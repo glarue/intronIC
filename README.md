@@ -2,7 +2,7 @@
 
 # (__intron__ <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-## __Quick start__
+## Quick start/testing
 
 First, install dependencies:
 
@@ -18,9 +18,9 @@ To extract all annotated intron sequences:
 
 * `../intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens -s`
 
-For many more details about options, output file, etc, please read on. And if you find this tool useful, please cite it! http://dx.doi.org/10.1093/nar/gkaa464
+For many more details about options, output file, etc, please read on. And if you find this tool useful, please cite http://dx.doi.org/10.1093/nar/gkaa464
 
-## **Overview**
+## Overview
 
 `intronIC` has two primary uses, both of which require a genome and corresponding annotation file (or BED file of intron coordinates):
 
@@ -47,7 +47,7 @@ By default, `intronIC` expects names in binomial (genus, species) form separated
 
 If you are running multiple versions of the same species and would like to keep the same species abbreviations in the output intron data, simply add a tag to the end of the name, e.g. "homo_sapiens.v2".
 
-### _Dependencies_
+### Dependencies
 
 * [Python >=3.3](https://www.python.org/downloads/)
 * [numpy & scipy](https://www.scipy.org/scipylib/download.html)
@@ -67,9 +67,9 @@ For genomes with a large number of annotated introns, memory usage can be on the
 
 For many non-model genomes, `intronIC` should run fairly quickly (e.g. tens of minutes). For human and other very well annotated genomes, runtime may be longer (the human Ensembl release 95 takes ~20-35 minutes in testing); run time scales relatively linearly with the total number of annotated introns, and can be improved by using parallel processes via `-p`.
 
-## **Details**
+## Details
 
-### _Output files_
+### Output files
 
 `intronIC` will automatically generate a set of output files. A brief description of the contents of each file follows (numbered lists represent the columns within each file).
 
@@ -156,7 +156,7 @@ Various scoring information (in order of increasing score).
 12. 3' z-score
 13. distance from hyperplane, e.g. the raw classifier output prior to scikit-learn's implementation of [Platt scaling](https://en.wikipedia.org/wiki/Platt_scaling) to convert distances to probabilities
 
-### _Configuration_
+### Configuration
 
 Configuration files can be found in the `intronIC_data` directory. They consist of the following set of files:
 
@@ -180,7 +180,7 @@ Configuration files can be found in the `intronIC_data` directory. They consist 
 
 #### Note: Any/all of the above files can be replaced as the defaults either permanently by modifying the existing files, or in one-off fashion using the '-m' and '-r[2, 12]' command line arguments
 
-### _Data filtering notes_
+### Data filtering notes
 
 1. When scoring introns, `intronIC` only processes introns with unique coordinates, and by default only includes introns from the longest isoform for a given gene. If run with `-i` (to include multiple isoforms), introns with duplicate coordinates are still excluded; in such cases, introns from the **longest isoform** (computed as the sum of the component coding sequences) will be preferentially included over introns with identical coordinates from shorter isoforms. Duplicate introns may optionally be included in the sequences output file using `-d`.
 2. There are a number of criteria by which introns may be omitted from the processed data, depending on run options. These introns will be included in the `bed.iic` and `introns.iic` files (and summarized in `log.iic`), however, tagged with `[o:x]` where `x` is one of the following:
@@ -190,7 +190,7 @@ Configuration files can be found in the `intronIC_data` directory. They consist 
     * `i` | short isoform: If run without `-i`, introns not present in the longest isoform are excluded.
 3. Non-canonical introns with very strong U12-like 5′ motifs near their annotated start will have their start and stop coordinates corrected (by equal amounts) to reflect the more U12-like splicing boundaries. These introns are tagged with `[c:x]`, where `x` is the relative coordinate shift applied (the total number of corrected introns is also summarized in `log.iic`).
 
-## **Complete usage info**
+## Complete usage info
 
 ```
 usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] -n SPECIES_NAME
@@ -352,7 +352,7 @@ required arguments (-g, -a | -q):
                         (default: None)
 ```
 
-## __Example usage__
+## Example usage
 
 A sample genome and annotation file can be found in `test_data`. To run `intronIC` on the sample data as organized in the repository simply do the following from within the `test_data` directory:
 
@@ -430,5 +430,3 @@ If only the intron sequences are desired, scoring can be bypassed using the `-s`
 ```
 
 Many additional options exist for a variety of use cases. Run `intronIC --help` for additional details.
-
-## __[background]__
