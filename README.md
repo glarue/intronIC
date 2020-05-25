@@ -2,11 +2,11 @@
 
 # (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-See the [[Quick start|Quick-start]] section and the rest of the wiki for installation and other instructions.
+See the [Quick start](https://github.com/glarue/intronIC/wiki/Quick-start) section and the rest of the [wiki](https://github.com/glarue/intronIC/wiki) for installation and other instructions.
 
 ## About
 
-`intronIC` was written to provide a customizable, open-source method for identifying minor (U12-type) spliceosomal introns from annotated intron sequences. Minor introns usually represent at most ~0.5% of a given genome's intron complement, but contain distinct splicing motifs which make them amenable to bioinformatic identification.
+`intronIC` is a Python program that provides a customizable, open-source method for identifying minor (U12-type) spliceosomal introns from annotated intron sequences. Minor introns usually represent at most ~0.5% of a given genome's intron complement, but contain distinct splicing motifs which make them amenable to bioinformatic identification.
 
 Earlier minor intron resources (U12DB, SpliceRack, ERISdb, etc.), while hugely important to the field, are by design static. As such, these databases fail to reflect the dramatic increase in available genome sequences and annotation quality of the last decade.
 
