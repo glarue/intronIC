@@ -6,7 +6,7 @@
 # the above uses specific Python version; allows script name in top
 
 """
-usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] -n SPECIES_NAME
+usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] [-b BED_FILE] -n SPECIES_NAME
                 [-q SEQUENCE_FILE] [-f {cds,exon}] [-s] [--no_nc] [-i] [-v]
                 [--pwms {matrix files)} [{matrix file(s} ...]]
                 [--reference_u12s {reference U12 intron sequences}]
@@ -20,7 +20,7 @@ usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] -n SPECIES_NAME
                 [--n_subsample N_SUBSAMPLE] [--cv_processes CV_PROCESSES]
                 [-p PROCESSES] [--matrix_score_info] [-C HYPERPARAMETER_C]
                 [--min_intron_len MIN_INTRON_LEN] [--pseudocount PSEUDOCOUNT]
-                [--exons_as_flanks] [-b BED_FILE]
+                [--exons_as_flanks]
 
 intronIC (intron Interrogator and Classifier) is a script which collects all
 of the annotated introns found in a genome/annotation file pair, and produces
@@ -142,17 +142,17 @@ optional arguments:
                         0-div errors (default: 0.0001)
   --exons_as_flanks     Use entire up/downstream exonic sequence as flank
                         sequence in output (default: False)
-  -b BED_FILE, --bed BED_FILE
-                        Supply intron coordinates in BED format (default:
-                        None)
 
-required arguments (-g, -a | -q):
+required arguments (-g, [-a, -b] | -q):
   -g GENOME, --genome GENOME
                         Genome file in FASTA format (gzip compatible)
                         (default: None)
   -a ANNOTATION, --annotation ANNOTATION
                         Annotation file in gff/gff3/gtf format (gzip
                         compatible) (default: None)
+  -b BED_FILE, --bed BED_FILE
+                        Supply intron coordinates in BED format (default:
+                        None)
   -n SPECIES_NAME, --species_name SPECIES_NAME
                         Binomial species name, used in output file and intron
                         label formatting. It is recommended to include at
@@ -209,7 +209,7 @@ from sklearn.base import clone
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.metrics import f1_score
 from sklearn import linear_model
-from biogl import fasta_parse, get_runtime, rev_comp, flex_open
+from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
 
 # nuclear option to ignore sklearn warnings during fitting process
 # does not appear to persist as env variable after script execution
@@ -240,214 +240,6 @@ def main():
     pass
 
 # Classes ####################################################################
-
-class GxfParse(object):
-    """
-    Takes a gff3/gtf/gff annotation line, and returns available metadata
-    about it.
-
-    """
-    def __init__(self, line, line_number):
-        self.bits = self.__split_on_tabs(line)
-        try:
-            self.region = self.bits[0]
-            try:
-                self.start = min(map(int, self.bits[3:5]))
-                self.stop = max(map(int, self.bits[3:5]))
-            except ValueError:
-                self.start = None
-                self.stop = None
-            self.strand = self.bits[6]
-            if self.strand not in ('+', '-'):
-                self.strand = '+'
-            if self.bits[7] in ['0', '1', '2']:
-                self.phase = int(self.bits[7])
-            else:
-                self.phase = None
-            self.infostring = self.bits[8]
-            self.feat_type = self.bits[2].lower()
-            self.parent = self.get_parent()
-            self.grandparent = None
-            # try to get grandparent for child types
-            if self.feat_type in ('cds', 'exon'):
-                self.grandparent = self.__field_match(
-                    self.infostring, ['gene_id', 'geneID'], delimiter=';')
-            self.name = self.get_ID()
-            self.line_number = line_number
-        except TypeError:
-            raise
-
-    @staticmethod
-    def __split_on_tabs(l, n=9):
-        """
-        Checks for a valid line (does not start with #).
-
-        Splits valid line on tabs, and returns a list of the bits
-        if the list length is {n}. Setting {n} to None will return
-        the split line regardless of length.
-
-        """
-        if l.startswith('#'):
-            return None
-        columns = l.strip().split("\t")
-        if n and len(columns) < n:
-            return None
-            
-        return columns
-
-    @staticmethod
-    def __field_match(infostring, tags, delimiter, tag_order=False):
-        if tag_order:
-            # check for first match of tags in order
-            try:
-                tags = [next(t for t in tags if t.lower() in infostring.lower())]
-            except StopIteration:
-                return None
-        info_bits = infostring.split(delimiter)
-        try:
-            match = next(
-                e for e in info_bits
-                if any(p.lower() in e.lower() for p in tags))
-        except StopIteration:  # no matches found
-            return None
-        if "=" in match:
-            substring = match.split("=")[1]
-        else:
-            substring = match.split()[1]
-
-        return substring.strip("\"")
-
-
-    def get_type(self, delimiter=';'):
-        """
-        Classifies annotation lines into type categories,
-        taking into account edge cases like 'processed transcript'
-        and 'pseudogenic transcript'.
-
-        """
-        og_type = self.bits[2].lower()
-        if og_type == 'mrna':
-            og_type = 'transcript'
-        if og_type in ('gene', 'transcript', 'exon', 'cds'):
-            return og_type
-
-        disqualifying = ['utr', 'start', 'stop']
-        if any(kw in og_type for kw in disqualifying):
-            return og_type
-
-        # Not an obvious type, so search for features of transcripts
-        # and genes in infostring to try to infer type
-
-        # check for explicit mention of transcript in ID
-        try:
-            id_string = next(
-                (f for f in delimiter.split(self.infostring)
-                if f.startswith("ID")))
-
-            if any(tag in id_string for tag in ('transcript', 'mrna')):
-                return 'transcript'
-        except StopIteration:
-            pass
-
-        gene_tags = ["gene_id", "geneId"]
-        transcript_tags = ["transcriptId", "transcript_ID"]
-        # Transcripts first because genes shouldn't have transcript IDs,
-        # but transcripts may have gene IDs
-        for ftype, tags in zip(
-                ['transcript', 'gene'], [transcript_tags, gene_tags]
-        ):
-            match = self.__field_match(self.infostring, tags, delimiter)
-            if match:
-                return ftype
-            else:
-                return og_type
-
-
-    def get_ID(self, delimiter=";"):
-        """
-        Finds the ID of a given annotation file line.
-
-        """
-        # first, do it the easy way
-        prefix = None
-        infostring = self.infostring
-        match = self.__field_match(infostring, ["ID="], delimiter)
-        if match:
-            return match
-
-        # Constrain feature types to simplify indexing
-        feat_type = self.feat_type
-        if feat_type == "mrna":
-            feat_type = "transcript"
-        # all get lowercased in the comparison
-        # if is no 'ID=', should reference self via others
-        gene_tags = ["ID=", "gene_id", "geneId"]
-        transcript_tags = ["ID=", "transcriptId", "transcript_ID"]
-        tag_selector = {
-            "gene": gene_tags,
-            "transcript": transcript_tags
-        }
-        try:
-            tags = tag_selector[feat_type]
-        except KeyError:
-            # get any ID available, prepended with the feature type
-            # to keep different features of the same transcript unique
-            prefix = self.feat_type
-            tags = ['transcriptID', 'transcript_ID', 'gene_ID', 'geneID']
-
-        match = self.__field_match(
-            infostring, tags, delimiter, tag_order=True)
-
-        # if nothing matches, return infostring if there's only
-        # one tag in it (common for gtf parent features)
-        if match is None and infostring.count(";") < 2:
-            match = infostring.split(";")[0]
-
-        if prefix:
-            match = '{}_{}'.format(prefix, match)
-
-        return match
-
-
-    def get_parent(self, delimiter=";"):
-        """
-        Retrieves parent information from an annotation line.
-
-        """
-        # do it the easy way first
-        infostring = self.infostring
-        match = self.__field_match(infostring, ["Parent="], delimiter)
-        if not match:
-            feat_type_converter = {"cds": "exon", "mrna": "transcript"}
-            feat_type = self.feat_type
-            if feat_type in feat_type_converter:
-                feat_type = feat_type_converter[feat_type]
-            child_tags = [
-                "Parent=", "transcript_ID",
-                "transcriptId", "proteinId", "protein_ID"
-            ]
-            transcript_tags = ["Parent=", "gene_ID", "geneId"]
-            gene_tags = ["Parent="]
-            tag_selector = {
-                "gene": gene_tags,
-                "transcript": transcript_tags,
-                "exon": child_tags
-            }
-            try:
-                tags = tag_selector[feat_type]
-            except KeyError:
-                # tags = list(set(child_tags + transcript_tags))
-                tags = child_tags + transcript_tags
-            match = self.__field_match(infostring, tags, delimiter, tag_order=True)
-            if not match and feat_type == "transcript":
-                match = self.get_ID()
-        try:
-            match = match.split(',') # updated GFF3 spec can list multiple parents
-        except:
-            match = [None]
-
-        return match
-
 
 class GenomeFeature(object):
     """
@@ -4770,7 +4562,7 @@ parser = argparse.ArgumentParser(
     '\'[u2, u12]_reference_set.introns.iic\'',
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 req_parse_grp = parser.add_argument_group(
-    title='required arguments (-g, -a | -q)')
+    title='required arguments (-g, [-a, -b] | -q)')
 req_parse_grp.add_argument(
     '-g',
     '--genome',
@@ -4779,6 +4571,12 @@ req_parse_grp.add_argument(
     '-a',
     '--annotation',
     help='Annotation file in gff/gff3/gtf format (gzip compatible)')
+req_parse_grp.add_argument(
+    '-b',
+    '--bed',
+    metavar='BED_FILE',
+    help='Supply intron coordinates in BED format'
+)
 req_parse_grp.add_argument(
     '-n',
     '--species_name',
@@ -5016,12 +4814,7 @@ parser.add_argument(
     action='store_true',
     help='Use entire up/downstream exonic sequence as flank sequence in output'
 )
-parser.add_argument(
-    '-b',
-    '--bed',
-    metavar='BED_FILE',
-    help='Supply intron coordinates in BED format'
-)
+
 
 format_info_message = ("""
  _       _                  _____ _____ 
@@ -5115,9 +4908,7 @@ following columns:
 # Args special cases
 if len(sys.argv) == 1:
     parser.print_usage()
-    sys.exit(
-        '{}: error: must be run with either a genome and annotation/BED, '
-        'or intron sequences file'.format(os.path.basename(sys.argv[0])))
+    sys.exit(0)
 
 if '--format_info' in sys.argv:  # can't use argparse unless other args
     sys.exit(format_info_message)
@@ -5127,7 +4918,12 @@ args = parser.parse_args()
 if args.format_info:
     sys.exit(format_info_message)
 
-if args.sequence_file and (args.genome or args.annotation):
+if not (args.genome and (args.annotation or args.bed)) or args.sequence_file:
+    parser.error(
+        '{}: error: must be run with either a genome and annotation/BED, '
+        'or intron sequences file'.format(os.path.basename(sys.argv[0]))
+    )
+if args.sequence_file and (args.genome or args.annotation or args.bed):
     parser.error(
         'Must specify either direct sequence input (via -q) or a '
         'genome/annotation combination'
@@ -5142,6 +4938,10 @@ if args.bed:
         parser.error(
             'Cannot use --exons_as_flanks in combination with BED input'
         )
+if args.bed and args.annotation:
+    parser.error(
+        'Use either -a or -b, but not both'
+    )
 
 # External filenames
 matrix_filename = "scoring_matrices.fasta.iic"
