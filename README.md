@@ -1,6 +1,6 @@
 ![intronIC_logo](https://user-images.githubusercontent.com/6827531/82829967-62872480-9e69-11ea-94e9-fa7306c7df1b.png)
 
-# (__intron__ **I**nterrogator and **C**lassifier)
+# (__intron__ <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
 ## __Quick start__
 
