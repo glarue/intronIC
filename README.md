@@ -4,6 +4,15 @@
 
 `intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves.
 
+First, clone the repo to your local machine:
+
+```
+git clone https://github.com/glarue/intronIC.git`
+cd intronIC
+```
+
+You may also wish to add `intronIC` to your system path (how you do this is platform-dependent).
+
 See the [wiki](https://github.com/glarue/intronIC/wiki) for more detail information about configuration/run options.
 
 ## Dependencies
