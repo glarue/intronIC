@@ -4473,22 +4473,26 @@ parser.add_argument(
     '--allow_multiple_isoforms',
     action='store_true',
     help='Include non-duplicate introns from isoforms other than '
-    'the longest in the scored intron set')
+    'the longest in the scored intron set (including those with alt. splice '
+    'boundaries unless also -v')
 parser.add_argument(
     '-v',
-    '--allow_intron_overlap',
+    '--no_intron_overlap',
     action='store_true',
-    help='Allow introns with boundaries that overlap other introns from '
-    'higher-priority transcripts (longer coding length, etc.) to be '
-    'included. This will include, for instance, introns with alternative '
-    '5′/3′ boundaries')
+    help='Requires -i (or weird annotations). Exclude any introns with '
+    'boundaries that overlap other introns from higher-priority transcripts '
+    '(longer coding length, etc.). This will exclude, for example, introns '
+    'with alternative 5′/3′ boundaries',
+    default=False
+)
 parser.add_argument(
     '--pwms',
     metavar='{PWM file(s)}',
     help='One or more PWMs to use in place of the defaults. '
     'Must follow the formatting described by the --format_info '
     'option',
-    nargs='+')
+    nargs='+'
+)
 parser.add_argument(
     '--reference_u12s',
     '--r12',
@@ -4884,7 +4888,7 @@ if args.no_nc:
     ALLOW_NONCANONICAL = False
 else:
     ALLOW_NONCANONICAL = True
-ALLOW_OVERLAP = args.allow_intron_overlap
+ALLOW_OVERLAP = not args.no_intron_overlap
 if args.allow_multiple_isoforms:
     LONGEST_ONLY = False
 else:
