@@ -44,6 +44,8 @@ By default, `intronIC` **includes non-canonical introns**, and considers **only 
 
 * `-p` | parallel processes, which can significantly reduce runtime
 
+* `-f cds` | use only `CDS` features to identify introns (by default, uses both `CDS` and `exon` features)
+
 * `--no_nc` | exclude introns with non-canonical (non-`GT-AG`/`GC-AG`/`AT-AC`) boundaries
 
 * `-i` | include introns from multiple isoforms of the same gene (default: longest isoform only)
