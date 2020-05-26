@@ -8,7 +8,7 @@
 """
 usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] [-b BED_FILE] -n SPECIES_NAME
                 [-q SEQUENCE_FILE] [-f {cds,exon}] [-s] [--no_nc] [-i] [-v]
-                [--pwms {matrix files)} [{matrix file(s} ...]]
+                [--pwms {PWM files)} [{PWM file(s} ...]]
                 [--reference_u12s {reference U12 intron sequences}]
                 [--reference_u2s {reference U2 intron sequences}] [--no_plot]
                 [--format_info] [-d] [-u] [--no_abbreviate] [-t 0-100]
@@ -21,153 +21,8 @@ usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] [-b BED_FILE] -n SPECIES_NAME
                 [-p PROCESSES] [--matrix_score_info] [-C HYPERPARAMETER_C]
                 [--min_intron_len MIN_INTRON_LEN] [--pseudocount PSEUDOCOUNT]
                 [--exons_as_flanks]
-
-intronIC (intron Interrogator and Classifier) is a script which collects all
-of the annotated introns found in a genome/annotation file pair, and produces
-a variety of output files (*.iic) which describe the annotated introns and
-(optionally) their similarity to known U12 sequences. Without the '-m' flag,
-there MUST exist a matrix file in the 'intronIC_data' subdirectory in the same
-parent directory as intronIC.py, with filename 'scoring_matrices.fasta.iic'.
-In the same data directory, there must also be a pair of sequence files (see
---format_info) with reference intron sequences named '[u2,
-u12]_reference_set.introns.iic'
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -f {cds,exon}, --feature {cds,exon}
-                        Specify feature to use to define introns. By default,
-                        intronIC will identify all introns uniquely defined by
-                        both CDS and exon features. Under the default mode,
-                        introns defined by exon features only will be
-                        demarcated by an '[e]' tag (default: None)
-  -s, --sequences_only  Bypass the scoring system and simply report the intron
-                        sequences present in the annotations (default: False)
-  --no_nc               Omit introns with non-canonical terminal dinucleoties
-                        from scoring (default: False)
-  -i, --allow_multiple_isoforms
-                        Include non-duplicate introns from isoforms other than
-                        the longest in the scored intron set (default: False)
-  -v, --allow_intron_overlap
-                        Allow introns with boundaries that overlap other
-                        introns from higher-priority transcripts (longer
-                        coding length, etc.) to be included. This will
-                        include, for instance, introns with alternative 5′/3′
-                        boundaries (default: False)
-  --pwms {matrix file(s)} [{matrix file(s)} ...]
-                        One or more matrices to use in place of the defaults.
-                        Must follow the formatting described by the
-                        --format_info option (default: None)
-  --reference_u12s {reference U12 intron sequences}, --r12 {reference U12 intron sequences}
-                        introns.iic file with custom reference introns to be
-                        used for setting U12 scoring expectation, including
-                        flanking regions (default: None)
-  --reference_u2s {reference U2 intron sequences}, --r2 {reference U2 intron sequences}
-                        introns.iic file with custom reference introns to be
-                        used for setting U12 scoring expectation, including
-                        flanking regions (default: None)
-  --no_plot             Do not output illustrations of intron
-                        scores/distributions(plotting requires matplotlib)
-                        (default: False)
-  --format_info         Print information about the system files required by
-                        this script (default: False)
-  -d, --include_duplicates
-                        Include introns with duplicate coordinates in the
-                        intron seqs file (default: False)
-  -u, --uninformative_naming
-                        Use a simple naming scheme for introns instead of the
-                        verbose, metadata-laden default format (default:
-                        False)
-  --no_abbreviate, --na
-                        Use the provided species name in full within the
-                        output files (default: False)
-  -t 0-100, --threshold 0-100
-                        Threshold value of the SVM-calculated probability of
-                        being a U12 to determine output statistics (default:
-                        90)
-  --no_sequence_output, --ns
-                        Do not create a file with the full intron sequences of
-                        all annotated introns (default: False)
-  --five_score_coords start stop, --5c start stop
-                        Coordinates describing the 5' sequence to be scored,
-                        relative to the 5' splice site (e.g. position 0 is the
-                        first base of the intron); half-closed interval
-                        [start, stop) (default: (-3, 9))
-  --three_score_coords start stop, --3c start stop
-                        Coordinates describing the 3' sequence to be scored,
-                        relative to the 3' splice site (e.g. position -1 is
-                        the last base of the intron); half-closed interval
-                        (start, stop] (default: (-10, 4))
-  --branch_point_coords start stop, --bpc start stop
-                        Coordinates describing the region to search for branch
-                        point sequences, relative to the 3' splice site (e.g.
-                        position -1 is the last base of the intron); half-
-                        closed interval [start, stop). (default: (-55, -5))
-  -r {five,bp,three} [{five,bp,three} ...], --scoring_regions {five,bp,three} [{five,bp,three} ...]
-                        Intron sequence regions to include in intron score
-                        calculations. (default: ('five', 'bp'))
-  --abbreviate_filenames, --afn
-                        Use abbreviated species name when creating output
-                        filenames. (default: False)
-  --recursive           Generate new scoring matrices and training data using
-                        confident U12s from the first scoring pass. This
-                        option may produce better results in species distantly
-                        related to the species upon which the training
-                        data/matrices are based, though beware accidental
-                        training on false positives. Recommended only in cases
-                        where clear separation between types is seen with
-                        default data. (default: False)
-  --n_subsample N_SUBSAMPLE
-                        Number of sub-samples to use to generate SVM
-                        classifiers; 0 uses the entire training set and should
-                        provide the best results; otherwise, higher values
-                        will better approximate the entire set at the expense
-                        of speed. (default: 0)
-  --cv_processes CV_PROCESSES
-                        Number of parallel processes to use during cross-
-                        validation (default: None)
-  -p PROCESSES, --processes PROCESSES
-                        Number of parallel processes to use for scoring (and
-                        cross-validation, unless --cv_processes is also set)
-                        (default: 1)
-  --matrix_score_info   Produce additional per-matrix raw score information
-                        for each intron (default: False)
-  -C HYPERPARAMETER_C, --hyperparameter_C HYPERPARAMETER_C
-                        Provide the value for hyperparameter C directly
-                        (bypasses optimized parameter search) (default: None)
-  --min_intron_len MIN_INTRON_LEN
-                        Minimum intron length to consider for scoring
-                        (default: 30)
-  --pseudocount PSEUDOCOUNT
-                        Pseudocount value to add to each matrix value to avoid
-                        0-div errors (default: 0.0001)
-  --exons_as_flanks     Use entire up/downstream exonic sequence as flank
-                        sequence in output (default: False)
-
-required arguments (-g, [-a, -b] | -q):
-  -g GENOME, --genome GENOME
-                        Genome file in FASTA format (gzip compatible)
-                        (default: None)
-  -a ANNOTATION, --annotation ANNOTATION
-                        Annotation file in gff/gff3/gtf format (gzip
-                        compatible) (default: None)
-  -b BED_FILE, --bed BED_FILE
-                        Supply intron coordinates in BED format (default:
-                        None)
-  -n SPECIES_NAME, --species_name SPECIES_NAME
-                        Binomial species name, used in output file and intron
-                        label formatting. It is recommended to include at
-                        least the first letter of the species, and the full
-                        genus name since intronIC (by default) abbreviates the
-                        provided name in its output (e.g. Homo_sapiens -->
-                        HomSap) (default: None)
-  -q SEQUENCE_FILE, --sequence_file SEQUENCE_FILE
-                        Provide intron sequences directly, rather than using a
-                        genome/annotation combination. Must follow the
-                        introns.iic format (see README for description)
-                        (default: None)
 """
 
-# authorship information
 __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
@@ -4629,8 +4484,8 @@ parser.add_argument(
     '5′/3′ boundaries')
 parser.add_argument(
     '--pwms',
-    metavar='{matrix file(s)}',
-    help='One or more matrices to use in place of the defaults. '
+    metavar='{PWM file(s)}',
+    help='One or more PWMs to use in place of the defaults. '
     'Must follow the formatting described by the --format_info '
     'option',
     nargs='+')
