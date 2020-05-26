@@ -7,7 +7,7 @@
 First, clone the repo to your local machine:
 
 ```
-git clone https://github.com/glarue/intronIC.git`
+git clone https://github.com/glarue/intronIC.git
 cd intronIC
 ```
 
