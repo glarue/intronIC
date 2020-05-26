@@ -6,9 +6,9 @@
 
 First, clone the repo to your local machine:
 
-```
-git clone https://github.com/glarue/intronIC.git
-cd intronIC
+```console
+$ git clone https://github.com/glarue/intronIC.git
+$ cd intronIC
 ```
 
 You may also wish to add `intronIC` to your system path (how you do this is platform-dependent).
