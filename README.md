@@ -50,7 +50,7 @@ By default, `intronIC` **includes non-canonical introns**, and considers **only 
 
 * `-i` | include introns from multiple isoforms of the same gene (default: longest isoform only)
 
-* `-v` | include introns with overlapping boundaries (e.g. alt. 5'/3' boundaries)
+* `-v` | exclude introns with overlapping boundaries (e.g. alt. 5'/3' boundaries); usually requires `-i` (unless you're annotations are weird)
 
 ## Running on test dataset
 
