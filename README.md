@@ -25,7 +25,7 @@ See the [wiki](https://github.com/glarue/intronIC/wiki) for more detail informat
 
 To install dependencies using `pip`, do
 
-`python -m pip install numpy scipy matplotlib scikit-learn biogl`
+`python3 -m pip install numpy scipy matplotlib scikit-learn biogl`
 
 `intronIC` was built and tested on Linux, but should run on Windows or Mac OSes without much trouble (I say that now...).
 
