@@ -50,11 +50,9 @@ By default, `intronIC` **includes non-canonical introns**, and considers **only 
 
 * `-i` | include introns from multiple isoforms of the same gene (default: longest isoform only)
 
-* `-v` | exclude introns with overlapping boundaries (e.g. alt. 5'/3' boundaries); usually requires `-i` (unless you're annotations are weird)
+## Running on test data
 
-## Running on test dataset
-
-To test the installation, change to the `test_data` subdirectory, which contains Ensembl annotations for chr 19 of the human genome.
+To test the installation, change to the `test_data` subdirectory, which contains Ensembl annotations for chromosome 19 of the human genome.
 
 ### Classify annotated introns
 
@@ -66,7 +64,15 @@ If you just want to retrieve all annotated intron sequences, add the `-s` flag:
 
 * `../intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens -s`
 
-See the rest of the Wiki for more extensive details about [[output files|Output-files]], [[usage info|Usage-info]], etc.
+See the rest of the [wiki](https://github.com/glarue/intronIC/wiki) for more details about [output files](https://github.com/glarue/intronIC/wiki/Output-files.md).
+
+## A note on the `-n` (name) argument
+
+By default, `intronIC` expects names in binomial (genus, species) form separated by a non-alphanumeric character, e.g. 'homo_sapiens', 'homo.sapiens', etc. `intronIC` then formats that name internally into a tag that it uses to label all output intron IDs, ignoring anything past the second non-alphanumeric character.
+
+Output *files*, on the other hand, are named using the full name supplied via `-n`. If you'd prefer to have it leave whatever argument you supply to `-n` unmodified, use the `--na` flag.
+
+If you are running multiple versions of the same species and would like to keep the same species abbreviations in the output intron data, simply add a tag to the end of the name, e.g. "homo_sapiens.v2"; the tags within files will be consistent ("HomSap"), but the file names across runs will be distinct.
 
 ## Resource usage
 
@@ -78,12 +84,12 @@ See the rest of the wiki for more detailed instructions.
 
 ## About
 
-`intronIC` was written to provide a customizable, open-source method for identifying minor (U12-type) spliceosomal introns from annotated intron sequences. Minor introns usually represent at most ~0.5% of a given genome's intron complement, but contain distinct splicing motifs which make them amenable to bioinformatic identification.
+`intronIC` was written to provide a customizable, open-source method for identifying minor (U12-type) spliceosomal introns from annotated intron sequences. Minor introns usually represent ~0.5% (at most) of a given genome's intron complement, and contain distinct splicing motifs which make them amenable to bioinformatic identification.
 
-Earlier minor intron resources (U12DB, SpliceRack, ERISdb, etc.), while hugely important to the field, are static by design. As such, these databases fail to reflect the dramatic increase in available genome sequences and annotation quality of the last decade.
+Earlier minor intron resources (U12DB, SpliceRack, ERISdb, etc.), while hugely important contributions to the field, are static by design. As such, these databases fail to reflect the dramatic increase in available genome sequences and annotation quality of the last decade.
 
-In addition, other published identification methods employ a certain amount of heuristic fuzziness to define their U12-type scoring system. `intronIC` relegates this decision to the well-established support-vector machine (SVM) classification approach, which produces an easily-interpretable "probability of being U12-type" score for each intron.
+In addition, other published identification methods employ a certain amount of heuristic fuzziness in defining the classification criteria of their U12-type scoring systems (i.e how "U12-like" does an intron need to look before being called a U12-type intron). `intronIC` relegates this decision to the well-established support-vector machine (SVM) classification method, which produces an easy-to-interpret "probability of being U12-type" score for each intron.
 
-Furthermore, `intronIC` provides researchers the opportunity to tailor the underlying training data/position-weight matrices, should they have species-specific data that they can take advantage of.
+Furthermore, `intronIC` provides researchers the opportunity to tailor the underlying training data/position-weight matrices, should they have species-specific data to take advantage of.
 
 Finally, `intronIC` performs a fair amount of bookkeping during the intron collection process, resulting in (potentially) useful metadata about each intron including parent gene/transcript, ordinal index and phase, information for which there is no other striaghtforward pipeline (as far as I'm aware) through which to easily acquire.
