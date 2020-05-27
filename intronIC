@@ -1460,34 +1460,34 @@ def overlap_log(objs):
         FEATURE, parent, coords)
 
 
-# def overlap_check(a, b):
-#    """
-#    Check to see if the two ordered tuples, >a< and >b<,
-#    overlap with one another.
-
-#    By way of Jacob Stanley <3
-#    """
-
-#    val = (a[0] - b[1]) * (a[1] - b[0])
-
-#    if val < 0:
-#        return True
-#    else:
-#        return False
-
-
 def overlap_check(a, b):
-    """
-    >a< and >b< are sorted coordinate tuples;
-    returns True if they overlap, False otherwise
+   """
+   Check to see if the two ordered tuples, >a< and >b<,
+   overlap with one another.
 
-    """
-    lowest = min([a, b], key=lambda x: min(x))
-    highest = max([a, b], key=lambda x: min(x))
-    if min(highest) <= max(lowest):
-        return True
-    else:
-        return False
+   By way of Jacob Stanley <3
+   """
+
+   val = (a[0] - b[1]) * (a[1] - b[0])
+
+   if val < 0:
+       return True
+   else:
+       return False
+
+
+# def overlap_check(a, b):
+#     """
+#     >a< and >b< are sorted coordinate tuples;
+#     returns True if they overlap, False otherwise
+
+#     """
+#     lowest = min([a, b], key=lambda x: min(x))
+#     highest = max([a, b], key=lambda x: min(x))
+#     if min(highest) <= max(lowest):
+#         return True
+#     else:
+#         return False
 
 
 # TODO use desired feature type (if specified) to decide the
