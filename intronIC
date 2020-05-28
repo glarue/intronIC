@@ -73,6 +73,8 @@ from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
 #     os.environ["PYTHONWARNINGS"] = "ignore" # Also affect subprocesses
 
 # improve sklearn parallel performance/stability
+# this option is limited by certain OS constraints,
+# and may cause problems outside Unix...?
 os.environ['JOBLIB_START_METHOD'] = 'forkserver'
 
 # check for the plotting library required to produce
@@ -90,9 +92,9 @@ except ModuleNotFoundError:
 
 warnings.filterwarnings('ignore')
 
-# make packagable by setuptools using console_scripts
-def main():
-    pass
+# # make packagable by setuptools using console_scripts
+# def main():
+#     pass
 
 # Classes ####################################################################
 
