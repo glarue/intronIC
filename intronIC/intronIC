@@ -756,7 +756,7 @@ def make_parser():
         'files (*.iic) which describe the annotated introns and (optionally) '
         'their similarity to known U12 sequences.\n'
         'Without the \'-m\' flag, there MUST exist a matrix file in the '
-        '\'intronIC_data\' subdirectory in the same parent directory '
+        '\'data\' subdirectory in the same parent directory '
         'as intronIC.py, with filename \'scoring_matrices.fasta.iic\'. '
         'In the same data directory, there must also be a pair of sequence '
         'files (see --format_info) with reference intron sequences named '
@@ -3937,7 +3937,7 @@ def get_args(argv, arg_parser):
     /// Naming ///
 
     The matrix file must be named 'scoring_matrices.fasta.iic', and placed in a
-    directory called 'intronIC_data' located in the main intronIC directory.
+    directory called 'data' located in the main intronIC directory.
 
     /// Format ///
 
@@ -3990,7 +3990,7 @@ def get_args(argv, arg_parser):
     /// Naming ///
 
     The files needs to be named '[u2, u12]_reference_set.introns.iic[.gz]', and
-    be located in the intronIC_data directory, unless specified via the --r[2, 12]
+    be located in the data directory, unless specified via the --r[2, 12]
     command line argument.
 
     /// Format ///
@@ -4053,11 +4053,11 @@ def get_custom_args(args, argv):
     # Get script directory and external file paths
     HOME = os.path.dirname(os.path.realpath(sys.argv[0]))
     custom_args['HOME'] = HOME
-    DATA_DIR = pkg_resources.resource_filename(__name__, 'intronIC_data/')
+    DATA_DIR = pkg_resources.resource_filename(__name__, 'data/')
 
     # print(DATA_DIR)
 
-    # DATA_DIR = os.path.join(HOME, "intronIC_data")
+    # DATA_DIR = os.path.join(HOME, "data")
 
     custom_args['DATA_DIR'] = DATA_DIR
     RUN_DIR = os.getcwd()
