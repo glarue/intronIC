@@ -42,6 +42,7 @@ import gzip
 import numpy as np
 import warnings
 import types
+import pkg_resources
 
 # hacky way to ignore annoying sklearn warnings
 # (https://stackoverflow.com/a/33616192/3076552)
@@ -52,7 +53,7 @@ warnings.warn = warn
 from multiprocessing.pool import Pool
 from scipy import stats as pystats
 from bisect import bisect_left, bisect_right
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict, deque, namedtuple
 from itertools import islice, repeat, chain
 from operator import attrgetter
 from functools import partial
@@ -66,6 +67,15 @@ from sklearn.metrics import f1_score
 from sklearn import linear_model
 from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
 
+try:
+    import matplotlib
+    matplotlib.use('Agg') # allow to run without X display server
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+except ModuleNotFoundError:
+    pass
+
 # nuclear option to ignore sklearn warnings during fitting process
 # does not appear to persist as env variable after script execution
 # if not sys.warnoptions:
@@ -75,26 +85,7 @@ from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
 # improve sklearn parallel performance/stability
 # this option is limited by certain OS constraints,
 # and may cause problems outside Unix...?
-os.environ['JOBLIB_START_METHOD'] = 'forkserver'
-
-# check for the plotting library required to produce
-# optionall figures
-try:
-    import matplotlib
-    matplotlib.use('Agg') # allow to run without X display server
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-    CAN_PLOT = True
-except ModuleNotFoundError:
-    CAN_PLOT = False
-
-warnings.filterwarnings('ignore')
-
-# # make packagable by setuptools using console_scripts
-# def main():
-#     pass
+# os.environ['JOBLIB_START_METHOD'] = 'forkserver'
 
 # Classes ####################################################################
 
@@ -600,7 +591,7 @@ class Intron(GenomeFeature):
         # setattr(self, seq_name, new_coords)
         return new_coords
 
-    def get_name(self, special='?'):
+    def get_name(self, spcs, simple=False, special='?'):
         """
         Build a unique name (not including score) from metadata.
 
@@ -615,18 +606,18 @@ class Intron(GenomeFeature):
             dyn_tag = ';{}'.format(';'.join(sorted(self.dynamic_tag)))
         else:
             dyn_tag = ''
-        if SIMPLE_NAME is True:
-            return '{}-i_{}{}{}'.format(SPCS, self.unique_num, omit_tag, dyn_tag)
+        if simple is True:
+            return '{}-i_{}{}{}'.format(spcs, self.unique_num, omit_tag, dyn_tag)
         elements = [
             self.grandparent, self.parent,
             self.index, self.family_size, omit_tag]
         tags = [e if e is not None else special for e in elements]
         tags.append(dyn_tag)  # compatibility with earlier Python 3s
-        name = "{}-{}@{}-intron_{}({}){}{}".format(SPCS, *tags)
+        name = "{}-{}@{}-intron_{}({}){}{}".format(spcs, *tags)
         # setattr(self, "name", name)
         return name
 
-    def get_label(self, special='?'):
+    def get_label(self, spcs, simple=False, special='?'):
         """
         Builds a unique intron label from metadata
         """
@@ -643,7 +634,7 @@ class Intron(GenomeFeature):
         else:
             score = None
         if not self.name:
-            self.name = self.get_name()
+            self.name = self.get_name(spcs, simple)
         label = ('{};{}'
                  .format(*[e if e is not None else special for e in
                            [self.name, score]]))
@@ -651,7 +642,7 @@ class Intron(GenomeFeature):
 
 
     def omit_check(
-        self, min_length, allow_noncanon=False,
+        self, min_length, bp_matrix_length, allow_noncanon=False,
         allow_overlap=False, longest_only=True):
         #TODO make .omitted be a list containing all tags
         # instead of just a single string
@@ -676,7 +667,7 @@ class Intron(GenomeFeature):
             omission_reason = 'ambiguous sequence'
         # check if there is sufficiently long sequence in the
         # bp region to score at least one bp motif
-        elif longest_match(self.bp_region_seq) < BP_MATRIX_LENGTH:
+        elif longest_match(self.bp_region_seq) < bp_matrix_length:
                 omission_reason = 'short'
         elif not allow_noncanon and self.noncanonical:
             omission_reason = 'noncanonical'
@@ -716,6 +707,7 @@ class Intron(GenomeFeature):
         self, 
         models, 
         scoring_regions, 
+        THRESHOLD,
         model_weights=None, 
         add_type=True
     ):
@@ -755,6 +747,281 @@ class Intron(GenomeFeature):
 # /Classes ###################################################################
 
 # Functions ##################################################################
+
+def make_parser():
+    parser = argparse.ArgumentParser(
+        description='intronIC (intron Interrogator and Classifier) is a '
+        'script which collects all of the annotated introns found in a '
+        'genome/annotation file pair, and produces a variety of output '
+        'files (*.iic) which describe the annotated introns and (optionally) '
+        'their similarity to known U12 sequences.\n'
+        'Without the \'-m\' flag, there MUST exist a matrix file in the '
+        '\'intronIC_data\' subdirectory in the same parent directory '
+        'as intronIC.py, with filename \'scoring_matrices.fasta.iic\'. '
+        'In the same data directory, there must also be a pair of sequence '
+        'files (see --format_info) with reference intron sequences named '
+        '\'[u2, u12]_reference_set.introns.iic\'',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    req_parse_grp = parser.add_argument_group(
+        title='required arguments (-g, [-a, -b] | -q)')
+    req_parse_grp.add_argument(
+        '-g',
+        '--genome',
+        help='Genome file in FASTA format (gzip compatible)')
+    req_parse_grp.add_argument(
+        '-a',
+        '--annotation',
+        help='Annotation file in gff/gff3/gtf format (gzip compatible)')
+    req_parse_grp.add_argument(
+        '-b',
+        '--bed',
+        metavar='BED_FILE',
+        help='Supply intron coordinates in BED format'
+    )
+    req_parse_grp.add_argument(
+        '-n',
+        '--species_name',
+        type=str,
+        help='Binomial species name, used in output file and intron label '
+        'formatting. It is recommended to include at least the first letter '
+        'of the species, and the full genus name since intronIC (by default) '
+        'abbreviates the provided name in its output '
+        '(e.g. Homo_sapiens --> HomSap)',
+        required=True)
+    req_parse_grp.add_argument(
+        '-q',
+        '--sequence_file',
+        help='Provide intron sequences directly, rather than using a '
+        'genome/annotation combination. Must follow the introns.iic '
+        'format (see README for description)')
+    parser.add_argument(
+        '-f',
+        '--feature',
+        help='Specify feature to use to define introns. By default, '
+        'intronIC will identify all introns uniquely defined by '
+        'both CDS and exon features. Under the default mode, introns '
+        'defined by exon features only will be demarcated by an '
+        '\'[e]\' tag',
+        choices=['cds', 'exon'],
+        default=None)
+    parser.add_argument(
+        '-s',
+        '--sequences_only',
+        action='store_true',
+        help='Bypass the scoring system and simply report the intron '
+        'sequences present in the annotations')
+    parser.add_argument(
+        '--no_nc',
+        action='store_true',
+        help='Omit introns with non-canonical terminal dinucleoties from scoring')
+    parser.add_argument(
+        '-i',
+        '--allow_multiple_isoforms',
+        action='store_true',
+        help='Include non-duplicate introns from isoforms other than '
+        'the longest in the scored intron set (including those with alt. splice '
+        'boundaries unless also -v')
+    parser.add_argument(
+        '-v',
+        '--no_intron_overlap',
+        action='store_true',
+        help='Requires -i (or weird annotations). Exclude any introns with '
+        'boundaries that overlap other introns from higher-priority transcripts '
+        '(longer coding length, etc.). This will exclude, for example, introns '
+        'with alternative 5′/3′ boundaries',
+        default=False
+    )
+    parser.add_argument(
+        '--pwms',
+        metavar='{PWM file(s)}',
+        help='One or more PWMs to use in place of the defaults. '
+        'Must follow the formatting described by the --format_info '
+        'option',
+        nargs='+'
+    )
+    parser.add_argument(
+        '--reference_u12s',
+        '--r12',
+        metavar='{reference U12 intron sequences}',
+        help='introns.iic file with custom reference introns to be used '
+        'for setting U12 scoring expectation, including flanking regions')
+    parser.add_argument(
+        '--reference_u2s',
+        '--r2',
+        metavar='{reference U2 intron sequences}',
+        help='introns.iic file with custom reference introns to be used '
+        'for setting U12 scoring expectation, including flanking regions')
+    parser.add_argument(
+        '--no_plot',
+        action='store_true',
+        help='Do not output illustrations of intron scores/distributions'
+        '(plotting requires matplotlib)')
+    parser.add_argument(
+        '--format_info',
+        action='store_true',
+        help='Print information about the system '
+        'files required by this script')
+    parser.add_argument(
+        '-d',
+        '--include_duplicates',
+        action='store_true',
+        help='Include introns with duplicate '
+        'coordinates in the intron seqs file')
+    parser.add_argument(
+        '-u',
+        '--uninformative_naming',
+        action='store_true',
+        help='Use a simple naming scheme for introns instead of the '
+        'verbose, metadata-laden default format'
+    )
+    parser.add_argument(
+        '--no_abbreviate',
+        '--na',
+        action='store_true',
+        help='Use the provided species name in full within the output files'
+    )
+    parser.add_argument(
+        '-t',
+        '--threshold',
+        metavar='0-100',
+        type=float,
+        default=90,
+        help='Threshold value of the SVM-calculated probability of being a U12 to '
+        'determine output statistics')
+    parser.add_argument(
+        '--no_sequence_output',
+        '--ns',
+        action='store_true',
+        help='Do not create a file with the full intron sequences '
+        'of all annotated introns')
+    parser.add_argument(
+        '--five_score_coords',
+        '--5c',
+        default=(-3, 9),
+        metavar=('start', 'stop'),
+        nargs=2,
+        type=int,
+        help=(
+            'Coordinates describing the 5\' sequence to be scored, relative to '
+            'the 5\' splice site (e.g. position 0 is the first base of the '
+            'intron); half-closed interval [start, stop)'
+        )
+    )
+    parser.add_argument(
+        '--three_score_coords',
+        '--3c',
+        default=(-10, 4),
+        metavar=('start', 'stop'),
+        nargs=2,
+        type=int,
+        help=(
+            'Coordinates describing the 3\' sequence to be scored, relative to '
+            'the 3\' splice site (e.g. position -1 is the last base of the '
+            'intron); half-closed interval (start, stop]'
+        )
+    )
+    parser.add_argument(
+        '--branch_point_coords',
+        '--bpc',
+        default=(-55, -5),
+        metavar=('start', 'stop'),
+        nargs=2,
+        type=int,
+        help=(
+            'Coordinates describing the region to search for branch point '
+            'sequences, relative to the 3\' splice site (e.g. position -1 is the '
+            'last base of the intron); half-closed interval [start, stop).'
+        )
+    )
+    parser.add_argument(
+        '-r',
+        '--scoring_regions',
+        help='Intron sequence regions to include in intron score calculations.',
+        default=('five', 'bp'),
+        choices=('five', 'bp', 'three'),
+        nargs='+'
+    )
+    parser.add_argument(
+        '--abbreviate_filenames',
+        '--afn',
+        action='store_true',
+        help='Use abbreviated species name when creating '
+        'output filenames.'
+    )
+    parser.add_argument(
+        '--recursive',
+        action='store_true',
+        help=(
+            'Generate new scoring matrices and training data using '
+            'confident U12s from the first scoring pass. This option may '
+            'produce better results in species distantly related to the '
+            'species upon which the training data/matrices are based, though '
+            'beware accidental training on false positives. Recommended only '
+            'in cases where clear separation between types is seen with default '
+            'data.'
+        )
+    )
+    parser.add_argument(
+        '--n_subsample',
+        default=0,
+        type=int,
+        help=(
+            'Number of sub-samples to use to generate SVM classifiers; 0 uses the '
+            'entire training set and should provide the best results; otherwise, '
+            'higher values will better approximate the entire set at the expense '
+            'of speed.'
+        )
+    )
+    parser.add_argument(
+        '--cv_processes',
+        # default=1,
+        type=int,
+        help=(
+            'Number of parallel processes to use during cross-validation')
+    )
+    parser.add_argument(
+        '-p',
+        '--processes',
+        default=1,
+        type=int,
+        help=(
+            'Number of parallel processes to use for scoring (and '
+            'cross-validation, unless --cv_processes is also set)'
+        )
+    )
+    parser.add_argument(
+        '--matrix_score_info',
+        action='store_true',
+        help='Produce additional per-matrix raw score information for each intron'
+    )
+    parser.add_argument(
+        '-C',
+        '--hyperparameter_C',
+        default=None,
+        help=(
+            'Provide the value for hyperparameter C directly (bypasses optimized '
+            'parameter search)')
+    )
+    parser.add_argument(
+        '--min_intron_len',
+        default=30,
+        type=int,
+        help='Minimum intron length to consider for scoring'
+    )
+    parser.add_argument(
+        '--pseudocount',
+        default=0.0001,
+        type=float,
+        help='Pseudocount value to add to each matrix value to avoid 0-div errors'
+    )
+    parser.add_argument(
+        '--exons_as_flanks',
+        action='store_true',
+        help='Use entire up/downstream exonic sequence as flank sequence in output'
+    )
+
+    return parser
+
 
 def check_thresh_arg(t):
     """
@@ -969,18 +1236,23 @@ def format_matrix(matrix, label="frequencies", precision=None):
 
 def introns_from_flatfile(
     flatfile,
-    five_score_coords,
-    three_score_coords,
-    bp_coords,
-    allow_noncanon,
-    allow_overlap,
+    args,
     hashgen=False,
-    type_id=None):
+    type_id=None
+):
     """
     Build a list of Intron objects from a reference file in
     introns.iic format
 
     """
+    FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
+    THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
+    MIN_INTRON_LENGTH = args['MIN_INTRON_LENGTH']
+    allow_noncanon = args['ALLOW_NONCANONICAL']
+    allow_overlap = args['ALLOW_OVERLAP']
+    BP_COORDS = args['BP_REGION_COORDS']
+    BP_MATRIX_LENGTH = args['BP_MATRIX_LENGTH']
+
     ref_introns = []
     auto_name = 'auto_intron_'
     auto_int = 0
@@ -1015,13 +1287,14 @@ def introns_from_flatfile(
                 new_intron,
                 seq.upper(),
                 flank_size,
-                five_score_coords,
-                three_score_coords,
+                FIVE_SCORE_COORDS,
+                THREE_SCORE_COORDS,
                 # five_score_length,
-                bp_coords
+                BP_COORDS
             )
             new_intron.omit_check(
                 MIN_INTRON_LENGTH,
+                BP_MATRIX_LENGTH,
                 allow_noncanon=allow_noncanon,
                 allow_overlap=allow_overlap
             )
@@ -1036,8 +1309,7 @@ def introns_from_flatfile(
             yield new_intron
 
 
-def get_reference_introns(ref_file, five_score_coords, three_score_coords,
-                       bp_coords, type_id=None):
+def get_reference_introns(ref_file, args, type_id=None):
     """
     Build a list of Intron objects from a reference file in
     introns.iic format
@@ -1045,11 +1317,7 @@ def get_reference_introns(ref_file, five_score_coords, three_score_coords,
     """
     refs = introns_from_flatfile(
         ref_file,
-        five_score_coords,
-        three_score_coords,
-        bp_coords,
-        allow_noncanon=True,
-        allow_overlap=True,
+        args,
         type_id=type_id)
     
     refs = list(refs)
@@ -1611,7 +1879,7 @@ def seq_score(seq, matrix, start_index=0):
 
 # bp score version with position-specific score weighting
 # for secret species
-def bp_score(seq, matrix, use_bpx=False, matrix_tag='TTTGA'):
+def bp_score(seq, matrix, use_bpx=False, BPX=None, matrix_tag='TTTGA'):
     """
     Score every sub-sequence of >seq< with length equal
     to the value of the keys in >matrix<.
@@ -1834,7 +2102,13 @@ def u12_correction(intron):
     return True
 
 
-def correct_annotation(introns, flattened, annotation_file, run_dir):
+def correct_annotation(
+    introns, 
+    flattened, 
+    annotation_file, 
+    RUN_DIR, 
+    FN_ANNOT
+):
     """
     Adjusts intron-defining entries in >annotation_file<
     based upon the intron attribute >corrected<.
@@ -1911,11 +2185,16 @@ def correct_annotation(introns, flattened, annotation_file, run_dir):
             bits[7] = str(_shift_phase(bits[7], shift_tag))
         return '\t'.join(bits)
 
-    # Iterate over only those introns with non-zero values for >corrected<
+    # Iterate over only those introns with non-zero values for {corrected}
     corrected_count = 0
     corrected_dupes = 0
     corrected_exon_coords = {}
-    for intron in filter(attrgetter('corrected'), introns):
+    corrected_introns = [i for i in introns if i.corrected]
+    corrected_count = len(corrected_introns)
+    if corrected_count == 0:
+        return
+    # for intron in filter(attrgetter('corrected'), introns):
+    for intron in corrected_introns:
         corrected_count += 1
         if intron.duplicate:
             corrected_dupes += 1
@@ -1930,9 +2209,9 @@ def correct_annotation(introns, flattened, annotation_file, run_dir):
             corrected_exon_coords[ex.line_number] = (
                 coords, coord_tag, shift_tag, phase_shift)
 
+    # if corrected_count == 0:
+    #     return
     # We now have an index of lines to modify in the annotation file
-    if corrected_count == 0:
-        return
     modded_filename = FN_ANNOT
     modded_filepath = os.path.join(
         RUN_DIR, modded_filename)
@@ -2223,7 +2502,7 @@ def counter_format_top(cntr, num=None):
         yield count_info
 
 
-def build_u2_bp_matrix(introns, u12_matrices, dnt_list=None):
+def build_u2_bp_matrix(introns, u12_matrices, spcs, simple_name, dnt_list=None):
     """
     Builds a matrix for branch point sequences
     based on highest-scoring sequences when
@@ -2253,7 +2532,7 @@ def build_u2_bp_matrix(introns, u12_matrices, dnt_list=None):
             ###!!!
 
             if not seq:
-                print('NO BP SEQ: ', intron.get_name())
+                print('NO BP SEQ: ', intron.get_name(spcs, simple_name))
                 sys.exit(0)
             yield seq
 
@@ -2298,6 +2577,9 @@ def get_score_bounds(matrix):
 def multi_matrix_score(
     intron,
     matrices,
+    FIVE_SCORE_COORDS,
+    THREE_SCORE_COORDS,
+    PSEUDOCOUNT,
     regions=('five', 'bp', 'three'),
     matrix_tags=None,
     use_bpx=False):
@@ -2451,7 +2733,15 @@ def log_ratio(a, b):
 #         # yield intron
 #     return scored_introns
 
-def assign_raw_score(intron, matrices, scoring_regions, multiplier_d=None):
+def assign_raw_score(
+    intron, 
+    matrices, 
+    scoring_regions, 
+    five_score_coords, 
+    three_score_coords, 
+    pseudocount, 
+    multiplier_d=None
+):
     """
     Assigns raw scores to an Intron object based on the supplied matrices
 
@@ -2459,9 +2749,22 @@ def assign_raw_score(intron, matrices, scoring_regions, multiplier_d=None):
     # Determine the best type of matrix to used based on 5' score
     # e.g. ('u12', 'gtag')
     u2_matrix_info = multi_matrix_score(
-        intron, matrices, matrix_tags=['u2'])
+        intron, 
+        matrices, 
+        five_score_coords, 
+        three_score_coords, 
+        pseudocount, 
+        matrix_tags=['u2']
+    )
     u12_matrix_info = multi_matrix_score(
-        intron, matrices, matrix_tags=['u12'], use_bpx=True)
+        intron, 
+        matrices, 
+        five_score_coords, 
+        three_score_coords, 
+        pseudocount, 
+        matrix_tags=['u12'],
+        use_bpx=True
+    )
     dnts = ''.join(intron.dnts).lower()
     u2_score, best_u2_key = best_matrix(
         u2_matrix_info, scoring_regions, dnts)
@@ -2503,13 +2806,24 @@ def assign_raw_score(intron, matrices, scoring_regions, multiplier_d=None):
 
 
 def get_raw_scores(
-    introns, matrices, scoring_regions, multiplier_d=None, processes=1):
+    introns, 
+    matrices, 
+    scoring_regions, 
+    five_score_coords, 
+    three_score_coords, 
+    pseudocount, 
+    multiplier_d=None, 
+    processes=1
+):
     with Pool(processes=processes) as pool:
         raw_introns = pool.starmap(
             assign_raw_score, zip(
                 introns, 
                 repeat(matrices), 
                 repeat(scoring_regions),
+                repeat(five_score_coords),
+                repeat(three_score_coords),
+                repeat(pseudocount),
                 repeat(multiplier_d)))
     return raw_introns
 
@@ -2597,7 +2911,7 @@ def motif_strings(intron):
     return schematic, bp_context
 
 
-def dupe_list_format(intron, dupe_index):
+def dupe_list_format(intron, spcs, simple_name, dupe_index):
     """
     Check an intron against an index of duplicates, and
     return a string of all duplicate entries in list format,
@@ -2610,7 +2924,7 @@ def dupe_list_format(intron, dupe_index):
         dupe_strings = []
         for dupe in dupe_intron_index[intron_uid]:
             # dupe.svm_score = intron.svm_score
-            dupe_name = dupe.get_label()
+            dupe_name = '{}-{}'.format(spcs, dupe.get_label(simple_name))
             dupe_bits = list_bits + [dupe_name]
             dupe_string = '\t'.join(map(str, dupe_bits))
             dupe_strings.append(dupe_string)
@@ -2657,7 +2971,7 @@ def bp_multiplier(intron, multiplier_dict):
     return multiplier_dict.get(d_from_3)
 
 
-def add_scores(introns, intron_seq_file):
+def add_scores(introns, intron_seq_file, spcs):
     """
     Add scores to previously-made intron sequences file
 
@@ -2670,7 +2984,7 @@ def add_scores(introns, intron_seq_file):
         for l in inf:
             bits = l.strip().split('\t')
             # bits[0] is intron name
-            name = bits[0].split(';')[0]
+            name = bits[0].split(';')[0].lstrip('{}-'.format(spcs))
             if name in score_dict:
                 score = str(round(score_dict[name], 4))
                 bits[1] = score
@@ -2779,7 +3093,18 @@ def make_matrices(
     return matrices
 
 
-def add_u2_matrix(matrices, introns, min_u2_count=100):
+def add_u2_matrix(
+    introns, 
+    args,
+    min_u2_count=100
+):
+    matrices = args['MATRICES']
+    five_score_coords = args['FIVE_SCORE_COORDS']
+    three_score_coords = args['THREE_SCORE_COORDS']
+    pseudocount = args['PSEUDOCOUNT']
+    spcs = args['SPCS']
+    simple_name = args['SIMPLE_NAME']
+
     u2_bp_key = ('u2', 'gtag', 'bp')
     u12_five_key = ('u12', 'gtag', 'five')
 
@@ -2792,6 +3117,9 @@ def add_u2_matrix(matrices, introns, min_u2_count=100):
             score_info = multi_matrix_score(
                 i, 
                 matrices,
+                five_score_coords,
+                three_score_coords,
+                pseudocount,
                 regions=('five'),
                 matrix_tags=['u12'])
             # try:
@@ -2811,6 +3139,8 @@ def add_u2_matrix(matrices, introns, min_u2_count=100):
         u2_bp_matrix, n_introns_used = build_u2_bp_matrix(
             u2_bp_introns,
             u12_bp_matrices,
+            spcs,
+            simple_name,
             dnt_list=[('GT', 'AG'), ('GC', 'AG')]
         )
         # use conserved u2 bp matrix as fallback if insufficient
@@ -2827,7 +3157,7 @@ def add_u2_matrix(matrices, introns, min_u2_count=100):
             '{} introns used to build U2 branch point matrix '
             '(5\'SS in bottom {}th percentile)',
             n_introns_used, u2_five_percentile)
-        matrices[u2_bp_key] = add_pseudos(u2_bp_matrix, pseudo=PSEUDOCOUNT)
+        matrices[u2_bp_key] = add_pseudos(u2_bp_matrix, pseudo=pseudocount)
         matrices[('u2', 'gcag', 'bp')] = matrices[u2_bp_key]
     if ('u2', 'gcag', 'bp') not in matrices:
         matrices[('u2', 'gcag', 'bp')] = matrices[u2_bp_key]
@@ -2835,7 +3165,22 @@ def add_u2_matrix(matrices, introns, min_u2_count=100):
     return matrices
 
 
-def get_flipped(introns, model, scaler):
+def get_flipped(
+    introns, 
+    model, 
+    scaler,
+    scoring_region_labels,
+    args
+):
+    SPCS = args['SPCS']
+    N_PROC = args['N_PROC']
+    MATRICES = args['MATRICES']
+    SCORING_REGIONS = args['SCORING_REGIONS']
+    FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
+    THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
+    PSEUDOCOUNT = args['PSEUDOCOUNT']
+    THRESHOLD = args['THRESHOLD']
+    SIMPLE_NAME = args['SIMPLE_NAME']
     flipped = {}
     swap_introns = copy.deepcopy(
         [
@@ -2850,13 +3195,27 @@ def get_flipped(introns, model, scaler):
     # Only perform these calculation if we actually found applicable introns
     if swap_introns:
         raw_swaps = get_raw_scores(
-            swap_introns, MATRICES, SCORING_REGIONS, processes=N_PROC)
+            swap_introns, 
+            MATRICES, 
+            SCORING_REGIONS, 
+            FIVE_SCORE_COORDS, 
+            THREE_SCORE_COORDS, 
+            PSEUDOCOUNT, 
+            processes=N_PROC
+        )
         scored_swaps = scale_scores(raw_swaps, scaler)
         mutant_swaps = [
             mutate(intron, FIVE_SCORE_COORDS, THREE_SCORE_COORDS)
             for intron in copy.deepcopy(swap_introns)]
         raw_mutants = get_raw_scores(
-            mutant_swaps, MATRICES, SCORING_REGIONS, processes=N_PROC)
+            mutant_swaps, 
+            MATRICES, 
+            SCORING_REGIONS, 
+            FIVE_SCORE_COORDS, 
+            THREE_SCORE_COORDS, 
+            PSEUDOCOUNT, 
+            processes=N_PROC
+        )
         scored_mutants = scale_scores(raw_mutants, scaler)
 
         # scored_swaps = assign_svm_scores(
@@ -2864,26 +3223,24 @@ def get_flipped(introns, model, scaler):
 
         # scored_mutants = assign_svm_scores(
         #     scored_mutants, model, scoring_region_labels)
-
         scored_swaps = parallel_svm_score(
-            scored_swaps, model, scoring_region_labels, processes=N_PROC)
-
+            scored_swaps, model, scoring_region_labels, THRESHOLD, processes=N_PROC)
         scored_mutants = parallel_svm_score(
-            scored_mutants, model, scoring_region_labels, processes=N_PROC)
+            scored_mutants, model, scoring_region_labels, THRESHOLD, processes=N_PROC)
 
         # for old, new in zip(
         #     sorted(scored_swaps, key=lambda x: x.unique_num), 
         #     sorted(scored_mutants, key=lambda x: x.unique_num)):
         for old, new in zip(scored_swaps, scored_mutants):
             if old.svm_score > THRESHOLD and new.svm_score <= THRESHOLD:
-                name = old.get_name()
+                name = old.get_name(SPCS, SIMPLE_NAME)
                 flipped[old.unique_num] = new
                 # flipped[name] = new
 
     return flipped
     
 
-def demote(introns, flipped):
+def demote(introns, flipped, spcs, simple_name, THRESHOLD):
     # For putative U12 introns whose scores don't survive dnt switching
     # demoted_swaps = []
     for i in introns:
@@ -2908,7 +3265,7 @@ def demote(introns, flipped):
             flip_type_id = flipped_i.type_id
             flip_matrices = flipped_i.matrices
             flip_info = [
-                i.get_name(), 
+                i.get_name(spcs, simple_name), 
                 old_score, 
                 old_five, 
                 old_bp, 
@@ -2968,22 +3325,53 @@ def scale_scores(
 
 def apply_scores(
     ref_set, 
-    exp_set, 
+    exp_set,
     matrices,
-    scoring_regions, 
-    log=True):
+    scoring_region_labels,
+    args,
+    log=True
+):
+    SCORING_REGIONS = args['SCORING_REGIONS']
+    N_PROC = args['N_PROC']
+    OPTIMIZE_N = args['OPTIMIZE_N']
+    SVM_ITER = args['SVM_ITER']
+    CV_JOBS = args['CV_JOBS']
+    HYPER_C = args['HYPER_C']
+    SPECIES = args['SPECIES']
+    FIG_DPI = args['FIG_DPI']
+    THRESHOLD = args['THRESHOLD']
+    SPCS = args['SPCS']
+    SIMPLE_NAME = args['SIMPLE_NAME']
+    FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
+    THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
+    PSEUDOCOUNT = args['PSEUDOCOUNT']
+
     # Get the raw log ratio scores of each scoring region in each intron
     # pool = Pool(processes=4)
     # raw_introns = pool.starmap(
     #     get_raw_scores, zip(exp_set, repeat(matrices), repeat(SCORING_REGIONS)))
-    raw_introns = get_raw_scores(exp_set, matrices, SCORING_REGIONS, processes=N_PROC)
+    raw_introns = get_raw_scores(
+        exp_set, 
+        matrices, 
+        SCORING_REGIONS,
+        FIVE_SCORE_COORDS,
+        THREE_SCORE_COORDS,
+        PSEUDOCOUNT, 
+        processes=N_PROC)
     # raw_introns = get_raw_scores(exp_set, matrices, SCORING_REGIONS)
     # raw_introns = list(raw_introns)
 
     # Same for the reference sequences
     # raw_refs = pool.starmap(
     #     get_raw_scores, zip(ref_set, repeat(matrices), repeat(SCORING_REGIONS)))
-    raw_refs = get_raw_scores(ref_set, matrices, SCORING_REGIONS, processes=N_PROC)
+    raw_refs = get_raw_scores(
+        ref_set, 
+        matrices, 
+        SCORING_REGIONS,
+        FIVE_SCORE_COORDS,
+        THREE_SCORE_COORDS,
+        PSEUDOCOUNT, 
+        processes=N_PROC)
     # raw_refs = get_raw_scores(ref_set, matrices, SCORING_REGIONS)
     # raw_refs = list(raw_refs)
 
@@ -3014,9 +3402,9 @@ def apply_scores(
     
     # make score vectors for training data
     ref_u12_vector = get_score_vector(
-        ref_u12s, score_names=scoring_regions)
+        ref_u12s, score_names=scoring_region_labels)
     ref_u2_vector = get_score_vector(
-        ref_u2s, score_names=scoring_regions)
+        ref_u2s, score_names=scoring_region_labels)
 
     # NOTE: in this application with a "soft-margin" (C > 0) SVM,
     # redundant data arguably should be included, if present.
@@ -3100,7 +3488,13 @@ def apply_scores(
     #/ PERFORMANCE METRICS
 
     if len(scoring_region_labels) > 1:
-        ref_scatter(ref_u2_vector, ref_u12_vector, model[0])
+        ref_scatter(
+            ref_u2_vector, 
+            ref_u12_vector, 
+            model[0], 
+            SCORING_REGIONS, 
+            SPECIES
+        )
 
         density_hexplot(
             np.concatenate((ref_u2_vector, ref_u12_vector)), 
@@ -3112,10 +3506,11 @@ def apply_scores(
     #     scored_introns, model, scoring_regions, weights=model_performance['f1'])
 
     scored_introns = parallel_svm_score(
-        scored_introns, model, scoring_regions, 
+        scored_introns, model, scoring_region_labels, THRESHOLD,
         weights=model_performance['f1'], processes=N_PROC)
 
-    flipped = get_flipped(scored_introns, model, score_scaler)
+    flipped = get_flipped(
+        scored_introns, model, score_scaler, scoring_region_labels, args)
     if log is True:
         write_log(
             '{} putative U12 scores were not robust to boundary switching',
@@ -3126,7 +3521,7 @@ def apply_scores(
     atac_count = 0
     demoted_swaps = []
 
-    for i in demote(scored_introns, flipped):
+    for i in demote(scored_introns, flipped, SPCS, SIMPLE_NAME, THRESHOLD):
         if '[d]' in i.dynamic_tag:
             demoted_swaps.append(i.demote_info)
         if i.svm_score > THRESHOLD:
@@ -3142,17 +3537,23 @@ def recursive_scoring(
     finalized_introns,
     refs,
     model,
-    matrices,
-    scoring_region_labels,
+    args,
     raw_score_names,
-    z_score_names):
+    z_score_names
+):
 
+    FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
+    THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
+    matrices = args['MATRICES']
+    threshold = args['THRESHOLD']
+    SCORING_REGIONS = args['SCORING_REGIONS']
+    PSEUDOCOUNT = args['PSEUDOCOUNT']
     # use introns from first round to create new matrices
     # for second round
     write_log('Updating scoring matrices using empirical data')
     new_matrices = make_matrices(
         finalized_introns, 
-        THRESHOLD, 
+        threshold, 
         FIVE_SCORE_COORDS[0], 
         THREE_SCORE_COORDS[0],
         min_seqs=5)
@@ -3160,7 +3561,7 @@ def recursive_scoring(
     new_matrices = add_pseudos(new_matrices, pseudo=PSEUDOCOUNT)
     if u12_count < 100:
         mod_type = 'Averaging'
-        MATRICES = average_matrices(matrices, new_matrices)
+        matrices = average_matrices(matrices, new_matrices)
     # replace old matrices with new ones
     else:
         mod_type = 'Replacing'
@@ -3171,8 +3572,23 @@ def recursive_scoring(
     # matrices to filter out any introns whose scored changed dramatically 
     # before picking a species-specific reference set
     raw_introns = get_raw_scores(
-        finalized_introns, matrices, SCORING_REGIONS, processes=N_PROC)
-    raw_refs = get_raw_scores(refs, matrices, SCORING_REGIONS, processes=N_PROC)
+        finalized_introns, 
+        matrices, 
+        SCORING_REGIONS,
+        FIVE_SCORE_COORDS,
+        THREE_SCORE_COORDS,
+        PSEUDOCOUNT,
+        processes=N_PROC
+    )
+    raw_refs = get_raw_scores(
+        refs, 
+        matrices, 
+        SCORING_REGIONS,
+        FIVE_SCORE_COORDS,
+        THREE_SCORE_COORDS,
+        PSEUDOCOUNT,
+        processes=N_PROC
+    )
     scale_vector = get_score_vector(
         raw_refs, score_names=raw_score_names)
     recursive_scaler = preprocessing.RobustScaler().fit(scale_vector)
@@ -3180,7 +3596,12 @@ def recursive_scoring(
     # scored_introns = assign_svm_scores(
     #     scored_introns, model, scoring_region_labels)
     scored_introns = parallel_svm_score(
-        scored_introns, model, scoring_region_labels, processes=N_PROC)
+        scored_introns, 
+        model, 
+        scoring_region_labels, 
+        threshold, 
+        processes=N_PROC
+    )
 
     # filter reference introns to non-redundant set
     # before training SVM
@@ -3225,12 +3646,24 @@ def recursive_scoring(
     random.seed(42)
     if ref_u2_delta > 0 or ref_u12_delta > 0:
         raw_default_refs = get_raw_scores(
-            refs, matrices, SCORING_REGIONS, processes=N_PROC)
+            refs, 
+            matrices, 
+            SCORING_REGIONS,
+            FIVE_SCORE_COORDS,
+            THREE_SCORE_COORDS,
+            PSEUDOCOUNT,
+            processes=N_PROC
+        )
         scored_default_refs = scale_scores(raw_default_refs, recursive_scaler)
         # working_default_refs = assign_svm_scores(
         #     scored_default_refs, model, scoring_region_labels)
         working_default_refs = parallel_svm_score(
-            scored_default_refs, model, scoring_region_labels, processes=N_PROC)
+            scored_default_refs, 
+            model, 
+            scoring_region_labels, 
+            threshold, 
+            processes=N_PROC
+        )
         scored_ref_u2s = [
             i for i in working_default_refs if i.svm_score < ref_u2_threshold]
         scored_ref_u12s = [
@@ -3245,6 +3678,1240 @@ def recursive_scoring(
     recursive_refs = recursive_ref_u2s + recursive_ref_u12s
 
     return recursive_refs, scored_introns, matrices
+
+
+def add_custom_matrices(custom_matrix_files, default_matrices):
+    '''
+    Integrates user-supplied matrices with the default matrices,
+    overwriting those in the default set as needed.
+    
+    '''
+    tmp_custom_matrices = {}
+    all_custom_keys = set()
+    for m in custom_matrix_files:
+        custom_matrix = load_external_matrix(m)
+        custom_keys = ['-'.join(key) for key in custom_matrix.keys()]
+        for k in custom_keys:
+            all_custom_keys.add(k)
+        tmp_custom_matrices.update(custom_matrix)
+    # in special case where there are diff. versions of a matrix,
+    # e.g. u12-gtag-bp-vA10
+    versioned_keys = [k for k in tmp_custom_matrices if len(k) > 3]
+    for k in versioned_keys:
+        category = tuple(k[:3])
+        matches = [mk for mk in default_matrices.keys() if all(e in mk for e in category)]
+        for m in matches:
+            del MATRICES[m]
+    default_matrices.update(tmp_custom_matrices)
+    write_log('Custom matrices used: {}', ','.join(sorted(all_custom_keys)))
+
+    return default_matrices
+
+
+def introns_from_seqs(
+    source_file, 
+    five_coords, 
+    three_coords, 
+    bp_region_coords, 
+    allow_noncanonical):
+    # source_file = args.sequence_file
+    all_introns = introns_from_flatfile(
+        source_file,
+        FIVE_SCORE_COORDS,
+        THREE_SCORE_COORDS,
+        BP_REGION_COORDS,
+        ALLOW_NONCANONICAL,
+        hashgen=False,
+        allow_overlap=False)
+    all_introns = list(all_introns)
+    final_introns = [i for i in all_introns if not i.omitted]
+    total_count = len(final_introns)
+    omit_count = len(all_introns) - total_count
+    if omit_count > 0:
+        write_log('{} introns omitted', omit_count)
+
+    if total_count == 0:
+        write_log(
+            '[!] ERROR: No intron sequences found. Exiting now.'
+        )
+        sys.exit(1)
+
+    return final_introns, total_count
+
+
+def introns_from_annotation(annotation, feature):
+    # source_file = ANNOTATION
+    feats_to_try = (feature, ('cds',), ('exon',))
+    feature_found = False
+    # Check to make sure annotation file has desired feature type
+    for feat in feats_to_try:
+        if not has_feature(annotation, feat):
+            write_log(
+                '[!] No {} features in annotation.', ','.join(feat))
+        else:
+            feature_found = True
+            feature = feat
+            break
+    if feature_found is False:
+        write_log(
+            '[!] ERROR: No intron-defining features found in annotation. '
+            'Exiting now.')       
+        sys.exit(1)
+
+    write_log('Using {} features to define introns', ','.join(feature))
+
+    # set a temporary feature list here to allow all possible
+    # introns to be gathered initially, then pruned in
+    # collect_introns() if needed
+    working_feature = ('cds', 'exon')   ###!!!
+
+    # original functionality
+    # working_feature = FEATURE
+
+    # Pull all annotation entries into a hierarchy of objects
+    top_level_annots = annotation_hierarchy(
+        annotation, working_feature)
+
+    # Make a dictionary index for all intron-defining objects in the
+    # annotated heirarchy. This index will allow easy access to parent
+    # objects when mucking about with the introns
+
+    # Add transcripts here to allow longest-isoform tagging
+    feat_list = working_feature + ('transcript',)
+    flat_annots = flatten(top_level_annots, feat_list=feat_list)
+
+    # Make intron object dictionary from the collected top-level objects,
+    # including whatever duplicates might exist in the annotation
+    all_introns, total_count = collect_introns(
+        top_level_annots, feature, flat_annots)
+
+    if total_count == 0:
+        write_log(
+            '[!] ERROR: No intron sequences found. '
+            'Annotation <-> genome ID mismatch, perhaps? Exiting now.')
+        sys.exit(1)
+    
+    return all_introns, total_count, flat_annots
+
+
+def introns_from_bedfile(genome, bed):
+    """
+    chr start   stop    name    score   strand
+    
+    """
+    bed_introns = []
+    seen_coords = set()
+    intron_index = defaultdict(list)
+    intron_count = 0
+    with flex_open(bed) as b:
+        for line_number, l in enumerate(b, start=1):
+            if l.startswith('#'):
+                continue
+            try:
+                loc, start, stop, name, _, strand = l.strip().split('\t')[:6]
+            except:
+                continue
+            try:
+                # ensure start is lowest coord
+                start, stop = sorted(map(int, [start, stop]))
+            except:
+                continue
+            if strand not in ('+', '-'):
+                continue
+            if not name or name in ('-.*'):  # Null indicators
+                name = 'i_{}'.format(line_number)
+            start += 1  # BED files are 0-indexed
+            intron = Intron(
+                name=name, 
+                start=start, 
+                stop=stop, 
+                strand=strand, 
+                region=loc
+            )
+            intron_index[loc].append(intron)
+            intron_count += 1
+    
+    return intron_index, intron_count
+
+
+def output_format(
+    intron, 
+    out_type, 
+    spcs, 
+    simple_name=False, 
+    null='.', 
+    separator='\t'
+):
+    attrib_index = {
+        'BED': [
+            'region',
+            'start',
+            'stop',
+            # 'get_label',
+            'svm_score',
+            'strand'
+        ],
+        'META': [
+            # 'get_name',
+            'motif_string',
+            'bps_context',
+            'length',
+            'parent',
+            'grandparent',
+            'index',
+            'family_size',
+            'fractional_position',
+            'phase',
+            'type_id',
+            'defined_by'
+        ],
+        'SCORE': [
+            # 'get_name',
+            'relative_score',
+            'svm_score',
+            'score_distance',
+            'five_seq',
+            'five_raw_score',
+            'five_z_score',
+            'bp_seq',
+            'bp_raw_score',
+            'bp_z_score',
+            'three_seq',
+            'three_raw_score',
+            'three_z_score'
+        ],
+        'SEQ': [
+            # 'get_name',
+            'svm_score',
+            'upstream_flank',
+            'seq',
+            'downstream_flank'
+        ]
+    }
+    to_get = attrib_index[out_type]
+    # attribs = write_format(intron, to_get, separator=None, null=null)
+    attribs = [getattr(intron, a) for a in to_get]
+    # run any methods that were returned along with other static types
+    attribs = [
+        a() if type(a)==types.MethodType else a for a in attribs]
+    attribs = [null if a is None else a for a in attribs]
+    name = intron.get_name(spcs, simple_name)
+    label = intron.get_label(spcs, simple_name)
+    if out_type in ('META', 'SEQ', 'SCORE'):
+        attribs.insert(0, name)
+        if out_type == 'META':
+            try:
+                rounded_score = round(intron.relative_score, 4)
+            except:
+                rounded_score = null
+            dnts = '-'.join(intron.dnts)
+            attribs.insert(1, rounded_score)
+            attribs.insert(2, dnts)
+    elif out_type == 'BED':
+        attribs.insert(3, label)
+    if separator is not None:
+        attribs = separator.join([str(a) for a in attribs])
+    
+    return attribs
+
+def get_args(argv, arg_parser):
+    format_info_message = (
+    """
+    _       _                  _____ _____ 
+    (_)     | |                |_   _/  __ \
+    _ _ __ | |_ _ __ ___  _ __  | | | /  \/
+    | | '_ \| __| '__/ _ \| '_ \ | | | |    
+    | | | | | |_| | | (_) | | | || |_| \__/\
+    |_|_| |_|\__|_|  \___/|_| |_\___/ \____/
+
+    [ data formatting information ]
+
+    # Matrix files ################################################################
+
+    /// Description ///
+
+    The matrix file describes the frequency of each nucleotide at each position
+    in scoring region for different intron types, in FASTA format with specific
+    header and first line of each record requirements (see below).
+
+    /// Naming ///
+
+    The matrix file must be named 'scoring_matrices.fasta.iic', and placed in a
+    directory called 'intronIC_data' located in the main intronIC directory.
+
+    /// Format ///
+
+    Each matrix in the file consists of a FASTA header line, indicating
+    which type of intron the matrix represents ('u2', 'u12'), which region
+    it describes ('five', 'bp', 'three') and which intron subtype it applies to
+    ('gtag', 'atac', etc). Optionally, this header may also include a special
+    keyword phrase 'start={integer}', where {integer} is the position of
+    the first matrix entry relative to the corresponding splice site. If the
+    5' matrix begins with three exonic positions upstream of the beginning of 
+    the intron, for example, then the header for that matrix would include
+    'start=-3'. If this keyword is omitted, the matrix is assumed to start at 
+    position 0, the first base of the intron. Because the branch point motif 
+    occurs at variable locations, branch point matrices do not use this 
+    convention (e.g. all BPS matrices start at 0).
+
+    The line after the header must be the whitespace-separated order of the bases 
+    as they appear in the subsequent lines of the matrix. The rest of the lines
+    under the header are tab-separated values representing the frequency of each 
+    base (columns) at each position in the target sequence (rows).
+
+    Example formatting ('scoring_matrices.fasta.iic'):
+
+    >u12_gtag_five  start=-3
+    A   C   G   T
+    0.293478260869565	0.239130434782609	0.239130434782609	0.228260869565217
+    0.271739130434783	0.326086956521739	0.152173913043478	0.25
+    0.217391304347826	0.184782608695652	0.0543478260869565	0.543478260869565
+    0	0	1	0
+    0	0	0	1
+    [...]
+    >u12_gtag_bp
+    A   C   G   T
+    0.12	0.15	0.21	0.52
+    0.12	0.17	0.18	0.53
+    0.13	0.2 0.12	0.55
+    [...]
+
+    # Reference introns ###########################################################
+
+    /// Description ///
+
+    The reference intron set is a collection of introns of inferred types, 15000
+    U2s and 1084 U12s, which have been found to be conserved between human, mouse
+    and chicken and, in the case of the U12s, also including additional human U12s
+    from Tyler Alioto's U12DB database. Each intron will be scored against the
+    same matrices used for the experimental dataset to determine an optimal
+    U2/U12 scoring threshold.
+
+    /// Naming ///
+
+    The files needs to be named '[u2, u12]_reference_set.introns.iic[.gz]', and
+    be located in the intronIC_data directory, unless specified via the --r[2, 12]
+    command line argument.
+
+    /// Format ///
+
+    Each line in the file contains the
+    following columns:
+
+    1. Identifier
+    2. 5' exonic sequence (>= the length used for scoring, if any)
+    3. Intronic sequence
+    4. 3' exonic sequence (>= the length used for scoring, if any)
+
+    """)
+    if len(argv) == 1:
+        arg_parser.print_usage()
+        sys.exit(0)
+
+    if '--format_info' in argv:  # can't use argparse unless other args
+        sys.exit(format_info_message)
+
+    args = arg_parser.parse_args()
+
+    if args.format_info:
+        sys.exit(format_info_message)
+
+    if not (args.genome and (args.annotation or args.bed)) or args.sequence_file:
+        parser.error(
+            '{}: error: must be run with either a genome and annotation/BED, '
+            'or intron sequences file'.format(os.path.basename(sys.argv[0]))
+        )
+    if args.sequence_file and (args.genome or args.annotation or args.bed):
+        parser.error(
+            'Must specify either direct sequence input (via -q) or a '
+            'genome/annotation combination'
+        )
+    if args.bed:
+        if not args.genome:
+            parser.error(
+                'Must provide a genome file (via -g) when using a BED file for '
+                'sequence input'
+            )
+        elif args.exons_as_flanks:
+            parser.error(
+                'Cannot use --exons_as_flanks in combination with BED input'
+            )
+    if args.bed and args.annotation:
+        parser.error(
+            'Use either -a or -b, but not both'
+        )
+    
+    return args
+
+def get_custom_args(args, argv):
+    custom_args = {}
+    matrix_filename = "scoring_matrices.fasta.iic"
+    reference_u12s_filename = "u12_reference.introns.iic"
+    reference_u2s_filename = "u2_reference.introns.iic"
+    backup_u2_bps_filename = 'u2.conserved_empirical_bp_matrix.iic'
+
+    # Get script directory and external file paths
+    HOME = os.path.dirname(os.path.realpath(sys.argv[0]))
+    custom_args['HOME'] = HOME
+    DATA_DIR = pkg_resources.resource_filename(__name__, 'intronIC_data/')
+
+    # print(DATA_DIR)
+
+    # DATA_DIR = os.path.join(HOME, "intronIC_data")
+
+    custom_args['DATA_DIR'] = DATA_DIR
+    RUN_DIR = os.getcwd()
+    custom_args['RUN_DIR'] = os.getcwd()
+    MATRIX_FILE = os.path.join(DATA_DIR, matrix_filename)
+    custom_args['MATRIX_FILE'] = MATRIX_FILE
+    U2_BPS_MATRIX_FILE = os.path.join(DATA_DIR, backup_u2_bps_filename)
+    custom_args['U2_BPS_MATRIX_FILE'] = U2_BPS_MATRIX_FILE
+    # This is inelegant, but to do otherwise would require reorg of args
+    # and constants (defaulting the arg would require knowing the data dir
+    # and matrix filename, for example)
+    if args.reference_u12s:
+        REFERENCE_U12_FILE = args.reference_u12s
+    else:
+        ref_u12_fns = [
+            os.path.join(DATA_DIR, r) for r in
+            [reference_u12s_filename, reference_u12s_filename + '.gz']]
+        REFERENCE_U12_FILE = next(r for r in ref_u12_fns if os.path.isfile(r))
+    if args.reference_u2s:
+        REFERENCE_U2_FILE = args.reference_u2s
+    else:
+        ref_u2_fns = [
+            os.path.join(DATA_DIR, r) for r in
+            [reference_u2s_filename, reference_u2s_filename + '.gz']]
+        REFERENCE_U2_FILE = next(r for r in ref_u2_fns if os.path.isfile(r))
+
+    custom_args['REFERENCE_U12_FILE'] = REFERENCE_U12_FILE
+    custom_args['REFERENCE_U2_FILE'] = REFERENCE_U2_FILE
+
+    custom_args['SVM_ITER'] = args.n_subsample
+    custom_args['N_PROC'] = args.processes
+    custom_args['CV_JOBS'] = args.cv_processes
+    # set cross-validation parallel processing to same as main
+    # parallel arg unless explicitly specified
+    if not custom_args['CV_JOBS']:
+        custom_args['CV_JOBS'] = custom_args['N_PROC']
+    custom_args['RECURSIVE'] = args.recursive
+    # scoring region coordinates are relative to the 5' and 3' ends of the intron
+    custom_args['FIVE_SCORE_COORDS'] = tuple(args.five_score_coords)
+    custom_args['THREE_SCORE_COORDS'] = tuple(args.three_score_coords)
+    custom_args['BP_REGION_COORDS'] = tuple(args.branch_point_coords)
+    custom_args['OPTIMIZE_N'] = 5  # rounds of SVM optimization
+    custom_args['INTRON_FLANK_SIZE'] = 200  # for output file
+    custom_args['MIN_INTRON_LENGTH'] = args.min_intron_len
+    custom_args['NUM_NC_USER'] = 5 # number of nc splice sites to print to screen
+    custom_args['NUM_NC_LOG'] = 25  # number of nc splice sites to print to log
+    custom_args['PSEUDOCOUNT'] = args.pseudocount # value to add to matrix values to avoid div 0 errors
+    custom_args['EXONS_AS_FLANKS'] = args.exons_as_flanks
+    custom_args['FIG_DPI'] = 300
+
+    custom_args['GENOME'] = args.genome
+    custom_args['ANNOTATION'] = args.annotation
+    custom_args['SEQUENCE_INPUT'] = args.sequence_file
+    custom_args['SPECIES_FULL'] = args.species_name  # used in log file header
+    custom_args['SPECIES'] = args.species_name  # used to name files
+    if not args.no_abbreviate:
+        SPCS = abbreviate(custom_args['SPECIES'])  # used within files
+        SPECIES_NAME_INFO = '{} ({})'.format(custom_args['SPECIES_FULL'], SPCS)
+    else:
+        SPCS = custom_args['SPECIES']
+        SPECIES_NAME_INFO = SPECIES_FULL
+    custom_args['SPCS'] = SPCS
+    custom_args['SPECIES_NAME_INFO'] = SPECIES_NAME_INFO
+    if not args.feature:  # to define introns
+        FEATURE = ('cds', 'exon')
+    else:
+        FEATURE = (args.feature.lower(),)
+    custom_args['FEATURE'] = FEATURE
+    if args.no_nc:
+        ALLOW_NONCANONICAL = False
+    else:
+        ALLOW_NONCANONICAL = True
+    custom_args['ALLOW_NONCANONICAL'] = ALLOW_NONCANONICAL
+    custom_args['ALLOW_OVERLAP'] = not args.no_intron_overlap
+    custom_args['LONGEST_ONLY'] = not args.allow_multiple_isoforms
+    custom_args['THRESHOLD'] = args.threshold
+    custom_args['INCLUDE_DUPES'] = args.include_duplicates
+    custom_args['ONLY_SEQS'] = args.sequences_only
+    custom_args['NO_SEQS'] = args.no_sequence_output
+    custom_args['CUSTOM_MATRICES'] = args.pwms
+    custom_args['SIMPLE_NAME'] = args.uninformative_naming
+    custom_args['SCORING_REGIONS'] = args.scoring_regions
+    custom_args['MATRIX_SCORE_INFO'] = args.matrix_score_info
+    if args.hyperparameter_C:
+        HYPER_C = float(args.hyperparameter_C)
+    else:
+        HYPER_C = None
+    custom_args['HYPER_C'] = HYPER_C
+
+    custom_args['WANT_PLOT'] = not args.no_plot
+    custom_args['PLOT'] = not args.no_plot
+    if custom_args['PLOT'] and check_plot() is False:
+        custom_args['PLOT'] = False
+
+    # Change file-naming variable if specified
+    if args.abbreviate_filenames:
+        SPECIES_FN = abbreviate(custom_args['SPECIES'])
+    else:
+        SPECIES_FN = custom_args['SPECIES']
+
+    # Output filenames
+    custom_args['FN_SEQS'] = '{}.introns.iic'.format(SPECIES_FN)
+    custom_args['FN_RANKINGS'] = '{}.rankings.iic'.format(SPECIES_FN)
+    custom_args['FN_BED'] = '{}.bed.iic'.format(SPECIES_FN)
+    custom_args['FN_DUPE_MAP'] = '{}.dupe_map.iic'.format(SPECIES_FN)
+    custom_args['FN_OVERLAP_MAP'] = '{}.overlap.iic'.format(SPECIES_FN)
+    custom_args['FN_MATRICES'] = '{}.pwms.iic'.format(SPECIES_FN)
+    custom_args['FN_META'] = '{}.meta.iic'.format(SPECIES_FN)
+    custom_args['FN_SCORE'] = '{}.score_info.iic'.format(SPECIES_FN)
+    custom_args['FN_SWAP'] = '{}.demoted.iic'.format(SPECIES_FN)
+    custom_args['FN_ANNOT'] = '{}.annotation.iic'.format(SPECIES_FN)
+    custom_args['FN_LOG'] = '{}.log.iic'.format(SPECIES_FN)
+
+    # convert arg index to a namedtuple for prettier referencing
+    # custom_args = namedtuple(
+        # 'CustomArgs', custom_args.keys())(*custom_args.values())
+    
+    return custom_args
+
+def add_pwm_args(args):
+    MATRICES = load_external_matrix(args['MATRIX_FILE'])
+
+    if args['CUSTOM_MATRICES']:
+        MATRICES = add_custom_matrices(args['CUSTOM_MATRICES'], MATRICES)
+
+    # Pseudocounts added to avoid division by 0 during scoring
+    MATRICES = add_pseudos(MATRICES, pseudo=args['PSEUDOCOUNT'])
+
+    # Determine length of 5' sequence region from supplied matrices
+    # and use if shorter than >FIVE_LENGTH<
+    five_matrix_length = matrix_length(MATRICES[('u12', 'gtag', 'five')])
+    three_matrix_length = matrix_length(MATRICES[('u12', 'gtag', 'three')])
+
+    FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
+    THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
+
+    ARG_FIVE_LENGTH = abs(FIVE_SCORE_COORDS[0] - FIVE_SCORE_COORDS[1])
+    ARG_THREE_LENGTH = abs(THREE_SCORE_COORDS[0] - THREE_SCORE_COORDS[1])
+
+    FIVE_LENGTH = min(ARG_FIVE_LENGTH, five_matrix_length)
+    THREE_LENGTH = min(ARG_THREE_LENGTH, three_matrix_length)
+
+    # Notify user if desired length is incompatible with matrix
+    for l, arg, tag in zip(
+        [FIVE_LENGTH, THREE_LENGTH],
+        [ARG_FIVE_LENGTH, ARG_THREE_LENGTH],
+        ['5\'', '3\'']
+        ):
+        if l < arg:
+            write_log(
+                '[!] Length of {} region limited to {} by scoring matrices',
+                tag, l
+            )
+    args['FIVE_LENGTH'] = FIVE_LENGTH
+    args['THREE_LENGTH'] = THREE_LENGTH
+
+    # check min intron length against total size
+    # of scoring matrices and adjust up if necessary
+    bp_key = next(k for k in MATRICES.keys() if 'u12' in k and 'bp' in k)
+    args['BP_MATRIX_LENGTH'] = matrix_length(MATRICES[bp_key])
+    # BP_MATRIX_LENGTH = matrix_length(MATRICES[('u12', 'gtag', 'bp', 'vA9')])
+
+    # TODO adjust the bp margin to account for change in interval openness
+    # This seems to have been done...the empirical data min/max BPS
+    # sequence locations match the coords listed in BP_REGION_COORDS
+    bp_margin = abs(args['BP_REGION_COORDS'][1])
+
+    # calculate length required by matrices at either end of intron
+    intronic_five = len([e for e in range(*FIVE_SCORE_COORDS) if e >= 0])
+    intronic_three = len([e for e in range(*THREE_SCORE_COORDS) if e < 0])
+    intronic_three = max(
+        (args['BP_MATRIX_LENGTH'] + bp_margin), intronic_three)
+
+    # scoring_region_size = FIVE_LENGTH + BP_MATRIX_LENGTH + bp_margin
+    scoring_region_size = intronic_five + intronic_three
+
+    MIN_INTRON_LENGTH = args['MIN_INTRON_LENGTH']
+
+    if MIN_INTRON_LENGTH < scoring_region_size and not ONLY_SEQS:
+        MIN_INTRON_LENGTH = scoring_region_size
+        write_log(
+            '[!] Minimum intron length set to {} due to size of scoring regions',
+            MIN_INTRON_LENGTH
+        )
+    args['MIN_INTRON_LENGTH'] = MIN_INTRON_LENGTH
+    args['MATRICES'] = MATRICES
+
+    return args
+
+def introns_from_args(args, ext_args):
+    # return a trio of values regardless of method
+    introns = []
+    total_count = None
+    flat_annots = {}
+    if ext_args.sequence_file:
+        source_file = ext_args.sequence_file
+        introns, total_count = introns_from_seqs(
+            source_file,
+            args['FIVE_SCORE_COORDS'],
+            args['THREE_SCORE_COORDS'],
+            args['BP_REGION_COORDS'],
+            args['ALLOW_NONCANONICAL']
+        )
+    elif ext_args.bed:
+        source_file = ext_args.bed
+        introns, total_count = introns_from_bedfile(args['GENOME'], source_file)
+    else:
+        source_file = args['ANNOTATION']
+        introns, total_count, flat_annots = introns_from_annotation(
+            source_file, args['FEATURE'])
+    
+    write_log('{} introns found in {}', total_count, source_file)
+    
+    return introns, total_count, flat_annots
+
+
+def log_omitted(stats_omitted_counts, min_intron_length):
+    write_log(
+        '{} introns omitted from scoring based on the following criteria:',
+        sum(stats_omitted_counts.values()))
+    write_log(
+        '* short (<{} nt): {}', min_intron_length, stats_omitted_counts['s'],
+        wrap_chars=None)
+    write_log(
+        '* ambiguous nucleotides in scoring regions: {}',
+        stats_omitted_counts['a'],
+        wrap_chars=None)
+    write_log(
+        '* non-canonical boundaries: {}', stats_omitted_counts['n'],
+        wrap_chars=None)
+    write_log(
+        '* overlapping coordinates: {}', stats_omitted_counts['v'],
+        wrap_chars=None)
+    write_log(
+        '* not in longest isoform: {}', stats_omitted_counts['i'],
+        wrap_chars=None)
+
+
+def filter_introns_write_files(
+    all_introns, 
+    flat_annots, 
+    total_count, 
+    args,
+    ext_args
+):
+    # Populate introns with sub-sequences and write full seqs to file
+    # Also, tag introns with >omitted< if meet omission criteria
+    # Omitted introns are written to same file as all other introns
+    stats_omitted_counts = Counter()
+    stats_corrected_count = 0
+    stats_nc_types = Counter()  # omitted for non-canon bounds
+    final_introns = []
+    omitted_introns = []
+    corrected_duplicates = []
+    duplicate_count = 0
+    # Only make seqs file if not argument preventing it
+    opened_files = []
+    if not args['NO_SEQS']:
+        seq_file = open(args['FN_SEQS'], 'w')
+        opened_files.append(seq_file)
+    # Write the omitted introns to bed file first
+    meta_file = open(args['FN_META'], 'w')
+    opened_files.append(meta_file)
+    bed_file = open(args['FN_BED'], 'w')
+    opened_files.append(bed_file)
+    # build an index of duplicate introns keyed by (region, start, stop) of
+    # the intron which superceded them to allow score propagation
+    dupe_intron_index = defaultdict(set)
+    overlap_index = defaultdict(set)
+    # map unique_num attributes to final intron names for use in
+    # dupe_map output
+    intron_name_index = {}
+
+    # these two dictionaries enable communication between get_sub_seqs()
+    # and add_tags()
+    intron_index = defaultdict(lambda: defaultdict(dict))
+    longest_isoforms = {}
+
+    GENOME = args['GENOME']
+    INTRON_FLANK_SIZE = args['INTRON_FLANK_SIZE']
+    FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
+    THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
+    BP_REGION_COORDS = args['BP_REGION_COORDS']
+    EXONS_AS_FLANKS = args['EXONS_AS_FLANKS']
+    MIN_INTRON_LENGTH = args['MIN_INTRON_LENGTH']
+    ALLOW_NONCANONICAL = args['ALLOW_NONCANONICAL']
+    ALLOW_OVERLAP = args['ALLOW_OVERLAP']
+    LONGEST_ONLY = args['LONGEST_ONLY']
+    ONLY_SEQS = args['ONLY_SEQS']
+    INCLUDE_DUPES = args['INCLUDE_DUPES']
+    NO_SEQS = args['NO_SEQS']
+    FN_ANNOT = args['FN_ANNOT']
+    RUN_DIR = args['RUN_DIR']
+    BP_MATRIX_LENGTH = args['BP_MATRIX_LENGTH']
+    SIMPLE_NAME = args['SIMPLE_NAME']
+    SPCS = args['SPCS']
+    FN_DUPE_MAP = args['FN_DUPE_MAP']
+    NUM_NC_USER = args['NUM_NC_USER']
+    NUM_NC_LOG = args['NUM_NC_LOG']
+
+    # Iterate over generator with transient full sequences
+    # Keep your wits about you here, given the number of flags at play
+    for intron in get_sub_seqs(
+        all_introns,
+        flat_annots,
+        GENOME,
+        INTRON_FLANK_SIZE,
+        FIVE_SCORE_COORDS,
+        THREE_SCORE_COORDS,
+        BP_REGION_COORDS,
+        EXONS_AS_FLANKS
+    ):
+        # Set omission status before generating headers
+        intron.omit_check(
+            MIN_INTRON_LENGTH, 
+            BP_MATRIX_LENGTH,
+            ALLOW_NONCANONICAL,
+            ALLOW_OVERLAP, 
+            LONGEST_ONLY
+        )
+
+        #TODO the problem is that for a duplicate short intron, say, 
+        # since it is omitted at this point (which we want) it 
+        # won't go into add_tags() and therefore won't be tagged
+        # as a duplicate. But, sending omitted introns to add_tags()
+        # won't work as-is because we don't want to make decisions
+        # on other introns based on omitted intron values.
+        # One way would be to run a series of checks within add_tags()
+        # to make sure the intron isn't omitted, but that's hacky.
+        # Unsure what to do...
+
+        # UPDATE: modified add_tags() to partition things by 
+        # omission status — seems to be working.
+
+        # add tags with filtering internal to add_tags
+        intron, intron_index, longest_isoforms = add_tags(
+            intron, 
+            intron_index, 
+            longest_isoforms,
+            ALLOW_OVERLAP, 
+            LONGEST_ONLY)
+
+        # this step seems redundant but it's not!
+        intron.omit_check(
+            MIN_INTRON_LENGTH, 
+            ALLOW_NONCANONICAL,
+            ALLOW_OVERLAP, 
+            LONGEST_ONLY)
+
+        if intron.noncanonical:
+            # tag non-canonical introns in label even if being scored
+            intron.dynamic_tag.add('[n]')
+        if not intron.longest_isoform:
+            intron.dynamic_tag.add('[i]')
+        if not ONLY_SEQS:
+            if not intron.omitted and intron.duplicate is False:
+                final_introns.append(intron)
+                # compute hash of intron sequence to identify introns
+                # across different annotations
+            # if intron.duplicate is False:
+                    # intron.sha1 = sha1(intron.seq.encode('utf-8')).digest()
+        intron_name_index[intron.unique_num] = intron.get_name(SPCS, SIMPLE_NAME)
+        if intron.duplicate is not False:
+            duplicate_count += 1
+            dupe_intron_index[intron.duplicate].add(intron.get_name(SPCS, SIMPLE_NAME))
+            if intron.corrected:
+                corrected_duplicates.append(intron)
+            if not INCLUDE_DUPES:
+                continue
+        # keep a index of introns which are being omitted due to
+        # overlap
+        if intron.omitted == 'v':
+            overlap_index[intron.overlap].add(intron.get_name(SPCS, SIMPLE_NAME))
+        if intron.corrected:
+            stats_corrected_count += 1
+        # if intron is non-canonical (omitted or not), add to nc stats
+        if intron.noncanonical and intron.omitted not in ('s', 'a'):
+        # if intron.noncanonical and not intron.omitted:
+            dnts = '-'.join(intron.dnts)
+            stats_nc_types[dnts] += 1
+        if ONLY_SEQS: # no scoring info in intron label
+            intron.omitted = False
+            intron.name = intron.get_name(SPCS, SIMPLE_NAME)
+            for f, tag in zip([bed_file, meta_file], ['BED', 'META']):
+                out_string = output_format(intron, tag, SPCS, SIMPLE_NAME)
+                f.write(out_string + '\n')
+
+        # write omitted introns to list file (unscored)
+        elif intron.omitted and intron.duplicate is False:
+            stats_omitted_counts[intron.omitted] += 1
+            if intron.omitted == 'n':
+                dnts = '-'.join(intron.dnts)
+                intron.dynamic_tag.add(dnts)
+            for f, tag in zip([bed_file, meta_file], ['BED', 'META']):
+                out_string = output_format(intron, tag, SPCS, SIMPLE_NAME)
+                f.write(out_string + '\n')
+
+            # odds of two introns producing the same 128-bit hash in a 
+            # set of 1 trillion introns is ~1.44e-15
+            # (via https://www.ilikebigbits.com/2018_10_20_estimating_hash_collisions.html#toc1.7)
+            # intron.sha1.hex()
+
+        if not NO_SEQS:
+            # Write all introns to file
+            seq_string = output_format(intron, 'SEQ', SPCS, SIMPLE_NAME)
+            seq_file.write(seq_string + '\n')
+
+        intron.seq = None  # reduce memory footprint
+
+    if dupe_intron_index:
+        with open(FN_DUPE_MAP, 'w') as dupe_map:
+            for chosen, dupes in dupe_intron_index.items():
+                name = intron_name_index[chosen]
+                for d in dupes:
+                    dupe_map.write('{}\t{}\n'.format(name, d))
+
+    if not ALLOW_OVERLAP and overlap_index:
+        with open(FN_OVERLAP_MAP, 'w') as ol_map:
+            for chosen, overlapping in overlap_index.items():
+                name = intron_name_index[chosen]
+                for o in overlapping:
+                    ol_map.write('{}\t{}\n'.format(name, o))
+    
+    # close any files that were opened
+    for f in opened_files:
+        f.close()
+
+    if not INCLUDE_DUPES:
+        write_log(
+            '{} introns with redundant coordinates excluded', 
+            duplicate_count)
+
+    # If they only want the intron sequences, exit after writing seq file
+    if ONLY_SEQS:
+        if not INCLUDE_DUPES:
+            total_count = total_count - duplicate_count
+        # info_file.close()
+        # meta_file.close()
+        # seq_file.close()
+        # bed_file.close()
+        write_log(
+            '{} intron sequences written to {}',
+            (total_count),
+            FN_SEQS)
+        run_time = get_runtime(START_TIME)
+        write_log('Run finished in {}', run_time)
+        sys.exit(0)
+
+    if stats_omitted_counts:
+        log_omitted(stats_omitted_counts, MIN_INTRON_LENGTH)
+
+    if stats_nc_types:
+        write_log(
+            'Most common non-canonical splice sites:',
+        )
+        for stat in counter_format_top(stats_nc_types, NUM_NC_USER):
+            print('[#] {}'.format(stat))
+        for stat in counter_format_top(stats_nc_types, NUM_NC_LOG):
+            write_log(stat, level='warning')  # was debug
+
+    if not final_introns:
+        write_log(
+            '[!] ERROR: No intron sequences found. '
+            'Check for annotation/genome headers mismatch. Exiting now.')
+        sys.exit(1)
+
+    # Correct coordinates of defining features in annotation if any
+    # misannotated AT-AC introns are found
+    correct_annotation(
+        final_introns + corrected_duplicates, 
+        flat_annots, 
+        ext_args.annotation, 
+        RUN_DIR, 
+        FN_ANNOT
+    )
+    
+    return final_introns
+
+def plot_figures(finalized_introns, args, logging):
+    # build lists of component scores for making plots
+    score_vector = np.array(
+        [(i.five_z_score, i.bp_z_score) for i in finalized_introns])
+
+    write_log('Generating figures')
+    # disable logging temporarily to avoid matplotlib writing
+    # to root logging stream
+    logging.disable(logging.INFO)
+    # plot intron component scores with and without marked U12s
+    density_hexplot(
+        score_vector,
+        '{}.plot.hex'.format(args['SPECIES_FULL']),
+        xlab='5\' z-score',
+        ylab='BPS z-score',
+        fig_dpi=args['FIG_DPI']
+    )
+    scatter_plot(
+        finalized_introns,
+        score_vector,
+        '{}.plot.scatter'.format(args['SPECIES_FULL']),
+        xlab='5\' z-score',
+        ylab='BPS z-score',
+        threshold=args['THRESHOLD'],
+        fig_dpi=args['FIG_DPI']
+    )
+    summary_scores = [i.svm_score for i in finalized_introns]
+    hist_title = '{}.plot.score_histogram'.format(args['SPECIES'])
+    histogram(
+        summary_scores,
+        args['THRESHOLD'],
+        bins=100, 
+        title=hist_title, 
+        fig_dpi=args['FIG_DPI']
+    )
+    # re-enable logging
+    logging.disable(logging.NOTSET)
+
+def write_pwm_info(finalized_introns, args):
+
+    SPECIES = args['SPECIES']
+    MATRICES = args['MATRICES']
+    SIMPLE_NAME = args['SIMPLE_NAME']
+    SPCS = args['SPCS']
+
+    matrix_score_info_fn = '{}.pwm_score_info.iic'.format(SPECIES)
+    matrix_score_file = open(matrix_score_info_fn, 'w')
+    scored_seqs = ['five_seq', 'bp_seq', 'three_seq']
+    region_tags = ['five', 'bp', 'three']
+    starts = [args['FIVE_SCORE_COORDS'][0], 0, args['THREE_SCORE_COORDS'][0]]
+    # map to demote_info attribute indices for different scored seqs
+    demote_seq_map = {
+        'five': -3,
+        'bp': -2,
+        'three': -1
+    }
+    for index, intron in enumerate(
+        sorted(finalized_introns, key=attrgetter('svm_score')), start=1):
+        u12_key = intron.u12_matrix  # e.g. ('u12', 'gtag')
+        u2_key = intron.u2_matrix
+        if getattr(intron, 'demote_info', None) is not None:
+            u12_key = ('u12', 'gtag')
+            u2_key = ('u2', 'gtag')
+        score_strings = []
+        scoring_matrices = {
+            u12_key: [],
+            u2_key: []
+        }
+        name = intron.get_name(SPCS, SIMPLE_NAME)
+        header = '\t'.join([name, str(intron.svm_score)])
+        matrix_score_file.write('>{}\n'.format(header))
+        for seq_name, tag, start in zip(scored_seqs, region_tags, starts):
+            try:
+                seq = intron.demote_info[demote_seq_map[tag]]
+            except AttributeError:
+                seq = getattr(intron, seq_name)
+            u12_region_key = u12_key + (tag,)
+            u2_region_key = u2_key + (tag,)
+
+            if u12_region_key not in MATRICES:
+                u12_region_key = next(
+                    m for m in intron.matrices if 
+                    all(e in m for e in u12_region_key)
+                )
+            if u2_region_key not in MATRICES:
+                u2_region_key = next(
+                    m for m in intron.matrices if 
+                    all(e in m for e in u2_region_key)
+                )
+            scoring_matrices[u12_key].append('-'.join(u12_region_key))
+            scoring_matrices[u2_key].append('-'.join(u2_region_key))
+            u12_m = MATRICES[u12_region_key]
+            u2_m = MATRICES[u2_region_key]
+            u12_m_scores = ''.join(mark_seq_score(seq, u12_m, start))
+            u2_m_scores = ''.join(mark_seq_score(seq, u2_m, start))
+            output_string = (u12_m_scores, seq, u2_m_scores)
+            score_strings.append(output_string)
+        
+        score_strings.append(
+            (
+                ','.join(scoring_matrices[u12_key]), 
+                '', 
+                ','.join(scoring_matrices[u2_key])
+            )
+        )
+        
+        for line_bits in zip(*score_strings):
+            matrix_score_file.write('\t'.join(line_bits) + '\n')
+    matrix_score_file.close()
+
+def main():
+    warnings.filterwarnings('ignore')
+    parser = make_parser()
+    EXT_ARGS = get_args(sys.argv, parser)
+    ARGS = get_custom_args(EXT_ARGS, sys.argv)
+    ARGS = add_pwm_args(ARGS)
+
+    # Logging setup ###########################################################
+
+    # Default config used as a base
+    # Debug messasges go only to log file, not screen
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    logging.basicConfig(filename=ARGS['FN_LOG'],
+                        format='[#] %(asctime)s | %(message)s',
+                        datefmt='%Y.%m.%d-%H.%M.%S',
+                        level=logging.WARNING,  # was DEBUG
+                        filemode='w')
+    # Add logging module for printing to stdout
+    screenlogger = logging.StreamHandler(stream=sys.stdout)
+    screenlogger.setLevel(logging.CRITICAL)  # was INFO
+    # Set less-verbose print syntax for screen vs. log file
+    screenformatter = logging.Formatter('[#] %(message)s')
+    screenlogger.setFormatter(screenformatter)
+    # Add screen logger to root logger
+    logging.getLogger('').addHandler(screenlogger)
+
+    # /Logging setup ##########################################################
+
+    write_log('Starting run on {}', ARGS['SPECIES_NAME_INFO'])
+
+    # Determine whether we can plot figures, assuming it is asked for
+    if ARGS['WANT_PLOT'] and not ARGS['PLOT']:
+        write_log('Matplotlib not detected; plotting disabled')
+
+    # Start processing files
+    full_path_args = [
+        os.path.abspath(a) if os.path.exists(a) else a for a in sys.argv
+    ]
+    write_log('Run command: {}', ' '.join(full_path_args))
+
+    # Capture start time of run to facilitate calculation of total runtime at end
+    START_TIME = time.time()
+
+    # /Global constants ##########################################################
+
+    # Initial data collection ####################################################
+
+    # Collect reference introns, with flanking exonic region
+    # on either end
+    ARGS['REF_U2S'] = get_reference_introns(
+        ref_file=ARGS['REFERENCE_U2_FILE'],
+        args=ARGS,
+        type_id='u2'
+    )
+    ARGS['REF_U12S'] = get_reference_introns(
+        ref_file=ARGS['REFERENCE_U12_FILE'],
+        args=ARGS,
+        type_id='u12'
+    )
+
+    # remove any reference data with redundant scores
+    # filter_attributes = ['five_seq', 'bp_region_seq', 'three_seq']
+    # REF_U12S = list(unique_attributes(REF_U12S, filter_attributes))
+    # REF_U2S = list(unique_attributes(REF_U2S, filter_attributes))
+
+    ARGS['REFS'] = ARGS['REF_U12S'] + ARGS['REF_U2S']
+
+    all_introns, total_count, flat_annots = introns_from_args(ARGS, EXT_ARGS)
+
+    if not ARGS['SEQUENCE_INPUT']:
+        final_introns = filter_introns_write_files(
+            all_introns, 
+            flat_annots, 
+            total_count, 
+            ARGS, 
+            EXT_ARGS
+        )
+    else:
+        final_introns = all_introns
+
+    FINAL_INTRON_COUNT = len(final_introns)
+
+    write_log('{} introns included in scoring analysis', FINAL_INTRON_COUNT)
+
+    # /Initial data collection ###################################################
+
+    # Scoring ####################################################################
+    #TODO make cmdline arg to require bp be built from all introns (in case is
+    # u2 matrix in matrices file but don't want to use it)
+
+    BPX = None
+
+    # [ v1 ]
+    # secret species introns conserved as U12s in other species, using the
+    # pattern '.{4}TTTGA.{3}.{6,8}$'
+    # BPX = {
+    #     6: 1.371429,
+    #     7: 1.428571,
+    #     8: 1.2
+    # }
+    # [ v2 ]
+    # secret species introns conserved as U12s in other species plus ATACs
+    # from conserved regions using the pattern '.{4}TTTGA.{3}.{6,8}$'
+    # BPX = {
+    #     6: 1.354167, # 17/48
+    #     7: 1.4375, # 21/48
+    #     8: 1.208333  # 10 /48
+    # }
+    # [ v3 ]
+    # secret species introns conserved as U12s in others and BUSCO matches,
+    # plus ATACs in conserved regions
+    # BPX = {
+    #     6: 1.352941, # 54/153
+    #     7: 1.431373, # 66/153
+    #     8: 1.215686  # 33/153
+    # }
+
+    ###!!! FIRST ROUND OF SCORING
+    MATRICES = add_u2_matrix(
+        final_introns,
+        ARGS
+    )
+
+    # Get the maximum and minimum score possible for each matrix, to be used
+    # to scale scores
+    # MATRIX_BOUNDS = defaultdict(dict)
+    # for k, m in MATRICES.items():
+    #     category = k[:2]
+    #     sub_category = k[-1]
+    #     MATRIX_BOUNDS[category][sub_category] = get_score_bounds(m)
+    # ARGS['MATRIX_BOUNDS'] = MATRIX_BOUNDS
+
+    ARGS['MATRICES'] = MATRICES
+
+    write_log(
+        'Scoring introns using the following regions: {}',
+        ', '.join(ARGS['SCORING_REGIONS'])
+    )
+
+    score_label_table = {
+        'five': 'five_z_score',
+        'bp': 'bp_z_score',
+        'three': 'three_z_score'
+    }
+
+    # ensure that scoring regions are sorted in the correct order for plotting
+    scoring_region_labels = []
+    label_order = ['five', 'bp', 'three']
+    for label in label_order:
+        if label in ARGS['SCORING_REGIONS']:
+            scoring_region_labels.append(score_label_table[label])
+
+    raw_score_names = ['five_raw_score', 'bp_raw_score', 'three_raw_score']
+    z_score_names = ['five_z_score', 'bp_z_score', 'three_z_score']
+
+    finalized_introns, model, u12_count, atac_count, demoted_swaps = apply_scores(
+        ARGS['REFS'], final_introns, ARGS['MATRICES'], scoring_region_labels, ARGS)
+
+    ###!!! /FIRST ROUND OF SCORING
+
+    if ARGS['RECURSIVE'] and u12_count > 5:
+        r_refs, r_introns, r_matrices = recursive_scoring(
+            finalized_introns, 
+            ARGS['REFS'], 
+            model, 
+            ARGS['MATRICES'], 
+            scoring_region_labels, 
+            raw_score_names, 
+            z_score_names)
+        
+        (
+            finalized_introns, 
+            model, 
+            u12_count, 
+            atac_count, 
+            demoted_swaps
+        ) = apply_scores(
+            r_refs, 
+            r_introns, 
+            r_matrices,
+            ARGS
+        )
+
+    write_log(
+        '{} putative AT-AC U12 introns found.', atac_count)
+    write_log(
+        '{} putative U12 introns found with scores > {}%', 
+        u12_count, 
+        ARGS['THRESHOLD']
+    )
+
+    # /Scoring ###################################################################
+
+    # format and write output files
+
+    if demoted_swaps:
+        with open(ARGS['FN_SWAP'], 'w') as swaps:
+            for info in demoted_swaps:
+                swaps.write(
+                    '{}\t{:.5f} ({:.5f}, {:.5f}, {:.5f}) --> '
+                    '{:.5f} ({:.5f}, {:.5f}, {:.5f})\n'.format(*info))
+
+    # Write matrices to file for reference,
+    # removing added pseudocounts first
+    print_matrices = {
+        k: add_pseudos(v, pseudo=-ARGS['PSEUDOCOUNT'])
+        for k, v in ARGS['MATRICES'].items()}
+    write_matrix_file(print_matrices, ARGS['FN_MATRICES'], precision=15)
+    
+    SPCS = ARGS['SPCS']
+    SIMPLE_NAME = ARGS['SIMPLE_NAME']
+    
+    if not ARGS['SEQUENCE_INPUT']:
+        bed_file = open(ARGS['FN_BED'], 'a')
+        for i in finalized_introns:
+            bed_string = output_format(i, 'BED', SPCS, SIMPLE_NAME)
+            # bed_string = write_format(
+            #     i, 'region', 'strand', 'start', 'stop', 'get_label', fasta=False)
+            bed_file.write(bed_string + '\n')
+        bed_file.close()
+
+    # ranking_file = open(FN_RANKINGS, 'w')
+    score_file = open(ARGS['FN_SCORE'], 'w')
+    meta_file = open(ARGS['FN_META'], 'a')
+
+    if ARGS['SEQUENCE_INPUT']:
+        ref_format = True
+    else:
+        ref_format=False
+
+    #TODO add headers to each output file with column names
+    for index, intron in enumerate(sorted(
+            finalized_introns, 
+            key=attrgetter('svm_score', 'parent', 'index')), start=1
+        ):
+
+        score_string = output_format(
+            intron, 'SCORE', SPCS, SIMPLE_NAME)    
+        score_file.write(score_string + '\n')
+        meta_string = output_format(
+            intron, 'META', SPCS, SIMPLE_NAME)
+        meta_file.write(meta_string + '\n')
+
+    score_file.close()
+    meta_file.close()
+    # ranking_file.close()
+
+    if not ARGS['NO_SEQS'] and not ARGS['SEQUENCE_INPUT']:
+        write_log('Adding scores to intron sequences file')
+        add_scores(finalized_introns, ARGS['FN_SEQS'], SPCS)
+
+    if ARGS['PLOT']:
+        plot_figures(finalized_introns, ARGS, logging)
+
+    # per-matrix raw scoring information for debugging
+    if ARGS['MATRIX_SCORE_INFO']:
+        write_pwm_info(finalized_introns, ARGS)
+
+    run_time = get_runtime(START_TIME)
+
+    write_log('Run finished in {}', run_time)
+
+    logging.shutdown()
+
+    sys.exit(0)
 
 # SVM functions ##############################################################
 
@@ -3763,12 +5430,14 @@ def u12_label_ratio(label_dict):
 
 def assign_svm_score(
     intron,
-    models=None, 
-    scoring_region_labels=None,
-    weights=None,
-    add_type=True
+    models, 
+    scoring_region_labels,
+    weights,
+    threshold,
+    add_type
 ):
-    intron.model_score(models, scoring_region_labels, weights, add_type)
+    intron.model_score(
+        models, scoring_region_labels, threshold, weights, add_type)
     
     return intron
 
@@ -3777,6 +5446,7 @@ def parallel_svm_score(
     introns, 
     models, 
     scoring_region_labels,
+    threshold,
     weights=None, 
     add_type=True, 
     processes=1
@@ -3796,6 +5466,7 @@ def parallel_svm_score(
                 repeat(models),
                 repeat(scoring_region_labels),
                 repeat(weights),
+                repeat(threshold),
                 repeat(add_type)
             )
         )
@@ -3852,231 +5523,20 @@ def parallel_svm_score(
 
 #     return classified_introns
 
-def add_custom_matrices(custom_matrix_files, default_matrices):
-    '''
-    Integrates user-supplied matrices with the default matrices,
-    overwriting those in the default set as needed.
-    
-    '''
-    tmp_custom_matrices = {}
-    all_custom_keys = set()
-    for m in custom_matrix_files:
-        custom_matrix = load_external_matrix(m)
-        custom_keys = ['-'.join(key) for key in custom_matrix.keys()]
-        for k in custom_keys:
-            all_custom_keys.add(k)
-        tmp_custom_matrices.update(custom_matrix)
-    # in special case where there are diff. versions of a matrix,
-    # e.g. u12-gtag-bp-vA10
-    versioned_keys = [k for k in tmp_custom_matrices if len(k) > 3]
-    for k in versioned_keys:
-        category = tuple(k[:3])
-        matches = [mk for mk in default_matrices.keys() if all(e in mk for e in category)]
-        for m in matches:
-            del MATRICES[m]
-    default_matrices.update(tmp_custom_matrices)
-    write_log('Custom matrices used: {}', ','.join(sorted(all_custom_keys)))
-
-    return default_matrices
-
-
-def introns_from_seqs(
-    source_file, 
-    five_coords, 
-    three_coords, 
-    bp_region_coords, 
-    allow_noncanonical):
-    # source_file = args.sequence_file
-    all_introns = introns_from_flatfile(
-        source_file,
-        FIVE_SCORE_COORDS,
-        THREE_SCORE_COORDS,
-        BP_REGION_COORDS,
-        ALLOW_NONCANONICAL,
-        hashgen=False,
-        allow_overlap=False)
-    all_introns = list(all_introns)
-    final_introns = [i for i in all_introns if not i.omitted]
-    total_count = len(final_introns)
-    omit_count = len(all_introns) - total_count
-    if omit_count > 0:
-        write_log('{} introns omitted', omit_count)
-
-    if total_count == 0:
-        write_log(
-            '[!] ERROR: No intron sequences found. Exiting now.'
-        )
-        sys.exit(1)
-
-    return final_introns, total_count
-
-
-def introns_from_annotation(annotation, feature):
-    # source_file = ANNOTATION
-    feats_to_try = (feature, ('cds',), ('exon',))
-    feature_found = False
-    # Check to make sure annotation file has desired feature type
-    for feat in feats_to_try:
-        if not has_feature(annotation, feat):
-            write_log(
-                '[!] No {} features in annotation.', ','.join(feat))
-        else:
-            feature_found = True
-            feature = feat
-            break
-    if feature_found is False:
-        write_log(
-            '[!] ERROR: No intron-defining features found in annotation. '
-            'Exiting now.')       
-        sys.exit(1)
-
-    write_log('Using {} features to define introns', ','.join(feature))
-
-    # set a temporary feature list here to allow all possible
-    # introns to be gathered initially, then pruned in
-    # collect_introns() if needed
-    working_feature = ('cds', 'exon')   ###!!!
-
-    # original functionality
-    # working_feature = FEATURE
-
-    # Pull all annotation entries into a hierarchy of objects
-    top_level_annots = annotation_hierarchy(
-        annotation, working_feature)
-
-    # Make a dictionary index for all intron-defining objects in the
-    # annotated heirarchy. This index will allow easy access to parent
-    # objects when mucking about with the introns
-
-    # Add transcripts here to allow longest-isoform tagging
-    feat_list = working_feature + ('transcript',)
-    flat_annots = flatten(top_level_annots, feat_list=feat_list)
-
-    # Make intron object dictionary from the collected top-level objects,
-    # including whatever duplicates might exist in the annotation
-    all_introns, total_count = collect_introns(
-        top_level_annots, feature, flat_annots)
-
-    if total_count == 0:
-        write_log(
-            '[!] ERROR: No intron sequences found. '
-            'Annotation <-> genome ID mismatch, perhaps? Exiting now.')
-        sys.exit(1)
-    
-    return all_introns, total_count, flat_annots
-
-
-def introns_from_bedfile(genome, bed):
-    """
-    chr start   stop    name    score   strand
-    
-    """
-    bed_introns = []
-    seen_coords = set()
-    intron_index = defaultdict(list)
-    intron_count = 0
-    with flex_open(bed) as b:
-        for line_number, l in enumerate(b, start=1):
-            if l.startswith('#'):
-                continue
-            try:
-                loc, start, stop, name, _, strand = l.strip().split('\t')[:6]
-            except:
-                continue
-            try:
-                # ensure start is lowest coord
-                start, stop = sorted(map(int, [start, stop]))
-            except:
-                continue
-            if strand not in ('+', '-'):
-                continue
-            if not name or name in ('-.*'):  # Null indicators
-                name = 'i_{}'.format(line_number)
-            start += 1  # BED files are 0-indexed
-            intron = Intron(
-                name=name, 
-                start=start, 
-                stop=stop, 
-                strand=strand, 
-                region=loc
-            )
-            intron_index[loc].append(intron)
-            intron_count += 1
-    
-    return intron_index, intron_count
-
-
-def output_format(intron, out_type, null='.', separator='\t'):
-    attrib_index = {
-        'BED': [
-            'region',
-            'start',
-            'stop',
-            'get_label',
-            'svm_score',
-            'strand'
-        ],
-        'META': [
-            'get_name',
-            'motif_string',
-            'bps_context',
-            'length',
-            'parent',
-            'grandparent',
-            'index',
-            'family_size',
-            'fractional_position',
-            'phase',
-            'type_id',
-            'defined_by'
-        ],
-        'SCORE': [
-            'get_name',
-            'relative_score',
-            'svm_score',
-            'score_distance',
-            'five_seq',
-            'five_raw_score',
-            'five_z_score',
-            'bp_seq',
-            'bp_raw_score',
-            'bp_z_score',
-            'three_seq',
-            'three_raw_score',
-            'three_z_score'
-        ],
-        'SEQ': [
-            'get_name',
-            'svm_score',
-            'upstream_flank',
-            'seq',
-            'downstream_flank'
-        ]
-    }
-    to_get = attrib_index[out_type]
-    # attribs = write_format(intron, to_get, separator=None, null=null)
-    attribs = [getattr(intron, a) for a in to_get]
-    # run any methods that were returned along with other static types
-    attribs = [
-        a() if type(a)==types.MethodType else a for a in attribs]
-    attribs = [null if a is None else a for a in attribs]
-    if out_type == 'META':
-        try:
-            rounded_score = round(intron.relative_score, 4)
-        except:
-            rounded_score = null
-        dnts = '-'.join(intron.dnts)
-        attribs.insert(1, rounded_score)
-        attribs.insert(2, dnts)
-    
-    if separator is not None:
-        attribs = separator.join([str(a) for a in attribs])
-    
-    return attribs
-
 # /SVM functions ######################################################
 
 # Plotting functions #########################################################
+
+def check_plot():
+    # check for the plotting library required to produce
+    # optional figures
+    try:
+        import matplotlib
+        can_plot = True
+    except ModuleNotFoundError:
+        can_plot = False
+
+    return can_plot
 
 def density_hexplot(
     scores, title, xlab=None, ylab=None, outfmt='png', fsize=14, fig_dpi=300):
@@ -4114,7 +5574,8 @@ def scatter_plot(
     scores, 
     title, 
     xlab, 
-    ylab, 
+    ylab,
+    threshold,
     fsize=14, 
     outfmt='png', 
     fig_dpi=300):
@@ -4122,8 +5583,8 @@ def scatter_plot(
     cluster_colors = []
     u2_count, u12_low, u12_med, u12_high = [0] * 4
     score_stdev = np.std([i.svm_score for i in introns])
-    high_val = THRESHOLD
-    med_val = THRESHOLD - score_stdev
+    high_val = threshold
+    med_val = threshold - score_stdev
     # low_val = THRESHOLD - (score_stdev * 2)
     for i in introns:
         itype = i.type_id
@@ -4178,7 +5639,15 @@ def scatter_plot(
     plt.close()
 
 
-def ref_scatter(u2_vector, u12_vector, clf, fsize=14, fig_dpi=300):
+def ref_scatter(
+    u2_vector, 
+    u12_vector, 
+    clf, 
+    scoring_regions, 
+    species, 
+    fsize=14, 
+    fig_dpi=300
+):
     plt.figure(figsize=(8, 8))
     plt.scatter(
         *u2_vector[:,:2].T,
@@ -4198,7 +5667,7 @@ def ref_scatter(u2_vector, u12_vector, clf, fsize=14, fig_dpi=300):
     plt.ylabel('BPS z-score', fontsize=fsize)
 
     # only plot decision function if 2 scoring regions used
-    if len(SCORING_REGIONS) == 2:
+    if len(scoring_regions) == 2:
         # plot the decision function
         ax = plt.gca()
         xlim = ax.get_xlim()
@@ -4220,7 +5689,7 @@ def ref_scatter(u2_vector, u12_vector, clf, fsize=14, fig_dpi=300):
     plt.axes().set_aspect('equal')
     plt.tight_layout()
     plt.savefig(
-        '{}.plot.training_scatter.iic.png'.format(SPECIES), 
+        '{}.plot.training_scatter.iic.png'.format(species), 
         format='png', 
         dpi=fig_dpi)
 
@@ -4230,7 +5699,7 @@ def ref_scatter(u2_vector, u12_vector, clf, fsize=14, fig_dpi=300):
     plt.close()
 
 
-def histogram(data_list, title=None, grid=True, bins='auto', log=True, fig_dpi=300):
+def histogram(data_list, threshold, title=None, grid=True, bins='auto', log=True, fig_dpi=300):
     plt.figure(figsize=(10, 6))
     if log is True:
         plt.yscale('log')
@@ -4242,12 +5711,12 @@ def histogram(data_list, title=None, grid=True, bins='auto', log=True, fig_dpi=3
     plt.xlabel('U12 score', fontsize=14)
     plt.ylabel('Number of introns', fontsize=14)
     plt.axvline(
-        THRESHOLD, color='orange', linestyle='--',
-        label='U12 threshold: {}'.format(THRESHOLD))
+        threshold, color='orange', linestyle='--',
+        label='U12 threshold: {}'.format(threshold))
     plt.legend()
     plt.tight_layout()
     # plt.savefig('{}.iic.png'.format(title.replace(' ', '_')), dpi=600)
-    plt.savefig('{}.plot.score_histogram.iic.png'.format(SPECIES), dpi=fig_dpi)
+    plt.savefig('{}.iic.png'.format(title), dpi=fig_dpi)
     plt.close()
 
 # /Plotting functions ########################################################
@@ -4256,1157 +5725,8 @@ def histogram(data_list, title=None, grid=True, bins='auto', log=True, fig_dpi=3
 
 # Main #######################################################################
 
-# Get command-line arguments
-parser = argparse.ArgumentParser(
-    description='intronIC (intron Interrogator and Classifier) is a '
-    'script which collects all of the annotated introns found in a '
-    'genome/annotation file pair, and produces a variety of output '
-    'files (*.iic) which describe the annotated introns and (optionally) '
-    'their similarity to known U12 sequences.\n'
-    'Without the \'-m\' flag, there MUST exist a matrix file in the '
-    '\'intronIC_data\' subdirectory in the same parent directory '
-    'as intronIC.py, with filename \'scoring_matrices.fasta.iic\'. '
-    'In the same data directory, there must also be a pair of sequence '
-    'files (see --format_info) with reference intron sequences named '
-    '\'[u2, u12]_reference_set.introns.iic\'',
-    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-req_parse_grp = parser.add_argument_group(
-    title='required arguments (-g, [-a, -b] | -q)')
-req_parse_grp.add_argument(
-    '-g',
-    '--genome',
-    help='Genome file in FASTA format (gzip compatible)')
-req_parse_grp.add_argument(
-    '-a',
-    '--annotation',
-    help='Annotation file in gff/gff3/gtf format (gzip compatible)')
-req_parse_grp.add_argument(
-    '-b',
-    '--bed',
-    metavar='BED_FILE',
-    help='Supply intron coordinates in BED format'
-)
-req_parse_grp.add_argument(
-    '-n',
-    '--species_name',
-    type=str,
-    help='Binomial species name, used in output file and intron label '
-    'formatting. It is recommended to include at least the first letter '
-    'of the species, and the full genus name since intronIC (by default) '
-    'abbreviates the provided name in its output '
-    '(e.g. Homo_sapiens --> HomSap)',
-    required=True)
-req_parse_grp.add_argument(
-    '-q',
-    '--sequence_file',
-    help='Provide intron sequences directly, rather than using a '
-    'genome/annotation combination. Must follow the introns.iic '
-    'format (see README for description)')
-parser.add_argument(
-    '-f',
-    '--feature',
-    help='Specify feature to use to define introns. By default, '
-    'intronIC will identify all introns uniquely defined by '
-    'both CDS and exon features. Under the default mode, introns '
-    'defined by exon features only will be demarcated by an '
-    '\'[e]\' tag',
-    choices=['cds', 'exon'],
-    default=None)
-parser.add_argument(
-    '-s',
-    '--sequences_only',
-    action='store_true',
-    help='Bypass the scoring system and simply report the intron '
-    'sequences present in the annotations')
-parser.add_argument(
-    '--no_nc',
-    action='store_true',
-    help='Omit introns with non-canonical terminal dinucleoties from scoring')
-parser.add_argument(
-    '-i',
-    '--allow_multiple_isoforms',
-    action='store_true',
-    help='Include non-duplicate introns from isoforms other than '
-    'the longest in the scored intron set (including those with alt. splice '
-    'boundaries unless also -v')
-parser.add_argument(
-    '-v',
-    '--no_intron_overlap',
-    action='store_true',
-    help='Requires -i (or weird annotations). Exclude any introns with '
-    'boundaries that overlap other introns from higher-priority transcripts '
-    '(longer coding length, etc.). This will exclude, for example, introns '
-    'with alternative 5′/3′ boundaries',
-    default=False
-)
-parser.add_argument(
-    '--pwms',
-    metavar='{PWM file(s)}',
-    help='One or more PWMs to use in place of the defaults. '
-    'Must follow the formatting described by the --format_info '
-    'option',
-    nargs='+'
-)
-parser.add_argument(
-    '--reference_u12s',
-    '--r12',
-    metavar='{reference U12 intron sequences}',
-    help='introns.iic file with custom reference introns to be used '
-    'for setting U12 scoring expectation, including flanking regions')
-parser.add_argument(
-    '--reference_u2s',
-    '--r2',
-    metavar='{reference U2 intron sequences}',
-    help='introns.iic file with custom reference introns to be used '
-    'for setting U12 scoring expectation, including flanking regions')
-parser.add_argument(
-    '--no_plot',
-    action='store_true',
-    help='Do not output illustrations of intron scores/distributions'
-    '(plotting requires matplotlib)')
-parser.add_argument(
-    '--format_info',
-    action='store_true',
-    help='Print information about the system '
-    'files required by this script')
-parser.add_argument(
-    '-d',
-    '--include_duplicates',
-    action='store_true',
-    help='Include introns with duplicate '
-    'coordinates in the intron seqs file')
-parser.add_argument(
-    '-u',
-    '--uninformative_naming',
-    action='store_true',
-    help='Use a simple naming scheme for introns instead of the '
-    'verbose, metadata-laden default format'
-)
-parser.add_argument(
-    '--no_abbreviate',
-    '--na',
-    action='store_true',
-    help='Use the provided species name in full within the output files'
-)
-parser.add_argument(
-    '-t',
-    '--threshold',
-    metavar='0-100',
-    type=float,
-    default=90,
-    help='Threshold value of the SVM-calculated probability of being a U12 to '
-    'determine output statistics')
-parser.add_argument(
-    '--no_sequence_output',
-    '--ns',
-    action='store_true',
-    help='Do not create a file with the full intron sequences '
-    'of all annotated introns')
-parser.add_argument(
-    '--five_score_coords',
-    '--5c',
-    default=(-3, 9),
-    metavar=('start', 'stop'),
-    nargs=2,
-    type=int,
-    help=(
-        'Coordinates describing the 5\' sequence to be scored, relative to '
-        'the 5\' splice site (e.g. position 0 is the first base of the '
-        'intron); half-closed interval [start, stop)'
-    )
-)
-parser.add_argument(
-    '--three_score_coords',
-    '--3c',
-    default=(-10, 4),
-    metavar=('start', 'stop'),
-    nargs=2,
-    type=int,
-    help=(
-        'Coordinates describing the 3\' sequence to be scored, relative to '
-        'the 3\' splice site (e.g. position -1 is the last base of the '
-        'intron); half-closed interval (start, stop]'
-    )
-)
-parser.add_argument(
-    '--branch_point_coords',
-    '--bpc',
-    default=(-55, -5),
-    metavar=('start', 'stop'),
-    nargs=2,
-    type=int,
-    help=(
-        'Coordinates describing the region to search for branch point '
-        'sequences, relative to the 3\' splice site (e.g. position -1 is the '
-        'last base of the intron); half-closed interval [start, stop).'
-    )
-)
-parser.add_argument(
-    '-r',
-    '--scoring_regions',
-    help='Intron sequence regions to include in intron score calculations.',
-    default=('five', 'bp'),
-    choices=('five', 'bp', 'three'),
-    nargs='+'
-)
-parser.add_argument(
-    '--abbreviate_filenames',
-    '--afn',
-    action='store_true',
-    help='Use abbreviated species name when creating '
-    'output filenames.'
-)
-parser.add_argument(
-    '--recursive',
-    action='store_true',
-    help=(
-        'Generate new scoring matrices and training data using '
-        'confident U12s from the first scoring pass. This option may '
-        'produce better results in species distantly related to the '
-        'species upon which the training data/matrices are based, though '
-        'beware accidental training on false positives. Recommended only '
-        'in cases where clear separation between types is seen with default '
-        'data.'
-    )
-)
-parser.add_argument(
-    '--n_subsample',
-    default=0,
-    type=int,
-    help=(
-        'Number of sub-samples to use to generate SVM classifiers; 0 uses the '
-        'entire training set and should provide the best results; otherwise, '
-        'higher values will better approximate the entire set at the expense '
-        'of speed.'
-    )
-)
-parser.add_argument(
-    '--cv_processes',
-    # default=1,
-    type=int,
-    help=(
-        'Number of parallel processes to use during cross-validation')
-)
-parser.add_argument(
-    '-p',
-    '--processes',
-    default=1,
-    type=int,
-    help=(
-        'Number of parallel processes to use for scoring (and '
-        'cross-validation, unless --cv_processes is also set)'
-    )
-)
-parser.add_argument(
-    '--matrix_score_info',
-    action='store_true',
-    help='Produce additional per-matrix raw score information for each intron'
-)
-parser.add_argument(
-    '-C',
-    '--hyperparameter_C',
-    default=None,
-    help=(
-        'Provide the value for hyperparameter C directly (bypasses optimized '
-        'parameter search)')
-)
-parser.add_argument(
-    '--min_intron_len',
-    default=30,
-    type=int,
-    help='Minimum intron length to consider for scoring'
-)
-parser.add_argument(
-    '--pseudocount',
-    default=0.0001,
-    type=float,
-    help='Pseudocount value to add to each matrix value to avoid 0-div errors'
-)
-parser.add_argument(
-    '--exons_as_flanks',
-    action='store_true',
-    help='Use entire up/downstream exonic sequence as flank sequence in output'
-)
-
-
-format_info_message = ("""
- _       _                  _____ _____ 
-(_)     | |                |_   _/  __ \
- _ _ __ | |_ _ __ ___  _ __  | | | /  \/
-| | '_ \| __| '__/ _ \| '_ \ | | | |    
-| | | | | |_| | | (_) | | | || |_| \__/\
-|_|_| |_|\__|_|  \___/|_| |_\___/ \____/
-
-[ data formatting information ]
-
-# Matrix files ################################################################
-
-/// Description ///
-
-The matrix file describes the frequency of each nucleotide at each position
-in scoring region for different intron types, in FASTA format with specific
-header and first line of each record requirements (see below).
-
-/// Naming ///
-
-The matrix file must be named 'scoring_matrices.fasta.iic', and placed in a
-directory called 'intronIC_data' located in the main intronIC directory.
-
-/// Format ///
-
-Each matrix in the file consists of a FASTA header line, indicating
-which type of intron the matrix represents ('u2', 'u12'), which region
-it describes ('five', 'bp', 'three') and which intron subtype it applies to
-('gtag', 'atac', etc). Optionally, this header may also include a special
-keyword phrase 'start={integer}', where {integer} is the position of
-the first matrix entry relative to the corresponding splice site. If the
-5' matrix begins with three exonic positions upstream of the beginning of 
-the intron, for example, then the header for that matrix would include
-'start=-3'. If this keyword is omitted, the matrix is assumed to start at 
-position 0, the first base of the intron. Because the branch point motif 
-occurs at variable locations, branch point matrices do not use this 
-convention (e.g. all BPS matrices start at 0).
-
-The line after the header must be the whitespace-separated order of the bases 
-as they appear in the subsequent lines of the matrix. The rest of the lines
-under the header are tab-separated values representing the frequency of each 
-base (columns) at each position in the target sequence (rows).
-
-Example formatting ('scoring_matrices.fasta.iic'):
-
->u12_gtag_five  start=-3
-A   C   G   T
-0.293478260869565	0.239130434782609	0.239130434782609	0.228260869565217
-0.271739130434783	0.326086956521739	0.152173913043478	0.25
-0.217391304347826	0.184782608695652	0.0543478260869565	0.543478260869565
-0	0	1	0
-0	0	0	1
-[...]
->u12_gtag_bp
-A   C   G   T
-0.12	0.15	0.21	0.52
-0.12	0.17	0.18	0.53
-0.13	0.2 0.12	0.55
-[...]
-
-# Reference introns ###########################################################
-
-/// Description ///
-
-The reference intron set is a collection of introns of inferred types, 15000
-U2s and 1084 U12s, which have been found to be conserved between human, mouse
-and chicken and, in the case of the U12s, also including additional human U12s
-from Tyler Alioto's U12DB database. Each intron will be scored against the
-same matrices used for the experimental dataset to determine an optimal
-U2/U12 scoring threshold.
-
-/// Naming ///
-
-The files needs to be named '[u2, u12]_reference_set.introns.iic[.gz]', and
-be located in the intronIC_data directory, unless specified via the --r[2, 12]
-command line argument.
-
-/// Format ///
-
-Each line in the file contains the
-following columns:
-
-1. Identifier
-2. 5' exonic sequence (>= the length used for scoring, if any)
-3. Intronic sequence
-4. 3' exonic sequence (>= the length used for scoring, if any)
-
-""")
-
-# Args special cases
-if len(sys.argv) == 1:
-    parser.print_usage()
-    sys.exit(0)
-
-if '--format_info' in sys.argv:  # can't use argparse unless other args
-    sys.exit(format_info_message)
-
-args = parser.parse_args()
-
-if args.format_info:
-    sys.exit(format_info_message)
-
-if not (args.genome and (args.annotation or args.bed)) or args.sequence_file:
-    parser.error(
-        '{}: error: must be run with either a genome and annotation/BED, '
-        'or intron sequences file'.format(os.path.basename(sys.argv[0]))
-    )
-if args.sequence_file and (args.genome or args.annotation or args.bed):
-    parser.error(
-        'Must specify either direct sequence input (via -q) or a '
-        'genome/annotation combination'
-    )
-if args.bed:
-    if not args.genome:
-        parser.error(
-            'Must provide a genome file (via -g) when using a BED file for '
-            'sequence input'
-        )
-    elif args.exons_as_flanks:
-        parser.error(
-            'Cannot use --exons_as_flanks in combination with BED input'
-        )
-if args.bed and args.annotation:
-    parser.error(
-        'Use either -a or -b, but not both'
-    )
-
-# External filenames
-matrix_filename = "scoring_matrices.fasta.iic"
-reference_u12s_filename = "u12_reference.introns.iic"
-reference_u2s_filename = "u2_reference.introns.iic"
-backup_u2_bps_filename = 'u2.conserved_empirical_bp_matrix.iic'
-
-# Global constants ###########################################################
-
-# Get script directory and external file paths
-HOME = os.path.dirname(os.path.realpath(sys.argv[0]))
-# import pkg_resources
-# DATA_DIR = pkg_resources.resource_filename(__name__, 'intronIC_data')
-# DATA_DIR = DATA_DIR.rstrip('/scripts/intronIC_data/')
-# DATA_DIR = os.path.join(DATA_DIR, 'intronIC_data')
-# print(DATA_DIR, '\n'.join(os.listdir(DATA_DIR)))
-
-# DATA_DIR = os.path.join(sys.prefix, 'intronIC_data')
-# print(DATA_DIR)
-
-DATA_DIR = os.path.join(HOME, "intronIC_data")
-RUN_DIR = os.getcwd()
-MATRIX_FILE = os.path.join(DATA_DIR, matrix_filename)
-U2_BPS_MATRIX_FILE = os.path.join(DATA_DIR, backup_u2_bps_filename)
-
-# This is inelegant, but to do otherwise would require reorg of args
-# and constants (defaulting the arg would require knowing the data dir
-# and matrix filename, for example)
-if args.reference_u12s:
-    REFERENCE_U12_FILE = args.reference_u12s
-else:
-    ref_u12_fns = [
-        os.path.join(DATA_DIR, r) for r in
-        [reference_u12s_filename, reference_u12s_filename + '.gz']]
-    REFERENCE_U12_FILE = next(r for r in ref_u12_fns if os.path.isfile(r))
-if args.reference_u2s:
-    REFERENCE_U2_FILE = args.reference_u2s
-else:
-    ref_u2_fns = [
-        os.path.join(DATA_DIR, r) for r in
-        [reference_u2s_filename, reference_u2s_filename + '.gz']]
-    REFERENCE_U2_FILE = next(r for r in ref_u2_fns if os.path.isfile(r))
-
-SVM_ITER = args.n_subsample
-N_PROC = args.processes
-CV_JOBS = args.cv_processes
-# set cross-validation parallel processing to same as main
-# parallel arg unless explicitly specified
-if not CV_JOBS:
-    CV_JOBS = N_PROC
-RECURSIVE = args.recursive
-# scoring region coordinates are relative to the 5' and 3' ends of the intron
-FIVE_SCORE_COORDS = tuple(args.five_score_coords)
-THREE_SCORE_COORDS = tuple(args.three_score_coords)
-BP_REGION_COORDS = tuple(args.branch_point_coords)
-OPTIMIZE_N = 5  # rounds of SVM optimization
-INTRON_FLANK_SIZE = 200  # for output file
-MIN_INTRON_LENGTH = args.min_intron_len
-# number of nc splice sites to print to screen
-NUM_NC_USER = 5
-# number of nc splice sites to print to log
-NUM_NC_LOG = 25
-# value to add to matrix values to avoid div 0 errors
-PSEUDOCOUNT = args.pseudocount
-EXONS_AS_FLANKS = args.exons_as_flanks
-FIG_DPI = 300
-
-# Stuff from args
-GENOME = args.genome
-ANNOTATION = args.annotation
-SEQUENCE_INPUT = args.sequence_file
-SPECIES_FULL = args.species_name  # used in log file header
-SPECIES = args.species_name  # used to name files
-if not args.no_abbreviate:
-    SPCS = abbreviate(SPECIES)  # used within files
-    species_name_info = '{} ({})'.format(SPECIES_FULL, SPCS)
-else:
-    SPCS = SPECIES
-    species_name_info = SPECIES_FULL
-if not args.feature:  # to define introns
-    FEATURE = ('cds', 'exon')
-else:
-    FEATURE = (args.feature.lower(),)
-if args.no_nc:
-    ALLOW_NONCANONICAL = False
-else:
-    ALLOW_NONCANONICAL = True
-ALLOW_OVERLAP = not args.no_intron_overlap
-if args.allow_multiple_isoforms:
-    LONGEST_ONLY = False
-else:
-    LONGEST_ONLY = True
-THRESHOLD = args.threshold
-INCLUDE_DUPES = args.include_duplicates
-ONLY_SEQS = args.sequences_only
-NO_SEQS = args.no_sequence_output
-CUSTOM_MATRICES = args.pwms
-SIMPLE_NAME = args.uninformative_naming
-SCORING_REGIONS = args.scoring_regions
-MATRIX_SCORE_INFO = args.matrix_score_info
-if args.hyperparameter_C:
-    HYPER_C = float(args.hyperparameter_C)
-else:
-    HYPER_C = None
-
-# Change file-naming variable if specified
-if args.abbreviate_filenames:
-    SPECIES = abbreviate(SPECIES)
-
-# Output filenames
-FN_SEQS = '{}.introns.iic'.format(SPECIES)
-FN_RANKINGS = '{}.rankings.iic'.format(SPECIES)
-FN_BED = '{}.bed.iic'.format(SPECIES)
-FN_DUPE_MAP = '{}.dupe_map.iic'.format(SPECIES)
-FN_OVERLAP_MAP = '{}.overlap.iic'.format(SPECIES)
-FN_MATRICES = '{}.pwms.iic'.format(SPECIES)
-FN_META = '{}.meta.iic'.format(SPECIES)
-FN_SCORE = '{}.score_info.iic'.format(SPECIES)
-FN_SWAP = '{}.demoted.iic'.format(SPECIES)
-FN_ANNOT = '{}.annotation.iic'.format(SPECIES)
-FN_LOG = '{}.log.iic'.format(SPECIES)
-
-# Logging setup ##############################################################
-
-# Default config used as a base
-# Debug messasges go only to log file, not screen
-for handler in logging.root.handlers[:]:
-    logging.root.removeHandler(handler)
-logging.basicConfig(filename=FN_LOG,
-                    format='[#] %(asctime)s | %(message)s',
-                    datefmt='%Y.%m.%d-%H.%M.%S',
-                    level=logging.WARNING,  # was DEBUG
-                    filemode='w')
-# Add logging module for printing to stdout
-screenlogger = logging.StreamHandler(stream=sys.stdout)
-screenlogger.setLevel(logging.CRITICAL)  # was INFO
-# Set less-verbose print syntax for screen vs. log file
-screenformatter = logging.Formatter('[#] %(message)s')
-screenlogger.setFormatter(screenformatter)
-# Add screen logger to root logger
-logging.getLogger('').addHandler(screenlogger)
-
-# /Logging setup #############################################################
-
-write_log('Starting run on {}', species_name_info)
-
-# Determine whether we can plot figures, assuming it is asked for
-WANT_PLOT = not args.no_plot
-if WANT_PLOT and CAN_PLOT:
-    PLOT = True
-else:
-    PLOT = False
-    if WANT_PLOT:
-        write_log('Matplotlib not detected; plotting disabled')
-
-# Start processing files
-
-full_path_args = [
-    os.path.abspath(a) if os.path.exists(a) else a for a in sys.argv
-]
-write_log('Run command: {}', ' '.join(full_path_args))
-
-# Load external scoring matrices
-MATRICES = load_external_matrix(MATRIX_FILE)
-
-if CUSTOM_MATRICES:
-    MATRICES = add_custom_matrices(CUSTOM_MATRICES, MATRICES)
-
-# Pseudocounts added to avoid division by 0 during scoring
-MATRICES = add_pseudos(MATRICES, pseudo=PSEUDOCOUNT)
-
-# Determine length of 5' sequence region from supplied matrices
-# and use if shorter than >FIVE_LENGTH<
-five_matrix_length = matrix_length(MATRICES[('u12', 'gtag', 'five')])
-three_matrix_length = matrix_length(MATRICES[('u12', 'gtag', 'three')])
-
-ARG_FIVE_LENGTH = abs(FIVE_SCORE_COORDS[0] - FIVE_SCORE_COORDS[1])
-ARG_THREE_LENGTH = abs(THREE_SCORE_COORDS[0] - THREE_SCORE_COORDS[1])
-
-FIVE_LENGTH = min(ARG_FIVE_LENGTH, five_matrix_length)
-THREE_LENGTH = min(ARG_THREE_LENGTH, three_matrix_length)
-
-# Notify user if desired length is incompatible with matrix
-for l, arg, tag in zip(
-    [FIVE_LENGTH, THREE_LENGTH],
-    [ARG_FIVE_LENGTH, ARG_THREE_LENGTH],
-    ['5\'', '3\'']
-    ):
-    if l < arg:
-        write_log(
-            '[!] Length of {} region limited to {} by scoring matrices',
-            tag, l
-        )
-
-# check min intron length against total size
-# of scoring matrices and adjust up if necessary
-bp_key = next(k for k in MATRICES.keys() if 'u12' in k and 'bp' in k)
-BP_MATRIX_LENGTH = matrix_length(MATRICES[bp_key])
-# BP_MATRIX_LENGTH = matrix_length(MATRICES[('u12', 'gtag', 'bp', 'vA9')])
-
-# TODO adjust the bp margin to account for change in interval openness
-# This seems to have been done...the empirical data min/max BPS
-# sequence locations match the coords listed in BP_REGION_COORDS
-bp_margin = abs(BP_REGION_COORDS[1])
-
-# calculate length required by matrices at either end of intron
-intronic_five = len([e for e in range(*FIVE_SCORE_COORDS) if e >= 0])
-intronic_three = len([e for e in range(*THREE_SCORE_COORDS) if e < 0])
-intronic_three = max((BP_MATRIX_LENGTH + bp_margin), intronic_three)
-
-# scoring_region_size = FIVE_LENGTH + BP_MATRIX_LENGTH + bp_margin
-scoring_region_size = intronic_five + intronic_three
-
-if MIN_INTRON_LENGTH < scoring_region_size and not ONLY_SEQS:
-    MIN_INTRON_LENGTH = scoring_region_size
-    write_log(
-        '[!] Minimum intron length set to {} due to size of scoring regions',
-        MIN_INTRON_LENGTH
-    )
-
-# Capture start time of run to facilitate calculation of total runtime at end
-START_TIME = time.time()
-
-# /Global constants ##########################################################
-
-# Initial data collection ####################################################
-
-# Collect reference introns, with flanking exonic region
-# on either end
-REF_U2S = get_reference_introns(
-    ref_file=REFERENCE_U2_FILE,
-    five_score_coords=FIVE_SCORE_COORDS,
-    three_score_coords=THREE_SCORE_COORDS,
-    bp_coords=BP_REGION_COORDS,
-    type_id='u2'
-)
-REF_U12S = get_reference_introns(
-    ref_file=REFERENCE_U12_FILE,
-    five_score_coords=FIVE_SCORE_COORDS,
-    three_score_coords=THREE_SCORE_COORDS,
-    bp_coords=BP_REGION_COORDS,
-    type_id='u12'
-)
-
-# remove any reference data with redundant scores
-filter_attributes = ['five_seq', 'bp_region_seq', 'three_seq']
-
-REF_U12S = list(unique_attributes(REF_U12S, filter_attributes))
-REF_U2S = list(unique_attributes(REF_U2S, filter_attributes))
-
-REFS = REF_U12S + REF_U2S
-
-if args.sequence_file:
-    source_file = args.sequence_file
-    final_introns, total_count = introns_from_seqs(
-        source_file,
-        FIVE_SCORE_COORDS,
-        THREE_SCORE_COORDS,
-        BP_REGION_COORDS,
-        ALLOW_NONCANONICAL)
-elif args.bed:
-    source_file = args.bed
-    all_introns, total_count = introns_from_bedfile(GENOME, source_file)
-    flat_annots = {}  # compatibility with downstream sequence acquisition
-else:
-    source_file = ANNOTATION
-    all_introns, total_count, flat_annots = introns_from_annotation(
-        source_file, FEATURE)
-
-write_log('{} introns found in {}', total_count, source_file)
-
-if not SEQUENCE_INPUT:
-    # Populate introns with sub-sequences and write full seqs to file
-    # Also, tag introns with >omitted< if meet omission criteria
-    # Omitted introns are written to same file as all other introns
-    stats_omitted_counts = Counter()
-    stats_corrected_count = 0
-    stats_nc_types = Counter()  # omitted for non-canon bounds
-    final_introns = []
-    omitted_introns = []
-    corrected_duplicates = []
-    duplicate_count = 0
-    # Only make seqs file if not argument preventing it
-    if not NO_SEQS:
-        seq_file = open(FN_SEQS, 'w')
-    # Write the omitted introns to bed file first
-    meta_file = open(FN_META, 'w')
-    bed_file = open(FN_BED, 'w')
-
-    # build an index of duplicate introns keyed by (region, start, stop) of
-    # the intron which superceded them to allow score propagation
-    dupe_intron_index = defaultdict(set)
-    overlap_index = defaultdict(set)
-    # map unique_num attributes to final intron names for use in
-    # dupe_map output
-    intron_name_index = {}
-
-    # these two dictionaries enable communication between get_sub_seqs()
-    # and add_tags()
-    intron_index = defaultdict(lambda: defaultdict(dict))
-    longest_isoforms = {}
-
-    # Iterate over generator with transient full sequences
-    # Keep your wits about you here, given the number of flags at play
-    for intron in get_sub_seqs(
-        all_introns,
-        flat_annots,
-        GENOME,
-        INTRON_FLANK_SIZE,
-        FIVE_SCORE_COORDS,
-        THREE_SCORE_COORDS,
-        BP_REGION_COORDS,
-        EXONS_AS_FLANKS):
-        # Set omission status before generating headers
-        intron.omit_check(
-            MIN_INTRON_LENGTH, ALLOW_NONCANONICAL,
-            ALLOW_OVERLAP, LONGEST_ONLY)
-
-        #TODO the problem is that for a duplicate short intron, say, 
-        # since it is omitted at this point (which we want) it 
-        # won't go into add_tags() and therefore won't be tagged
-        # as a duplicate. But, sending omitted introns to add_tags()
-        # won't work as-is because we don't want to make decisions
-        # on other introns based on omitted intron values.
-        # One way would be to run a series of checks within add_tags()
-        # to make sure the intron isn't omitted, but that's hacky.
-        # Unsure what to do...
-
-        # UPDATE: modified add_tags() to partition things by 
-        # omission status — seems to be working.
-
-        # add all intron tags
-        # if not intron.omitted:
-        #     intron, intron_index, longest_isoforms = add_tags(
-        #         intron, intron_index, longest_isoforms,
-        #         ALLOW_OVERLAP, LONGEST_ONLY)
-
-        # add tags to introns with filtering
-        # if not intron.omitted or intron.omitted == 's':
-        #     intron, intron_index, longest_isoforms = add_tags(
-        #         intron, intron_index, longest_isoforms,
-        #         ALLOW_OVERLAP, LONGEST_ONLY)
-
-        # add tags with filtering internal to add_tags
-        intron, intron_index, longest_isoforms = add_tags(
-            intron, intron_index, longest_isoforms,
-            ALLOW_OVERLAP, LONGEST_ONLY)
-
-        # this step seems redundant but it's not!
-        intron.omit_check(
-            MIN_INTRON_LENGTH, ALLOW_NONCANONICAL,
-            ALLOW_OVERLAP, LONGEST_ONLY)
-
-        if intron.noncanonical:
-            # tag non-canonical introns in label even if being scored
-            intron.dynamic_tag.add('[n]')
-        if not intron.longest_isoform:
-            intron.dynamic_tag.add('[i]')
-        if not ONLY_SEQS:
-            if not intron.omitted and intron.duplicate is False:
-                final_introns.append(intron)
-                # compute hash of intron sequence to identify introns
-                # across different annotations
-            # if intron.duplicate is False:
-                    # intron.sha1 = sha1(intron.seq.encode('utf-8')).digest()
-        intron_name_index[intron.unique_num] = intron.get_name()
-        if intron.duplicate is not False:
-            duplicate_count += 1
-            dupe_intron_index[intron.duplicate].add(intron.get_name())
-            if intron.corrected:
-                corrected_duplicates.append(intron)
-            if not INCLUDE_DUPES:
-                continue
-        # keep a index of introns which are being omitted due to
-        # overlap
-        if intron.omitted == 'v':
-            overlap_index[intron.overlap].add(intron.get_name())
-        if intron.corrected:
-            stats_corrected_count += 1
-        # if intron is non-canonical (omitted or not), add to nc stats
-        if intron.noncanonical and intron.omitted not in ('s', 'a'):
-        # if intron.noncanonical and not intron.omitted:
-            dnts = '-'.join(intron.dnts)
-            stats_nc_types[dnts] += 1
-        if ONLY_SEQS: # no scoring info in intron label
-            intron.omitted = False
-            bed_string = output_format(intron, 'BED')
-            bed_file.write(bed_string + '\n')
-            meta_string = output_format(intron, 'META')
-            meta_file.write(meta_string + '\n')
-
-        # write omitted introns to list file (unscored)
-        elif intron.omitted and intron.duplicate is False:
-            stats_omitted_counts[intron.omitted] += 1
-            if intron.omitted == 'n':
-                dnts = '-'.join(intron.dnts)
-                intron.dynamic_tag.add(dnts)
-            bed_string = output_format(intron, 'BED')
-            bed_file.write(bed_string + '\n')
-            meta_string = output_format(intron, 'META')
-            meta_file.write(meta_string + '\n')
-
-            # odds of two introns producing the same 128-bit hash in a 
-            # set of 1 trillion introns is ~1.44e-15
-            # (via https://www.ilikebigbits.com/2018_10_20_estimating_hash_collisions.html#toc1.7)
-            # intron.sha1.hex()
-
-        if not NO_SEQS:
-            # Write all introns to file
-            seq_string = output_format(intron, 'SEQ')
-            # seq_string = write_format(
-                # intron, *seqs_attribs, fasta=False)
-            seq_file.write(seq_string + '\n')
-
-        intron.seq = None  # save memory allocation
-
-    if not NO_SEQS:  # only close if opened
-        seq_file.close()
-    meta_file.close()
-    if dupe_intron_index:
-        with open(FN_DUPE_MAP, 'w') as dupe_map:
-            for chosen, dupes in dupe_intron_index.items():
-                name = intron_name_index[chosen]
-                for d in dupes:
-                    dupe_map.write('{}\t{}\n'.format(name, d))
-
-    if not ALLOW_OVERLAP and overlap_index:
-        with open(FN_OVERLAP_MAP, 'w') as ol_map:
-            for chosen, overlapping in overlap_index.items():
-                name = intron_name_index[chosen]
-                for o in overlapping:
-                    ol_map.write('{}\t{}\n'.format(name, o))
-    bed_file.close()
-
-    if not INCLUDE_DUPES:
-        write_log(
-            '{} introns with duplicate coordinates excluded', 
-            duplicate_count)
-
-    # If they only want the intron sequences, exit after writing seq file
-    if ONLY_SEQS:
-        if not INCLUDE_DUPES:
-            total_count = total_count - duplicate_count
-        # info_file.close()
-        meta_file.close()
-        seq_file.close()
-        bed_file.close()
-        write_log(
-            '{} intron sequences written to {}',
-            (total_count),
-            FN_SEQS)
-        run_time = get_runtime(START_TIME)
-        write_log('Run finished in {}', run_time)
-        sys.exit()
-
-    if stats_omitted_counts:
-        write_log(
-            '{} introns omitted from scoring based on the following criteria:',
-            sum(stats_omitted_counts.values()))
-        write_log(
-            '* short (<{} nt): {}', MIN_INTRON_LENGTH, stats_omitted_counts['s'],
-            wrap_chars=None)
-        write_log(
-            '* ambiguous nucleotides in scoring regions: {}',
-            stats_omitted_counts['a'],
-            wrap_chars=None)
-        write_log(
-            '* non-canonical boundaries: {}', stats_omitted_counts['n'],
-            wrap_chars=None)
-        write_log(
-            '* overlapping coordinates: {}', stats_omitted_counts['v'],
-            wrap_chars=None)
-        write_log(
-            '* not in longest isoform: {}', stats_omitted_counts['i'],
-            wrap_chars=None)
-
-    if stats_nc_types:
-        write_log(
-            'Most common non-canonical splice sites:',
-        )
-        for stat in counter_format_top(stats_nc_types, NUM_NC_USER):
-            print('[#] {}'.format(stat))
-        for stat in counter_format_top(stats_nc_types, NUM_NC_LOG):
-            write_log(stat, level='warning')  # was debug
-
-    if not final_introns:
-        write_log(
-            '[!] ERROR: No intron sequences found. '
-            'Check for annotation/genome ID mismatch. Exiting now.')
-        sys.exit(1)
-
-    # Correct coordinates of defining features in annotation if any
-    # misannotated AT-AC introns are found
-    correct_annotation(
-        final_introns + corrected_duplicates, flat_annots, ANNOTATION, RUN_DIR)
-
-FINAL_INTRON_COUNT = len(final_introns)
-
-write_log('{} introns included in scoring analysis', FINAL_INTRON_COUNT)
-
-# /Initial data collection ###################################################
-
-# Scoring ####################################################################
-#TODO make cmdline arg to require bp be built from all introns (in case is
-# u2 matrix in matrices file but don't want to use it)
-
-BPX = None
-
-# [ v1 ]
-# secret species introns conserved as U12s in other species, using the
-# pattern '.{4}TTTGA.{3}.{6,8}$'
-# BPX = {
-#     6: 1.371429,
-#     7: 1.428571,
-#     8: 1.2
-# }
-# [ v2 ]
-# secret species introns conserved as U12s in other species plus ATACs
-# from conserved regions using the pattern '.{4}TTTGA.{3}.{6,8}$'
-# BPX = {
-#     6: 1.354167, # 17/48
-#     7: 1.4375, # 21/48
-#     8: 1.208333  # 10 /48
-# }
-# [ v3 ]
-# secret species introns conserved as U12s in others and BUSCO matches,
-# plus ATACs in conserved regions
-# BPX = {
-#     6: 1.352941, # 54/153
-#     7: 1.431373, # 66/153
-#     8: 1.215686  # 33/153
-# }
-
-###!!! FIRST ROUND OF SCORING
-MATRICES = add_u2_matrix(MATRICES, final_introns)
-
-# Get the maximum and minimum score possible for each matrix, to be used
-# to scale scores
-MATRIX_BOUNDS = defaultdict(dict)
-for k, m in MATRICES.items():
-    category = k[:2]
-    sub_category = k[-1]
-    MATRIX_BOUNDS[category][sub_category] = get_score_bounds(m)
-
-write_log(
-    'Scoring introns using the following regions: {}',
-    ', '.join(SCORING_REGIONS)
-)
-
-score_label_table = {
-    'five': 'five_z_score',
-    'bp': 'bp_z_score',
-    'three': 'three_z_score'
-}
-
-# ensure that scoring regions are sorted in the correct order for plotting
-scoring_region_labels = []
-label_order = ['five', 'bp', 'three']
-for label in label_order:
-    if label in SCORING_REGIONS:
-        scoring_region_labels.append(score_label_table[label])
-
-raw_score_names = ['five_raw_score', 'bp_raw_score', 'three_raw_score']
-z_score_names = ['five_z_score', 'bp_z_score', 'three_z_score']
-
-finalized_introns, model, u12_count, atac_count, demoted_swaps = apply_scores(
-    REFS, final_introns, MATRICES, scoring_region_labels)
-
-###!!! /FIRST ROUND OF SCORING
-
-if RECURSIVE and u12_count > 5:
-    r_refs, r_introns, r_matrices = recursive_scoring(
-        finalized_introns, 
-        REFS, 
-        model, 
-        MATRICES, 
-        scoring_region_labels, 
-        raw_score_names, 
-        z_score_names)
-    
-    (
-        finalized_introns, 
-        model, 
-        u12_count, 
-        atac_count, 
-        demoted_swaps
-    ) = apply_scores(r_refs, r_introns, r_matrices, scoring_region_labels)
-
-write_log(
-    '{} putative AT-AC U12 introns found.', atac_count)
-write_log(
-    '{} putative U12 introns found with scores > {}%', u12_count, THRESHOLD)
-
-# /Scoring ###################################################################
-
-# format and write output files
-
-if demoted_swaps:
-    with open(FN_SWAP, 'w') as swaps:
-        for info in demoted_swaps:
-            swaps.write(
-                '{}\t{:.5f} ({:.5f}, {:.5f}, {:.5f}) --> '
-                '{:.5f} ({:.5f}, {:.5f}, {:.5f})\n'.format(*info))
-
-# Write matrices to file for reference,
-# removing added pseudocounts first
-print_matrices = {
-    k: add_pseudos(v, pseudo=-PSEUDOCOUNT)
-    for k, v in MATRICES.items()}
-write_matrix_file(print_matrices, FN_MATRICES, precision=15)
-
-if not SEQUENCE_INPUT:
-    bed_file = open(FN_BED, 'a')
-    for i in finalized_introns:
-        bed_string = output_format(i, 'BED')
-        # bed_string = write_format(
-        #     i, 'region', 'strand', 'start', 'stop', 'get_label', fasta=False)
-        bed_file.write(bed_string + '\n')
-    bed_file.close()
-
-# ranking_file = open(FN_RANKINGS, 'w')
-score_file = open(FN_SCORE, 'w')
-meta_file = open(FN_META, 'a')
-
-if SEQUENCE_INPUT:
-    ref_format = True
-else:
-    ref_format=False
-
-#TODO add headers to each output file with column names
-for index, intron in enumerate(sorted(
-        finalized_introns, 
-        key=attrgetter('svm_score', 'parent', 'index')), start=1
-    ):
-
-    score_string = output_format(intron, 'SCORE')    
-    score_file.write(score_string + '\n')
-    meta_string = output_format(intron, 'META')
-    meta_file.write(meta_string + '\n')
-
-score_file.close()
-meta_file.close()
-# ranking_file.close()
-
-if not NO_SEQS and not SEQUENCE_INPUT:
-    write_log('Adding scores to intron sequences file')
-    add_scores(finalized_introns, FN_SEQS)
-
-if PLOT:
-    # build lists of component scores for making plots
-    score_vector = np.array(
-        [(i.five_z_score, i.bp_z_score) for i in finalized_introns])
-
-    write_log('Generating figures')
-    # disable logging temporarily to avoid matplotlib writing
-    # to root logging stream
-    logging.disable(logging.INFO)
-    # plot intron component scores with and without marked U12s
-    density_hexplot(
-        score_vector,
-        '{}.plot.hex'.format(SPECIES_FULL),
-        xlab='5\' z-score',
-        ylab='BPS z-score',
-        fig_dpi=FIG_DPI
-    )
-    scatter_plot(
-        finalized_introns,
-        score_vector,
-        '{}.plot.scatter'.format(SPECIES_FULL),
-        xlab='5\' z-score',
-        ylab='BPS z-score',
-        fig_dpi=FIG_DPI
-    )
-    summary_scores = [i.svm_score for i in finalized_introns]
-    hist_title = '{} intron score distribution'.format(SPECIES)
-    histogram(summary_scores, bins=100, title=hist_title, fig_dpi=FIG_DPI)
-    # re-enable logging
-    logging.disable(logging.NOTSET)
-
-# per-matrix raw scoring information for debugging
-if MATRIX_SCORE_INFO:
-    matrix_score_info_fn = '{}.matrix_score_info.iic'.format(SPECIES)
-    matrix_score_file = open(matrix_score_info_fn, 'w')
-    scored_seqs = ['five_seq', 'bp_seq', 'three_seq']
-    region_tags = ['five', 'bp', 'three']
-    starts = [FIVE_SCORE_COORDS[0], 0, THREE_SCORE_COORDS[0]]
-    # map to demote_info attribute indices for different scored seqs
-    demote_seq_map = {
-        'five': -3,
-        'bp': -2,
-        'three': -1
-    }
-    for index, intron in enumerate(
-        sorted(finalized_introns, key=attrgetter('svm_score')), start=1):
-        u12_key = intron.u12_matrix  # e.g. ('u12', 'gtag')
-        u2_key = intron.u2_matrix
-        if getattr(intron, 'demote_info', None) is not None:
-            u12_key = ('u12', 'gtag')
-            u2_key = ('u2', 'gtag')
-        score_strings = []
-        scoring_matrices = {
-            u12_key: [],
-            u2_key: []
-        }
-        header = '\t'.join([intron.get_name(),str(intron.svm_score)])
-        matrix_score_file.write('>{}\n'.format(header))
-        for seq_name, tag, start in zip(scored_seqs, region_tags, starts):
-            try:
-                seq = intron.demote_info[demote_seq_map[tag]]
-            except AttributeError:
-                seq = getattr(intron, seq_name)
-            u12_region_key = u12_key + (tag,)
-            u2_region_key = u2_key + (tag,)
-
-            if u12_region_key not in MATRICES:
-                u12_region_key = next(
-                    m for m in intron.matrices if 
-                    all(e in m for e in u12_region_key)
-                )
-            if u2_region_key not in MATRICES:
-                u2_region_key = next(
-                    m for m in intron.matrices if 
-                    all(e in m for e in u2_region_key)
-                )
-            scoring_matrices[u12_key].append('-'.join(u12_region_key))
-            scoring_matrices[u2_key].append('-'.join(u2_region_key))
-            u12_m = MATRICES[u12_region_key]
-            u2_m = MATRICES[u2_region_key]
-            u12_m_scores = ''.join(mark_seq_score(seq, u12_m, start))
-            u2_m_scores = ''.join(mark_seq_score(seq, u2_m, start))
-            output_string = (u12_m_scores, seq, u2_m_scores)
-            score_strings.append(output_string)
-        
-        score_strings.append(
-            (
-                ','.join(scoring_matrices[u12_key]), 
-                '', 
-                ','.join(scoring_matrices[u2_key])
-            )
-        )
-        
-        for line_bits in zip(*score_strings):
-            matrix_score_file.write('\t'.join(line_bits) + '\n')
-    matrix_score_file.close()
-
-run_time = get_runtime(START_TIME)
-
-write_log('Run finished in {}', run_time)
-
-logging.shutdown()
-
-sys.exit(0)
+if __name__ == '__main__':
+    main()
 
 # TODO report types of features that were skipped
 # TODO modify functions to return dictionaries for extensibility?
