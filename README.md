@@ -84,12 +84,12 @@ See the rest of the wiki for more detailed instructions.
 
 ## About
 
-`intronIC` was written to provide a customizable, open-source method for identifying minor (U12-type) spliceosomal introns from annotated intron sequences. Minor introns usually represent ~0.5% (at most) of a given genome's intron complement, and contain distinct splicing motifs which make them amenable to bioinformatic identification.
+`intronIC` was written to provide a customizable, open-source method for identifying minor (U12-type) spliceosomal introns from annotated intron sequences. Minor introns usually represent ~0.5% (at most) of a given genome's introns, and contain distinct splicing motifs which make them amenable to bioinformatic identification.
 
-Earlier minor intron resources (U12DB, SpliceRack, ERISdb, etc.), while hugely important contributions to the field, are static by design. As such, these databases fail to reflect the dramatic increase in available genome sequences and annotation quality of the last decade.
+Earlier minor intron resources (U12DB, SpliceRack, ERISdb, etc.), while important contributions to the field, are static by design. As such, these databases fail to reflect the dramatic increase in available genome sequences and annotation quality of the last decade.
 
 In addition, other published identification methods employ a certain amount of heuristic fuzziness in defining the classification criteria of their U12-type scoring systems (i.e how "U12-like" does an intron need to look before being called a U12-type intron). `intronIC` relegates this decision to the well-established support-vector machine (SVM) classification method, which produces an easy-to-interpret "probability of being U12-type" score for each intron.
 
 Furthermore, `intronIC` provides researchers the opportunity to tailor the underlying training data/position-weight matrices, should they have species-specific data to take advantage of.
 
-Finally, `intronIC` performs a fair amount of bookkeping during the intron collection process, resulting in (potentially) useful metadata about each intron including parent gene/transcript, ordinal index and phase, information for which there is no other striaghtforward pipeline (as far as I'm aware) through which to easily acquire.
+Finally, `intronIC` performs a fair amount of bookkeping during the intron collection process, resulting in (potentially) useful metadata about each intron including parent gene/transcript, ordinal index and phase, information which (as far as I'm aware) is otherwise non-trivial to acquire.
