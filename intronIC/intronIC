@@ -51,6 +51,7 @@ def warn(*args, **kwargs):
 warnings.warn = warn
 
 from multiprocessing.pool import Pool
+from multiprocessing import get_all_start_methods, set_start_method
 from scipy import stats as pystats
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict, deque, namedtuple
@@ -3917,13 +3918,6 @@ def output_format(
 def get_args(argv, arg_parser):
     format_info_message = (
     """
-    _       _                  _____ _____ 
-    (_)     | |                |_   _/  __ \
-    _ _ __ | |_ _ __ ___  _ __  | | | /  \/
-    | | '_ \| __| '__/ _ \| '_ \ | | | |    
-    | | | | | |_| | | (_) | | | || |_| \__/\
-    |_|_| |_|\__|_|  \___/|_| |_\___/ \____/
-
     [ data formatting information ]
 
     # Matrix files ################################################################
@@ -4051,12 +4045,11 @@ def get_custom_args(args, argv):
     backup_u2_bps_filename = 'u2.conserved_empirical_bp_matrix.iic'
 
     # Get script directory and external file paths
-    HOME = os.path.dirname(os.path.realpath(sys.argv[0]))
-    custom_args['HOME'] = HOME
     DATA_DIR = pkg_resources.resource_filename(__name__, 'data/')
+    DATA_DIR = os.path.realpath(DATA_DIR)
 
-    # print(DATA_DIR)
-
+    # HOME = os.path.dirname(os.path.realpath(sys.argv[0]))
+    # custom_args['HOME'] = HOME
     # DATA_DIR = os.path.join(HOME, "data")
 
     custom_args['DATA_DIR'] = DATA_DIR
@@ -4647,6 +4640,12 @@ def write_pwm_info(finalized_introns, args):
     matrix_score_file.close()
 
 def main():
+    # set better forking method for Unix-based OSes
+    fork_types = get_all_start_methods()
+    if 'forkserver' in fork_types:
+        set_start_method('forkserver')
+    elif 'spawn' in fork_types:
+        set_start_method('spawn')
     warnings.filterwarnings('ignore')
     parser = make_parser()
     EXT_ARGS = get_args(sys.argv, parser)
