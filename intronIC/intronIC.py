@@ -4350,6 +4350,9 @@ def filter_introns_write_files(
     FN_DUPE_MAP = args['FN_DUPE_MAP']
     NUM_NC_USER = args['NUM_NC_USER']
     NUM_NC_LOG = args['NUM_NC_LOG']
+    FN_SEQS = args['FN_SEQS']
+    FN_OVERLAP_MAP = args['FN_OVERLAP_MAP']
+    START_TIME = args['START_TIME']
 
     # Iterate over generator with transient full sequences
     # Keep your wits about you here, given the number of flags at play
@@ -4640,6 +4643,8 @@ def write_pwm_info(finalized_introns, args):
     matrix_score_file.close()
 
 def main():
+    # Capture start time of run to facilitate calculation of total runtime at end
+    START_TIME = time.time()
     # set better forking method for Unix-based OSes
     fork_types = get_all_start_methods()
     if 'forkserver' in fork_types:
@@ -4650,6 +4655,7 @@ def main():
     parser = make_parser()
     EXT_ARGS = get_args(sys.argv, parser)
     ARGS = get_custom_args(EXT_ARGS, sys.argv)
+    ARGS['START_TIME'] = START_TIME
     ARGS = add_pwm_args(ARGS)
 
     # Logging setup ###########################################################
@@ -4686,8 +4692,6 @@ def main():
     ]
     write_log('Run command: {}', ' '.join(full_path_args))
 
-    # Capture start time of run to facilitate calculation of total runtime at end
-    START_TIME = time.time()
 
     # /Global constants ##########################################################
 
