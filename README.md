@@ -60,17 +60,19 @@ By default, `intronIC` **includes non-canonical introns**, and **considers only 
 
 ## Running on test data
 
-To test the installation, change to the `test_data` subdirectory, which contains Ensembl annotations for chromosome 19 of the human genome.
+* If you have installed via `pip`, first download the chromosome 19 [FASTA](https://github.com/glarue/intronIC/raw/master/intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz) and [GFF3](https://github.com/glarue/intronIC/raw/master/intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz) sample files into a directory of your choice.
+
+* If you have cloned the repo, first change to the `/intronIC/intronIC/test_data` subdirectory, which contains Ensembl annotations and sequence for chromosome 19 of the human genome. Replace `intronIC` with `../intronIC.py` in the following examples.
 
 ### Classify annotated introns
 
-* `../intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens`
+* `intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens`
 
 ### Extract all annotated intron sequences
 
 If you just want to retrieve all annotated intron sequences, add the `-s` flag:
 
-* `../intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens -s`
+* `intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens -s`
 
 See the rest of the [wiki](https://github.com/glarue/intronIC/wiki) for more details about [output files](https://github.com/glarue/intronIC/wiki/Output-files), etc.
 
