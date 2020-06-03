@@ -3944,8 +3944,8 @@ def get_args(argv, arg_parser):
     5' matrix begins with three exonic positions upstream of the beginning of 
     the intron, for example, then the header for that matrix would include
     'start=-3'. If this keyword is omitted, the matrix is assumed to start at 
-    position 0, the first base of the intron. Because the branch point motif 
-    occurs at variable locations, branch point matrices do not use this 
+    position 0, the first base of corresponding scoring region. Because the branch 
+    point motif occurs at variable locations, branch point matrices do not use this 
     convention (e.g. all BPS matrices start at 0).
 
     The line after the header must be the whitespace-separated order of the bases 
@@ -4009,27 +4009,21 @@ def get_args(argv, arg_parser):
         sys.exit(format_info_message)
 
     if not (args.genome and (args.annotation or args.bed)) or args.sequence_file:
-        parser.error(
+        arg_parser.error(
             '{}: error: must be run with either a genome and annotation/BED, '
             'or intron sequences file'.format(os.path.basename(sys.argv[0]))
         )
     if args.sequence_file and (args.genome or args.annotation or args.bed):
-        parser.error(
+        arg_parser.error(
             'Must specify either direct sequence input (via -q) or a '
             'genome/annotation combination'
         )
-    if args.bed:
-        if not args.genome:
-            parser.error(
-                'Must provide a genome file (via -g) when using a BED file for '
-                'sequence input'
-            )
-        elif args.exons_as_flanks:
-            parser.error(
-                'Cannot use --exons_as_flanks in combination with BED input'
-            )
+    if args.bed and args.exons_as_flanks:
+        arg_parser.error(
+            'Cannot use --exons_as_flanks in combination with BED input'
+        )
     if args.bed and args.annotation:
-        parser.error(
+        arg_parser.error(
             'Use either -a or -b, but not both'
         )
     
