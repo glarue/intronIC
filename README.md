@@ -4,14 +4,22 @@
 
 `intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves.
 
-First, clone the repo to your local machine:
+If you have (or can get `pip`) the easiest way to install `intronIC` is
+
+```console
+$ python -m pip install intronIC
+```
+
+If successful, `intronIC` should now be callable from the command-line.
+
+Otherwise, you can simply clone this repository to your local machine using `git`
 
 ```console
 $ git clone https://github.com/glarue/intronIC.git
-$ cd intronIC
+$ cd intronIC/intronIC
 ```
 
-You may also wish to add `intronIC` to your system path (how you do this is platform-dependent).
+If you clone the repo, you may also wish to add `intronIC/intronIC` to your system PATH (how best to do this depends on your platform).
 
 See the [wiki](https://github.com/glarue/intronIC/wiki) for more detail information about configuration/run options.
 
@@ -27,20 +35,20 @@ If you find this tool useful, please cite https://doi.org/10.1093/nar/gkaa464
 * [biogl](https://github.com/glarue/biogl)
 * [matplotlib](https://matplotlib.org/) (optional, required for plotting)
 
-To install dependencies using `pip`, do
+To install dependencies separately using `pip`, do
 
 `python3 -m pip install numpy scipy matplotlib scikit-learn biogl`
 
-`intronIC` was built and tested on Linux, but should run on Windows or Mac OSes without much trouble (I say that now...).
+`intronIC` was built and tested on Linux, but should run on Windows or Mac OSes without too much trouble (I say that now...).
 
 ## Useful arguments
 
-The required arguments for any classification run include a name (`-n`), along with:
+The required arguments for any classification run include a name (`-n`; see [note](#A-note-on-the--n-name-argument) below), along with:
 
 1. Genome (`-g`) and annotation/BED (`-a`, `-b`) files or,
 2. Intron sequences file (`-q`) (see [Training-data-and-PWMs](https://github.com/glarue/intronIC/wiki/Training-data-and-PWMs) for formatting information, which matches the reference sequence format)
 
-By default, `intronIC` **includes non-canonical introns**, and considers **only the longest isoform of each gene**. Helpful arguments may include:
+By default, `intronIC` **includes non-canonical introns**, and **considers only the longest isoform of each gene**. Helpful arguments may include:
 
 * `-p`  parallel processes, which can significantly reduce runtime
 
