@@ -1,0 +1,3 @@
+include README.md
+recursive-include intronIC/data/ *
+recursive-include intronIC/test_data/ *.gz
