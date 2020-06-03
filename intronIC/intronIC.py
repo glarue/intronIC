@@ -3974,12 +3974,10 @@ def get_args(argv, arg_parser):
 
     /// Description ///
 
-    The reference intron set is a collection of introns of inferred types, 15000
-    U2s and 1084 U12s, which have been found to be conserved between human, mouse
-    and chicken and, in the case of the U12s, also including additional human U12s
-    from Tyler Alioto's U12DB database. Each intron will be scored against the
-    same matrices used for the experimental dataset to determine an optimal
-    U2/U12 scoring threshold.
+    The reference intron set is a collection of introns with evidence supporting 
+    classification into one of the two types. Each intron will be scored against 
+    the same matrices used for the experimental dataset and fed into the classifier
+    as training data.
 
     /// Naming ///
 
