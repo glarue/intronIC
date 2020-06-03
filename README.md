@@ -4,19 +4,25 @@
 
 `intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves.
 
-If you have (or can get `pip`) the easiest way to install `intronIC` is
+If you have (or can get) `pip`, running it on this repo is the easiest way to install the most recent version of `intronIC`:
 
 ```console
-$ python -m pip install intronIC
+    python -m pip install git+https://github.com/glarue/intronIC
+```
+
+Alternatively, you can get the last stable version published to PyPI:
+
+```console
+    python -m pip install intronIC
 ```
 
 If successful, `intronIC` should now be callable from the command-line.
 
-Otherwise, you can simply clone this repository to your local machine using `git`
+Otherwise, you can simply clone this repository to your local machine using `git`:
 
 ```console
-$ git clone https://github.com/glarue/intronIC.git
-$ cd intronIC/intronIC
+    git clone https://github.com/glarue/intronIC.git
+    cd intronIC/intronIC
 ```
 
 If you clone the repo, you may also wish to add `intronIC/intronIC` to your system PATH (how best to do this depends on your platform).
