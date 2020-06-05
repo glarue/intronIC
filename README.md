@@ -72,7 +72,7 @@ By default, `intronIC` **includes non-canonical introns**, and **considers only 
 
 ### Classify annotated introns
 
-```console
+```
 intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens
 ```
 
