@@ -84,7 +84,7 @@ The various output files contain different information about each intron; inform
 To retrieve all U12-type introns from this file, one can filter based on the relative score (2nd column; U12-type introns have relative scores >0), e.g.
 
 ```console
-awk '$2!="."' homo_sapiens.meta.iic | `awk '$2>0'
+awk '$2!="."' homo_sapiens.meta.iic | awk '$2>0'
 ```
 
 ### Extract all annotated intron sequences
