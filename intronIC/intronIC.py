@@ -2985,7 +2985,7 @@ def add_scores(introns, intron_seq_file, spcs):
         for l in inf:
             bits = l.strip().split('\t')
             # bits[0] is intron name
-            name = bits[0].split(';')[0].lstrip('{}-'.format(spcs))
+            name = bits[0].split(';')[0]
             if name in score_dict:
                 score = str(round(score_dict[name], 4))
                 bits[1] = score
