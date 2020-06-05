@@ -72,13 +72,28 @@ By default, `intronIC` **includes non-canonical introns**, and **considers only 
 
 ### Classify annotated introns
 
-`intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens`
+```console
+intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens
+```
+
+The various output files contain different information about each intron; information can be cross-referenced by using the intron label (usually the first column of the file). U12-type introns are those (by default) with probability scores >90%, or equivalently (depending on the output file) relative scores >0. For example, here is an example U12-type AT-AC intron from the `meta.iic` file:
+
+`HomSap-gene:ENSG00000141837@transcript:ENST00000614285-intron_1(47);[c:-1]      10.0    AT-AC   GCC|ATATCCTTTT...TTTTCCTTAATT...AATAC|TCC       CACCTCCAACACCCTTCTTTTCTTTGAACAAGAT[TTTTCCTTAATT]CCCCAATAC       50719   transcript:ENST00000614285      gene:ENSG00000141837    1       47      3.9
+     2       u12     cds`
+
+To retrieve all U12-type introns from this file, one can filter based on the relative score (2nd column; U12-type introns have relative scores >0), e.g.
+
+```console
+awk '$2!="."' homo_sapiens.meta.iic | `awk '$2>0'
+```
 
 ### Extract all annotated intron sequences
 
-If you just want to retrieve all annotated intron sequences, add the `-s` flag:
+If you just want to retrieve all annotated intron sequences (without classification), add the `-s` flag:
 
-`intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens -s`
+```
+intronIC -g Homo_sapiens.Chr19.Ensembl_91.fa.gz -a Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens -s
+```
 
 See the rest of the [wiki](https://github.com/glarue/intronIC/wiki) for more details about [output files](https://github.com/glarue/intronIC/wiki/Output-files), etc.
 
