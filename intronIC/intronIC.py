@@ -5286,7 +5286,7 @@ def average_svm_score_info(probabilities, labels, distances, weights=None):
     else:
         u12_probs = np.array(probabilities)
         distances = np.array(distances)
-        if weights:
+        if weights is not None:
             # weight each average by the performance of its source classifier
             # u2_probs = u2_probs * weights
             u12_probs = u12_probs * weights
