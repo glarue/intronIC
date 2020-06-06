@@ -2,6 +2,8 @@
 
 # (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
+## Installation
+
 `intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves.
 
 If you have (or can get) `pip`, running it on this repo is the easiest way to install the most recent version of `intronIC`:
