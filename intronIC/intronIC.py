@@ -3455,8 +3455,8 @@ def apply_scores(
 
     # PERFORMANCE METRICS
     if log is True:
-        auc = np.mean(model_performance['pr_auc'])
-        f1 = np.mean(model_performance['f1'])
+        auc = round(np.mean(model_performance['pr_auc']), 6)
+        f1 = round(np.mean(model_performance['f1']), 6)
         all_reports = model_performance['classification_report']
         report = '\n'.join(model_performance['classification_report'])
 
@@ -3549,6 +3549,9 @@ def recursive_scoring(
     threshold = args['THRESHOLD']
     SCORING_REGIONS = args['SCORING_REGIONS']
     PSEUDOCOUNT = args['PSEUDOCOUNT']
+    U12_COUNT = args['U12_COUNT']
+    N_PROC = args['N_PROC']
+    SCORING_REGION_LABELS = args['SCORING_REGION_LABELS']
     # use introns from first round to create new matrices
     # for second round
     write_log('Updating scoring matrices using empirical data')
@@ -3560,7 +3563,7 @@ def recursive_scoring(
         min_seqs=5)
 
     new_matrices = add_pseudos(new_matrices, pseudo=PSEUDOCOUNT)
-    if u12_count < 100:
+    if U12_COUNT < 100:
         mod_type = 'Averaging'
         matrices = average_matrices(matrices, new_matrices)
     # replace old matrices with new ones
@@ -3599,7 +3602,7 @@ def recursive_scoring(
     scored_introns = parallel_svm_score(
         scored_introns, 
         model, 
-        scoring_region_labels, 
+        SCORING_REGION_LABELS, 
         threshold, 
         processes=N_PROC
     )
@@ -3661,7 +3664,7 @@ def recursive_scoring(
         working_default_refs = parallel_svm_score(
             scored_default_refs, 
             model, 
-            scoring_region_labels, 
+            SCORING_REGION_LABELS, 
             threshold, 
             processes=N_PROC
         )
@@ -3702,7 +3705,8 @@ def add_custom_matrices(custom_matrix_files, default_matrices):
         category = tuple(k[:3])
         matches = [mk for mk in default_matrices.keys() if all(e in mk for e in category)]
         for m in matches:
-            del MATRICES[m]
+            del default_matrices[m]
+            # del MATRICES[m]
     default_matrices.update(tmp_custom_matrices)
     write_log('Custom matrices used: {}', ','.join(sorted(all_custom_keys)))
 
@@ -4793,7 +4797,7 @@ def main():
     for label in label_order:
         if label in ARGS['SCORING_REGIONS']:
             scoring_region_labels.append(score_label_table[label])
-
+    ARGS['SCORING_REGION_LABELS'] = scoring_region_labels
     raw_score_names = ['five_raw_score', 'bp_raw_score', 'three_raw_score']
     z_score_names = ['five_z_score', 'bp_z_score', 'three_z_score']
 
@@ -4803,12 +4807,12 @@ def main():
     ###!!! /FIRST ROUND OF SCORING
 
     if ARGS['RECURSIVE'] and u12_count > 5:
+        ARGS['U12_COUNT'] = u12_count
         r_refs, r_introns, r_matrices = recursive_scoring(
             finalized_introns, 
             ARGS['REFS'], 
             model, 
-            ARGS['MATRICES'], 
-            scoring_region_labels, 
+            ARGS,
             raw_score_names, 
             z_score_names)
         
@@ -4822,6 +4826,7 @@ def main():
             r_refs, 
             r_introns, 
             r_matrices,
+            scoring_region_labels,
             ARGS
         )
 
@@ -5626,11 +5631,11 @@ def scatter_plot(
         '{}.iic.{}'.format(title, outfmt), 
         format=outfmt, dpi=fig_dpi, bbox_inches='tight')
 
-    ###!!!
-    outfmt = 'pdf'
-    plt.savefig(
-        '{}.iic.{}'.format(title, outfmt), 
-        format=outfmt, dpi=fig_dpi, bbox_inches='tight')
+    # ###!!!
+    # outfmt = 'pdf'
+    # plt.savefig(
+    #     '{}.iic.{}'.format(title, outfmt), 
+    #     format=outfmt, dpi=fig_dpi, bbox_inches='tight')
     plt.close()
 
 
