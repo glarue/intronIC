@@ -3614,14 +3614,8 @@ def recursive_scoring(
     unambiguous = [
         copy.deepcopy(i) for i in scored_introns if 
         i.svm_score > ref_u12_threshold or i.svm_score < ref_u2_threshold]
-    unambiguous_seqs = get_attributes(
+    recursive_refs = get_attributes(
         unambiguous, ['five_seq', 'bp_region_seq', 'three_seq'])
-    recursive_refs = []
-    unique_ref_seqs = set()
-    for i, seqs in zip(unambiguous, unambiguous_seqs):
-        if seqs not in unique_ref_seqs:
-            unique_ref_seqs.add(seqs)
-            recursive_refs.append(i)
 
     scale_vector = get_score_vector(
         recursive_refs, score_names=raw_score_names)
@@ -3643,7 +3637,7 @@ def recursive_scoring(
     # adding the reference introns with scores derived from the
     # initial matrices ensures that changes to the matrices do
     MIN_REF_U2 = 5000
-    MIN_REF_U12 = 100
+    MIN_REF_U12 = 50
 
     ref_u2_delta = MIN_REF_U2 - len(recursive_ref_u2s)
     ref_u12_delta = MIN_REF_U12 - len(recursive_ref_u12s)
