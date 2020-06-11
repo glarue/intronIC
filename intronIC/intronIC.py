@@ -1725,10 +1725,11 @@ def intronator(exons):
 
 def overlap_log(objs):
     parent = objs[0].parent
+    feature = objs[0].feat_type
     coords = [(o.start, o.stop) for o in objs]
     write_log(
         '[!] WARNING: overlapping {} features found in {}: {} - skipping',
-        FEATURE, parent, coords)
+        feature, parent, coords)
 
 
 def overlap_check(a, b):
@@ -1916,6 +1917,7 @@ def bp_score(seq, matrix, use_bpx=False, BPX=None, matrix_tag='TTTGA'):
         # the end of the bp region and the window's current
         # end coordinate
         if BPX and use_bpx is True and 'TTGA' in matrix_tag:
+            # TODO: fix this global reference
             dist_from_3 = (len(seq) - stop) + abs(BP_REGION_COORDS[1])
             # perform multiplier if present in dictionary
             multiplier = BPX.get(dist_from_3)
@@ -2923,7 +2925,7 @@ def dupe_list_format(intron, spcs, simple_name, dupe_index):
     if intron_uid in dupe_index:
         list_bits = [intron.region, intron.strand, intron.start, intron.stop]
         dupe_strings = []
-        for dupe in dupe_intron_index[intron_uid]:
+        for dupe in dupe_index[intron_uid]:
             # dupe.svm_score = intron.svm_score
             dupe_name = '{}-{}'.format(spcs, dupe.get_label(simple_name))
             dupe_bits = list_bits + [dupe_name]
@@ -3105,6 +3107,7 @@ def add_u2_matrix(
     pseudocount = args['PSEUDOCOUNT']
     spcs = args['SPCS']
     simple_name = args['SIMPLE_NAME']
+    U2_BPS_MATRIX_FILE = args['U2_BPS_MATRIX_FILE']
 
     u2_bp_key = ('u2', 'gtag', 'bp')
     u12_five_key = ('u12', 'gtag', 'five')
@@ -3716,10 +3719,10 @@ def introns_from_seqs(
     # source_file = args.sequence_file
     all_introns = introns_from_flatfile(
         source_file,
-        FIVE_SCORE_COORDS,
-        THREE_SCORE_COORDS,
-        BP_REGION_COORDS,
-        ALLOW_NONCANONICAL,
+        five_coords,
+        three_coords,
+        bp_region_coords,
+        allow_noncanonical,
         hashgen=False,
         allow_overlap=False)
     all_introns = list(all_introns)
@@ -4100,8 +4103,8 @@ def get_custom_args(args, argv):
         SPCS = abbreviate(custom_args['SPECIES'])  # used within files
         SPECIES_NAME_INFO = '{} ({})'.format(custom_args['SPECIES_FULL'], SPCS)
     else:
-        SPCS = custom_args['SPECIES']
-        SPECIES_NAME_INFO = SPECIES_FULL
+        SPCS = args.species_name
+        SPECIES_NAME_INFO = args.species_name
     custom_args['SPCS'] = SPCS
     custom_args['SPECIES_NAME_INFO'] = SPECIES_NAME_INFO
     if not args.feature:  # to define introns
@@ -4219,7 +4222,7 @@ def add_pwm_args(args):
 
     MIN_INTRON_LENGTH = args['MIN_INTRON_LENGTH']
 
-    if MIN_INTRON_LENGTH < scoring_region_size and not ONLY_SEQS:
+    if MIN_INTRON_LENGTH < scoring_region_size and not args['ONLY_SEQS']:
         MIN_INTRON_LENGTH = scoring_region_size
         write_log(
             '[!] Minimum intron length set to {} due to size of scoring regions',
