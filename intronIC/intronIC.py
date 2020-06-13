@@ -1275,7 +1275,8 @@ def introns_from_flatfile(
             name = bits[0]
             # ignore any columns that might be old format-style with
             # scores/lengths in them
-            others = [b for b in bits[1:] if not b[0].isdigit()]
+            others = [
+                b for b in bits[1:] if not (b[0].isdigit() or b == '.')]
             try:
                 five, int_seq, three = others[:3]
             except:
@@ -3722,19 +3723,13 @@ def add_custom_matrices(custom_matrix_files, default_matrices):
 
 def introns_from_seqs(
     source_file, 
-    five_coords, 
-    three_coords, 
-    bp_region_coords, 
-    allow_noncanonical):
+    args
+):
     # source_file = args.sequence_file
     all_introns = introns_from_flatfile(
         source_file,
-        five_coords,
-        three_coords,
-        bp_region_coords,
-        allow_noncanonical,
-        hashgen=False,
-        allow_overlap=False)
+        args
+    )
     all_introns = list(all_introns)
     final_introns = [i for i in all_introns if not i.omitted]
     total_count = len(final_introns)
@@ -4019,7 +4014,9 @@ def get_args(argv, arg_parser):
     if args.format_info:
         sys.exit(format_info_message)
 
-    if not (args.genome and (args.annotation or args.bed)) or args.sequence_file:
+    if not (
+        (args.genome and (args.annotation or args.bed)) or args.sequence_file
+    ):
         arg_parser.error(
             '{}: error: must be run with either a genome and annotation/BED, '
             'or intron sequences file'.format(os.path.basename(sys.argv[0]))
@@ -4040,6 +4037,15 @@ def get_args(argv, arg_parser):
     
     return args
 
+
+def remove_previous_runfiles(args):
+    filenames = [args[k] for k in args.keys() if k.startswith('FN')]
+    for fn in filenames:
+        if os.path.isfile(fn):
+            os.remove(fn)
+    return
+
+    
 def get_custom_args(args, argv):
     custom_args = {}
     matrix_filename = "scoring_matrices.fasta.iic"
@@ -4252,10 +4258,7 @@ def introns_from_args(args, ext_args):
         source_file = ext_args.sequence_file
         introns, total_count = introns_from_seqs(
             source_file,
-            args['FIVE_SCORE_COORDS'],
-            args['THREE_SCORE_COORDS'],
-            args['BP_REGION_COORDS'],
-            args['ALLOW_NONCANONICAL']
+            args
         )
     elif ext_args.bed:
         source_file = ext_args.bed
@@ -4658,6 +4661,7 @@ def main():
     parser = make_parser()
     EXT_ARGS = get_args(sys.argv, parser)
     ARGS = get_custom_args(EXT_ARGS, sys.argv)
+    remove_previous_runfiles(ARGS)
     ARGS['START_TIME'] = START_TIME
     ARGS = add_pwm_args(ARGS)
 
