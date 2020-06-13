@@ -27,6 +27,7 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
+__version__ = '1.0.7'
 
 # imports
 import argparse
@@ -762,17 +763,26 @@ def make_parser():
         'In the same data directory, there must also be a pair of sequence '
         'files (see --format_info) with reference intron sequences named '
         '\'[u2, u12]_reference_set.introns.iic\'',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        '--version', 
+        action='version', 
+        version='%(prog)s v{}'.format(__version__)
+    )
     req_parse_grp = parser.add_argument_group(
-        title='required arguments (-g, [-a, -b] | -q)')
+        title='required arguments (-g, [-a, -b] | -q)'
+    )
     req_parse_grp.add_argument(
         '-g',
         '--genome',
-        help='Genome file in FASTA format (gzip compatible)')
+        help='Genome file in FASTA format (gzip compatible)'
+    )
     req_parse_grp.add_argument(
         '-a',
         '--annotation',
-        help='Annotation file in gff/gff3/gtf format (gzip compatible)')
+        help='Annotation file in gff/gff3/gtf format (gzip compatible)'
+    )
     req_parse_grp.add_argument(
         '-b',
         '--bed',
@@ -911,7 +921,7 @@ def make_parser():
     parser.add_argument(
         '--three_score_coords',
         '--3c',
-        default=(-10, 4),
+        default=(-13, 4),
         metavar=('start', 'stop'),
         nargs=2,
         type=int,
