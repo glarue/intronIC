@@ -27,7 +27,7 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
-__version__ = '1.0.7'
+__version__ = '1.0.8'
 
 # imports
 import argparse
@@ -4045,7 +4045,7 @@ def remove_previous_runfiles(args):
             os.remove(fn)
     return
 
-    
+
 def get_custom_args(args, argv):
     custom_args = {}
     matrix_filename = "scoring_matrices.fasta.iic"
