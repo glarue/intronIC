@@ -45,6 +45,23 @@ import warnings
 import types
 import pkg_resources
 
+
+# pull version from packaging, which integrates git commits,
+# unless being run without installation
+try:
+    _dist = pkg_resources.get_distribution('intronIC')
+    # Normalize case for Windows systems
+    dist_loc = os.path.normcase(_dist.location)
+    here = os.path.normcase(__file__)
+    if not here.startswith(os.path.join(dist_loc, 'intronIC')):
+        # not installed, but there is another version that *is*
+        raise pkg_resources.DistributionNotFound
+except pkg_resources.DistributionNotFound:
+    #__version__ = 'Please install this project with setup.py'
+    pass
+else:
+    __version__ = _dist.version
+
 # hacky way to ignore annoying sklearn warnings
 # (https://stackoverflow.com/a/33616192/3076552)
 def warn(*args, **kwargs):
