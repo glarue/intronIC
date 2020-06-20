@@ -1868,17 +1868,22 @@ def sliding_window(seq, n):
 
 def seq_score(seq, matrix, start_index=0):
     """
-    Score >seq< using values from >matrix<.
+    Score {seq} using values from {matrix}.
 
     Returns a float.
 
     """
     score = None
     for i, e in enumerate(seq, start=start_index):
+        try:
+            base_freq = matrix[e][i]
+        except KeyError:  # could be N
+            #TODO update this to use pseudocount
+            base_freq = 0.0001
         if score is None:
-            score = matrix[e][i]
+            score = base_freq
         else:
-            score *= matrix[e][i]
+            score *= base_freq
 
     return score
 
