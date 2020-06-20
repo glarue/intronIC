@@ -661,8 +661,14 @@ class Intron(GenomeFeature):
 
 
     def omit_check(
-        self, min_length, bp_matrix_length, allow_noncanon=False,
-        allow_overlap=False, longest_only=True):
+        self, 
+        min_length, 
+        bp_matrix_length, 
+        scoring_regions, 
+        allow_noncanon=False,
+        allow_overlap=False, 
+        longest_only=True
+    ):
         #TODO make .omitted be a list containing all tags
         # instead of just a single string
         """
@@ -677,7 +683,13 @@ class Intron(GenomeFeature):
             'coordinate overlap': 'v',
             'not in longest isoform': 'i'
         }
-        scoring_regions = ['five_seq', 'three_seq']
+        scoring_region_map = {
+            'five': 'five_seq',
+            'bp': 'bp_region_seq',
+            'three': 'three_seq'
+        }
+        scoring_regions = [scoring_region_map[r] for r in scoring_regions]
+        # scoring_regions = ['five_seq', 'three_seq']
         omission_reason = None
         if self.length < min_length:
             omission_reason = 'short'
@@ -1280,6 +1292,7 @@ def introns_from_flatfile(
     allow_overlap = args['ALLOW_OVERLAP']
     BP_COORDS = args['BP_REGION_COORDS']
     BP_MATRIX_LENGTH = args['BP_MATRIX_LENGTH']
+    SCORING_REGIONS = args['SCORING_REGIONS']
 
     ref_introns = []
     auto_name = 'auto_intron_'
@@ -1324,6 +1337,7 @@ def introns_from_flatfile(
             new_intron.omit_check(
                 MIN_INTRON_LENGTH,
                 BP_MATRIX_LENGTH,
+                SCORING_REGIONS,
                 allow_noncanon=allow_noncanon,
                 allow_overlap=allow_overlap
             )
@@ -4376,6 +4390,7 @@ def filter_introns_write_files(
     FN_SEQS = args['FN_SEQS']
     FN_OVERLAP_MAP = args['FN_OVERLAP_MAP']
     START_TIME = args['START_TIME']
+    SCORING_REGIONS = args['SCORING_REGIONS']
 
     # Iterate over generator with transient full sequences
     # Keep your wits about you here, given the number of flags at play
@@ -4393,6 +4408,7 @@ def filter_introns_write_files(
         intron.omit_check(
             MIN_INTRON_LENGTH, 
             BP_MATRIX_LENGTH,
+            SCORING_REGIONS,
             ALLOW_NONCANONICAL,
             ALLOW_OVERLAP, 
             LONGEST_ONLY
@@ -4421,7 +4437,9 @@ def filter_introns_write_files(
 
         # this step seems redundant but it's not!
         intron.omit_check(
-            MIN_INTRON_LENGTH, 
+            MIN_INTRON_LENGTH,
+            BP_MATRIX_LENGTH,
+            SCORING_REGIONS,
             ALLOW_NONCANONICAL,
             ALLOW_OVERLAP, 
             LONGEST_ONLY)
