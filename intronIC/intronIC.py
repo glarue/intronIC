@@ -685,10 +685,12 @@ class Intron(GenomeFeature):
         }
         scoring_region_map = {
             'five': 'five_seq',
-            'bp': 'bp_region_seq',
             'three': 'three_seq'
         }
-        scoring_regions = [scoring_region_map[r] for r in scoring_regions]
+        scoring_regions = [
+            scoring_region_map[r]
+            for r in scoring_regions if r in scoring_region_map
+        ]
         # scoring_regions = ['five_seq', 'three_seq']
         omission_reason = None
         if self.length < min_length:
@@ -699,7 +701,10 @@ class Intron(GenomeFeature):
         # check if there is sufficiently long sequence in the
         # bp region to score at least one bp motif
         elif longest_match(self.bp_region_seq) < bp_matrix_length:
+            if len(self.bp_region_seq) < bp_matrix_length:
                 omission_reason = 'short'
+            else:
+                omission_reason = 'ambiguous sequence'
         elif not allow_noncanon and self.noncanonical:
             omission_reason = 'noncanonical'
         elif longest_only and self.longest_isoform is False:
