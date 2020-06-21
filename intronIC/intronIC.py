@@ -4731,8 +4731,11 @@ def main():
     logging.getLogger('').addHandler(screenlogger)
 
     # /Logging setup ##########################################################
-
-    write_log('Starting run on {}', ARGS['SPECIES_NAME_INFO'])
+    write_log(
+        'Starting intronIC {} run on {}', 
+        'v{}'.format(__version__), 
+        ARGS['SPECIES_NAME_INFO']
+    )
 
     # Determine whether we can plot figures, assuming it is asked for
     if ARGS['WANT_PLOT'] and not ARGS['PLOT']:
