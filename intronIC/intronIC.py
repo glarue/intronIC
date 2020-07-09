@@ -27,7 +27,7 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
-__version__ = '1.0.10'
+__version__ = '1.0.11'
 
 # imports
 import argparse
@@ -995,7 +995,10 @@ def make_parser():
     )
     parser.add_argument(
         '--recursive',
-        action='store_true',
+        nargs='?',
+        default=False,
+        const=True,
+        type=parse_recursive_arg,
         help=(
             'Generate new scoring matrices and training data using '
             'confident U12s from the first scoring pass. This option may '
@@ -1003,8 +1006,11 @@ def make_parser():
             'species upon which the training data/matrices are based, though '
             'beware accidental training on false positives. Recommended only '
             'in cases where clear separation between types is seen with default '
-            'data.'
-        )
+            'data. Accepts optional integer value to specify a subsample size '
+            'for any identified U2-type introns (for increased speed; suggested) '
+            'value ~30000)'
+        ),
+        metavar='U2_subset_size'
     )
     parser.add_argument(
         '--n_subsample',
@@ -1066,6 +1072,16 @@ def make_parser():
     )
 
     return parser
+
+
+def parse_recursive_arg(arg):
+    try:
+        arg = int(arg)
+        return arg
+    except:
+        raise ValueError
+    # if arg.isdigit():
+        # return int(arg)
 
 
 def check_thresh_arg(t):
@@ -1204,7 +1220,7 @@ def load_external_matrix(matrix_file):
 
 def add_pseudos(matrix, pseudo=0.0001):
     """
-    Apply a pseudo-count of ^pseudo to every frequency in a
+    Apply a pseudo-count of {pseudo} to every frequency in a
     frequency matrix (to every number in each keys' values)
 
     """
@@ -1276,6 +1292,7 @@ def format_matrix(matrix, label="frequencies", precision=None):
     string_list.append(">{}\tstart={}\n{}".format(label, start_index, char_order))
     for i, freqs in sorted(freq_index.items()):
         string_list.append('\t'.join(freqs))
+
     return '\n'.join(string_list)
 
 
@@ -1747,6 +1764,12 @@ def intronator(exons):
             yield result
 
     exons = sorted_in_coding_direction(exons)
+
+    # we can directly infer intron phases using exon lengths if needed
+    #TODO: assign phase to any CDS entries before introns are made...?
+    # exon_lengths = [e.length for e in exons]
+    # child_cumsum = np.array(exon_lengths)[:-1].cumsum()
+    # intron_phases = child_cumsum % 3
 
     for index, pair in enumerate(_window(exons)):
         # edge case where exons might overlap in same transcript/gene;
@@ -3607,6 +3630,7 @@ def recursive_scoring(
     U12_COUNT = args['U12_COUNT']
     N_PROC = args['N_PROC']
     SCORING_REGION_LABELS = args['SCORING_REGION_LABELS']
+    MAX_REF_U2 = args['RECURSIVE']
     # use introns from first round to create new matrices
     # for second round
     write_log('Updating scoring matrices using empirical data')
@@ -3664,13 +3688,12 @@ def recursive_scoring(
 
     # filter reference introns to non-redundant set
     # before training SVM
-    ref_u12_threshold = 95
-    ref_u2_threshold = 5
-    unambiguous = [
+    ref_u12_threshold = 90
+    ref_u2_threshold = 10
+
+    recursive_refs = [
         copy.deepcopy(i) for i in scored_introns if 
         i.svm_score > ref_u12_threshold or i.svm_score < ref_u2_threshold]
-    recursive_refs = get_attributes(
-        unambiguous, ['five_seq', 'bp_region_seq', 'three_seq'])
 
     scale_vector = get_score_vector(
         recursive_refs, score_names=raw_score_names)
@@ -3684,6 +3707,17 @@ def recursive_scoring(
         i for i in scored_refs if i.svm_score > ref_u12_threshold]
     recursive_ref_u2s = [
         i for i in scored_refs if i.type_id == 'u2']
+
+    num_ref_u2 = len(recursive_ref_u2s)
+    # subsample U2 refs if a subsample size has been provided as an additional
+    # argument to --recursive
+    if type(MAX_REF_U2) is not bool and num_ref_u2 > MAX_REF_U2:
+            write_log(
+                'Randomly sampling U2-type training set ({}) to {}', 
+                num_ref_u2, 
+                MAX_REF_U2
+            )
+            recursive_ref_u2s = random.sample(recursive_ref_u2s, MAX_REF_U2)
 
     write_log(
         'Empirically-derived training data: {} U2, {} U12', 
