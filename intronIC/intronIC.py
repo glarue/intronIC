@@ -6,21 +6,23 @@
 # the above uses specific Python version; allows script name in top
 
 """
-usage: intronIC [-h] [-g GENOME] [-a ANNOTATION] [-b BED_FILE] -n SPECIES_NAME
-                [-q SEQUENCE_FILE] [-f {cds,exon}] [-s] [--no_nc] [-i] [-v]
-                [--pwms {PWM files)} [{PWM file(s} ...]]
-                [--reference_u12s {reference U12 intron sequences}]
-                [--reference_u2s {reference U2 intron sequences}] [--no_plot]
-                [--format_info] [-d] [-u] [--no_abbreviate] [-t 0-100]
-                [--no_sequence_output] [--five_score_coords start stop]
-                [--three_score_coords start stop]
-                [--branch_point_coords start stop]
-                [-r {five,bp,three} [{five,bp,three} ...]]
-                [--abbreviate_filenames] [--recursive]
-                [--n_subsample N_SUBSAMPLE] [--cv_processes CV_PROCESSES]
-                [-p PROCESSES] [--matrix_score_info] [-C HYPERPARAMETER_C]
-                [--min_intron_len MIN_INTRON_LEN] [--pseudocount PSEUDOCOUNT]
-                [--exons_as_flanks]
+usage: intronIC.py [-h] [--version] [-g GENOME] [-a ANNOTATION] [-b BED_FILE]
+                   -n SPECIES_NAME [-q SEQUENCE_FILE] [-f {cds,exon}] [-s]
+                   [--no_nc] [-i] [-v]
+                   [--pwms {PWM files)} [{PWM file(s} ...]]
+                   [--reference_u12s {reference U12 intron sequences}]
+                   [--reference_u2s {reference U2 intron sequences}]
+                   [--no_plot] [--format_info] [-d] [-u] [--no_abbreviate]
+                   [-t 0-100] [--no_sequence_output]
+                   [--five_score_coords start stop]
+                   [--three_score_coords start stop]
+                   [--branch_point_coords start stop]
+                   [-r {five,bp,three} [{five,bp,three} ...]]
+                   [--abbreviate_filenames] [--recursive [U2_subset_size]]
+                   [--n_subsample N_SUBSAMPLE] [--cv_processes CV_PROCESSES]
+                   [-p PROCESSES] [--matrix_score_info] [-C HYPERPARAMETER_C]
+                   [--min_intron_len MIN_INTRON_LEN]
+                   [--pseudocount PSEUDOCOUNT] [--exons_as_flanks]
 """
 
 __author__ = 'Graham E. Larue'
@@ -949,7 +951,7 @@ def make_parser():
         help=(
             'Coordinates describing the 5\' sequence to be scored, relative to '
             'the 5\' splice site (e.g. position 0 is the first base of the '
-            'intron); half-closed interval [start, stop)'
+            'intron); 0-indexed half-open interval [start, stop)'
         )
     )
     parser.add_argument(
@@ -962,7 +964,7 @@ def make_parser():
         help=(
             'Coordinates describing the 3\' sequence to be scored, relative to '
             'the 3\' splice site (e.g. position -1 is the last base of the '
-            'intron); half-closed interval (start, stop]'
+            'intron); 0-indexed half-open interval [start, stop)'
         )
     )
     parser.add_argument(
@@ -974,8 +976,9 @@ def make_parser():
         type=int,
         help=(
             'Coordinates describing the region to search for branch point '
-            'sequences, relative to the 3\' splice site (e.g. position -1 is the '
-            'last base of the intron); half-closed interval [start, stop).'
+            'sequences, relative to the 3\' splice site (e.g. position -1 is '
+            'the last base of the intron); 0-indexed half-open interval '
+            '[start, stop).'
         )
     )
     parser.add_argument(
