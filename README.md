@@ -20,6 +20,12 @@ python -m pip install intronIC
 
 If successful, `intronIC` should now be callable from the command-line.
 
+To upgrade to the latest version from a previous one, include `--upgrade` in either of the previous `pip` commands, e.g. 
+
+```console
+python -m pip install git+https://github.com/glarue/intronIC --upgrade
+```
+
 Otherwise, you can simply clone this repository to your local machine using `git`:
 
 ```console
