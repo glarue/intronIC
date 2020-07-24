@@ -2500,17 +2500,17 @@ def get_sub_seqs(
                 five_score_coords,
                 three_score_coords,
                 bp_coords)
-            if intron.noncanonical:
-                if u12_correction(intron):  # coords have changed
-                    intron = assign_seqs(
-                        intron,
-                        region_seq,
-                        int_flank_size,
-                        # five_flank,
-                        # five_score_length,
-                        five_score_coords,
-                        three_score_coords,
-                        bp_coords)
+            if intron.noncanonical and u12_correction(intron):
+                # coords have changed, so reassign info
+                intron = assign_seqs(
+                    intron,
+                    region_seq,
+                    int_flank_size,
+                    # five_flank,
+                    # five_score_length,
+                    five_score_coords,
+                    three_score_coords,
+                    bp_coords)
 
             yield intron
 
