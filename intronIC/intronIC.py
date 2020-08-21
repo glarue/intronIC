@@ -2156,7 +2156,8 @@ def u12_correction(intron):
     up_n = 5
     down_n = 12
     # strict_motif = re.compile(r'[AG]TATC[CT]{2}')
-    strict_motif = re.compile(r'[AG]TATC[CT]([ACTG]T|T[ACTG])')
+    strict_motif = re.compile(r'[AG]TATC[CT]([ACTG][CT]|[CT][ACTG])')
+    # strict_motif = re.compile(r'[AG]TATC[CT]{3}')
     lax_motif = re.compile(r'[AG]TATC[CT]')
     # relax constraints if we're correcting a non-canonical intron
     # if canonical_bounds(intron):
@@ -2820,8 +2821,7 @@ def assign_raw_score(
     scoring_regions, 
     five_score_coords, 
     three_score_coords, 
-    pseudocount, 
-    multiplier_d=None
+    pseudocount
 ):
     """
     Assigns raw scores to an Intron object based on the supplied matrices
@@ -2893,7 +2893,6 @@ def get_raw_scores(
     five_score_coords, 
     three_score_coords, 
     pseudocount, 
-    multiplier_d=None, 
     processes=1
 ):
     with Pool(processes=processes) as pool:
@@ -2904,8 +2903,7 @@ def get_raw_scores(
                 repeat(scoring_regions),
                 repeat(five_score_coords),
                 repeat(three_score_coords),
-                repeat(pseudocount),
-                repeat(multiplier_d)))
+                repeat(pseudocount)))
     return raw_introns
 
 
@@ -4140,7 +4138,6 @@ def get_custom_args(args, argv):
     # DATA_DIR = os.path.join(HOME, "data")
 
     custom_args['DATA_DIR'] = DATA_DIR
-    RUN_DIR = os.getcwd()
     custom_args['RUN_DIR'] = os.getcwd()
     MATRIX_FILE = os.path.join(DATA_DIR, matrix_filename)
     custom_args['MATRIX_FILE'] = MATRIX_FILE
