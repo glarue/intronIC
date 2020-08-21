@@ -121,7 +121,7 @@ If you are running multiple versions of the same species and would like to keep 
 
 For genomes with a large number of annotated introns, memory usage can be on the order of gigabytes. This should rarely be a problem even for most modern personal computers, however. For reference, the Ensembl 95 release of the human genome requires ~5 GB of memory.
 
-For many non-model genomes, intronIC should run fairly quickly (e.g. tens of minutes). For human and other very well annotated genomes, runtime may be longer (the human Ensembl 95 release takes ~20-35 minutes in testing); run time scales relatively linearly with the total number of annotated introns, and can be improved by using parallel processes via `-p`.
+For many non-model genomes, `intronIC` should run fairly quickly (e.g. tens of minutes). For human and other very well annotated genomes, runtime may be longer (the human Ensembl 95 release takes ~20-35 minutes in testing); run time scales relatively linearly with the total number of annotated introns, and can be improved by using parallel processes via `-p`.
 
 See the rest of the wiki for more detailed instructions.
 
@@ -135,4 +135,4 @@ In addition, other published identification methods employ a certain amount of h
 
 Furthermore, `intronIC` provides researchers the opportunity to tailor the underlying training data/position-weight matrices, should they have species-specific data to take advantage of.
 
-Finally, `intronIC` performs a fair amount of bookkeping during the intron collection process, resulting in (potentially) useful metadata about each intron including parent gene/transcript, ordinal index and phase, information which (as far as I'm aware) is otherwise non-trivial to acquire.
+Finally, `intronIC` performs a fair amount of bookkeping during the intron collection process, resulting in (potentially) useful metadata about each intron including parent gene/transcript, ordinal index and phase, information which (as far as I'm aware) is otherwise somewhat non-trivial to acquire.
