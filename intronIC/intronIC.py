@@ -1211,7 +1211,7 @@ def load_external_matrix(matrix_file):
         formatted_name = __name_parser(name.split()[0])
         matrices[formatted_name] = defaultdict(dict)
         # first row is bases in order
-        bases = [b for b in rows.pop(0).split() if b in 'AGCT']
+        bases = [b for b in rows.pop(0).upper().split() if b in 'AGCT']
         base_index = {}
         for i, r in enumerate(rows, start=start_index):
             freqs = [float(f) for f in r.split()]
