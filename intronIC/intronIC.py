@@ -4737,12 +4737,12 @@ def main():
     elif 'spawn' in fork_types:
         set_start_method('spawn')
     warnings.filterwarnings('ignore')
+
     parser = make_parser()
     EXT_ARGS = get_args(sys.argv, parser)
     ARGS = get_custom_args(EXT_ARGS, sys.argv)
     remove_previous_runfiles(ARGS)
     ARGS['START_TIME'] = START_TIME
-    ARGS = add_pwm_args(ARGS)
 
     # Logging setup ###########################################################
 
@@ -4765,11 +4765,16 @@ def main():
     logging.getLogger('').addHandler(screenlogger)
 
     # /Logging setup ##########################################################
+
     write_log(
         'Starting intronIC {} run on {}', 
         'v{}'.format(__version__), 
         ARGS['SPECIES_NAME_INFO']
     )
+
+    # this has to be done after logging is established because it may
+    # write to the logfile
+    ARGS = add_pwm_args(ARGS)
 
     # Determine whether we can plot figures, assuming it is asked for
     if ARGS['WANT_PLOT'] and not ARGS['PLOT']:
