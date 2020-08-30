@@ -2896,14 +2896,21 @@ def get_raw_scores(
     processes=1
 ):
     with Pool(processes=processes) as pool:
-        raw_introns = pool.starmap(
-            assign_raw_score, zip(
-                introns, 
-                repeat(matrices), 
-                repeat(scoring_regions),
-                repeat(five_score_coords),
-                repeat(three_score_coords),
-                repeat(pseudocount)))
+        try:
+            raw_introns = pool.starmap(
+                assign_raw_score, zip(
+                    introns, 
+                    repeat(matrices), 
+                    repeat(scoring_regions),
+                    repeat(five_score_coords),
+                    repeat(three_score_coords),
+                    repeat(pseudocount)))
+        except KeyboardInterrupt:
+            write_log('[!] Terminating pool due to user interrupt')
+            pool.terminate()
+        finally:
+            pool.close()
+            pool.join()
     return raw_introns
 
 
@@ -5558,16 +5565,23 @@ def parallel_svm_score(
     #     add_type=add_type)
     # classified_introns = pool.imap(
     #     score_func, introns)
-        classified_introns = pool.starmap(
-            assign_svm_score, zip(
-                introns,
-                repeat(models),
-                repeat(scoring_region_labels),
-                repeat(weights),
-                repeat(threshold),
-                repeat(add_type)
+        try:
+            classified_introns = pool.starmap(
+                assign_svm_score, zip(
+                    introns,
+                    repeat(models),
+                    repeat(scoring_region_labels),
+                    repeat(weights),
+                    repeat(threshold),
+                    repeat(add_type)
+                )
             )
-        )
+        except KeyboardInterrupt:
+            write_log('[!] Terminating pool due to user interrupt')
+            pool.terminate()
+        finally:
+            pool.close()
+            pool.join()
 
     return classified_introns
 
