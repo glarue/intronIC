@@ -20,7 +20,7 @@ usage: intronIC.py [-h] [--version] [-g GENOME] [-a ANNOTATION] [-b BED_FILE]
                    [-r {five,bp,three} [{five,bp,three} ...]]
                    [--abbreviate_filenames] [--recursive [U2_subset_size]]
                    [--n_subsample N_SUBSAMPLE] [--cv_processes CV_PROCESSES]
-                   [-p PROCESSES] [--matrix_score_info] [-C HYPERPARAMETER_C]
+                   [-p PROCESSES] [--pwm_score_info] [-C HYPERPARAMETER_C]
                    [--min_intron_len MIN_INTRON_LEN]
                    [--pseudocount PSEUDOCOUNT] [--exons_as_flanks]
 """
@@ -1048,7 +1048,7 @@ def make_parser():
         )
     )
     parser.add_argument(
-        '--matrix_score_info',
+        '--pwm_score_info',
         action='store_true',
         help='Produce additional per-matrix raw score information for each intron'
     )
@@ -4235,7 +4235,7 @@ def get_custom_args(args, argv):
     custom_args['CUSTOM_MATRICES'] = args.pwms
     custom_args['SIMPLE_NAME'] = args.uninformative_naming
     custom_args['SCORING_REGIONS'] = args.scoring_regions
-    custom_args['MATRIX_SCORE_INFO'] = args.matrix_score_info
+    custom_args['PWM_SCORE_INFO'] = args.pwm_score_info
     if args.hyperparameter_C:
         HYPER_C = float(args.hyperparameter_C)
     else:
@@ -5018,7 +5018,7 @@ def main():
         plot_figures(finalized_introns, ARGS, logging)
 
     # per-matrix raw scoring information for debugging
-    if ARGS['MATRIX_SCORE_INFO']:
+    if ARGS['PWM_SCORE_INFO']:
         write_pwm_info(finalized_introns, ARGS)
 
     run_time = get_runtime(START_TIME)
