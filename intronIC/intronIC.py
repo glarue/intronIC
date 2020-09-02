@@ -725,7 +725,11 @@ class Intron(GenomeFeature):
             self.upstream_flank[-exonic:], self.five_display_seq)
         three_boundary = '{}|{}'.format(
             self.three_display_seq, self.downstream_flank[:exonic])
-        schematic_bits = [five_boundary, self.bp_seq, three_boundary]
+        try:
+            bps_display_seq = '/'.join([self.bp_seq, self.bp_seq_u2])
+        except:
+            bps_display_seq = None
+        schematic_bits = [five_boundary, bps_display_seq, three_boundary]
         schematic_bits = [b for b in schematic_bits if b is not None]
         schematic_string = '...'.join(schematic_bits)
         
@@ -2855,6 +2859,10 @@ def assign_raw_score(
     u12_bp_info = u12_matrix_info[best_u12_key]['bp']['info']
     bp_rel_coords, bpm, u12_bp_seq = u12_bp_info
 
+    # get info for the U2-type BPS matrix as well
+    *_, u2_bp_seq = u2_matrix_info[best_u2_key]['bp']['info']
+    intron.bp_seq_u2 = u2_bp_seq
+
     if bpm is not None:
         intron.dynamic_tag.add('bpm={}'.format(bpm))
 
@@ -2869,7 +2877,8 @@ def assign_raw_score(
             u2_region_matrix = u2_matrix_info[best_u2_key][region]
             ratio_score = log_ratio(
                 u12_region_matrix['score'],
-                u2_region_matrix['score'])
+                u2_region_matrix['score']
+            )
             setattr(intron, attr, ratio_score)
             intron.matrices.add(u12_region_matrix['name'])
             intron.matrices.add(u2_region_matrix['name'])
@@ -2911,6 +2920,7 @@ def get_raw_scores(
         finally:
             pool.close()
             pool.join()
+
     return raw_introns
 
 
@@ -3964,6 +3974,7 @@ def output_format(
             'five_raw_score',
             'five_z_score',
             'bp_seq',
+            'bp_seq_u2',
             'bp_raw_score',
             'bp_z_score',
             'three_seq',
