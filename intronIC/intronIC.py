@@ -4145,7 +4145,7 @@ def get_custom_args(args, argv):
     matrix_filename = "scoring_matrices.fasta.iic"
     reference_u12s_filename = "u12_reference.introns.iic"
     reference_u2s_filename = "u2_reference.introns.iic"
-    backup_u2_bps_filename = 'u2.conserved_empirical_bp_matrix.iic'
+    backup_u2_bps_filename = 'u2.conserved_empirical_bp_pwm.iic'
 
     # Get script directory and external file paths
     DATA_DIR = pkg_resources.resource_filename(__name__, 'data/')
