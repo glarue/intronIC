@@ -4532,7 +4532,9 @@ def filter_introns_write_files(
             overlap_index[intron.overlap].add(intron.get_name(SPCS, SIMPLE_NAME))
         if intron.corrected:
             stats_corrected_count += 1
-        # if intron is non-canonical (omitted or not), add to nc stats
+        # report NC stats for all unique introns that aren't omitted for
+        # sequence-based reasons (e.g. include unique omitted introns from 
+        # other isoforms)
         if intron.noncanonical and intron.omitted not in ('s', 'a'):
         # if intron.noncanonical and not intron.omitted:
             dnts = '-'.join(intron.dnts)
