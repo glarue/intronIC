@@ -41,7 +41,7 @@ See the [wiki](https://github.com/glarue/intronIC/wiki) for more detail informat
 
 If you find this tool useful, please cite:
 
-Devlin C Moyer, Graham E Larue, Courtney E Hershberger, Scott W Roy, Richard A Padgett, Comprehensive database and evolutionary dynamics of U12-type introns, *Nucleic Acids Research*, gkaa464, https://doi.org/10.1093/nar/gkaa464
+Devlin C Moyer, Graham E Larue, Courtney E Hershberger, Scott W Roy, Richard A Padgett, Comprehensive database and evolutionary dynamics of U12-type introns, Nucleic Acids Research, Volume 48, Issue 13, 27 July 2020, Pages 7066–7078, <https://doi.org/10.1093/nar/gkaa464>
 
 ## Dependencies
 
