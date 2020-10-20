@@ -1014,7 +1014,7 @@ def make_parser():
             'beware accidental training on false positives. Recommended only '
             'in cases where clear separation between types is seen with default '
             'data. Accepts optional integer value to specify a subsample size '
-            'for any identified U2-type introns (for increased speed; suggested) '
+            'for any identified U2-type introns (for increased speed; suggested '
             'value ~30000)'
         ),
         metavar='U2_subset_size'
@@ -1032,10 +1032,11 @@ def make_parser():
     )
     parser.add_argument(
         '--cv_processes',
-        # default=1,
         type=int,
         help=(
-            'Number of parallel processes to use during cross-validation')
+            'Number of parallel processes to use during cross-validation '
+            '(defaults to value specified for --processes)'
+        )
     )
     parser.add_argument(
         '-p',
@@ -1087,8 +1088,6 @@ def parse_recursive_arg(arg):
         return arg
     except:
         raise ValueError
-    # if arg.isdigit():
-        # return int(arg)
 
 
 def check_thresh_arg(t):
@@ -2313,7 +2312,7 @@ def correct_annotation(
                 l, new_coords, coord_tag, shift_tag, phase_shift)
             outfile.write(new_line + '\n')
     write_log(
-        '{} ({} unique, {} redundant) putatively misannotated U12 introns '
+        '{} ({} unique, {} redundant) putatively misannotated U12-type introns '
         'corrected in {}',
         corrected_count,
         corrected_count - corrected_dupes,
@@ -3922,10 +3921,10 @@ def introns_from_bedfile(genome, bed):
                 name = 'i_{}'.format(line_number)
             start += 1  # BED files are 0-indexed
             intron = Intron(
-                name=name, 
-                start=start, 
-                stop=stop, 
-                strand=strand, 
+                name=name,
+                start=start,
+                stop=stop,
+                strand=strand,
                 region=loc
             )
             intron_index[loc].append(intron)
@@ -4949,9 +4948,9 @@ def main():
         )
 
     write_log(
-        '{} putative AT-AC U12 introns found.', atac_count)
+        '{} putative AT-AC U12-type introns found.', atac_count)
     write_log(
-        '{} putative U12 introns found with scores > {}%', 
+        '{} putative U12-type introns found with scores > {}%', 
         u12_count, 
         ARGS['THRESHOLD']
     )
