@@ -1993,6 +1993,7 @@ def bp_score(seq, matrix, use_bpx=False, BPX=None, matrix_tag='TTTGA'):
         # using BPX
         bpx_mod = None
         new_score = seq_score(sub_seq, matrix, start_index=start_index)
+        # print(sub_seq + '\t' + str(new_score))  ###!!!
         # calculate the distance of the end of the motif from
         # the 3' end of the full intron using the location of
         # the end of the bp region and the window's current
@@ -2734,6 +2735,7 @@ def best_matrix(score_info, scoring_regions, priority_tag=None):
         for r, r_score in regions.items():
             score = r_score['score']
             if r in scoring_regions:
+            # if r == 'five':
                 region_scores.append(score)
         summary_score = summarize(region_scores)
         category_scores.append((summary_score, matrix_category))
@@ -2903,6 +2905,7 @@ def get_raw_scores(
     pseudocount, 
     processes=1
 ):
+    raw_introns = []
     with Pool(processes=processes) as pool:
         try:
             raw_introns = pool.starmap(
@@ -3303,6 +3306,7 @@ def get_flipped(
         mutant_swaps = [
             mutate(intron, FIVE_SCORE_COORDS, THREE_SCORE_COORDS)
             for intron in copy.deepcopy(swap_introns)]
+
         raw_mutants = get_raw_scores(
             mutant_swaps, 
             MATRICES, 
@@ -3329,7 +3333,7 @@ def get_flipped(
         #     sorted(scored_mutants, key=lambda x: x.unique_num)):
         for old, new in zip(scored_swaps, scored_mutants):
             if old.svm_score > THRESHOLD and new.svm_score <= THRESHOLD:
-                name = old.get_name(SPCS, SIMPLE_NAME)
+                # name = old.get_name(SPCS, SIMPLE_NAME)
                 flipped[old.unique_num] = new
                 # flipped[name] = new
 
@@ -3360,6 +3364,8 @@ def demote(introns, flipped, spcs, simple_name, THRESHOLD):
             flip_dynamic_tag = flipped_i.dynamic_tag
             flip_type_id = flipped_i.type_id
             flip_matrices = flipped_i.matrices
+            flip_u12_matrix = flipped_i.u12_matrix
+            flip_u2_matrix = flipped_i.u2_matrix
             flip_info = [
                 i.get_name(spcs, simple_name), 
                 old_score, 
@@ -3385,7 +3391,9 @@ def demote(introns, flipped, spcs, simple_name, THRESHOLD):
                 'bp_z_score': flip_bp,
                 'three_z_score': flip_three,
                 'type_id': flip_type_id,
-                'matrices': flip_matrices
+                'matrices': flip_matrices,
+                'u12_matrix': flip_u12_matrix,
+                'u2_matrix': flip_u2_matrix
             }
             for da, v in demote_attrs.items():
                 setattr(i, da, v)
@@ -4594,10 +4602,6 @@ def filter_introns_write_files(
     if ONLY_SEQS:
         if not INCLUDE_DUPES:
             total_count = total_count - duplicate_count
-        # info_file.close()
-        # meta_file.close()
-        # seq_file.close()
-        # bed_file.close()
         write_log(
             '{} intron sequences written to {}',
             (total_count),
@@ -4696,9 +4700,11 @@ def write_pwm_info(finalized_introns, args):
         sorted(finalized_introns, key=attrgetter('svm_score')), start=1):
         u12_key = intron.u12_matrix  # e.g. ('u12', 'gtag')
         u2_key = intron.u2_matrix
-        if getattr(intron, 'demote_info', None) is not None:
-            u12_key = ('u12', 'gtag')
-            u2_key = ('u2', 'gtag')
+        # the below shouldn't be necessary since we add pwm info to
+        # demoted introns and they may not be gtag in certain cases
+        # if getattr(intron, 'demote_info', None) is not None:
+        #     u12_key = ('u12', 'gtag')
+        #     u2_key = ('u2', 'gtag')
         score_strings = []
         scoring_matrices = {
             u12_key: [],
