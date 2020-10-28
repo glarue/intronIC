@@ -891,6 +891,14 @@ def make_parser():
         nargs='+'
     )
     parser.add_argument(
+        '--generate_u2_bps_pwm',
+        action='store_true',
+        help=(
+            'Generate a custom U2-type BPS PWM on the fly using the best '
+            'matches to the U12-type BPS motif found across likely U2-type '
+            'introns instead of using the default human U2-type BPS PWM.')
+    )
+    parser.add_argument(
         '--reference_u12s',
         '--r12',
         metavar='{reference U12 intron sequences}',
@@ -3191,57 +3199,74 @@ def make_matrices(
     return matrices
 
 
-def add_u2_matrix(
-    introns, 
-    args,
-    min_u2_count=100
-):
+def make_u2_matrix(introns, args, bottom_percentile=95):
     matrices = args['MATRICES']
     five_score_coords = args['FIVE_SCORE_COORDS']
     three_score_coords = args['THREE_SCORE_COORDS']
     pseudocount = args['PSEUDOCOUNT']
     spcs = args['SPCS']
     simple_name = args['SIMPLE_NAME']
+    # get the Nth percentile of 5' scores to cull putative U12s
+    five_scores = []
+    for i in introns:
+        dnt_string = ''.join((e.lower() for e in i.dnts))
+        tag = ('u12', dnt_string)
+        score_info = multi_matrix_score(
+            i, 
+            matrices,
+            five_score_coords,
+            three_score_coords,
+            pseudocount,
+            regions=('five'),
+            matrix_tags=['u12'])
+
+        best_tag = best_matrix(score_info, ['five'])[1]
+        best_score = score_info[best_tag]['five']['score']
+        five_scores.append(best_score)
+
+    u2_threshold = np.percentile(five_scores, bottom_percentile)
+    u2_bp_introns = (
+        i for i, five in zip(introns, five_scores) 
+        if five < u2_threshold
+    )
+    u12_bp_matrices = {
+        k: v for k, v in matrices.items() if
+        all(x in k for x in ['u12', 'bp', 'gtag'])}
+    u2_bp_matrix, n_introns_used = build_u2_bp_matrix(
+        u2_bp_introns,
+        u12_bp_matrices,
+        spcs,
+        simple_name,
+        dnt_list=[('GT', 'AG'), ('GC', 'AG')]
+    )
+
+    return u2_bp_matrix, n_introns_used
+
+
+def add_u2_matrix(
+    introns, 
+    args,
+    build_from_data=False,
+    min_u2_count=100,
+    percentile=95
+):
+    matrices = args['MATRICES']
+    # five_score_coords = args['FIVE_SCORE_COORDS']
+    # three_score_coords = args['THREE_SCORE_COORDS']
+    pseudocount = args['PSEUDOCOUNT']
+    # spcs = args['SPCS']
+    # simple_name = args['SIMPLE_NAME']
     U2_BPS_MATRIX_FILE = args['U2_BPS_MATRIX_FILE']
 
     u2_bp_key = ('u2', 'gtag', 'bp')
-    u12_five_key = ('u12', 'gtag', 'five')
+    # u12_five_key = ('u12', 'gtag', 'five')
 
-    if u2_bp_key not in matrices:
-        # get the Nth percentile of 5' scores to cull putative U12s
-        five_scores = []
-        for i in introns:
-            dnt_string = ''.join((e.lower() for e in i.dnts))
-            tag = ('u12', dnt_string)
-            score_info = multi_matrix_score(
-                i, 
-                matrices,
-                five_score_coords,
-                three_score_coords,
-                pseudocount,
-                regions=('five'),
-                matrix_tags=['u12'])
-            # try:
-            best_tag = best_matrix(score_info, ['five'])[1]
-            best_score = score_info[best_tag]['five']['score']
-            five_scores.append(best_score)
-
-        u2_five_percentile = 95
-        u2_threshold = np.percentile(five_scores, u2_five_percentile)
-        u2_bp_introns = (
-            i for i, five in zip(introns, five_scores) 
-            if five < u2_threshold
-        )
-        u12_bp_matrices = {
-            k: v for k, v in matrices.items() if
-            all(x in k for x in ['u12', 'bp', 'gtag'])}
-        u2_bp_matrix, n_introns_used = build_u2_bp_matrix(
-            u2_bp_introns,
-            u12_bp_matrices,
-            spcs,
-            simple_name,
-            dnt_list=[('GT', 'AG'), ('GC', 'AG')]
-        )
+    if build_from_data is False:
+        u2_bp_matrix = load_external_matrix(U2_BPS_MATRIX_FILE)
+        u2_bp_matrix = u2_bp_matrix[u2_bp_key]
+        matrices[u2_bp_key] = add_pseudos(u2_bp_matrix, pseudo=pseudocount)
+    elif u2_bp_key not in matrices:
+        u2_bp_matrix, n_introns_used = make_u2_matrix(introns, args, percentile)
         # use conserved u2 bp matrix as fallback if insufficient
         # u2s in provided data
         if n_introns_used < min_u2_count:
@@ -3255,9 +3280,9 @@ def add_u2_matrix(
             write_log(
             '{} introns used to build U2 branch point matrix '
             '(5\'SS in bottom {}th percentile)',
-            n_introns_used, u2_five_percentile)
+            n_introns_used, percentile)
         matrices[u2_bp_key] = add_pseudos(u2_bp_matrix, pseudo=pseudocount)
-        matrices[('u2', 'gcag', 'bp')] = matrices[u2_bp_key]
+        # matrices[('u2', 'gcag', 'bp')] = matrices[u2_bp_key]
     if ('u2', 'gcag', 'bp') not in matrices:
         matrices[('u2', 'gcag', 'bp')] = matrices[u2_bp_key]
         
@@ -4209,6 +4234,7 @@ def get_custom_args(args, argv):
     custom_args['PSEUDOCOUNT'] = args.pseudocount # value to add to matrix values to avoid div 0 errors
     custom_args['EXONS_AS_FLANKS'] = args.exons_as_flanks
     custom_args['FIG_DPI'] = 300
+    custom_args['GENERATE_U2_PWM'] = args.generate_u2_bps_pwm
 
     custom_args['GENOME'] = args.genome
     custom_args['ANNOTATION'] = args.annotation
@@ -4889,7 +4915,8 @@ def main():
     ###!!! FIRST ROUND OF SCORING
     MATRICES = add_u2_matrix(
         final_introns,
-        ARGS
+        ARGS,
+        build_from_data=ARGS['GENERATE_U2_PWM']
     )
 
     # Get the maximum and minimum score possible for each matrix, to be used
