@@ -1908,20 +1908,27 @@ def sliding_window(seq, n):
         yield result
 
 
-def seq_score(seq, matrix, start_index=0):
+def seq_score(seq, matrix, start_index=0, ignore=None):
     """
     Score {seq} using values from {matrix}.
+
+    {ignore} can be an iterable of sequence indices to ignore (set equal to 1)
+    when computing the score, e.g. to ignore the 5'SS terminal dinucleotide, 
+    set ignore=(0, 1); for the 3'SS terminal dinucleotide, ignore=(-2, -1).
 
     Returns a float.
 
     """
     score = None
     for i, e in enumerate(seq, start=start_index):
-        try:
-            base_freq = matrix[e][i]
-        except KeyError:  # could be N
-            #TODO update this to use pseudocount
-            base_freq = 0.0001
+        if ignore is not None and i in ignore:
+            base_freq = 1.0
+        else:
+            try:
+                base_freq = matrix[e][i]
+            except KeyError:  # could be N
+                #TODO update this to use pseudocount
+                base_freq = 0.0001
         if score is None:
             score = base_freq
         else:
@@ -2085,14 +2092,17 @@ def max_min_matrix_values(matrix):
     return max_by_pos, min_by_pos
 
 
-def mark_seq_score(seq, matrix, start_index=0):
+def mark_seq_score(seq, matrix, start_index=0, ignore=None):
     max_values, min_values = max_min_matrix_values(matrix)
     relative_scores = []
     for i, c in enumerate(seq, start=start_index):
-        score = matrix[c][i]
+        if ignore is not None and i in ignore:
+            score = 1.0
+        else:
+            score = matrix[c][i]
         max_score = max_values.get(i)
         min_score = min_values.get(i)
-        if score == max_score:
+        if score >= max_score:
             rel_score = '*'
         elif score == min_score:
             rel_score = '/'
