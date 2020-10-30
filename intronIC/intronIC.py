@@ -3160,9 +3160,9 @@ def add_scores(introns, intron_seq_file, spcs):
 
 
 def summarize(scores):
-    # summary = pystats.gmean(scores)  # all scores are in [0-1]
-    summary = np.mean(scores)
-
+    summary = pystats.gmean(scores)  # all scores are in [0-1]
+    # summary = np.mean(scores)
+    
     # summary = np.sqrt(sum([s ** 2 for s in scores]))
 
     return summary
