@@ -1198,9 +1198,12 @@ def load_external_matrix(matrix_file):
         }
         name_bits = []
         for cat in [subtypes, boundaries, regions]:
-            bit = next(k for k, v in cat.items() if
-                       any(subv in matrix_name.lower() for subv in v))
-            name_bits.append(bit)
+            try:
+                bit = next(k for k, v in cat.items() if
+                        any(subv in matrix_name.lower() for subv in v))
+                name_bits.append(bit)
+            except StopIteration:
+                continue
 
         # add an optional version tag to the name if present
         matrix_version = re.findall('[^A-Za-z]v\.?([^_\s]+)', matrix_name)
@@ -1224,7 +1227,6 @@ def load_external_matrix(matrix_file):
         matrices[formatted_name] = defaultdict(dict)
         # first row is bases in order
         bases = [b for b in rows.pop(0).upper().split() if b in 'AGCT']
-        base_index = {}
         for i, r in enumerate(rows, start=start_index):
             freqs = [float(f) for f in r.split()]
             for base, freq in zip(bases, freqs):
