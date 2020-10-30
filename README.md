@@ -37,12 +37,6 @@ If you clone the repo, you may also wish to add `intronIC/intronIC` to your syst
 
 See the [wiki](https://github.com/glarue/intronIC/wiki) for more detail information about configuration/run options.
 
-## Cite
-
-If you find this tool useful, please cite:
-
-Devlin C Moyer, Graham E Larue, Courtney E Hershberger, Scott W Roy, Richard A Padgett, Comprehensive database and evolutionary dynamics of U12-type introns, Nucleic Acids Research, Volume 48, Issue 13, 27 July 2020, Pages 7066–7078, <https://doi.org/10.1093/nar/gkaa464>
-
 ## Dependencies
 
 * [Python >=3.3](https://www.python.org/downloads/)
@@ -124,6 +118,12 @@ For genomes with a large number of annotated introns, memory usage can be on the
 For many non-model genomes, `intronIC` should run fairly quickly (e.g. tens of minutes). For human and other very well annotated genomes, runtime may be longer (the human Ensembl 95 release takes ~20-35 minutes in testing); run time scales relatively linearly with the total number of annotated introns, and can be improved by using parallel processes via `-p`.
 
 See the rest of the wiki for more detailed instructions.
+
+## Cite
+
+If you find this tool useful, please cite:
+
+Devlin C Moyer, Graham E Larue, Courtney E Hershberger, Scott W Roy, Richard A Padgett, Comprehensive database and evolutionary dynamics of U12-type introns, Nucleic Acids Research, Volume 48, Issue 13, 27 July 2020, Pages 7066–7078, <https://doi.org/10.1093/nar/gkaa464>
 
 ## About
 
