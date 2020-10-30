@@ -979,7 +979,7 @@ def make_parser():
     parser.add_argument(
         '--three_score_coords',
         '--3c',
-        default=(-13, 4),
+        default=(-7, 4),
         metavar=('start', 'stop'),
         nargs=2,
         type=int,
@@ -3162,7 +3162,7 @@ def add_scores(introns, intron_seq_file, spcs):
 def summarize(scores):
     summary = pystats.gmean(scores)  # all scores are in [0-1]
     # summary = np.mean(scores)
-    
+
     # summary = np.sqrt(sum([s ** 2 for s in scores]))
 
     return summary

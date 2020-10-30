@@ -1,0 +1,28 @@
+[#] 2020.10.29-15.41.00 | Starting intronIC [v1.0.13] run on [test (TEst)]
+[#] 2020.10.29-15.41.00 | Run command: [/home/glarue/Documents/Coding/Python/Research/intronIC/intronIC/intronIC.py -q /home/glarue/Documents/Coding/Python/Research/intronIC/intronIC/test_data/troubleshoot/test.intron --scoring_regions five bp three -n test -C 10 -p 2]
+[#] 2020.10.29-15.41.01 | [1] introns found in [test.intron]
+[#] 2020.10.29-15.41.01 | [1] introns included in scoring analysis
+[#] 2020.10.29-15.41.01 | Scoring introns using the following regions: [five, bp, three]
+[#] 2020.10.29-15.41.18 | Raw scores calculated for [20690] U2 and [387] U12 reference introns
+[#] 2020.10.29-15.41.18 | Raw scores calculated for [1] experimental introns
+[#] 2020.10.29-15.41.18 | Training set score vectors constructed: [20690] U2, [387] U12
+[#] 2020.10.29-15.41.18 | Training SVM using reference data
+[#] 2020.10.29-15.41.18 | Set classifier value for 'C': [10.0]
+[#] 2020.10.29-15.41.18 | Training classifier with optimized hyperparameters
+[#] 2020.10.29-15.41.18 | Average classifier performance on training data:
+	F1	[1.0]
+	P-R AUC	[1.0]
+[#] 2020.10.29-15.41.18 | Classifier performance details:
+              precision    recall  f1-score   support
+
+          U2       1.00      1.00      1.00      4139
+         U12       1.00      1.00      1.00        77
+
+    accuracy                           1.00      4216
+   macro avg       1.00      1.00      1.00      4216
+weighted avg       1.00      1.00      1.00      4216
+
+[#] 2020.10.29-15.41.22 | [0] putative AT-AC U12-type introns found.
+[#] 2020.10.29-15.41.22 | [0] putative U12-type introns found with scores > [90]%
+[#] 2020.10.29-15.41.22 | Generating figures
+[#] 2020.10.29-15.41.24 | Run finished in [24.722 seconds]
