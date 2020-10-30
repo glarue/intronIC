@@ -846,6 +846,16 @@ def make_parser():
         'genome/annotation combination. Must follow the introns.iic '
         'format (see README for description)')
     parser.add_argument(
+        '-p',
+        '--processes',
+        default=1,
+        type=int,
+        help=(
+            'Number of parallel processes to use for scoring (and '
+            'cross-validation, unless --cv_processes is also set)'
+        )
+    )
+    parser.add_argument(
         '-f',
         '--feature',
         help='Specify feature to use to define introns. By default, '
@@ -1047,16 +1057,6 @@ def make_parser():
         )
     )
     parser.add_argument(
-        '-p',
-        '--processes',
-        default=1,
-        type=int,
-        help=(
-            'Number of parallel processes to use for scoring (and '
-            'cross-validation, unless --cv_processes is also set)'
-        )
-    )
-    parser.add_argument(
         '--pwm_score_info',
         action='store_true',
         help='Produce additional per-matrix raw score information for each intron'
@@ -1085,6 +1085,16 @@ def make_parser():
         '--exons_as_flanks',
         action='store_true',
         help='Use entire up/downstream exonic sequence as flank sequence in output'
+    )
+    parser.add_argument(
+        '--no_ignore_nc_dnts',
+        action='store_true',
+        help=(
+            'By default, intronIC will ignore the terminal dinucleotides '
+            'of non-canonical introns for scoring purposes. Use this option '
+            'to consider all motif characters when scoring non-canonicals.'
+        ),
+        default=False
     )
 
     return parser
@@ -2097,17 +2107,17 @@ def mark_seq_score(seq, matrix, start_index=0, ignore=None):
     relative_scores = []
     for i, c in enumerate(seq, start=start_index):
         if ignore is not None and i in ignore:
-            score = 1.0
+            rel_score = '-'
         else:
             score = matrix[c][i]
-        max_score = max_values.get(i)
-        min_score = min_values.get(i)
-        if score >= max_score:
-            rel_score = '*'
-        elif score == min_score:
-            rel_score = '/'
-        else:
-            rel_score = math.floor((score / max_values.get(i)) * 10)
+            max_score = max_values.get(i)
+            min_score = min_values.get(i)
+            if score >= max_score:
+                rel_score = '*'
+            elif score == min_score:
+                rel_score = '/'
+            else:
+                rel_score = math.floor((score / max_values.get(i)) * 10)
         relative_scores.append(str(rel_score))
 
     return relative_scores
@@ -2678,6 +2688,23 @@ def get_score_bounds(matrix):
     return min_score, max_score
 
 
+def closest_canonical_dnts(dnts):
+    '''
+    {dnts} is a tuple, e.g. ('AT', 'AG')
+    '''
+    dnts = '-'.join(dnts)
+    canonical = [
+        'GT-AG',
+        'GC-AG',
+        'AT-AC'
+    ]
+    diffs = [(sum(c1 != c2 for c1, c2 in zip(c, dnts)), c) for c in canonical]
+    min_diff = min([e[0] for e in diffs])
+    closest = [e[1] for e in diffs if e[0] == min_diff]
+
+    return closest
+
+
 def multi_matrix_score(
     intron,
     matrices,
@@ -2686,6 +2713,7 @@ def multi_matrix_score(
     PSEUDOCOUNT,
     regions=('five', 'bp', 'three'),
     matrix_tags=None,
+    ignore_nc_dnts=True,
     use_bpx=False):
     """
     Finds the highest-scoring matrix key and value for the
@@ -2700,10 +2728,27 @@ def multi_matrix_score(
         'bp': 'bp_region_seq',
         'three': 'three_seq'
     }
+    ignore_five = None
+    ignore_three = None
+    if ignore_nc_dnts is True and intron.noncanonical:
+        closest_dnts = closest_canonical_dnts(intron.dnts)
+        if len(closest_dnts) > 1:
+            ignore_five = (0, 1)
+            ignore_three = (-2, -1)
+        elif len(closest_dnts) == 1:
+            closest_dnts = ''.join(closest_dnts[0]).lower()
+            if any(closest_dnts in k for k in matrices.keys()):
+                if matrix_tags is not None:
+                    matrix_tags.append(closest_dnts)
+                else:
+                    matrix_tags = [closest_dnts]
     score_funcs = {
-        'five': partial(seq_score, start_index=FIVE_SCORE_COORDS[0]),
+        'five': partial(
+            seq_score, start_index=FIVE_SCORE_COORDS[0], ignore=ignore_five),
         'bp': partial(bp_score, use_bpx=use_bpx),
-        'three': partial(seq_score, start_index=THREE_SCORE_COORDS[0])}
+        'three': partial(
+            seq_score, start_index=THREE_SCORE_COORDS[0], ignore=ignore_three)
+    }
     score_info = defaultdict(lambda: defaultdict(dict))
     if matrix_tags is not None:
         matrices = {
@@ -2844,7 +2889,8 @@ def assign_raw_score(
     scoring_regions, 
     five_score_coords, 
     three_score_coords, 
-    pseudocount
+    pseudocount,
+    ignore_nc_dnts
 ):
     """
     Assigns raw scores to an Intron object based on the supplied matrices
@@ -2858,7 +2904,8 @@ def assign_raw_score(
         five_score_coords, 
         three_score_coords, 
         pseudocount, 
-        matrix_tags=['u2']
+        matrix_tags=['u2'],
+        ignore_nc_dnts=ignore_nc_dnts
     )
     u12_matrix_info = multi_matrix_score(
         intron, 
@@ -2867,7 +2914,8 @@ def assign_raw_score(
         three_score_coords, 
         pseudocount, 
         matrix_tags=['u12'],
-        use_bpx=True
+        use_bpx=True,
+        ignore_nc_dnts=ignore_nc_dnts
     )
     dnts = ''.join(intron.dnts).lower()
     u2_score, best_u2_key = best_matrix(
@@ -2921,7 +2969,8 @@ def get_raw_scores(
     five_score_coords, 
     three_score_coords, 
     pseudocount, 
-    processes=1
+    processes=1,
+    ignore_nc_dnts=True
 ):
     raw_introns = []
     with Pool(processes=processes) as pool:
@@ -2933,7 +2982,8 @@ def get_raw_scores(
                     repeat(scoring_regions),
                     repeat(five_score_coords),
                     repeat(three_score_coords),
-                    repeat(pseudocount)))
+                    repeat(pseudocount),
+                    repeat(ignore_nc_dnts)))
         except KeyboardInterrupt:
             write_log('[!] Terminating pool due to user interrupt')
             pool.terminate()
@@ -3110,9 +3160,9 @@ def add_scores(introns, intron_seq_file, spcs):
 
 
 def summarize(scores):
-    summary = pystats.gmean(scores)  # all scores are in [0-1]
-    # summary = np.cbrt(np.prod(scores))
-    # summary = np.mean(scores)
+    # summary = pystats.gmean(scores)  # all scores are in [0-1]
+    summary = np.mean(scores)
+
     # summary = np.sqrt(sum([s ** 2 for s in scores]))
 
     return summary
@@ -3315,6 +3365,7 @@ def get_flipped(
     PSEUDOCOUNT = args['PSEUDOCOUNT']
     THRESHOLD = args['THRESHOLD']
     SIMPLE_NAME = args['SIMPLE_NAME']
+    ignore_nc_dnts = args['IGNORE_NC_DNTS']
     flipped = {}
     swap_introns = copy.deepcopy(
         [
@@ -3335,7 +3386,8 @@ def get_flipped(
             FIVE_SCORE_COORDS, 
             THREE_SCORE_COORDS, 
             PSEUDOCOUNT, 
-            processes=N_PROC
+            processes=N_PROC,
+            ignore_nc_dnts=ignore_nc_dnts
         )
         scored_swaps = scale_scores(raw_swaps, scaler)
         mutant_swaps = [
@@ -3349,7 +3401,8 @@ def get_flipped(
             FIVE_SCORE_COORDS, 
             THREE_SCORE_COORDS, 
             PSEUDOCOUNT, 
-            processes=N_PROC
+            processes=N_PROC,
+            ignore_nc_dnts=ignore_nc_dnts
         )
         scored_mutants = scale_scores(raw_mutants, scaler)
 
@@ -3484,6 +3537,7 @@ def apply_scores(
     FIVE_SCORE_COORDS = args['FIVE_SCORE_COORDS']
     THREE_SCORE_COORDS = args['THREE_SCORE_COORDS']
     PSEUDOCOUNT = args['PSEUDOCOUNT']
+    IGNORE_NC_DNTS = args['IGNORE_NC_DNTS']
 
     # Get the raw log ratio scores of each scoring region in each intron
     # pool = Pool(processes=4)
@@ -3496,7 +3550,8 @@ def apply_scores(
         FIVE_SCORE_COORDS,
         THREE_SCORE_COORDS,
         PSEUDOCOUNT, 
-        processes=N_PROC)
+        processes=N_PROC,
+        ignore_nc_dnts=IGNORE_NC_DNTS)
     # raw_introns = get_raw_scores(exp_set, matrices, SCORING_REGIONS)
     # raw_introns = list(raw_introns)
 
@@ -3510,7 +3565,8 @@ def apply_scores(
         FIVE_SCORE_COORDS,
         THREE_SCORE_COORDS,
         PSEUDOCOUNT, 
-        processes=N_PROC)
+        processes=N_PROC,
+        ignore_nc_dnts=IGNORE_NC_DNTS)
     # raw_refs = get_raw_scores(ref_set, matrices, SCORING_REGIONS)
     # raw_refs = list(raw_refs)
 
@@ -3648,26 +3704,36 @@ def apply_scores(
         scored_introns, model, scoring_region_labels, THRESHOLD,
         weights=model_performance['f1'], processes=N_PROC)
 
-    flipped = get_flipped(
-        scored_introns, model, score_scaler, scoring_region_labels, args)
-    if log is True:
-        write_log(
-            '{} putative U12 scores were not robust to boundary switching',
-            len(flipped.keys()))
-
     finalized_introns = []
     u12_count = 0
     atac_count = 0
     demoted_swaps = []
 
-    for i in demote(scored_introns, flipped, SPCS, SIMPLE_NAME, THRESHOLD):
-        if '[d]' in i.dynamic_tag:
-            demoted_swaps.append(i.demote_info)
-        if i.svm_score > THRESHOLD:
-            u12_count += 1
-            if i.dnts == ('AT', 'AC'):
-                atac_count += 1
-        finalized_introns.append(i)
+    if IGNORE_NC_DNTS:
+        for i in scored_introns:
+            if i.svm_score > THRESHOLD:
+                u12_count += 1
+                if i.dnts == ('AT', 'AC'):
+                    atac_count += 1
+            finalized_introns.append(i)
+    # only perform demotion analysis if terminal dinucleotides are being
+    # scored
+    else:
+        flipped = get_flipped(
+            scored_introns, model, score_scaler, scoring_region_labels, args)
+        if log is True:
+            write_log(
+                '{} putative U12 scores were not robust to boundary switching',
+                len(flipped.keys()))
+
+        for i in demote(scored_introns, flipped, SPCS, SIMPLE_NAME, THRESHOLD):
+            if '[d]' in i.dynamic_tag:
+                demoted_swaps.append(i.demote_info)
+            if i.svm_score > THRESHOLD:
+                u12_count += 1
+                if i.dnts == ('AT', 'AC'):
+                    atac_count += 1
+            finalized_introns.append(i)
     
     return finalized_introns, model, u12_count, atac_count, demoted_swaps
 
@@ -3691,6 +3757,7 @@ def recursive_scoring(
     N_PROC = args['N_PROC']
     SCORING_REGION_LABELS = args['SCORING_REGION_LABELS']
     MAX_REF_U2 = args['RECURSIVE']
+    IGNORE_NC_DNTS = args['IGNORE_NC_DNTS']
     # use introns from first round to create new matrices
     # for second round
     write_log('Updating scoring matrices using empirical data')
@@ -3721,7 +3788,8 @@ def recursive_scoring(
         FIVE_SCORE_COORDS,
         THREE_SCORE_COORDS,
         PSEUDOCOUNT,
-        processes=N_PROC
+        processes=N_PROC,
+        ignore_nc_dnts=IGNORE_NC_DNTS
     )
     raw_refs = get_raw_scores(
         refs, 
@@ -3730,7 +3798,8 @@ def recursive_scoring(
         FIVE_SCORE_COORDS,
         THREE_SCORE_COORDS,
         PSEUDOCOUNT,
-        processes=N_PROC
+        processes=N_PROC,
+        ignore_nc_dnts=IGNORE_NC_DNTS
     )
     scale_vector = get_score_vector(
         raw_refs, score_names=raw_score_names)
@@ -3799,7 +3868,8 @@ def recursive_scoring(
             FIVE_SCORE_COORDS,
             THREE_SCORE_COORDS,
             PSEUDOCOUNT,
-            processes=N_PROC
+            processes=N_PROC,
+            ignore_nc_dnts=IGNORE_NC_DNTS
         )
         scored_default_refs = scale_scores(raw_default_refs, recursive_scaler)
         # working_default_refs = assign_svm_scores(
@@ -4245,6 +4315,7 @@ def get_custom_args(args, argv):
     custom_args['EXONS_AS_FLANKS'] = args.exons_as_flanks
     custom_args['FIG_DPI'] = 300
     custom_args['GENERATE_U2_PWM'] = args.generate_u2_bps_pwm
+    custom_args['IGNORE_NC_DNTS'] = not args.no_ignore_nc_dnts
 
     custom_args['GENOME'] = args.genome
     custom_args['ANNOTATION'] = args.annotation
@@ -4726,6 +4797,12 @@ def write_pwm_info(finalized_introns, args):
     scored_seqs = ['five_seq', 'bp_seq', 'three_seq']
     region_tags = ['five', 'bp', 'three']
     starts = [args['FIVE_SCORE_COORDS'][0], 0, args['THREE_SCORE_COORDS'][0]]
+    ignore_nc_dnts = args['IGNORE_NC_DNTS']
+    ignore_indices = {
+        'five': (0, 1),
+        'bp': None,
+        'three': (-2, -1)
+    }
     # map to demote_info attribute indices for different scored seqs
     demote_seq_map = {
         'five': -3,
@@ -4771,8 +4848,14 @@ def write_pwm_info(finalized_introns, args):
             scoring_matrices[u2_key].append('-'.join(u2_region_key))
             u12_m = MATRICES[u12_region_key]
             u2_m = MATRICES[u2_region_key]
-            u12_m_scores = ''.join(mark_seq_score(seq, u12_m, start))
-            u2_m_scores = ''.join(mark_seq_score(seq, u2_m, start))
+            if ignore_nc_dnts is True:
+                ignore_index = ignore_indices[tag]
+            else:
+                ignore_index = None
+            u12_m_scores = ''.join(mark_seq_score(
+                seq, u12_m, start, ignore=ignore_index))
+            u2_m_scores = ''.join(mark_seq_score(
+                seq, u2_m, start, ignore=ignore_index))
             output_string = (u12_m_scores, seq, u2_m_scores)
             score_strings.append(output_string)
         
@@ -5611,6 +5694,7 @@ def parallel_svm_score(
     add_type=True, 
     processes=1
 ):
+    classified_introns = []
     with Pool(processes=processes) as pool:
     # score_func = partial(
     #     assign_svm_score, 
@@ -5882,7 +5966,6 @@ def histogram(data_list, threshold, title=None, grid=True, bins='auto', log=True
         label='U12 threshold: {}'.format(threshold))
     plt.legend()
     plt.tight_layout()
-    # plt.savefig('{}.iic.png'.format(title.replace(' ', '_')), dpi=600)
     plt.savefig('{}.iic.png'.format(title), dpi=fig_dpi)
     plt.close()
 
