@@ -3769,7 +3769,7 @@ def recursive_scoring(
         threshold, 
         FIVE_SCORE_COORDS[0], 
         THREE_SCORE_COORDS[0],
-        min_seqs=5)
+        min_seqs=10)
 
     new_matrices = add_pseudos(new_matrices, pseudo=PSEUDOCOUNT)
     if U12_COUNT < 100:
