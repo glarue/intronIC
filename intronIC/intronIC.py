@@ -2021,7 +2021,6 @@ def bp_score(seq, matrix, use_bpx=False, BPX=None, matrix_tag='TTTGA'):
         # using BPX
         bpx_mod = None
         new_score = seq_score(sub_seq, matrix, start_index=start_index)
-        # print(sub_seq + '\t' + str(new_score))  ###!!!
         # calculate the distance of the end of the motif from
         # the 3' end of the full intron using the location of
         # the end of the bp region and the window's current
@@ -2636,7 +2635,6 @@ def build_u2_bp_matrix(introns, u12_matrices, spcs, simple_name, dnt_list=None):
                     continue
             bp_region_seq = intron.bp_region_seq
             
-            ###!!!
             best_score = 0
             best_seq = None
             for name, matrix in matrices.items():
@@ -2646,7 +2644,6 @@ def build_u2_bp_matrix(introns, u12_matrices, spcs, simple_name, dnt_list=None):
                     best_seq = seq
                     best_score = m_score
             seq = best_seq
-            ###!!!
 
             if not seq:
                 print('NO BP SEQ: ', intron.get_name(spcs, simple_name))
@@ -3635,7 +3632,6 @@ def apply_scores(
 
     svm_start = time.time()
 
-    ###!!!!! reinstate
     model = svm.SVC(probability=True, kernel='linear', cache_size=1000)
     # model = svm.SVC(probability=True, kernel='rbf', gamma='scale', cache_size=1000)
     model, model_performance = optimize_svm(
@@ -3977,7 +3973,7 @@ def introns_from_annotation(annotation, feature):
     # set a temporary feature list here to allow all possible
     # introns to be gathered initially, then pruned in
     # collect_introns() if needed
-    working_feature = ('cds', 'exon')   ###!!!
+    working_feature = ('cds', 'exon')
 
     # original functionality
     # working_feature = FEATURE
@@ -5815,12 +5811,6 @@ def density_hexplot(
     plt.savefig(
         "{}.iic.{}".format(title, outfmt), 
         format=outfmt, dpi=fig_dpi, bbox_inches='tight')
-    ###!!!
-    # outfmt = 'pdf'
-    # plt.savefig(
-    #     "{}.iic.{}".format(title, outfmt), 
-    #     format=outfmt, dpi=fig_dpi, bbox_inches='tight')
-    ###!!!
     plt.close()
 
 
@@ -5876,7 +5866,6 @@ def scatter_plot(
         legend_patches.append(patch)
     plt.scatter(
         *scores[:,:2].T, s=20, c=cluster_colors, alpha=0.5, rasterized=True)
-    # plt.axes().set_aspect('equal')   ###!!!!
     plt.legend(handles=legend_patches)
     plt.xlabel(xlab, fontsize=fsize)
     plt.ylabel(ylab, fontsize=fsize)
@@ -5885,12 +5874,6 @@ def scatter_plot(
     plt.savefig(
         '{}.iic.{}'.format(title, outfmt), 
         format=outfmt, dpi=fig_dpi, bbox_inches='tight')
-
-    # ###!!!
-    # outfmt = 'pdf'
-    # plt.savefig(
-    #     '{}.iic.{}'.format(title, outfmt), 
-    #     format=outfmt, dpi=fig_dpi, bbox_inches='tight')
     plt.close()
 
 
@@ -5947,10 +5930,6 @@ def ref_scatter(
         '{}.plot.training_scatter.iic.png'.format(species), 
         format='png', 
         dpi=fig_dpi)
-
-    ###!!!
-    # plt.savefig(
-        # '{}.plot.training_scatter.iic.pdf'.format(SPECIES), format='pdf', dpi=fig_dpi)
     plt.close()
 
 
