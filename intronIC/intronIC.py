@@ -980,7 +980,7 @@ def make_parser():
     parser.add_argument(
         '--three_score_coords',
         '--3c',
-        default=(-7, 4),
+        default=(-6, 4),
         metavar=('start', 'stop'),
         nargs=2,
         type=int,
