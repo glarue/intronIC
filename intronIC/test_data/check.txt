@@ -1,9 +1,0 @@
->HomSap-gene:ENSG00000249840@transcript:ENST00000512278-intron_3(3);[c:3];[e];[n]	76.90539599780419
-96*--*****03	/321***/*1*3	/*/6/*/689/--34/*	u12-gtag-five,u12-gtag-bp-A9,u12-gtag-three
-GTTGTATCCTCC	CAGGCCTGAGCC	GTGCCTGGCCGAGTCCT	
-520--*1//777	9777/58/6/97	2*145*//48/--///*	u2-gtag-five,u2-gtag-bp,u2-gtag-three
-
->HomSap-gene:ENSG00000249840@transcript:ENST00000512278-intron_3(3);[c:3];[e];[n]	99.71740805017481
-58/--*****01	5/21**0*5/**	26/*/*685//--/3/*	u12-atac-five,u12-atac-bp-A10,u12-atac-three
-GTTATATCCTCC	GCCACCGTGCCT	GTGCCTGGCCGTCTCCT	
-520--*1//777	/7/7/53*//9*	2*145*//48/--///*	u2-gtag-five,u2-gtag-bp,u2-gtag-three
