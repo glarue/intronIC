@@ -3763,7 +3763,6 @@ def recursive_scoring(
     IGNORE_NC_DNTS = args['IGNORE_NC_DNTS']
     # use introns from first round to create new matrices
     # for second round
-    write_log('Updating scoring matrices using empirical data')
     new_matrices = make_matrices(
         finalized_introns, 
         threshold, 
