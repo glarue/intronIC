@@ -5108,19 +5108,22 @@ def main():
         bed_file = open(ARGS['FN_BED'], 'a')
         for i in finalized_introns:
             bed_string = output_format(i, 'BED', SPCS, SIMPLE_NAME)
-            # bed_string = write_format(
-            #     i, 'region', 'strand', 'start', 'stop', 'get_label', fasta=False)
             bed_file.write(bed_string + '\n')
         bed_file.close()
 
-    # ranking_file = open(FN_RANKINGS, 'w')
     score_file = open(ARGS['FN_SCORE'], 'w')
     meta_file = open(ARGS['FN_META'], 'a')
 
     if ARGS['SEQUENCE_INPUT']:
         ref_format = True
     else:
-        ref_format=False
+        ref_format = False
+
+    # re-scale introns so z-scores are based on entire data, not just 
+    # training set (the latter is required for the scoring process, however)
+    final_score_vector = get_score_vector(finalized_introns, raw_score_names)
+    final_z_scaler = preprocessing.StandardScaler().fit(final_score_vector)
+    finalized_introns = scale_scores(finalized_introns, final_z_scaler)
 
     #TODO add headers to each output file with column names
     for index, intron in enumerate(sorted(
@@ -5137,7 +5140,6 @@ def main():
 
     score_file.close()
     meta_file.close()
-    # ranking_file.close()
 
     if not ARGS['NO_SEQS'] and not ARGS['SEQUENCE_INPUT']:
         write_log('Adding scores to intron sequences file')
