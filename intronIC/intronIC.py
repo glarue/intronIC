@@ -3778,7 +3778,7 @@ def recursive_scoring(
     else:
         mod_type = 'Replacing'
         matrices.update(new_matrices)
-    write_log('{} matrices with empirically-derived data'.format(mod_type))
+    write_log('{} PWMs with empirically-derived data'.format(mod_type))
 
     # re-run previously-trained SVM models on introns scored with new 
     # matrices to filter out any introns whose scored changed dramatically 
