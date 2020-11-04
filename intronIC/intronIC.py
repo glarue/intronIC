@@ -2190,7 +2190,7 @@ def u12_correction(intron):
     up_n = 5
     down_n = 12
     # strict_motif = re.compile(r'[AG]TATC[CT]{2}')
-    strict_motif = re.compile(r'[AG]TATC[CT]([ACTG][CT]|[CT][ACTG])')
+    strict_motif = re.compile(r'[AG]TATCC([ACTG]T|T[ACTG])')
     # strict_motif = re.compile(r'[AG]TATC[CT]{3}')
     lax_motif = re.compile(r'[AG]TATC[CT]')
     # relax constraints if we're correcting a non-canonical intron
