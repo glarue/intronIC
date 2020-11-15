@@ -437,16 +437,17 @@ class Parent(GenomeFeature):
 
 
 class Gene(Parent):
-    def __init__(self, parent=None, **kwargs):
+    def __init__(self, parent=None, grandparent=None, **kwargs):
         super().__init__(**kwargs)
         self.__class__.count += 1
         self.feat_type = "gene"
         self.parent = parent
         self.parent_type = None
+        self.grandparent = None
 
 
 class Transcript(Parent):
-    def __init__(self, parent=None, **kwargs):
+    def __init__(self, parent=None, grandparent=None, **kwargs):
         super().__init__(**kwargs)
         self.__class__.count += 1
         self.feat_type = "transcript"
@@ -455,6 +456,7 @@ class Transcript(Parent):
             self.parent = self.name
         else:
             self.parent = parent
+        self.grandparent = None
 
 
 class Exon(GenomeFeature):
@@ -1449,6 +1451,7 @@ def make_feat_instance(line_info, feat_type=None):
             "name": line_info.name,
             "feat_type": feat_type,
             "parent": p,
+            "grandparent": line_info.grandparent,
             "region": line_info.region,
             "strand": line_info.strand,
             "start": line_info.start,
@@ -1576,6 +1579,9 @@ def annotation_hierarchy(annotation_file, child_feats):
                     if check_coords not in unique_coords[parent]:
                         children[new_feat.compute_name()] = new_feat
                         unique_coords[parent].add(check_coords)
+                    if new_feat.grandparent and new_feat.grandparent not in parent_map:
+                        parent_map[new_feat.grandparent] = Gene(
+                            name=new_feat.grandparent, parent=[None])
 
     parent_dest = transcripts
     grandparent_dest = genes
@@ -1586,23 +1592,34 @@ def annotation_hierarchy(annotation_file, child_feats):
         if parent not in parent_dest:
             try:
                 parent_info = parent_map[parent]
+                if child.grandparent and parent_info.parent != child.grandparent:
+                    parent_info.parent = child.grandparent
                 parent_objs = make_feat_instance(parent_info, 'transcript')
                 for p in parent_objs:
                     parent_name = p.name
                     parent_dest[parent_name] = p
                     grandparent = p.parent
                     gp_info = parent_map[grandparent]
+                    # if child.grandparent:
+                        # gp_info.name = child.grandparent
                     gp_objs = make_feat_instance(gp_info, 'gene')
                     for gp in gp_objs:
                         gp_name = gp.name
                         grandparent_dest[gp_name] = gp
 
-            except KeyError:  # there was no parent line in gff
+            except KeyError:  
+                # there was no parent line in gff;
                 # without parent line, use transcript name for
                 # both gene and transcript
-                parent_obj = Transcript(name=parent)
-                gp_obj = Gene(name=parent)
-                grandparent = parent
+                if child.grandparent is not None:
+                    gp_name = child.grandparent
+                else:
+                    gp_name = parent
+                parent_obj = Transcript(name=parent, grandparent=gp_name)
+                gp_obj = Gene(name=gp_name)
+                # gp_obj = Gene(name=parent)
+                # grandparent = parent
+                grandparent = gp_name
                 # make parent and grandparent objs in respective
                 # containers
                 parent_dest[parent] = parent_obj
