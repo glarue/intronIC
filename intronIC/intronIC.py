@@ -88,6 +88,8 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.metrics import f1_score
 from sklearn import linear_model
 from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
+from networkx import DiGraph
+from networkx.algorithms.dag import lexicographical_topological_sort
 
 try:
     import matplotlib
@@ -1443,7 +1445,8 @@ def make_feat_instance(line_info, feat_type=None):
     }
     # default to Transcript class if it's not an obvious feature
     if feat_type not in containers:
-        feat_type = "transcript"
+        return []
+        # feat_type = "transcript"
     feats = []
     # Get standard feature info
     for p in line_info.parent:
@@ -1507,7 +1510,7 @@ def consolidate(*levels):
     for i, lvl in enumerate(levels):
         try:
             parents = consolidated[i + 1]
-        except IndexError:
+        except IndexError:  # return the topmost objects
             return consolidated[i]
         for name, obj in lvl.items():
             p = obj.parent
@@ -1516,6 +1519,22 @@ def consolidate(*levels):
                 obj.grandparent = parents[p].parent
 
     return consolidated
+
+
+def add_if_better(name, ft_class, ft_index):
+    existing = None
+    add = True
+    try:
+        existing = ft_index[name]
+        if existing.line_number is not None:
+            add = False
+    except KeyError:
+        add = True
+    if add is True:
+        p = ft_class(name=name)
+        ft_index[name] = p
+    
+    return ft_index
 
 
 # Build a hierarchy of objects to allow for object functions to operate
@@ -1535,23 +1554,25 @@ def annotation_hierarchy(annotation_file, child_feats):
     dictionary of all objects indexed by name.
 
     """
-    genes = {}
-    transcripts = {}
-    children = defaultdict(list)
-    destination = {"gene": genes, "transcript": transcripts}
-    destination.update({c: children for c in child_feats})
-    # to_collect = parent_types + list(child_feats)
-    parent_containers = {"gene": Gene, "transcript": Transcript}
-    parent_containers.update({c: Transcript for c in child_feats})
-    # Track parents that don't meet criteria to avoid adding their children
-    # to list of objects
-    # # Keep record of unique coordinates to allow setting of dupe flag
-    # # if dupe children are detected
+    feat_graph = DiGraph()
+    feat_index = {}
     unique_coords = defaultdict(set)
+    parent_class = {
+        'parent': { 
+            'exon': Transcript,
+            'cds': Transcript,
+            'transcript': Gene,
+            'gene': None
+        },
+        'grandparent': {
+            'exon': Gene,
+            'cds': Gene,
+            'transcript': None,
+            'gene': None
+        }
+    }
+    feat_type_index = {}
     with flex_open(annotation_file) as f:
-        # Track line numbers for tagging downstream objects with
-        # their source lines
-        parent_map = {}
         for ln, l in enumerate(f):
             try:
                 line_info = GxfParse(l, ln)
@@ -1559,88 +1580,199 @@ def annotation_hierarchy(annotation_file, child_feats):
                 continue
             # will return as many objects as there are parents
             all_feats = make_feat_instance(line_info)
-            for new_feat in all_feats:
-                parent = new_feat.parent
-                # check to ignore duplicate child entries
-                if new_feat.feat_type not in child_feats:  # can be None
-                    # if new_feat.feat_type.lower() in ('cds', 'exon'):  # why?
-                    #     continue
-                    parent_map[new_feat.name] = line_info
-                    # parent_map[new_feat.name] = new_feat  ###???
-                    if parent is not None and parent not in parent_map:
-                        parent_map[parent] = Gene(name=parent, parent=[None])
-                        # parent_map[parent] = line_info
-                    continue
-                elif parent:
-                    check_coords = (
-                        new_feat.feat_type,
-                        new_feat.start,
-                        new_feat.stop)
-                    if check_coords not in unique_coords[parent]:
-                        children[new_feat.compute_name()] = new_feat
-                        unique_coords[parent].add(check_coords)
-                    if new_feat.grandparent and new_feat.grandparent not in parent_map:
-                        parent_map[new_feat.grandparent] = Gene(
-                            name=new_feat.grandparent, parent=[None])
+            for ft in all_feats:
+                p_name = ft.parent
+                gp_name = ft.grandparent
+                ft_type = ft.feat_type
+                # label each child with a unique name, as
+                # there are cases where exon/CDS lines have non-unique
+                # ID fields
+                if ft_type in child_feats:
+                    name = ft.compute_name()
+                name = ft.name
+                feat_index[name] = ft
+                if p_name is not None:
+                    feat_graph.add_edge(p_name, name)
+                    feat_index = add_if_better(
+                        p_name, parent_class['parent'][ft_type], feat_index)
+                    if gp_name is not None:
+                        feat_graph.add_edge(gp_name, p_name)
+                        feat_index = add_if_better(
+                            gp_name, parent_class['grandparent'][ft_type], feat_index)
+                    if ft_type in child_feats:
+                        check_coords = (
+                            ft_type,
+                            ft.start,
+                            ft.stop
+                        )
+                        if check_coords not in unique_coords[p_name]:
+                            unique_coords[p_name].add(check_coords)
+                            feat_index[name] = ft
 
-    parent_dest = transcripts
-    grandparent_dest = genes
-    # now make parent objs
-    for name, child in children.items():
-        parent = child.parent
-        # grandparent = child.parent
-        if parent not in parent_dest:
+    top_level_names = set()
+    top_level = {}
+
+    # iterate over graph, ensuring parents come first
+    for n in lexicographical_topological_sort(feat_graph):
+        try:
+            ft = feat_index[n]
+        except KeyError:
+            continue
+        children = list(feat_graph.successors(n))
+        parents = list(feat_graph.predecessors(n))
+        if children and not parents:
+            top_level_names.add(n)
+        if not children:
+            continue
+        gp_name = ft.parent
+        for c_name in children:
             try:
-                parent_info = parent_map[parent]
-                if child.grandparent and parent_info.parent != child.grandparent:
-                    parent_info.parent = child.grandparent
-                parent_objs = make_feat_instance(parent_info, 'transcript')
-                for p in parent_objs:
-                    parent_name = p.name
-                    parent_dest[parent_name] = p
-                    grandparent = p.parent
-                    gp_info = parent_map[grandparent]
-                    # if child.grandparent:
-                        # gp_info.name = child.grandparent
-                    gp_objs = make_feat_instance(gp_info, 'gene')
-                    for gp in gp_objs:
-                        gp_name = gp.name
-                        grandparent_dest[gp_name] = gp
+                c = feat_index[c_name]
+                c.grandparent = gp_name
+                ft.children.append(c)
+            except KeyError:
+                continue
+    
+    top_level = [v for k, v in feat_index.items() if k in top_level_names]
+    # top_level = list(feat_index.values())
 
-            except KeyError:  
-                # there was no parent line in gff;
-                # without parent line, use transcript name for
-                # both gene and transcript
-                if child.grandparent is not None:
-                    gp_name = child.grandparent
-                else:
-                    gp_name = parent
-                parent_obj = Transcript(name=parent, grandparent=gp_name)
-                gp_obj = Gene(name=gp_name)
-                # gp_obj = Gene(name=parent)
-                # grandparent = parent
-                grandparent = gp_name
-                # make parent and grandparent objs in respective
-                # containers
-                parent_dest[parent] = parent_obj
-                grandparent_dest[grandparent] = gp_obj
-
-    # Now collapse everything down to topmost objects
-    collected = [e for e in [children, transcripts, genes] if e]
-    consolidated = consolidate(*collected)
-    if not consolidated:
+    if not top_level:
         write_log(
             '[!] ERROR: could not establish parent-child relationships '
             'among feature set. Check annotation file format. Exiting now.'
         )
         sys.exit()
-    top_level_objs = list(consolidated.values())
-    # generate sibling numbers
-    for obj in top_level_objs:
+    
+    for obj in top_level:
         obj.set_family_size()
         obj.coding_length = obj.get_coding_length()
 
-    return top_level_objs
+    return top_level
+
+
+# # Build a hierarchy of objects to allow for object functions to operate
+# # correctly (won't work if everything is flattened)
+# def annotation_hierarchy(annotation_file, child_feats):
+#     """
+#     Build an object heirarchy of gene/transcript/child_feats
+#     entries from an annotation file and chosen feature(s).
+#     Examines entire file in case features are not already
+#     grouped in hierarchical structure.
+
+#     child_feats may be multiple features, which will all be
+#     assigned as children of Transcript entries.
+
+
+#     Returns a list of aggregate objects, as well as a
+#     dictionary of all objects indexed by name.
+
+#     """
+#     genes = {}
+#     transcripts = {}
+#     children = defaultdict(list)
+#     destination = {"gene": genes, "transcript": transcripts}
+#     destination.update({c: children for c in child_feats})
+#     # to_collect = parent_types + list(child_feats)
+#     parent_containers = {"gene": Gene, "transcript": Transcript}
+#     parent_containers.update({c: Transcript for c in child_feats})
+#     # Track parents that don't meet criteria to avoid adding their children
+#     # to list of objects
+#     # # Keep record of unique coordinates to allow setting of dupe flag
+#     # # if dupe children are detected
+#     unique_coords = defaultdict(set)
+#     with flex_open(annotation_file) as f:
+#         # Track line numbers for tagging downstream objects with
+#         # their source lines
+#         parent_map = {}
+#         for ln, l in enumerate(f):
+#             try:
+#                 line_info = GxfParse(l, ln)
+#             except TypeError:  # not a proper annotation line
+#                 continue
+#             # will return as many objects as there are parents
+#             all_feats = make_feat_instance(line_info)
+#             for new_feat in all_feats:
+#                 parent = new_feat.parent
+#                 # check to ignore duplicate child entries
+#                 if new_feat.feat_type not in child_feats:  # can be None
+#                     # if new_feat.feat_type.lower() in ('cds', 'exon'):  # why?
+#                     #     continue
+#                     parent_map[new_feat.name] = line_info
+#                     # parent_map[new_feat.name] = new_feat  ###???
+#                     if parent is not None and parent not in parent_map:
+#                         parent_map[parent] = Gene(name=parent, parent=[None])
+#                         # parent_map[parent] = line_info
+#                     continue
+#                 elif parent:
+#                     check_coords = (
+#                         new_feat.feat_type,
+#                         new_feat.start,
+#                         new_feat.stop)
+#                     if check_coords not in unique_coords[parent]:
+#                         children[new_feat.compute_name()] = new_feat
+#                         unique_coords[parent].add(check_coords)
+#                     if new_feat.grandparent and new_feat.grandparent not in parent_map:
+#                         parent_map[new_feat.grandparent] = Gene(
+#                             name=new_feat.grandparent, parent=[None])
+
+#     parent_dest = transcripts
+#     grandparent_dest = genes
+#     # now make parent objs
+#     for name, child in children.items():
+#         parent = child.parent
+#         # grandparent = child.parent
+#         if parent not in parent_dest:
+#             try:
+#                 parent_info = parent_map[parent]
+#                 if child.grandparent and parent_info.parent != child.grandparent:
+#                     parent_info.parent = child.grandparent
+#                 parent_objs = make_feat_instance(parent_info, 'transcript')
+#                 for p in parent_objs:
+#                     parent_name = p.name
+#                     parent_dest[parent_name] = p
+#                     grandparent = p.parent
+#                     gp_info = parent_map[grandparent]
+#                     # if child.grandparent:
+#                         # gp_info.name = child.grandparent
+#                     gp_objs = make_feat_instance(gp_info, 'gene')
+#                     for gp in gp_objs:
+#                         gp_name = gp.name
+#                         grandparent_dest[gp_name] = gp
+
+#             except KeyError:  
+#                 # there was no parent line in gff;
+#                 # without parent line, use transcript name for
+#                 # both gene and transcript
+#                 if child.grandparent is not None:
+#                     gp_name = child.grandparent
+#                 else:
+#                     gp_name = parent
+#                 parent_obj = Transcript(name=parent, grandparent=gp_name)
+#                 gp_obj = Gene(name=gp_name)
+#                 # gp_obj = Gene(name=parent)
+#                 # grandparent = parent
+#                 grandparent = gp_name
+#                 # make parent and grandparent objs in respective
+#                 # containers
+#                 parent_dest[parent] = parent_obj
+#                 grandparent_dest[grandparent] = gp_obj
+
+#     # Now collapse everything down to topmost objects
+#     collected = [e for e in [children, transcripts, genes] if e]
+#     consolidated = consolidate(*collected)
+#     if not consolidated:
+#         write_log(
+#             '[!] ERROR: could not establish parent-child relationships '
+#             'among feature set. Check annotation file format. Exiting now.'
+#         )
+#         sys.exit()
+#     top_level_objs = list(consolidated.values())
+#     # generate sibling numbers
+#     for obj in top_level_objs:
+#         obj.set_family_size()
+#         obj.coding_length = obj.get_coding_length()
+
+#     return top_level_objs
 
 
 #TODO finish this function to allow creation of transcript/gene info file
@@ -2494,7 +2626,7 @@ def longest_match(seq, pattern=r'[ATCG]+'):
         return 0
 
 
-def heirarchical_sort_attrs(intron):
+def hierarchical_sort_attrs(intron):
     sort_features = [
         intron.defined_by,  # CDS before exon
         intron.parent_length * -1,
@@ -2536,7 +2668,7 @@ def get_sub_seqs(
         region_seq = region_seq.upper()
         for intron in sorted(
             introns_by_region[region_name],
-            key=heirarchical_sort_attrs):
+            key=hierarchical_sort_attrs):
             if exons_as_flanks is True:
                 # determine length of upstream and downstream
                 # defining features to use as flanking sequence
@@ -4006,7 +4138,7 @@ def introns_from_annotation(annotation, feature):
     # Add transcripts here to allow longest-isoform tagging
     feat_list = working_feature + ('transcript',)
     flat_annots = flatten(top_level_annots, feat_list=feat_list)
-
+    
     # Make intron object dictionary from the collected top-level objects,
     # including whatever duplicates might exist in the annotation
     all_introns, total_count = collect_introns(
