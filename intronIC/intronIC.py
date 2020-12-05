@@ -88,7 +88,7 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.metrics import f1_score
 from sklearn import linear_model
 from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
-from networkx import DiGraph
+from networkx import DiGraph, find_cycle
 from networkx.algorithms.dag import lexicographical_topological_sort
 
 try:
@@ -131,7 +131,8 @@ class GenomeFeature(object):
     __slots__ = [
         'line_number', 'region', 'start', 'stop', 'parent_type',
         'strand', 'name', 'parent', 'seq', 'flank', 'feat_type', 'phase',
-        'upstream_flank', 'downstream_flank', 'family_size', 'unique_num'
+        'upstream_flank', 'downstream_flank', 'family_size', 'unique_num',
+        'coding_length'
     ]
 
     def __init__(
@@ -140,7 +141,7 @@ class GenomeFeature(object):
             strand=None, name=None, parent=None,
             seq=None, flank=0, feat_type=None,
             upstream_flank=None, downstream_flank=None,
-            family_size=0, phase=None
+            family_size=0, phase=None, coding_length=None
     ):
         self.region = region
         self.start = start
@@ -158,6 +159,7 @@ class GenomeFeature(object):
         self.flank = flank
         self.upstream_flank = upstream_flank
         self.downstream_flank = downstream_flank
+        self.coding_length = coding_length
 
     @property
     def length(self):
@@ -172,9 +174,10 @@ class GenomeFeature(object):
                 return None
             else:
                 return len(self.seq)
+
         return abs(self.start - self.stop) + 1
 
-    def get_coding_length(self, child_type="cds"):
+    def get_coding_length(self, child_type="cds", recalculate=False):
         """
         Returns an integer value of the aggregate
         length of all children of type child_type.
@@ -183,6 +186,8 @@ class GenomeFeature(object):
         length of all children
 
         """
+        if self.coding_length is not None and recalculate is False:
+            return self.coding_length
         total = 0
         while True:
             # while children themselves have children, recurse
@@ -198,6 +203,7 @@ class GenomeFeature(object):
                     total += self.length
                 break
             break
+
         return total
 
     def set_family_size(self):
@@ -454,10 +460,7 @@ class Transcript(Parent):
         self.__class__.count += 1
         self.feat_type = "transcript"
         self.parent_type = "gene"
-        if not parent:
-            self.parent = self.name
-        else:
-            self.parent = parent
+        self.parent = parent
         self.grandparent = None
 
 
@@ -1445,8 +1448,8 @@ def make_feat_instance(line_info, feat_type=None):
     }
     # default to Transcript class if it's not an obvious feature
     if feat_type not in containers:
-        return []
-        # feat_type = "transcript"
+        # return []
+        feat_type = "transcript"
     feats = []
     # Get standard feature info
     for p in line_info.parent:
@@ -1537,6 +1540,10 @@ def add_if_better(name, ft_class, ft_index):
     return ft_index
 
 
+#TODO: neither of the graph-based approaches currently work correctly;
+# they both exclude craploads of introns for not being in the longest
+# isoform...
+
 # Build a hierarchy of objects to allow for object functions to operate
 # correctly (won't work if everything is flattened)
 def annotation_hierarchy(annotation_file, child_feats):
@@ -1555,6 +1562,7 @@ def annotation_hierarchy(annotation_file, child_feats):
 
     """
     feat_graph = DiGraph()
+    # feat_graph = Graph()
     feat_index = {}
     unique_coords = defaultdict(set)
     parent_class = {
@@ -1612,6 +1620,15 @@ def annotation_hierarchy(annotation_file, child_feats):
     top_level_names = set()
     top_level = {}
 
+    try:
+        cycles = find_cycle(feat_graph)
+        write_log(
+            '[!] Removed {} cycles in parent/child graph: {}',
+            len(cycles), cycles)
+        feat_graph.remove_edges_from(cycles)
+    except:
+        pass
+
     # iterate over graph, ensuring parents come first
     for n in lexicographical_topological_sort(feat_graph):
         try:
@@ -1622,17 +1639,15 @@ def annotation_hierarchy(annotation_file, child_feats):
         parents = list(feat_graph.predecessors(n))
         if children and not parents:
             top_level_names.add(n)
-        if not children:
             continue
-        gp_name = ft.parent
-        for c_name in children:
-            try:
-                c = feat_index[c_name]
-                c.grandparent = gp_name
-                ft.children.append(c)
-            except KeyError:
-                continue
-    
+        if ft.feat_type in child_feats and ft.grandparent is None:
+            gp_name = feat_index[ft.parent].parent
+            if gp_name is None:
+                gp_name = ft.parent
+            ft.grandparent = gp_name
+        for p in parents:
+            feat_index[p].children.append(ft)
+        
     top_level = [v for k, v in feat_index.items() if k in top_level_names]
     # top_level = list(feat_index.values())
 
@@ -1893,6 +1908,9 @@ def add_tags(
         intron.longest_isoform = True
     # elif intron.duplicate or longest_isoforms[gene] != parent:
     elif longest_isoforms[gene] != parent:
+        # TODO the issue is that grandparents aren't being correctly
+        # assigned to introns...
+        # print('gene: {}, parent: {}, longest: {}'.format(gene, parent, longest_isoforms[gene]))  ###!!!
         intron.longest_isoform = False
     else:
         intron.longest_isoform = True
@@ -4098,9 +4116,13 @@ def introns_from_seqs(
     return final_introns, total_count
 
 
-def introns_from_annotation(annotation, feature):
+def introns_from_annotation(annotation, feature, fallback=('cds', 'exon')):
     # source_file = ANNOTATION
-    feats_to_try = (feature, ('cds',), ('exon',))
+    feats_to_try = [feature]
+    for f in fallback:
+        if f not in feature:
+            feats_to_try.append((f,))
+    # feats_to_try = (feature, ('cds',), ('exon',))
     feature_found = False
     # Check to make sure annotation file has desired feature type
     for feat in feats_to_try:
