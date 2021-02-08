@@ -41,7 +41,7 @@ See the [wiki](https://github.com/glarue/intronIC/wiki) for more detail informat
 
 * [Python >=3.3](https://www.python.org/downloads/)
 * [numpy & scipy](https://www.scipy.org/scipylib/download.html)
-* [scikit-learn >=0.20.1](http://scikit-learn.org/stable/index.html)
+* [scikit-learn >=0.22](http://scikit-learn.org/stable/index.html)
 * [biogl](https://github.com/glarue/biogl)
 * [matplotlib](https://matplotlib.org/) (optional, required for plotting)
 
