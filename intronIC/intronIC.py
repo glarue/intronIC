@@ -30,7 +30,7 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
-__version__ = '1.1.1'
+__version__ = '1.2.0'
 
 # imports
 import argparse
@@ -5499,7 +5499,6 @@ def optimize_svm(
 
         cv_params = {
             'cv': 5,
-            # 'iid': False,
             'scoring': scorer,
             'n_jobs': cv_jobs,
             'param_grid': initial_parameters
