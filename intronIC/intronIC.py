@@ -5499,7 +5499,7 @@ def optimize_svm(
 
         cv_params = {
             'cv': 5,
-            'iid': False,
+            # 'iid': False,
             'scoring': scorer,
             'n_jobs': cv_jobs,
             'param_grid': initial_parameters
