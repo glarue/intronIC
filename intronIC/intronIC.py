@@ -1465,6 +1465,12 @@ def make_feat_instance(line_info, feat_type=None):
             "line_number": line_info.line_number,
             "phase": line_info.phase
         }
+        # remove grandparent info in cases where it's the same as the parent, 
+        # as this should avoid bad behavior when child features are incorrectly 
+        # tagged with parent ID in e.g. the gene_id field
+        if info["grandparent"] == info["parent"]:
+            info["grandparent"] = None
+
         if line_info.phase is None:
             info['phase'] = '.'
         # Put each type of data in the right container
@@ -1621,7 +1627,9 @@ def annotation_hierarchy(annotation_file, child_feats):
     top_level = {}
 
     try:
-        cycles = find_cycle(feat_graph)
+        # this won't necessarily find all cycles, but it will indicate 
+        # a problem and will fail further on if cycles are still present
+        cycles = list(find_cycle(feat_graph))
         write_log(
             '[!] Removed {} cycles in parent/child graph: {}',
             len(cycles), cycles)
