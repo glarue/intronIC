@@ -1146,7 +1146,7 @@ def abbreviate(species_name, n=3, separator=''):
 
     """
     species_name = species_name.lower()
-    bits = re.split(r"\W|_", species_name)
+    bits = re.split(r"\W+|_+", species_name)
     if len(bits) == 1:  # no special character in string
         bit = bits[0]
         bits = [bit[0], bit[1:]]
