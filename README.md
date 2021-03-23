@@ -4,18 +4,18 @@
 
 ## Installation
 
-`intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves.
+`intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves. Alternatively, `intronIC` can simply extract all intron sequences without classification (using `-s`).
 
-If you have (or can get) `pip`, running it on this repo is the easiest way to install the most recent version of `intronIC` (if you have multiple versions of Python installed, **be sure to use the appropriate Python 3 version** e.g. `python3` instead of `python` in the following commands):
+If you have (or can get) `pip`, running it on this repo is the easiest way to install the most recent version of `intronIC` (if you have multiple versions of Python installed, **be sure to use the appropriate Python 3 version** e.g. `python3` in the following commands):
 
 ```console
-python -m pip install git+https://github.com/glarue/intronIC
+python3 -m pip install git+https://github.com/glarue/intronIC
 ```
 
 Alternatively, you can get the last stable version published to PyPI:
 
 ```console
-python -m pip install intronIC
+python3 -m pip install intronIC
 ```
 
 If successful, `intronIC` should now be callable from the command-line.
@@ -23,7 +23,7 @@ If successful, `intronIC` should now be callable from the command-line.
 To upgrade to the latest version from a previous one, include `--upgrade` in either of the previous `pip` commands, e.g.
 
 ```console
-python -m pip install git+https://github.com/glarue/intronIC --upgrade
+python3 -m pip install git+https://github.com/glarue/intronIC --upgrade
 ```
 
 Otherwise, you can simply clone this repository to your local machine using `git`:
