@@ -2020,20 +2020,6 @@ def overlap_check(a, b):
        return False
 
 
-# def overlap_check(a, b):
-#     """
-#     >a< and >b< are sorted coordinate tuples;
-#     returns True if they overlap, False otherwise
-
-#     """
-#     lowest = min([a, b], key=lambda x: min(x))
-#     highest = max([a, b], key=lambda x: min(x))
-#     if min(highest) <= max(lowest):
-#         return True
-#     else:
-#         return False
-
-
 # TODO use desired feature type (if specified) to decide the
 # sort order of the object list
 def sorted_in_coding_direction(obj_list):
