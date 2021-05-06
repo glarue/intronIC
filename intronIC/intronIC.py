@@ -30,7 +30,7 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
-__version__ = '1.2.2'
+__version__ = '1.2.3'
 
 # imports
 import argparse
