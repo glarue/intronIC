@@ -160,6 +160,7 @@ class GenomeFeature(object):
         self.upstream_flank = upstream_flank
         self.downstream_flank = downstream_flank
         self.coding_length = coding_length
+        self.defined_by = None
 
     @property
     def length(self):
@@ -508,7 +509,6 @@ class Intron(GenomeFeature):
         self.bp_raw_score = None
         self.bp_z_score = None
         self.index = None  # in coding orientation
-        self.defined_by = None
         self.five_seq = None
         self.three_seq = None
         self.bp_seq = None
@@ -4827,7 +4827,6 @@ def filter_introns_write_files(
         # sequence-based reasons (e.g. include unique omitted introns from 
         # other isoforms)
         if intron.noncanonical and intron.omitted not in ('s', 'a'):
-        # if intron.noncanonical and not intron.omitted:
             dnts = '-'.join(intron.dnts)
             stats_nc_types[dnts] += 1
         if ONLY_SEQS: # no scoring info in intron label
