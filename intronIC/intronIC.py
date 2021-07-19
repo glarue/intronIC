@@ -1015,7 +1015,7 @@ def make_parser():
         '-r',
         '--scoring_regions',
         help='Intron sequence regions to include in intron score calculations.',
-        default=('five', 'bp'),
+        default=('five', 'bp', 'three'),
         choices=('five', 'bp', 'three'),
         nargs='+'
     )
