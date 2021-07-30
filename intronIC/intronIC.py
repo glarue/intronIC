@@ -1238,6 +1238,8 @@ def load_external_matrix(matrix_file):
         try:
             start_bit = next(e for e in name.split() if 'start=' in e)
             start_index = int(start_bit.split('=')[1])
+        except AttributeError:  # no PWM file on filesystem
+            return matrices
         except StopIteration:
             start_index = 0
         formatted_name = __name_parser(name.split()[0])
@@ -4550,7 +4552,15 @@ def get_custom_args(args, argv):
     return custom_args
 
 def add_pwm_args(args):
-    MATRICES = load_external_matrix(args['MATRIX_FILE'])
+    if not os.path.isfile(args['MATRIX_FILE']):
+        write_log(
+            (
+                'No default PWM file found; this will cause problems unless '
+                'a custom PWM file is supplied with all desired PWMs')
+        )
+        MATRICES = {}
+    else:
+        MATRICES = load_external_matrix(args['MATRIX_FILE'])
 
     if args['CUSTOM_MATRICES']:
         MATRICES = add_custom_matrices(args['CUSTOM_MATRICES'], MATRICES)
