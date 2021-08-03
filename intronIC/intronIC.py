@@ -2340,6 +2340,12 @@ def u12_correction(intron):
     >corrected< attribute. Otherwise, >intron< is returned unchanged.
 
     """
+    #TODO make u12 correction modify a *copy* of the intron object,
+    # so that the result can be checked for e.g. NC bounds or ambiguous
+    # sequence. It may be desirable to revert certain cases e.g. intron is 
+    # shifted but the resulting intron is omitted (b/c of ambiguous sequence, 
+    # short, etc) and thus, the corrected boundaries aren't propagated to 
+    # the annotation.iic file)
     def _shift_phase(phase, shift):
         phases = deque([0, 1, 2])
         try:
