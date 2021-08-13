@@ -2,9 +2,11 @@
 
 # (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
+`intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves. Alternatively, `intronIC` can be used to simply extract all intron sequences without classification (using `-s`).
+
 ## Installation
 
-`intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves. Alternatively, `intronIC` can simply extract all intron sequences without classification (using `-s`).
+### via `pip`
 
 If you have (or can get) `pip`, running it on this repo is the easiest way to install the most recent version of `intronIC` (if you have multiple versions of Python installed, **be sure to use the appropriate Python 3 version** e.g. `python3` in the following commands):
 
@@ -25,6 +27,8 @@ To upgrade to the latest version from a previous one, include `--upgrade` in eit
 ```console
 python3 -m pip install git+https://github.com/glarue/intronIC --upgrade
 ```
+
+### via `git clone`
 
 Otherwise, you can simply clone this repository to your local machine using `git`:
 
