@@ -3760,7 +3760,7 @@ def apply_scores(
     scored_introns = scale_scores(raw_introns, score_scaler)
     if log is True:
         write_log(
-            'Raw scores calculated for {} experimental introns',
+            'Raw scores calculated for {} annotated introns',
             len(scored_introns)
         )
     
