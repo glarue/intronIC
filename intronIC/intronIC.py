@@ -1967,6 +1967,12 @@ def intronator(exons):
             result = result[1:] + (elem,)
             yield result
 
+    def remote_duplicate_pairs(exons):
+        seen = set()
+        for e in exons:
+            c = (e.start, e.stop)
+            if c in seen:
+
     exons = sorted_in_coding_direction(exons)
 
     # we can directly infer intron phases using exon lengths if needed
@@ -2057,14 +2063,14 @@ def sorted_in_coding_direction(obj_list):
     if strand == "-":
         # Want to sort by "first" coord, which for reverse-
         # strand features is the stop
-        order_attr = "stop"
+        order_attr = ('stop', 'start')
         rev = True
     elif strand == False:
-        order_attr = 'line_number'
+        order_attr = ('line_number',) # tuple for unpacking below
     else:  # this defaults any non-(+,-) features to sort by start coord
-        order_attr = "start"
+        order_attr = ('start', 'stop')
 
-    return sorted(obj_list, key=attrgetter(order_attr), reverse=rev)
+    return sorted(obj_list, key=attrgetter(*order_attr), reverse=rev)
 
 
 def sliding_window(seq, n):
