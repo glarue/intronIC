@@ -1967,13 +1967,24 @@ def intronator(exons):
             result = result[1:] + (elem,)
             yield result
 
-    def remote_duplicate_pairs(exons):
-        seen = set()
-        for e in exons:
-            c = (e.start, e.stop)
-            if c in seen:
+    # def _remove_duplicate_coords(exons):
+    #     seen = set()
+    #     cleaned = []
+    #     for e in exons:
+    #         c = (e.start, e.stop)
+    #         if c not in seen:
+    #             seen.add(c)
+    #             cleaned.append(e)
+    #         else:
+    #             continue
+
+    #     return cleaned
 
     exons = sorted_in_coding_direction(exons)
+
+    # this shouldn't be necessary as _window() already includes the 
+    # second member of an overlapping pair in cases where the pair overlap
+    # exons = _remove_duplicate_coords(exons)
 
     # we can directly infer intron phases using exon lengths if needed
     #TODO: assign phase to any CDS entries before introns are made...?
