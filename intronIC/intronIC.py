@@ -2625,8 +2625,9 @@ def assign_seqs(
     intron.three_seq = scoring_seq[slice(*three_rel_coords)]
 
     # fixed five and three sequences for display purposes
+    five_display_length = 10
+    intron.five_display_seq = intron.seq[:five_display_length]
     intron.three_display_seq = intron.seq[bp_coords[1]:]
-    intron.five_display_seq = intron.seq[:10]
     intron.dnts = (intron.seq[:2], intron.seq[-2:])
     if not canonical_bounds(intron):
         intron.noncanonical = True
