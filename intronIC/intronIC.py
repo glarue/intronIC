@@ -2624,8 +2624,15 @@ def assign_seqs(
     intron.five_seq = scoring_seq[slice(*five_rel_coords)]
     intron.three_seq = scoring_seq[slice(*three_rel_coords)]
 
+    #TODO fix this misleading display for short (e.g. 1-2 nt) spurious introns
+
+    '''
+    Gcf000-rna-NC_008409.1:1058269..1059325@rna-NC_008409.1:1058269..1059325-intron_1(6);[e];[n]    .       A-A     ATA|A...A|GTA   .       1       rna-NC_008409.1:1058269..1059325        rna-NC_008409.1:1058269..1059325        1       6       12.571  .       .       exon
+    Gcf000-rna-NC_008409.1:1058269..1059325@rna-NC_008409.1:1058269..1059325-intron_2(6);[e];[n]    .       TA-TA   AGA|TA...TA|GGT .       2       rna-NC_008409.1:1058269..1059325        rna-NC_008409.1:1058269..1059325        2       6       25.143  .       .       exon
+    '''
     # fixed five and three sequences for display purposes
     five_display_length = 10
+    # three_display_coord = max(0, intron.length - five_display_length)
     intron.five_display_seq = intron.seq[:five_display_length]
     intron.three_display_seq = intron.seq[bp_coords[1]:]
     intron.dnts = (intron.seq[:2], intron.seq[-2:])
@@ -5119,6 +5126,10 @@ def main():
     # Determine whether we can plot figures, assuming it is asked for
     if ARGS['WANT_PLOT'] and not ARGS['PLOT']:
         write_log('Matplotlib not detected; plotting disabled')
+
+    # Generate hashes for input files
+    # TODO loop over all files (including PWMs?) and generate hashes
+    # for them, and print the results
 
     # Start processing files
     full_path_args = [
