@@ -60,7 +60,9 @@ To install dependencies separately using `pip`, do
 The required arguments for any classification run include a name (`-n`; see [note](#A-note-on-the--n-name-argument) below), along with either of the following:
 
 * Genome (`-g`) and annotation/BED (`-a`, `-b`) files
-- OR -
+
+   —OR—
+
 * Intron sequences file (`-q`) (see [Training-data-and-PWMs](https://github.com/glarue/intronIC/wiki/Training-data-and-PWMs) for formatting information, which matches the reference sequence format)
 
 By default, `intronIC` **includes non-canonical introns**, and **considers only the longest isoform of each gene**. Helpful arguments may include:
