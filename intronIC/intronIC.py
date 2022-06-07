@@ -379,8 +379,10 @@ class Parent(GenomeFeature):
         filtered_children = []
         intron_count = 1
         try:
-            children = [child for child in self.children if
-                                 child.feat_type in child_types]
+            children = [
+                child for child in self.children if
+                child.feat_type in child_types
+            ]
         except AttributeError:
             return introns
         if not children:
@@ -401,7 +403,8 @@ class Parent(GenomeFeature):
                 continue
             coding_lengths[ct] = self.get_coding_length(ct)
             for indx, intron in enumerate(
-                self._intronator(filtered_children), start=1):
+                self._intronator(filtered_children), start=1
+            ):
                 intron.defined_by = ct
                 intron.index = indx
                 tmp_introns.append(intron)
@@ -413,7 +416,8 @@ class Parent(GenomeFeature):
                 for i in tmp_introns:
                     coords = (i.start, i.stop)
                     if not coord_overlap(
-                        coords, existing_coords, presorted=True):
+                        coords, existing_coords, presorted=True
+                    ):
                         non_redundant.append(i)
         if not non_redundant:
             return non_redundant
@@ -438,8 +442,7 @@ class Parent(GenomeFeature):
         aggregate_length = sum(exon_lengths)
         frac_positions = ((exon_cumsum / aggregate_length) * 100).round(3)
         
-        for index, i in enumerate(
-            non_redundant, start=1):
+        for index, i in enumerate(non_redundant, start=1):
             i.index = index
             i.family_size = family_size
             i.parent_length = coding_length
