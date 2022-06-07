@@ -42,11 +42,29 @@ import re
 import random
 import sys
 import time
-import gzip
 import numpy as np
 import warnings
 import types
 import pkg_resources
+from multiprocessing.pool import Pool
+from multiprocessing import get_all_start_methods, set_start_method
+from scipy import stats as pystats
+from bisect import bisect_left, bisect_right
+from collections import Counter, defaultdict, deque
+from itertools import islice, repeat, chain
+from operator import attrgetter
+from functools import partial
+# from hashlib import sha1
+from sklearn.metrics import precision_recall_curve, auc, classification_report
+# from sklearn.cluster import SpectralClustering
+from sklearn import svm, preprocessing
+from sklearn.base import clone
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.metrics import f1_score
+# from sklearn import linear_model
+from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
+from networkx import DiGraph, find_cycle
+from networkx.algorithms.dag import lexicographical_topological_sort
 
 
 # pull version from packaging, which integrates git commits,
@@ -71,26 +89,6 @@ def warn(*args, **kwargs):
     pass
 warnings.warn = warn
 
-from multiprocessing.pool import Pool
-from multiprocessing import get_all_start_methods, set_start_method
-from scipy import stats as pystats
-from bisect import bisect_left, bisect_right
-from collections import Counter, defaultdict, deque, namedtuple
-from itertools import islice, repeat, chain
-from operator import attrgetter
-from functools import partial
-# from hashlib import sha1
-from sklearn.metrics import precision_recall_curve, auc, classification_report
-# from sklearn.cluster import SpectralClustering
-from sklearn import svm, preprocessing
-from sklearn.base import clone
-from sklearn.model_selection import GridSearchCV, train_test_split
-from sklearn.metrics import f1_score
-from sklearn import linear_model
-from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
-from networkx import DiGraph, find_cycle
-from networkx.algorithms.dag import lexicographical_topological_sort
-
 try:
     import matplotlib
     matplotlib.use('Agg') # allow to run without X display server
@@ -112,6 +110,7 @@ except ModuleNotFoundError:
 # os.environ['JOBLIB_START_METHOD'] = 'forkserver'
 
 # Classes ####################################################################
+
 
 class GenomeFeature(object):
     """
@@ -242,10 +241,13 @@ class GenomeFeature(object):
         except AttributeError:
             # every feature type should have this
             unique_num = "u{}".format(self.unique_num)
-        coord_id = ("{}:{}_{}:{}".format(parent_type,
-                                    parent,
-                                    self.feat_type,
-                                    unique_num))
+        coord_id = ("{}:{}_{}:{}".format(
+            parent_type,
+            parent,
+            self.feat_type,
+            unique_num
+            )
+        )
         if set_attribute:
             setattr(self, "name", coord_id)
         return coord_id
@@ -262,7 +264,6 @@ class GenomeFeature(object):
         for key, value in attrs_to_use.items():
             if hasattr(self, key):  # don't make new attributes
                 setattr(self, key, value)
-
 
     def get_seq(self, region_seq=None, start=None, stop=None,
                 flank=None, strand_correct=True):
@@ -575,7 +576,6 @@ class Intron(GenomeFeature):
                    parent=parent, grandparent=grandparent, region=region,
                    line_number=line_number, phase=phase)
 
-
     def get_rel_coords(self, relative_to, relative_range):
         """
         Calculates and retrieves a pair of genomic sequence coordinates
@@ -668,7 +668,6 @@ class Intron(GenomeFeature):
                  .format(*[e if e is not None else special for e in
                            [self.name, score]]))
         return label
-
 
     def omit_check(
         self, 
@@ -797,6 +796,7 @@ class Intron(GenomeFeature):
 # /Classes ###################################################################
 
 # Functions ##################################################################
+
 
 def make_parser():
     parser = argparse.ArgumentParser(
@@ -2024,19 +2024,19 @@ def overlap_log(objs):
 
 
 def overlap_check(a, b):
-   """
-   Check to see if the two ordered tuples, >a< and >b<,
-   overlap with one another.
+    """
+    Check to see if the two ordered tuples, >a< and >b<,
+    overlap with one another.
 
-   By way of Jacob Stanley <3
-   """
+    By way of Jacob Stanley <3
+    """
 
-   val = (a[0] - b[1]) * (a[1] - b[0])
+    val = (a[0] - b[1]) * (a[1] - b[0])
 
-   if val < 0:
-       return True
-   else:
-       return False
+    if val < 0:
+        return True
+    else:
+        return False
 
 
 # TODO use desired feature type (if specified) to decide the
