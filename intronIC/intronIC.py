@@ -30,7 +30,6 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
-__version__ = '1.3.1'
 
 # imports
 import argparse
@@ -366,98 +365,6 @@ class Parent(GenomeFeature):
         else:
             selected = [c for c in self.children if c.feat_type == child_type]
         return selected
-
-
-    # def get_introns(self, child_types, flat_annots):
-    #     """
-    #     Returns all introns based on >child_type<,
-    #     including any duplicates across children.
-
-    #     """
-    #     introns = []
-    #     non_redundant = []
-    #     filtered_children = []
-    #     intron_count = 1
-    #     # PROBLEM: this try/except causes problems if there are 
-    #     # cds/exon feats whose parents IDs are for genes instead of 
-    #     # transcripts; in that case, it will not recurse through
-    #     # children (e.g. transcripts) to get additional introns
-    #     if self.feat_type != 'gene':  # filter this way?
-    #     try:
-    #         children = [
-    #             child for child in self.children if
-    #             child.feat_type in child_types
-    #         ]
-    #     except AttributeError:
-    #         return introns
-    #     if not children:
-    #         try:
-    #             for child in self.children:
-    #                 introns += child.get_introns(child_types, flat_annots)
-    #             return introns
-    #         except AttributeError:
-    #             return introns
-    #     # track coding lengths calculated under different
-    #     # feature types to preference CDS-based lengths at the end
-    #     coding_lengths = {}
-    #     for ct in child_types:  # CDS > exons depends on this list's order?
-    #         tmp_introns = []
-    #         filtered_children = [
-    #             c for c in children if c.feat_type == ct]
-    #         if not filtered_children:
-    #             continue
-    #         coding_lengths[ct] = self.get_coding_length(ct)
-    #         for indx, intron in enumerate(
-    #             self._intronator(filtered_children), start=1
-    #         ):
-    #             intron.defined_by = ct
-    #             intron.index = indx
-    #             tmp_introns.append(intron)
-    #         if not non_redundant:
-    #             non_redundant = tmp_introns
-    #         else:
-    #             existing_coords = sorted(
-    #                 (i.start, i.stop) for i in non_redundant)
-    #             for i in tmp_introns:
-    #                 coords = (i.start, i.stop)
-    #                 if not coord_overlap(
-    #                     coords, existing_coords, presorted=True
-    #                 ):
-    #                     non_redundant.append(i)
-    #     if not non_redundant:
-    #         return non_redundant
-        
-    #     # prioritize protein-coding transcript lengths over others
-    #     try:
-    #         coding_length = coding_lengths['cds']
-    #     except KeyError:
-    #         coding_length = coding_lengths['exon']
-    #     family_size = len(non_redundant)
-    #     # get the lengths of all intron-forming features to allow
-    #     # calculation of fractional position of introns
-
-    #     # TODO: figure out how to correctly get sorted list on
-    #     # this call, given that the features being sorted are
-    #     # introns - partially resolved by using CDS info if present
-    #     non_redundant = sorted_in_coding_direction(non_redundant)
-    #     exon_lengths = [flat_annots[i.upstream_exon].length for i in non_redundant]
-    #     last_exon = non_redundant[-1].downstream_exon
-    #     exon_lengths.append(flat_annots[last_exon].length)
-    #     exon_cumsum = np.array(exon_lengths)[:-1].cumsum()
-    #     aggregate_length = sum(exon_lengths)
-    #     frac_positions = ((exon_cumsum / aggregate_length) * 100).round(3)
-        
-    #     for index, i in enumerate(non_redundant, start=1):
-    #         i.index = index
-    #         i.family_size = family_size
-    #         i.parent_length = coding_length
-    #         i.fractional_position = frac_positions[index - 1]
-    #         if i.defined_by == 'exon':
-    #             i.dynamic_tag.add('[e]')
-    #         introns.append(i)
-
-    #     return introns
-
 
     def get_introns(self, child_types, flat_annots):
         """
