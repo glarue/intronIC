@@ -30,7 +30,6 @@ __author__ = 'Graham E. Larue'
 __maintainer__ = "Graham E. Larue"
 __email__ = 'egrahamlarue@gmail.com'
 __license__ = 'GPL v3.0'
-__version__ = '1.3.2'
 
 # imports
 import argparse
@@ -42,11 +41,29 @@ import re
 import random
 import sys
 import time
-import gzip
 import numpy as np
 import warnings
 import types
 import pkg_resources
+from multiprocessing.pool import Pool
+from multiprocessing import get_all_start_methods, set_start_method
+from scipy import stats as pystats
+from bisect import bisect_left, bisect_right
+from collections import Counter, defaultdict, deque
+from itertools import islice, repeat, chain
+from operator import attrgetter
+from functools import partial
+# from hashlib import sha1
+from sklearn.metrics import precision_recall_curve, auc, classification_report
+# from sklearn.cluster import SpectralClustering
+from sklearn import svm, preprocessing
+from sklearn.base import clone
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.metrics import f1_score
+# from sklearn import linear_model
+from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
+from networkx import DiGraph, find_cycle
+from networkx.algorithms.dag import lexicographical_topological_sort
 
 
 # pull version from packaging, which integrates git commits,
@@ -67,29 +84,14 @@ else:
 
 # hacky way to ignore annoying sklearn warnings
 # (https://stackoverflow.com/a/33616192/3076552)
+
+
 def warn(*args, **kwargs):
     pass
+
+
 warnings.warn = warn
 
-from multiprocessing.pool import Pool
-from multiprocessing import get_all_start_methods, set_start_method
-from scipy import stats as pystats
-from bisect import bisect_left, bisect_right
-from collections import Counter, defaultdict, deque, namedtuple
-from itertools import islice, repeat, chain
-from operator import attrgetter
-from functools import partial
-# from hashlib import sha1
-from sklearn.metrics import precision_recall_curve, auc, classification_report
-# from sklearn.cluster import SpectralClustering
-from sklearn import svm, preprocessing
-from sklearn.base import clone
-from sklearn.model_selection import GridSearchCV, train_test_split
-from sklearn.metrics import f1_score
-from sklearn import linear_model
-from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
-from networkx import DiGraph, find_cycle
-from networkx.algorithms.dag import lexicographical_topological_sort
 
 try:
     import matplotlib
@@ -112,6 +114,7 @@ except ModuleNotFoundError:
 # os.environ['JOBLIB_START_METHOD'] = 'forkserver'
 
 # Classes ####################################################################
+
 
 class GenomeFeature(object):
     """
@@ -242,10 +245,13 @@ class GenomeFeature(object):
         except AttributeError:
             # every feature type should have this
             unique_num = "u{}".format(self.unique_num)
-        coord_id = ("{}:{}_{}:{}".format(parent_type,
-                                    parent,
-                                    self.feat_type,
-                                    unique_num))
+        coord_id = ("{}:{}_{}:{}".format(
+            parent_type,
+            parent,
+            self.feat_type,
+            unique_num
+            )
+        )
         if set_attribute:
             setattr(self, "name", coord_id)
         return coord_id
@@ -262,7 +268,6 @@ class GenomeFeature(object):
         for key, value in attrs_to_use.items():
             if hasattr(self, key):  # don't make new attributes
                 setattr(self, key, value)
-
 
     def get_seq(self, region_seq=None, start=None, stop=None,
                 flank=None, strand_correct=True):
@@ -361,7 +366,6 @@ class Parent(GenomeFeature):
             selected = [c for c in self.children if c.feat_type == child_type]
         return selected
 
-
     def get_introns(self, child_types, flat_annots):
         """
         Returns all introns based on >child_type<,
@@ -371,31 +375,24 @@ class Parent(GenomeFeature):
         introns = []
         non_redundant = []
         filtered_children = []
-        intron_count = 1
-        try:
-            children = [child for child in self.children if
-                                 child.feat_type in child_types]
-        except AttributeError:
-            return introns
-        if not children:
+        for child in self.children:
             try:
-                for child in self.children:
-                    introns += child.get_introns(child_types, flat_annots)
-                return introns
+                introns += child.get_introns(child_types, flat_annots)
             except AttributeError:
-                return introns
+                continue
         # track coding lengths calculated under different
         # feature types to preference CDS-based lengths at the end
         coding_lengths = {}
-        for ct in child_types:  # CDS > exons depends on this list's order?
+        for ct in child_types:  # CDS > exons depends on this list's order
             tmp_introns = []
             filtered_children = [
-                c for c in children if c.feat_type == ct]
+                c for c in self.children if c.feat_type == ct]
             if not filtered_children:
                 continue
             coding_lengths[ct] = self.get_coding_length(ct)
             for indx, intron in enumerate(
-                self._intronator(filtered_children), start=1):
+                self._intronator(filtered_children), start=1
+            ):
                 intron.defined_by = ct
                 intron.index = indx
                 tmp_introns.append(intron)
@@ -407,10 +404,11 @@ class Parent(GenomeFeature):
                 for i in tmp_introns:
                     coords = (i.start, i.stop)
                     if not coord_overlap(
-                        coords, existing_coords, presorted=True):
+                        coords, existing_coords, presorted=True
+                    ):
                         non_redundant.append(i)
         if not non_redundant:
-            return non_redundant
+            return introns
         
         # prioritize protein-coding transcript lengths over others
         try:
@@ -432,8 +430,7 @@ class Parent(GenomeFeature):
         aggregate_length = sum(exon_lengths)
         frac_positions = ((exon_cumsum / aggregate_length) * 100).round(3)
         
-        for index, i in enumerate(
-            non_redundant, start=1):
+        for index, i in enumerate(non_redundant, start=1):
             i.index = index
             i.family_size = family_size
             i.parent_length = coding_length
@@ -575,7 +572,6 @@ class Intron(GenomeFeature):
                    parent=parent, grandparent=grandparent, region=region,
                    line_number=line_number, phase=phase)
 
-
     def get_rel_coords(self, relative_to, relative_range):
         """
         Calculates and retrieves a pair of genomic sequence coordinates
@@ -668,7 +664,6 @@ class Intron(GenomeFeature):
                  .format(*[e if e is not None else special for e in
                            [self.name, score]]))
         return label
-
 
     def omit_check(
         self, 
@@ -797,6 +792,7 @@ class Intron(GenomeFeature):
 # /Classes ###################################################################
 
 # Functions ##################################################################
+
 
 def make_parser():
     parser = argparse.ArgumentParser(
@@ -2024,19 +2020,19 @@ def overlap_log(objs):
 
 
 def overlap_check(a, b):
-   """
-   Check to see if the two ordered tuples, >a< and >b<,
-   overlap with one another.
+    """
+    Check to see if the two ordered tuples, >a< and >b<,
+    overlap with one another.
 
-   By way of Jacob Stanley <3
-   """
+    By way of Jacob Stanley <3
+    """
 
-   val = (a[0] - b[1]) * (a[1] - b[0])
+    val = (a[0] - b[1]) * (a[1] - b[0])
 
-   if val < 0:
-       return True
-   else:
-       return False
+    if val < 0:
+        return True
+    else:
+        return False
 
 
 # TODO use desired feature type (if specified) to decide the
