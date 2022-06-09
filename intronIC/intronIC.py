@@ -64,10 +64,12 @@ from sklearn.metrics import f1_score
 from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
 from networkx import DiGraph, find_cycle
 from networkx.algorithms.dag import lexicographical_topological_sort
+from _version import get_versions
 
 
 # pull version from packaging, which integrates git commits,
 # unless being run without installation
+__version__ = get_versions()['version']
 try:
     _dist = pkg_resources.get_distribution('intronIC')
     # Normalize case for Windows systems
@@ -76,11 +78,11 @@ try:
     if not here.startswith(os.path.join(dist_loc, 'intronIC')):
         # not installed, but there is another version that *is*
         raise pkg_resources.DistributionNotFound
+    else:
+        __version__ = _dist.version
 except pkg_resources.DistributionNotFound:
-    #__version__ = 'Please install this project with setup.py'
+    # __version__ = 'Please install this project with setup.py'
     pass
-else:
-    __version__ = _dist.version
 
 # hacky way to ignore annoying sklearn warnings
 # (https://stackoverflow.com/a/33616192/3076552)
@@ -2126,47 +2128,7 @@ def seq_score(seq, matrix, start_index=0, ignore=None):
     return score
 
 
-# def bp_score(seq, matrix):
-#     """
-#     Score every sub-sequence of >seq< with length equal
-#     to the value of the keys in >matrix<.
-
-#     Returns the highest score achieved by any sub-sequence,
-#     the relative coords of that sub-sequence within >seq<,
-#     and the sub-sequence itself.
-
-#     """
-#     # If the matrix has different lengths for the value of any key,
-#     # use the shortest
-#     window_size = matrix_length(matrix)
-#     start = 0
-#     stop = window_size
-#     best_score = None
-#     best_coords = None
-#     best_seq = None
-#     for sub_seq in sliding_window(seq, window_size):
-#         # convert from tuple to string
-#         sub_seq = ''.join(sub_seq)
-#         new_score = seq_score(sub_seq, matrix)
-#         new_coords = (start, stop)
-#         if best_score is None:
-#             best_score = new_score
-#             best_coords = new_coords
-#             best_seq = sub_seq
-#         else:
-#             if new_score > best_score:
-#                 best_score = new_score
-#                 best_coords = new_coords
-#                 best_seq = sub_seq
-#         # Adjust window coordinates for next round
-#         start += 1
-#         stop += 1
-#     return best_score, best_coords, best_seq
-
-
-# bp score version with position-specific score weighting
-# for secret species
-def bp_score(seq, matrix, use_bpx=False, BPX=None, matrix_tag='TTTGA'):
+def bp_score(seq, matrix):
     """
     Score every sub-sequence of >seq< with length equal
     to the value of the keys in >matrix<.
@@ -2179,50 +2141,29 @@ def bp_score(seq, matrix, use_bpx=False, BPX=None, matrix_tag='TTTGA'):
     # If the matrix has different lengths for the value of any key,
     # use the shortest
     window_size = matrix_length(matrix)
-    start_index = min(matrix['A'].keys())
     start = 0
     stop = window_size
     best_score = None
     best_coords = None
     best_seq = None
-    best_bpx_mod = None
     for sub_seq in sliding_window(seq, window_size):
         # convert from tuple to string
         sub_seq = ''.join(sub_seq)
-        if not valid_chars(sub_seq):
-            start += 1
-            stop += 1
-            continue
-        # flag to send back if branch point score was modified
-        # using BPX
-        bpx_mod = None
-        new_score = seq_score(sub_seq, matrix, start_index=start_index)
-        # calculate the distance of the end of the motif from
-        # the 3' end of the full intron using the location of
-        # the end of the bp region and the window's current
-        # end coordinate
-        if BPX and use_bpx is True and 'TTGA' in matrix_tag:
-            # TODO: fix this global reference
-            dist_from_3 = (len(seq) - stop) + abs(BP_REGION_COORDS[1])
-            # perform multiplier if present in dictionary
-            multiplier = BPX.get(dist_from_3)
-            if multiplier is not None:
-                # bpx_mod = ( (multiplier - 1) / 2 ) + 1
-                bpx_mod = multiplier
-                # bp score adjustment accounting for neg. initial scores
-                delta = abs(new_score * (bpx_mod - 1))
-                new_score += delta
+        new_score = seq_score(sub_seq, matrix)
         new_coords = (start, stop)
-        if best_score is None or new_score > best_score:
-            best_bpx_mod = bpx_mod
+        if best_score is None:
             best_score = new_score
             best_coords = new_coords
             best_seq = sub_seq
+        else:
+            if new_score > best_score:
+                best_score = new_score
+                best_coords = new_coords
+                best_seq = sub_seq
         # Adjust window coordinates for next round
         start += 1
         stop += 1
-
-    return best_score, best_coords, best_bpx_mod, best_seq
+    return best_score, best_coords, best_seq
 
 
 def matrix_from_seqs(seqs, start_index=0):
@@ -2829,7 +2770,7 @@ def build_u2_bp_matrix(introns, u12_matrices, spcs, simple_name, dnt_list=None):
             best_seq = None
             for name, matrix in matrices.items():
                 m_score, *_, seq = bp_score(
-                    bp_region_seq, matrix, use_bpx=True, matrix_tag=name[-1])
+                    bp_region_seq, matrix)
                 if m_score > best_score:
                     best_seq = seq
                     best_score = m_score
@@ -2903,8 +2844,8 @@ def multi_matrix_score(
     PSEUDOCOUNT,
     regions=('five', 'bp', 'three'),
     matrix_tags=None,
-    ignore_nc_dnts=True,
-    use_bpx=False):
+    ignore_nc_dnts=True
+):
     """
     Finds the highest-scoring matrix key and value for the
     specified intron, using the sum of multiple regions for
@@ -2935,7 +2876,7 @@ def multi_matrix_score(
     score_funcs = {
         'five': partial(
             seq_score, start_index=FIVE_SCORE_COORDS[0], ignore=ignore_five),
-        'bp': partial(bp_score, use_bpx=use_bpx),
+        'bp': partial(bp_score),
         'three': partial(
             seq_score, start_index=THREE_SCORE_COORDS[0], ignore=ignore_three)
     }
@@ -2954,7 +2895,7 @@ def multi_matrix_score(
         score_function = score_funcs[region]
         seq = getattr(intron, region_map[region])
         if region == 'bp':
-            score = score_function(seq, matrix, matrix_tag=matrix_key[-1])
+            score = score_function(seq, matrix)
         else:
             score = score_function(seq, matrix)
         info = []
@@ -3104,7 +3045,6 @@ def assign_raw_score(
         three_score_coords, 
         pseudocount, 
         matrix_tags=['u12'],
-        use_bpx=True,
         ignore_nc_dnts=ignore_nc_dnts
     )
     dnts = ''.join(intron.dnts).lower()
@@ -3114,14 +3054,11 @@ def assign_raw_score(
         u12_matrix_info, scoring_regions, dnts)
     u12_bp_score = u12_matrix_info[best_u12_key]['bp']['score']
     u12_bp_info = u12_matrix_info[best_u12_key]['bp']['info']
-    bp_rel_coords, bpm, u12_bp_seq = u12_bp_info
+    bp_rel_coords, u12_bp_seq = u12_bp_info
 
     # get info for the U2-type BPS matrix as well
     *_, u2_bp_seq = u2_matrix_info[best_u2_key]['bp']['info']
     intron.bp_seq_u2 = u2_bp_seq
-
-    if bpm is not None:
-        intron.dynamic_tag.add('bpm={}'.format(bpm))
 
     # Get log scores for each region
     score_regions = ['five', 'bp', 'three']
@@ -5110,8 +5047,8 @@ def main():
     # /Logging setup ##########################################################
 
     write_log(
-        'Starting intronIC {} run on {}', 
-        'v{}'.format(__version__), 
+        'Starting intronIC {} run on {}',
+        __version__, 
         ARGS['SPECIES_NAME_INFO']
     )
 
@@ -5151,11 +5088,6 @@ def main():
         type_id='u12'
     )
 
-    # remove any reference data with redundant scores
-    # filter_attributes = ['five_seq', 'bp_region_seq', 'three_seq']
-    # REF_U12S = list(unique_attributes(REF_U12S, filter_attributes))
-    # REF_U2S = list(unique_attributes(REF_U2S, filter_attributes))
-
     ARGS['REFS'] = ARGS['REF_U12S'] + ARGS['REF_U2S']
 
     all_introns, total_count, flat_annots = introns_from_args(ARGS, EXT_ARGS)
@@ -5181,48 +5113,12 @@ def main():
     #TODO make cmdline arg to require bp be built from all introns (in case is
     # u2 matrix in matrices file but don't want to use it)
 
-    BPX = None
-
-    # [ v1 ]
-    # secret species introns conserved as U12s in other species, using the
-    # pattern '.{4}TTTGA.{3}.{6,8}$'
-    # BPX = {
-    #     6: 1.371429,
-    #     7: 1.428571,
-    #     8: 1.2
-    # }
-    # [ v2 ]
-    # secret species introns conserved as U12s in other species plus ATACs
-    # from conserved regions using the pattern '.{4}TTTGA.{3}.{6,8}$'
-    # BPX = {
-    #     6: 1.354167, # 17/48
-    #     7: 1.4375, # 21/48
-    #     8: 1.208333  # 10 /48
-    # }
-    # [ v3 ]
-    # secret species introns conserved as U12s in others and BUSCO matches,
-    # plus ATACs in conserved regions
-    # BPX = {
-    #     6: 1.352941, # 54/153
-    #     7: 1.431373, # 66/153
-    #     8: 1.215686  # 33/153
-    # }
-
     ###!!! FIRST ROUND OF SCORING
     MATRICES = add_u2_matrix(
         final_introns,
         ARGS,
         build_from_data=ARGS['GENERATE_U2_PWM']
     )
-
-    # Get the maximum and minimum score possible for each matrix, to be used
-    # to scale scores
-    # MATRIX_BOUNDS = defaultdict(dict)
-    # for k, m in MATRICES.items():
-    #     category = k[:2]
-    #     sub_category = k[-1]
-    #     MATRIX_BOUNDS[category][sub_category] = get_score_bounds(m)
-    # ARGS['MATRIX_BOUNDS'] = MATRIX_BOUNDS
 
     ARGS['MATRICES'] = MATRICES
 
