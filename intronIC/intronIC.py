@@ -69,7 +69,7 @@ from _version import get_versions
 
 # pull version from packaging, which integrates git commits,
 # unless being run without installation
-__version__ = get_versions()['version']
+__version__ = ''
 try:
     _dist = pkg_resources.get_distribution('intronIC')
     # Normalize case for Windows systems
@@ -81,8 +81,8 @@ try:
     else:
         __version__ = _dist.version
 except pkg_resources.DistributionNotFound:
+    __version__ = get_versions()['version']
     # __version__ = 'Please install this project with setup.py'
-    pass
 
 # hacky way to ignore annoying sklearn warnings
 # (https://stackoverflow.com/a/33616192/3076552)
@@ -814,7 +814,7 @@ def make_parser():
     parser.add_argument(
         '--version', 
         action='version', 
-        version='%(prog)s v{}'.format(__version__)
+        version='%(prog)s {}'.format(__version__)
     )
     req_parse_grp = parser.add_argument_group(
         title='required arguments (-g, [-a, -b] | -q)'
