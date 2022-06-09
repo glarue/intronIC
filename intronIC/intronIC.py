@@ -77,10 +77,10 @@ try:
         # not installed, but there is another version that *is*
         raise pkg_resources.DistributionNotFound
     else:
-        __version__ = _dist.version
+        __version__ = f'v{_dist.version}'
 except pkg_resources.DistributionNotFound:
     try:
-        from ._version import get_versions
+        from _version import get_versions
         __version__ = get_versions()['version']
     except ModuleNotFoundError:
         pass
@@ -5048,7 +5048,7 @@ def main():
     # /Logging setup ##########################################################
 
     write_log(
-        'Starting intronIC {} run on {}',
+        'Starting intronIC v{} run on {}',
         __version__, 
         ARGS['SPECIES_NAME_INFO']
     )
