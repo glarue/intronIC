@@ -64,8 +64,6 @@ from sklearn.metrics import f1_score
 from biogl import fasta_parse, get_runtime, rev_comp, flex_open, GxfParse
 from networkx import DiGraph, find_cycle
 from networkx.algorithms.dag import lexicographical_topological_sort
-from _version import get_versions
-
 
 # pull version from packaging, which integrates git commits,
 # unless being run without installation
@@ -81,8 +79,11 @@ try:
     else:
         __version__ = _dist.version
 except pkg_resources.DistributionNotFound:
-    __version__ = get_versions()['version']
-    # __version__ = 'Please install this project with setup.py'
+    try:
+        from ._version import get_versions
+        __version__ = get_versions()['version']
+    except ModuleNotFoundError:
+        pass
 
 # hacky way to ignore annoying sklearn warnings
 # (https://stackoverflow.com/a/33616192/3076552)
