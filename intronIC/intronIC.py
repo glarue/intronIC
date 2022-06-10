@@ -5048,7 +5048,7 @@ def main():
     # /Logging setup ##########################################################
 
     write_log(
-        'Starting intronIC v{} run on {}',
+        'Starting intronIC {} run on {}',
         __version__, 
         ARGS['SPECIES_NAME_INFO']
     )
