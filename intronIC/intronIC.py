@@ -4251,6 +4251,7 @@ def output_format(
             attribs.insert(1, rounded_score)
             attribs.insert(2, dnts)
     elif out_type == 'BED':
+        attribs[1] -= 1  # revert start to 0-based indexing
         attribs.insert(3, label)
     if separator is not None:
         attribs = separator.join([str(a) for a in attribs])
