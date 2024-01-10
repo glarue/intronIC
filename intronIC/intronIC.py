@@ -1103,6 +1103,17 @@ def make_parser():
         ),
         default=False
     )
+    parser.add_argument(
+        '--no_nc_ss_adjustment',
+        action='store_true',
+        help=(
+            'Disables a procedure whereby the sequence surrounding the 5′SS motif of each non-canonical intron ' 
+            'is checked for the presence of a strong U12-like motif; if such a motif is found, the intron '
+            'coordinates are adjusted to capture the putatively-misannotated U12-type intron (and the intron label '
+            'is tagged with \'[c:<n>]\'; see documentation for details).'
+        ),
+        default=False
+    )
 
     return parser
 
@@ -2629,7 +2640,8 @@ def get_sub_seqs(
     five_score_coords,
     three_score_coords,
     bp_coords,
-    exons_as_flanks=False
+    exons_as_flanks=False,
+    u12_nc_ss_adjustment=True
 ):
     """
     Generator that populates objects in >introns< with short
@@ -2667,7 +2679,7 @@ def get_sub_seqs(
                 five_score_coords,
                 three_score_coords,
                 bp_coords)
-            if intron.noncanonical and u12_correction(intron):
+            if u12_nc_ss_adjustment and intron.noncanonical and u12_correction(intron):
                 # coords have changed, so reassign info
                 intron = assign_seqs(
                     intron,
@@ -4162,7 +4174,7 @@ def introns_from_bedfile(genome, bed):
                 continue
             if not name or name in ('-.*'):  # Null indicators
                 name = 'i_{}'.format(line_number)
-            start += 1  # BED files are 0-indexed
+            start += 1  # BED files are 0-indexed for the start coord
             intron = Intron(
                 name=name,
                 start=start,
@@ -4471,6 +4483,7 @@ def get_custom_args(args, argv):
     else:
         ALLOW_NONCANONICAL = True
     custom_args['ALLOW_NONCANONICAL'] = ALLOW_NONCANONICAL
+    custom_args['U12_NC_SS_ADJUSTMENT'] = not args.no_nc_ss_adjustment
     custom_args['ALLOW_OVERLAP'] = not args.no_intron_overlap
     custom_args['LONGEST_ONLY'] = not args.allow_multiple_isoforms
     custom_args['THRESHOLD'] = args.threshold
@@ -4706,6 +4719,7 @@ def filter_introns_write_files(
     FN_OVERLAP_MAP = args['FN_OVERLAP_MAP']
     START_TIME = args['START_TIME']
     SCORING_REGIONS = args['SCORING_REGIONS']
+    U12_NC_SS_ADJUSTMENT = args['U12_NC_SS_ADJUSTMENT']
 
     # Iterate over generator with transient full sequences
     # Keep your wits about you here, given the number of flags at play
@@ -4717,7 +4731,8 @@ def filter_introns_write_files(
         FIVE_SCORE_COORDS,
         THREE_SCORE_COORDS,
         BP_REGION_COORDS,
-        EXONS_AS_FLANKS
+        EXONS_AS_FLANKS,
+        U12_NC_SS_ADJUSTMENT
     ):
         # Set omission status before generating headers
         intron.omit_check(
