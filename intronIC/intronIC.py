@@ -372,7 +372,7 @@ class Parent(GenomeFeature):
     def get_introns(self, child_types, flat_annots):
         """
         Returns all introns based on >child_type<,
-        including any duplicates across children.
+        includng any duplicates across children.
 
         """
         introns = []
@@ -2444,36 +2444,46 @@ def correct_annotation(
     corrected_count = len(corrected_introns)
     if corrected_count == 0:
         return
-    # for intron in filter(attrgetter('corrected'), introns):
+ 
     for intron in corrected_introns:
-        corrected_count += 1
+        # corrected_count += 1
         if intron.duplicate:
             corrected_dupes += 1
+        if annotation_file is None:  # BED input
+            continue
         shift = intron.corrected
         five_exon = flattened[intron.upstream_exon]
         three_exon = flattened[intron.downstream_exon]
         # Build index of corrected coords by line number
         for ex, intron_side in zip([five_exon, three_exon], [5, 3]):
-            (cor_ex, coord_tag,
-            shift_tag, phase_shift) = _correct_exon(ex, shift, intron_side)
+            cor_ex, coord_tag, shift_tag, phase_shift = _correct_exon(ex, shift, intron_side)
             coords = (cor_ex.start, cor_ex.stop)
             corrected_exon_coords[ex.line_number] = (
                 coords, coord_tag, shift_tag, phase_shift)
 
-    # if corrected_count == 0:
-    #     return
+    corrected_unique = corrected_count - corrected_dupes
+    
+    # if the input file was BED format, we won't be correcting any flanking feature coordinates so we 
+    # exit early
+    if annotation_file is None:
+        write_log(
+            '{} ({} unique, {} redundant) putatively misannotated U12-type introns identified in input',
+            corrected_count,
+            corrected_unique,
+            corrected_dupes
+        )
+        return
+
     # We now have an index of lines to modify in the annotation file
     modded_filename = FN_ANNOT
     modded_filepath = os.path.join(
         RUN_DIR, modded_filename)
-    with flex_open(annotation_file) as infile, \
-    open(modded_filepath, 'w') as outfile:
+    with flex_open(annotation_file) as infile, open(modded_filepath, 'w') as outfile:
         for ln, l in enumerate(infile):
             if ln not in corrected_exon_coords:
                 outfile.write(l)
                 continue
-            (new_coords, coord_tag,
-            shift_tag, phase_shift) = corrected_exon_coords[ln]
+            new_coords, coord_tag, shift_tag, phase_shift = corrected_exon_coords[ln]
             new_line = _change_coords(
                 l, new_coords, coord_tag, shift_tag, phase_shift)
             outfile.write(new_line + '\n')
@@ -2481,7 +2491,7 @@ def correct_annotation(
         '{} ({} unique, {} redundant) putatively misannotated U12-type introns '
         'corrected in {}',
         corrected_count,
-        corrected_count - corrected_dupes,
+        corrected_unique,
         corrected_dupes,
         modded_filename
     )
@@ -4180,7 +4190,8 @@ def introns_from_bedfile(genome, bed):
                 start=start,
                 stop=stop,
                 strand=strand,
-                region=loc
+                region=loc,
+                phase='.'
             )
             intron_index[loc].append(intron)
             intron_count += 1
@@ -4764,7 +4775,6 @@ def filter_introns_write_files(
             longest_isoforms,
             ALLOW_OVERLAP, 
             LONGEST_ONLY)
-
         # this step seems redundant but it's not!
         intron.omit_check(
             MIN_INTRON_LENGTH,
@@ -4773,7 +4783,7 @@ def filter_introns_write_files(
             ALLOW_NONCANONICAL,
             ALLOW_OVERLAP, 
             LONGEST_ONLY)
-
+        
         if intron.noncanonical:
             # tag non-canonical introns in label even if being scored
             intron.dynamic_tag.add('[n]')
@@ -4786,6 +4796,7 @@ def filter_introns_write_files(
                 # across different annotations
             # if intron.duplicate is False:
                     # intron.sha1 = sha1(intron.seq.encode('utf-8')).digest()
+
         intron_name_index[intron.unique_num] = intron.get_name(SPCS, SIMPLE_NAME)
         if intron.duplicate is not False:
             duplicate_count += 1
