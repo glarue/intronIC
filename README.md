@@ -2,7 +2,7 @@
 
 # (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-`intronIC` is a program that can be used to classify intron sequences as minor (U12-type) or major (U2-type), using a genome and annotation or the sequences themselves. Alternatively, `intronIC` can be used to simply extract all intron sequences without classification (using `-s`).
+`intronIC` is a program that can classify intron sequences as minor (U12-type) or major (U2-type) using a support vector machine model in combination with a genome and annotation or the sequences themselves. Alternatively, `intronIC` can be used to simply extract all intron sequences without classification (using `-s`).
 
 ## Installation
 
