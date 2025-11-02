@@ -102,35 +102,51 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ---
 
-#### M0.5: Coordinate System Tests 🔜 NEXT
-- [ ] Create `tests/unit/test_coordinates.py`
-- [ ] Test 0-based ↔ 1-based conversion
-- [ ] Test BED format parsing (0-based input)
-- [ ] Test internal coordinate handling (1-based)
-- [ ] Test BED output conversion (back to 0-based)
-- [ ] Test strand handling in coordinates
-- [ ] Test validation (start < stop)
-- [ ] All coordinate tests pass
+#### M0.5: Coordinate System Tests ✅ COMPLETE
+- [x] Create `tests/unit/test_coordinates.py`
+- [x] Test 0-based ↔ 1-based conversion
+- [x] Test BED format parsing (0-based input)
+- [x] Test internal coordinate handling (1-based)
+- [x] Test BED output conversion (back to 0-based)
+- [x] Test strand handling in coordinates
+- [x] Test validation (start < stop)
+- [x] All coordinate tests pass
 
+**Completed:** 2025-11-02
 **Priority:** 🔴 CRITICAL
 **Reason:** Coordinate bugs are #1 risk area (see MAJOR_CONCERNS.md)
-**Target:** Next session
+**Test Results:** 34/34 tests passing
+**Deliverables:**
+- Comprehensive test suite (468 lines, 34 tests)
+- Mock implementations demonstrating TDD approach
+- Tests cover conversions, parsing, output, validation, edge cases
+- Real-world examples from chr19 gold standard
 
 ---
 
-#### M0.6: Core Coordinate Abstraction 🔜 UPCOMING
-- [ ] Create `utils/coordinates.py`
-- [ ] Implement `GenomicCoordinate` dataclass
-- [ ] Add coordinate system enum (0-based, 1-based)
-- [ ] Add validation (start < stop, valid strand)
-- [ ] Implement conversion functions
-- [ ] Full type hints
-- [ ] Docstrings with examples
-- [ ] Unit tests pass
+#### M0.6: Core Coordinate Abstraction ✅ COMPLETE
+- [x] Create `utils/coordinates.py`
+- [x] Implement `GenomicCoordinate` dataclass
+- [x] Add coordinate system enum (0-based, 1-based)
+- [x] Add validation (start < stop, valid strand, system-specific ranges)
+- [x] Implement conversion functions
+- [x] Full type hints
+- [x] Docstrings with examples
+- [x] Unit tests pass (34/34)
+- [x] Doctests pass (45/45)
 
+**Completed:** 2025-11-02
 **Priority:** 🔴 CRITICAL
 **Reason:** Foundation for all coordinate handling
-**Target:** After M0.5
+**Deliverables:**
+- Production-ready `utils/coordinates.py` (449 lines)
+- Immutable GenomicCoordinate dataclass with frozen=True
+- Comprehensive validation (start < stop, strand, system, coordinate ranges)
+- Conversion functions: bed_to_internal, internal_to_bed, gff_to_internal, internal_to_gff
+- Convenience validators: validate_bed_coordinates, validate_gff_coordinates
+- Full type hints with custom type aliases
+- 45 passing doctests demonstrating usage
+- All 34 unit tests pass with production code
 
 ---
 
@@ -371,13 +387,13 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ## Success Criteria
 
-### Phase 0 (Foundation) ✅
+### Phase 0 (Foundation) ✅ COMPLETE
 - [x] Gold standard outputs generated
 - [x] Regression tests pass (6/6)
 - [x] Environment working
-- [ ] Coordinate tests written
-- [ ] GenomicCoordinate abstraction created
-- [ ] Git branch established with planning docs
+- [x] Coordinate tests written (34/34 passing)
+- [x] GenomicCoordinate abstraction created
+- [x] Git branch established with planning docs
 
 ### Phase 1-2 (Core + Scoring)
 - [ ] Full pipeline functional
@@ -490,9 +506,9 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ### Current Status
 - **Started:** 2025-11-01
-- **Current Phase:** Phase 0 (Foundation)
-- **Progress:** M0.1-M0.3 complete (60% of Phase 0)
-- **Next:** M0.4-M0.6 (coordinate handling)
+- **Current Phase:** Phase 0 COMPLETE ✅ → Phase 1 starting
+- **Progress:** M0.1-M0.6 complete (100% of Phase 0)
+- **Next:** Phase 1 - Core Infrastructure (M1.1: Core Data Models)
 
 ---
 
