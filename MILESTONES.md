@@ -150,25 +150,56 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ---
 
-## Phase 1: Core Infrastructure 📋 PLANNED
+## Phase 1: Core Infrastructure ⏳ IN PROGRESS
 
-**Status:** Not Started
-**Prerequisites:** Phase 0 complete
+**Status:** IN PROGRESS (M1.1 complete)
+**Prerequisites:** Phase 0 complete ✅
 **Duration:** ~1 week (2-3 hours per chunk)
 
-### M1.1: Core Data Models
-- [ ] Create `core/models.py` (GenomeFeature hierarchy)
-- [ ] Create `core/intron.py` with composition pattern
-  - [ ] IntronScores dataclass
-  - [ ] IntronSequences dataclass
-  - [ ] IntronMetadata dataclass
-  - [ ] Intron class using composition
-- [ ] Create `utils/sequences.py` (rev_comp, helpers)
-- [ ] Unit tests for all models
-- [ ] Can create Intron objects successfully
+### M1.1: Core Data Models ✅ COMPLETE
+- [x] Create `core/models.py` (GenomeFeature hierarchy)
+- [x] Create `core/intron.py` with composition pattern
+  - [x] IntronScores dataclass
+  - [x] IntronSequences dataclass
+  - [x] IntronMetadata dataclass
+  - [x] Intron class using composition
+- [x] Create `utils/sequences.py` (rev_comp, helpers)
+- [x] Unit tests for all models
+- [x] Can create Intron objects successfully
 
+**Completed:** 2025-11-02
 **Priority:** Medium
 **Risk:** Low (new code, well-defined)
+**Test Results:** 144/144 tests passing (27 models + 35 intron + 48 sequences + 34 coordinates)
+**Deliverables:**
+- Production-ready `core/models.py` (429 lines)
+  - GenomeFeature base class
+  - Parent abstract class
+  - Gene and Transcript classes with child management
+  - Exon class with coding phase support
+  - All classes immutable where appropriate (frozen dataclasses)
+  - Comprehensive validation and type hints
+- Production-ready `core/intron.py` (513 lines)
+  - IntronScores: scoring data (frozen, immutable)
+  - IntronSequences: sequence data (frozen, immutable)
+  - IntronMetadata: metadata and tags (mutable for pipeline updates)
+  - Intron: main class with composition pattern
+  - Factory method: `from_exon_pair()` for intron creation
+  - Convenience methods: `with_scores()`, `with_sequences()`, `with_metadata()`
+  - All 24 doctests passing
+- Production-ready `utils/sequences.py` (321 lines)
+  - reverse_complement with IUPAC ambiguity code support
+  - Sequence validation (is_valid_dna, has_ambiguous_bases)
+  - GC content calculation
+  - Base counting
+  - Subsequence extraction with strand awareness
+  - Sliding window generator
+  - All 33 doctests passing
+- Comprehensive test suite:
+  - `test_models.py`: 27 tests for feature hierarchy
+  - `test_intron.py`: 35 tests for composition classes
+  - `test_sequences.py`: 48 tests for sequence utilities
+  - Integration tests demonstrating progressive intron building
 
 ---
 
@@ -506,9 +537,11 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ### Current Status
 - **Started:** 2025-11-01
-- **Current Phase:** Phase 0 COMPLETE ✅ → Phase 1 starting
-- **Progress:** M0.1-M0.6 complete (100% of Phase 0)
-- **Next:** Phase 1 - Core Infrastructure (M1.1: Core Data Models)
+- **Current Phase:** Phase 1 - Core Infrastructure (IN PROGRESS)
+- **Progress:**
+  - Phase 0: COMPLETE (M0.1-M0.6: 6/6 milestones ✅)
+  - Phase 1: M1.1 COMPLETE (1/3 milestones ✅)
+- **Next:** Phase 1 - M1.2: I/O Layer
 
 ---
 
