@@ -24,7 +24,7 @@ from typing import Optional, List, Set, Dict, Any
 from utils.coordinates import GenomicCoordinate, Strand
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GenomeFeature:
     """
     Base class for all genomic features.
@@ -111,7 +111,7 @@ class GenomeFeature:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Parent(ABC):
     """
     Abstract base class for hierarchical parent features (Gene, Transcript).
@@ -212,7 +212,7 @@ class Parent(ABC):
         pass
 
 
-@dataclass
+@dataclass(slots=True)
 class Gene(Parent):
     """
     Represents a gene with one or more transcripts.
@@ -267,7 +267,7 @@ class Gene(Parent):
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Transcript(Parent):
     """
     Represents a transcript (mRNA isoform) with one or more exons.
@@ -332,7 +332,7 @@ class Transcript(Parent):
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Exon:
     """
     Represents an exon (coding or non-coding region).

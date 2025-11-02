@@ -28,7 +28,7 @@ IntronType = Literal['u2', 'u12', 'unknown']
 OmissionCode = Optional[Literal['s', 'a', 'n', 'i', 'v', 'd']]  # short, ambiguous, noncanonical, isoform, overlap, duplicate
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IntronScores:
     """
     Scoring data for an intron.
@@ -101,7 +101,7 @@ class IntronScores:
         return "IntronScores(not scored)"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IntronSequences:
     """
     Sequence data for an intron.
@@ -175,7 +175,7 @@ class IntronSequences:
         return "IntronSequences(no sequence)"
 
 
-@dataclass
+@dataclass(slots=True)
 class IntronMetadata:
     """
     Metadata for an intron.
@@ -254,7 +254,7 @@ class IntronMetadata:
         return f"IntronMetadata({', '.join(parts)})" if parts else "IntronMetadata()"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Intron:
     """
     Main Intron class using composition pattern.
