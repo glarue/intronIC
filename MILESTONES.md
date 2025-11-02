@@ -152,9 +152,10 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ## Phase 1: Core Infrastructure ⏳ IN PROGRESS
 
-**Status:** IN PROGRESS (M1.1 complete)
+**Status:** IN PROGRESS (M1.1 ✅, M1.2 ✅)
 **Prerequisites:** Phase 0 complete ✅
 **Duration:** ~1 week (2-3 hours per chunk)
+**Next:** M1.3: Extraction Pipeline
 
 ### M1.1: Core Data Models ✅ COMPLETE
 - [x] Create `core/models.py` (GenomeFeature hierarchy)
@@ -203,19 +204,44 @@ tests/test_gold_standard.py::test_log_file_completeness       PASSED
 
 ---
 
-### M1.2: I/O Layer
-- [ ] Create `io/genome.py` (GenomeReader with caching)
-- [ ] Create `io/parsers.py`
-  - [ ] AnnotationParser (GFF3/GTF)
-  - [ ] BEDParser (with coordinate conversion)
-  - [ ] SequenceParser (.iic files)
-- [ ] Create `io/writers.py` (all output formats)
-- [ ] Create `io/formats.py` (format specifications)
-- [ ] Test with chr19 data
-- [ ] Compare outputs to gold standard
+### M1.2: I/O Layer ✅ COMPLETE
+- [x] Create `file_io/genome.py` (GenomeReader with caching)
+- [x] Create `file_io/parsers.py`
+  - [x] AnnotationParser (GFF3/GTF via biogl wrapper)
+  - [x] BEDParser (with coordinate conversion)
+  - [x] SequenceParser (.iic files)
+- [x] Create `file_io/writers.py` (all output formats)
+  - [x] BEDWriter (7 columns including attributes)
+  - [x] MetaWriter (15 columns including attributes)
+  - [x] SequenceWriter (.introns.iic)
+  - [x] ScoreWriter (.score_info.iic)
+  - [x] MappingWriter (dupe and overlap maps)
+- [x] Tag/Attribute mapping system
+  - [x] TAG_TO_ATTRIBUTE dictionary (centralized mapping)
+  - [x] Property tags: [n], [i], [c], [d]
+  - [x] Omission tags: [o:s], [o:a], [o:n], [o:v], [o:i]
+  - [x] Verbose attributes column for documentation
+- [x] Test with chr19 data
+- [x] Compare outputs to gold standard
 
+**Completed:** 2025-11-02
 **Priority:** High
-**Risk:** Medium (coordinate conversions at boundaries)
+**Risk:** Medium (coordinate conversions at boundaries) ✅ RESOLVED
+**Test Results:** 262/262 tests passing (44 parser + 37 writer + 9 integration)
+**Deliverables:**
+- `file_io/genome.py` (329 lines) - GenomeReader with streaming/cached modes
+- `file_io/parsers.py` (459 lines) - Modular parsers (Protocol-based)
+- `file_io/writers.py` (850 lines) - All output writers with tag system
+- `tests/unit/test_parsers.py` (563 lines, 44 tests)
+- `tests/unit/test_writers.py` (700 lines, 37 tests)
+- `tests/integration/test_parser_writer_pipeline.py` (343 lines, 9 tests)
+- `examples/attribute_mapping_demo.py` - Tag system demonstration
+**Key Features:**
+- Coordinate system abstraction used throughout
+- Generator-friendly design (memory efficient)
+- Context manager support
+- Format matches original intronIC exactly
+- Hybrid tag system (compact + verbose)
 
 ---
 
