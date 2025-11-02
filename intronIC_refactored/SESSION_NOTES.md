@@ -1,6 +1,145 @@
 # intronIC Refactoring - Session Notes
 
-## Session 2025-11-02: M1.1 Complete + M1.2 Partial
+## Session 2025-11-02 (continued #2): Tag Format Clarification - COMPLETE ✅
+
+### Important Tag Format Correction
+
+**Issue:** Initial implementation used incorrect tag format for omitted introns.
+- **Wrong:** `[s]`, `[a]`, `[v]` for omitted introns
+- **Correct:** `[o:s]`, `[o:a]`, `[o:v]`, `[o:n]`, `[o:i]` for omitted introns
+
+### Key Understanding (from original intronIC):
+1. **Property tags and omission tags are INDEPENDENT**:
+   - An intron can have both `[n]` (noncanonical property) AND `[o:s]` (omitted for being short)
+   - Example: `[n][i][o:s]` = noncanonical, not longest isoform, omitted because too short
+
+2. **Omission codes** (stored in `intron.metadata.omitted`):
+   - 's' = short (below minimum length)
+   - 'a' = ambiguous sequence (contains N or non-ACTG)
+   - 'n' = noncanonical (non-standard splice sites, when excluded)
+   - 'v' = coordinate overlap (overlapping with another intron)
+   - 'i' = not in longest isoform (when excluded)
+
+3. **Output format**: Omission codes are prefixed with `o:` to become `[o:s]`, `[o:a]`, etc.
+
+### Changes Made:
+1. **Updated TAG_TO_ATTRIBUTE dictionary** in `file_io/writers.py`:
+   - Added all omission code mappings: 'o:s', 'o:a', 'o:n', 'o:v', 'o:i'
+   - Maps to verbose names: omitted_short, omitted_ambiguous, etc.
+
+2. **Verified tag generation logic**:
+   - `_generate_tags()` correctly adds `[o:{code}]` format
+   - Property tags (`[n]`, `[i]`, `[c]`, `[d]`) added independently
+   - Both can appear together
+
+3. **Updated tests**:
+   - Added assertion for `[o:s]` tag in test_write_intron_with_tags
+   - All 262 tests pass ✅
+
+4. **Updated documentation**:
+   - Fixed examples/attribute_mapping_demo.py
+   - Updated docstrings to explain all omission codes
+
+### Verification:
+```bash
+PYTHONPATH=. pixi run pytest  # 262 tests pass
+PYTHONPATH=. pixi run python examples/attribute_mapping_demo.py  # Shows correct format
+```
+
+**Result:** Tag system now matches original intronIC exactly, with omission tags properly prefixed with `o:`.
+
+---
+
+## Session 2025-11-02 (continued): M1.2 COMPLETE - I/O Layer
+
+### Completed Work
+
+#### 1. Parser Tests (test_parsers.py - 44 tests)
+- **BioGLAnnotationParser** (14 tests): GFF3/GTF parsing, phases, strands, file handling
+- **BEDParser** (14 tests): BED3/BED6 formats, 0-based coordinates, extra columns
+- **SequenceParser** (13 tests): .iic format, scores, empty flanks, long sequences
+- **Data Structures** (3 tests): Dataclass creation and validation
+- **All tests pass** with real chr19 data
+
+#### 2. Writers Implementation (writers.py - 850 lines)
+- **BEDWriter**: BED format output (.bed.iic)
+  - 0-based coordinates (BED convention)
+  - Intron labels with tags ([n], [i], [c], [d])
+  - SVM scores, species naming
+- **MetaWriter**: Comprehensive metadata (.meta.iic)
+  - 14 columns: rel_score, dnts, motif, bp_context, length, parent, grandparent, index, family_size, frac_pos, phase, type_id, feature
+  - Fractional position calculations
+  - Null value handling
+- **SequenceWriter**: Sequence output (.introns.iic)
+  - Format: name, [score], upstream_flank, sequence, downstream_flank
+  - Optional score column
+  - Memory efficient (no buffering)
+- **ScoreWriter**: Detailed scoring (.score_info.iic)
+  - 14 columns: All PWM raw scores, z-scores, sequences
+  - Branch point sequences (bp_seq, bp_region)
+  - Decision distances
+- **MappingWriter**: Mapping files
+  - Duplicate mappings (.dupe_map.iic)
+  - Overlap mappings (.overlap_map.iic)
+
+**Key Features:**
+- All writers support context managers
+- Generator-friendly (accept iterables)
+- Proper null value handling ('.')
+- Format matches original intronIC exactly
+
+#### 3. Writer Tests (test_writers.py - 700 lines, 37 tests)
+- **BEDWriter** (10 tests): Basic writing, coordinates, tags, multiple introns
+- **MetaWriter** (7 tests): Headers, full introns, null values, fractional positions
+- **SequenceWriter** (7 tests): With/without scores, empty flanks, multiple introns
+- **ScoreWriter** (6 tests): Full scores, partial scores, null values, sequences
+- **MappingWriter** (5 tests): Single/multiple mappings, context managers
+- **Integration** (2 tests): All writers, consistent naming
+
+#### 4. Integration Tests (test_parser_writer_pipeline.py - 343 lines, 9 tests)
+- **Annotation Parser Integration** (3 tests): Chr19 parsing, structure, parent relationships
+- **Genome Reader Integration** (2 tests): Chr19 loading, subsequence extraction
+- **Parser → Writer Pipeline** (3 tests): BED roundtrip, sequence roundtrip, multiple formats
+- **Real Data Pipeline** (1 test): Full chr19 annotation → outputs
+
+### Test Results
+- **Total:** 262 tests (247 unit + 9 integration + 6 gold standard)
+- **Status:** ✅ All passing
+- **Runtime:** ~14 seconds
+
+### Files Created/Modified
+```
+file_io/
+├── writers.py              (850 lines) - NEW
+└── __init__.py             (45 lines) - Updated to export writers
+
+tests/unit/
+└── test_writers.py         (700 lines, 37 tests) - NEW
+
+tests/integration/
+├── __init__.py             - NEW
+└── test_parser_writer_pipeline.py (343 lines, 9 tests) - NEW
+```
+
+### Milestone M1.2: I/O Layer - COMPLETE ✅
+**Total Lines:** 2,726 new/modified lines
+- file_io/genome.py: 329 lines
+- file_io/parsers.py: 459 lines
+- file_io/writers.py: 850 lines
+- test_parsers.py: (part of test_parsers.py)
+- test_writers.py: 700 lines
+- test_parser_writer_pipeline.py: 343 lines
+
+**Capabilities:**
+- ✅ Read: FASTA genomes, GFF3/GTF annotations, BED files, .iic sequences
+- ✅ Write: BED, metadata, sequences, scores, mappings
+- ✅ Formats match original intronIC exactly
+- ✅ Memory efficient (streaming, generators)
+- ✅ Fully tested with real chr19 data
+
+---
+
+## Session 2025-11-02 (earlier): M1.1 Complete + M1.2 Partial
 
 ### Completed Work
 

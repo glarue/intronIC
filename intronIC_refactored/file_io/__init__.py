@@ -14,6 +14,13 @@ from .parsers import (
     SequenceLine,
     SequenceParser,
 )
+from .writers import (
+    BEDWriter,
+    MetaWriter,
+    SequenceWriter,
+    ScoreWriter,
+    MappingWriter,
+)
 
 __all__ = [
     # Genome reading
@@ -29,4 +36,10 @@ __all__ = [
     # Sequence file parsing
     'SequenceLine',
     'SequenceParser',
+    # Writers
+    'BEDWriter',
+    'MetaWriter',
+    'SequenceWriter',
+    'ScoreWriter',
+    'MappingWriter',
 ]
