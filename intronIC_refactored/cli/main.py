@@ -395,21 +395,35 @@ def score_introns(
         three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
     )
 
-    # Score introns
+    # Score introns with error handling
     progress = reporter.create_progress()
+    scored_introns = []
+    failed_count = 0
+
     with progress:
         task = progress.add_task(
             "[cyan]Scoring introns...",
             total=len(introns)
         )
 
-        scored_introns = []
         for intron in introns:
-            scored = scorer.score_intron(intron)
-            scored_introns.append(scored)
+            try:
+                scored = scorer.score_intron(intron)
+                scored_introns.append(scored)
+            except Exception as e:
+                # Log but continue - don't let one bad intron crash the pipeline
+                logger.warning(
+                    f"Failed to score intron {intron.intron_id}: {str(e)}. Skipping."
+                )
+                failed_count += 1
+
             progress.update(task, advance=1)
 
-    logger.info(f"Scored {len(scored_introns)} introns")
+    logger.info(f"Scored {len(scored_introns)} introns successfully")
+    if failed_count > 0:
+        logger.warning(f"Failed to score {failed_count} introns (see warnings above)")
+        reporter.print_warning(f"Skipped {failed_count} introns due to scoring errors")
+
     return scored_introns
 
 

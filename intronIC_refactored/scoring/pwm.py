@@ -95,6 +95,13 @@ class PWM:
             >>> pwm.score_sequence("GTAAGT", ignore_positions={0, 1})
             0.5
         """
+        # Validate sequence is not empty
+        if len(seq) == 0:
+            raise ValueError(
+                "Cannot score empty sequence. "
+                "This indicates a bug in sequence extraction or filtering."
+            )
+
         # Check for lowercase (warn user to use uppercase)
         if seq != seq.upper():
             raise ValueError(
@@ -143,10 +150,6 @@ class PWM:
                 score = base_freq
             else:
                 score *= base_freq
-
-        # Return neutral score for empty sequences
-        if score is None:
-            score = 1.0
 
         return score
 

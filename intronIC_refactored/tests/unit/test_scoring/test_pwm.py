@@ -263,10 +263,11 @@ def test_sequence_length_mismatch(simple_pwm):
 def test_empty_sequence(simple_pwm):
     """Test behavior with empty sequence.
 
-    Empty sequences should return 1.0 (neutral score in log space).
+    Empty sequences should raise ValueError - indicates a bug in
+    extraction/filtering if we get here.
     """
-    score = simple_pwm.score_sequence("")
-    assert score == 1.0  # No bases to score = neutral score
+    with pytest.raises(ValueError, match="Cannot score empty sequence"):
+        simple_pwm.score_sequence("")
 
 
 # ============================================================================
