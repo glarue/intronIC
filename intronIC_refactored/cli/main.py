@@ -516,41 +516,45 @@ def classify_introns(
     reporter.print_info("Training SVM classifier")
     logger.info("Starting SVM classification")
 
-    # Create classifier
+    # Create classifier with correct parameter names
+    # IntronClassifier API uses:
+    # - classification_threshold (not threshold)
+    # - n_ensemble_models (not n_models)
+    # - fixed_c (not fixed_C)
+    # - random_state (not seed)
     classifier = IntronClassifier(
-        threshold=config.scoring.threshold,
-        n_models=config.training.n_models,
-        fixed_C=config.training.fixed_C,
-        n_processes=config.performance.processes,
-        cv_processes=config.performance.cv_processes,
-        seed=config.training.seed
+        classification_threshold=config.scoring.threshold,
+        n_ensemble_models=config.training.n_models,
+        fixed_c=config.training.fixed_C,
+        optimize_c=(config.training.fixed_C is None),
+        random_state=config.training.seed
     )
 
-    # Train on reference data
-    reporter.print_info("Training ensemble SVM models")
-    logger.info(f"Training on {len(u12_reference)} U12 and {len(u2_reference)} U2 reference introns")
+    # Run complete classification pipeline (optimize + train + classify)
+    logger.info(f"Running classification on {len(introns)} experimental introns")
+    logger.info(f"Reference data: {len(u12_reference)} U12, {len(u2_reference)} U2")
 
-    training_results = classifier.train(
-        u12_introns=u12_reference,
-        u2_introns=u2_reference
+    result = classifier.classify(
+        u12_reference=u12_reference,
+        u2_reference=u2_reference,
+        experimental=introns
     )
 
-    logger.info(f"Training complete. F1: {training_results['f1_score']:.3f}, "
-                f"PR-AUC: {training_results['pr_auc']:.3f}")
-
-    # Predict on experimental introns
-    reporter.print_info("Classifying experimental introns")
-    logger.info(f"Classifying {len(introns)} experimental introns")
-
-    classified_introns = classifier.predict(introns)
-
+    # Extract metrics from result
     metrics = {
-        'training_f1': training_results['f1_score'],
-        'training_pr_auc': training_results['pr_auc']
+        'optimized_C': result.parameters.C,
+        'cv_score': result.parameters.cv_score,
+        'mean_f1': result.ensemble.mean_f1,
+        'mean_pr_auc': result.ensemble.mean_pr_auc,
+        'n_models': len(result.ensemble.models)
     }
 
-    logger.info("Classification complete")
-    return classified_introns, metrics
+    logger.info(f"Classification complete")
+    logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
+    logger.info(f"  Mean F1: {metrics['mean_f1']:.4f}")
+    logger.info(f"  Mean PR-AUC: {metrics['mean_pr_auc']:.4f}")
+
+    return list(result.classified_introns), metrics
 
 
 def write_outputs(
