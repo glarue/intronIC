@@ -215,14 +215,27 @@ def extract_introns_from_annotation(
     introns_all = list(introns_with_seq)
     logger.info(f"Extracted sequences for {len(introns_all)} introns")
 
+    # Calculate actual minimum length needed for scoring regions
+    # 5' region: relative to start, needs positions up to five_end
+    # 3' region: relative to end, needs positions from three_start (negative)
+    # BP region: relative to end, needs positions from bp_start (negative)
+    min_for_five = abs(config.scoring.scoring_regions.five_end)
+    min_for_three = abs(config.scoring.scoring_regions.three_start)
+    min_for_bp = abs(config.scoring.scoring_regions.bp_start)
+
+    # Intron must be long enough for all regions
+    calculated_min = max(min_for_five + min_for_three, min_for_bp)
+    actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+
     # Filter by minimum length
     introns = [
         i for i in introns_all
-        if i.sequences and len(i.sequences.seq) >= config.extraction.min_intron_len
+        if i.sequences and len(i.sequences.seq) >= actual_min_length
     ]
     filtered_count = len(introns_all) - len(introns)
     if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} introns shorter than {config.extraction.min_intron_len}bp")
+        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp "
+                   f"(required for scoring regions; user min was {config.extraction.min_intron_len}bp)")
 
     return introns
 
@@ -266,14 +279,27 @@ def extract_introns_from_bed(
     introns_all = list(introns_with_seq)
     logger.info(f"Extracted sequences for {len(introns_all)} introns")
 
+    # Calculate actual minimum length needed for scoring regions
+    # 5' region: relative to start, needs positions up to five_end
+    # 3' region: relative to end, needs positions from three_start (negative)
+    # BP region: relative to end, needs positions from bp_start (negative)
+    min_for_five = abs(config.scoring.scoring_regions.five_end)
+    min_for_three = abs(config.scoring.scoring_regions.three_start)
+    min_for_bp = abs(config.scoring.scoring_regions.bp_start)
+
+    # Intron must be long enough for all regions
+    calculated_min = max(min_for_five + min_for_three, min_for_bp)
+    actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+
     # Filter by minimum length
     introns = [
         i for i in introns_all
-        if i.sequences and len(i.sequences.seq) >= config.extraction.min_intron_len
+        if i.sequences and len(i.sequences.seq) >= actual_min_length
     ]
     filtered_count = len(introns_all) - len(introns)
     if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} introns shorter than {config.extraction.min_intron_len}bp")
+        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp "
+                   f"(required for scoring regions; user min was {config.extraction.min_intron_len}bp)")
 
     return introns
 
