@@ -95,12 +95,6 @@ class PWM:
             >>> pwm.score_sequence("GTAAGT", ignore_positions={0, 1})
             0.5
         """
-        # Validate sequence length
-        if len(seq) != self.length:
-            raise ValueError(
-                f"Sequence length ({len(seq)}) must match PWM length ({self.length})"
-            )
-
         # Check for lowercase (warn user to use uppercase)
         if seq != seq.upper():
             raise ValueError(
@@ -126,7 +120,8 @@ class PWM:
                 # Look up base frequency in matrix
                 try:
                     base_index = BASE_TO_INDEX[base]
-                    base_freq = self.matrix[base_index, i]
+                    # Use pwm_position to index into matrix, not i
+                    base_freq = self.matrix[base_index, pwm_position]
 
                     # Apply pseudocount if frequency is zero
                     # Port from: intronIC.py:2134

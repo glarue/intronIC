@@ -1,0 +1,12 @@
+<frozen runpy>:128: RuntimeWarning: 'cli.main' found in sys.modules after import of package 'cli', but prior to execution of 'cli.main'; this may result in unpredictable behaviour
+usage: main.py [-h] -n SPECIES_NAME [-g GENOME] [-a ANNOTATION] [-b BED]
+               [-q SEQUENCE_FILE] [-o OUTPUT_DIR] [-s] [-t THRESHOLD]
+               [-f {cds,exon,both}] [--no_nc] [-p PROCESSES]
+               [--min_intron_len MIN_INTRON_LEN] [-i] [-v] [--pwms PWMS]
+               [--reference_u12s REFERENCE_U12S]
+               [--reference_u2s REFERENCE_U2S] [--generate_u2_bps_pwm]
+               [--recursive [RECURSIVE]] [-C C] [--n_models N_MODELS]
+               [--five_score_coords START END] [--bp_region_coords START END]
+               [--three_score_coords START END] [--flank_len FLANK_LEN]
+               [--cv_processes CV_PROCESSES] [--seed SEED] [--quiet] [--debug]
+main.py: error: File not found: ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz

@@ -14,9 +14,11 @@ from .config import IntronICConfig
 from .progress import IntronICProgressReporter
 
 # Import pipeline components
-from core.intron import Intron
+from core.intron import Intron, IntronSequences
+from utils.coordinates import GenomicCoordinate
 from file_io.genome import GenomeReader
 from file_io.parsers import AnnotationParser, BEDParser, SequenceParser
+from file_io.writers import BEDWriter, MetaWriter, SequenceWriter, ScoreWriter, MappingWriter
 from extraction.annotator import AnnotationHierarchyBuilder
 from extraction.intronator import IntronGenerator
 from extraction.sequences import SequenceExtractor
@@ -24,6 +26,7 @@ from scoring.pwm import PWMLoader
 from scoring.scorer import IntronScorer
 from scoring.normalizer import ScoreNormalizer
 from classification.classifier import IntronClassifier
+import gzip
 
 
 def setup_logging(config: IntronICConfig) -> logging.Logger:
@@ -67,6 +70,95 @@ def setup_logging(config: IntronICConfig) -> logging.Logger:
     return logger
 
 
+def load_reference_sequences(filepath: Path, max_count: int = None, min_length: int = 55, logger: logging.Logger = None) -> List[Intron]:
+    """
+    Load reference intron sequences from .iic.gz file.
+
+    Format (tab-delimited):
+    - intron_id
+    - score
+    - upstream_flank
+    - intron_seq
+    - downstream_flank
+    - sources
+    - source_count
+
+    Args:
+        filepath: Path to .iic.gz file
+        max_count: Maximum number to load (None = all)
+        min_length: Minimum intron length required (default: 55bp for scoring regions)
+        logger: Optional logger instance
+
+    Returns:
+        List of Intron objects with sequences
+    """
+    introns = []
+    skipped_short = 0
+
+    open_fn = gzip.open if str(filepath).endswith('.gz') else open
+    with open_fn(filepath, 'rt') as f:
+        for line_num, line in enumerate(f, 1):
+            # Skip comments
+            if line.startswith('#'):
+                continue
+
+            # Parse line
+            fields = line.strip().split('\t')
+            if len(fields) < 5:
+                continue
+
+            intron_id = fields[0]
+            upstream_flank = fields[2]
+            intron_seq = fields[3]
+            downstream_flank = fields[4]
+
+            # Create dummy coordinates (not needed for scoring)
+            coord = GenomicCoordinate(
+                chromosome="ref",
+                start=1,
+                stop=len(intron_seq),
+                strand="+",
+                system="1-based"
+            )
+
+            # Extract terminal dinucleotides
+            five_dnt = intron_seq[:2] if len(intron_seq) >= 2 else None
+            three_dnt = intron_seq[-2:] if len(intron_seq) >= 2 else None
+
+            # Create IntronSequences
+            sequences = IntronSequences(
+                seq=intron_seq,
+                upstream_flank=upstream_flank,
+                downstream_flank=downstream_flank,
+                five_prime_dnt=five_dnt,
+                three_prime_dnt=three_dnt
+            )
+
+            # Skip if too short for scoring regions
+            if len(intron_seq) < min_length:
+                skipped_short += 1
+                continue
+
+            # Create Intron
+            intron = Intron(
+                intron_id=intron_id,
+                coordinates=coord,
+                sequences=sequences
+            )
+            introns.append(intron)
+
+            # Check max count
+            if max_count and len(introns) >= max_count:
+                break
+
+    if logger:
+        logger.info(f"Loaded {len(introns)} reference sequences from {filepath.name}")
+        if skipped_short > 0:
+            logger.info(f"Skipped {skipped_short} reference introns shorter than {min_length}bp")
+
+    return introns
+
+
 def load_genome(config: IntronICConfig, logger: logging.Logger) -> GenomeReader:
     """Load genome file.
 
@@ -78,8 +170,10 @@ def load_genome(config: IntronICConfig, logger: logging.Logger) -> GenomeReader:
         GenomeReader instance
     """
     logger.info(f"Loading genome: {config.input.genome}")
-    reader = GenomeReader(config.input.genome)
-    logger.info(f"Loaded {len(reader.sequences)} sequences")
+    # Use cached mode for faster repeated access
+    reader = GenomeReader(config.input.genome, cached=True)
+    if reader.cache:
+        logger.info(f"Loaded {len(reader.cache)} sequences into memory")
     return reader
 
 
@@ -103,27 +197,55 @@ def extract_introns_from_annotation(
     reporter.print_info(f"Parsing annotation: {config.input.annotation}")
     logger.info(f"Parsing annotation: {config.input.annotation}")
 
-    # Parse annotation
-    parser = AnnotationParser()
-    features = parser.parse_file(config.input.annotation)
-    logger.info(f"Parsed {len(features)} features")
+    # Step 1: Build annotation hierarchy
+    feature_types = ['exon'] if config.extraction.feature_type == 'exon' else ['cds']
+    builder = AnnotationHierarchyBuilder(child_features=feature_types)
+    genes = builder.build_from_file(config.input.annotation)
+    logger.info(f"Built hierarchy with {len(genes)} genes")
 
-    # Extract introns
-    reporter.print_info("Extracting introns from features")
-    logger.info("Extracting introns")
+    # Step 2: Generate introns from exon pairs
+    reporter.print_info("Generating introns from exon pairs")
+    generator = IntronGenerator()
+    introns_iter = generator.generate_from_genes(genes, builder.feature_index)
+    introns_list = list(introns_iter)  # Materialize iterator
+    logger.info(f"Generated {len(introns_list)} introns")
 
-    extractor = IntronExtractor(
-        genome_reader=genome_reader,
-        min_length=config.extraction.min_intron_len,
-        flank_length=config.extraction.flank_len
+    # Step 3: Extract sequences for introns
+    reporter.print_info("Extracting intron sequences from genome")
+    sequence_extractor = SequenceExtractor(
+        genome_file=str(config.input.genome),
+        use_cache=True
     )
-
-    introns = extractor.extract_from_features(
-        features,
-        feature_type=config.extraction.feature_type
+    introns_with_seq = sequence_extractor.extract_sequences(
+        introns_list,
+        flank_size=config.extraction.flank_len
     )
+    # Materialize generator to list
+    introns_all = list(introns_with_seq)
+    logger.info(f"Extracted sequences for {len(introns_all)} introns")
 
-    logger.info(f"Extracted {len(introns)} introns")
+    # Calculate actual minimum length needed for scoring regions
+    # 5' region: relative to start, needs positions up to five_end
+    # 3' region: relative to end, needs positions from three_start (negative)
+    # BP region: relative to end, needs positions from bp_start (negative)
+    min_for_five = abs(config.scoring.scoring_regions.five_end)
+    min_for_three = abs(config.scoring.scoring_regions.three_start)
+    min_for_bp = abs(config.scoring.scoring_regions.bp_start)
+
+    # Intron must be long enough for all regions
+    calculated_min = max(min_for_five + min_for_three, min_for_bp)
+    actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+
+    # Filter by minimum length
+    introns = [
+        i for i in introns_all
+        if i.sequences and len(i.sequences.seq) >= actual_min_length
+    ]
+    filtered_count = len(introns_all) - len(introns)
+    if filtered_count > 0:
+        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp "
+                   f"(required for scoring regions; user min was {config.extraction.min_intron_len}bp)")
+
     return introns
 
 
@@ -147,14 +269,47 @@ def extract_introns_from_bed(
     reporter.print_info(f"Reading BED file: {config.input.bed}")
     logger.info(f"Reading BED file: {config.input.bed}")
 
-    extractor = IntronExtractor(
-        genome_reader=genome_reader,
-        min_length=config.extraction.min_intron_len,
-        flank_length=config.extraction.flank_len
-    )
+    # Parse BED file
+    parser = BEDParser()
+    introns_no_seq = list(parser.parse_file(config.input.bed))
+    logger.info(f"Parsed {len(introns_no_seq)} introns from BED")
 
-    introns = extractor.extract_from_bed(config.input.bed)
-    logger.info(f"Extracted {len(introns)} introns from BED")
+    # Extract sequences
+    reporter.print_info("Extracting sequences from genome")
+    sequence_extractor = SequenceExtractor(
+        genome_file=str(config.input.genome),
+        use_cache=True
+    )
+    introns_with_seq = sequence_extractor.extract_sequences(
+        introns_no_seq,
+        flank_size=config.extraction.flank_len
+    )
+    # Materialize generator to list
+    introns_all = list(introns_with_seq)
+    logger.info(f"Extracted sequences for {len(introns_all)} introns")
+
+    # Calculate actual minimum length needed for scoring regions
+    # 5' region: relative to start, needs positions up to five_end
+    # 3' region: relative to end, needs positions from three_start (negative)
+    # BP region: relative to end, needs positions from bp_start (negative)
+    min_for_five = abs(config.scoring.scoring_regions.five_end)
+    min_for_three = abs(config.scoring.scoring_regions.three_start)
+    min_for_bp = abs(config.scoring.scoring_regions.bp_start)
+
+    # Intron must be long enough for all regions
+    calculated_min = max(min_for_five + min_for_three, min_for_bp)
+    actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+
+    # Filter by minimum length
+    introns = [
+        i for i in introns_all
+        if i.sequences and len(i.sequences.seq) >= actual_min_length
+    ]
+    filtered_count = len(introns_all) - len(introns)
+    if filtered_count > 0:
+        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp "
+                   f"(required for scoring regions; user min was {config.extraction.min_intron_len}bp)")
+
     return introns
 
 
@@ -176,9 +331,12 @@ def load_introns_from_sequences(
     reporter.print_info(f"Loading sequences: {config.input.sequence_file}")
     logger.info(f"Loading sequences: {config.input.sequence_file}")
 
-    # TODO: Implement sequence file parser
-    # This would be similar to the reference sequence loader in integration tests
-    raise NotImplementedError("Sequence file loading not yet implemented")
+    # Parse sequence file
+    parser = SequenceParser()
+    introns = list(parser.parse_file(config.input.sequence_file))
+    logger.info(f"Loaded {len(introns)} introns from sequence file")
+
+    return introns
 
 
 def score_introns(
@@ -198,18 +356,43 @@ def score_introns(
     Returns:
         List of introns with raw scores
     """
+    reporter.print_info("Loading PWM matrices")
+    logger.info("Loading PWM matrices")
+
+    # Load PWM matrices from data directory
+    pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+    if not pwm_file.exists():
+        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
+
+    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    logger.info(f"Loaded PWM matrices for {len(pwm_sets)} regions")
+
+    # Load U2 BP matrix from separate file (fallback/conserved matrix)
+    u2_bp_file = Path(__file__).parent.parent / "intronIC" / "data" / "u2.conserved_empirical_bp_pwm.iic"
+    if u2_bp_file.exists():
+        from dataclasses import replace
+        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file)
+        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
+            # PWMSet is frozen, so use replace() to create updated copy
+            pwm_sets['bp'] = replace(
+                pwm_sets['bp'],
+                u2_canonical=u2_bp_matrices['bp'].u2_canonical
+            )
+            logger.info("Loaded conserved U2 BP matrix")
+        else:
+            logger.warning("U2 BP matrix file found but couldn't extract U2 canonical PWM")
+    else:
+        logger.warning(f"U2 BP matrix file not found: {u2_bp_file}")
+
+    # Create scorer
     reporter.print_info("Calculating PWM scores")
     logger.info("Starting PWM scoring")
 
-    # Load or build PWM matrices
-    # TODO: Implement PWM loading from file or defaults
-    scorer = PWMScorer(
-        five_start=config.scoring.scoring_regions.five_start,
-        five_end=config.scoring.scoring_regions.five_end,
-        bp_start=config.scoring.scoring_regions.bp_start,
-        bp_end=config.scoring.scoring_regions.bp_end,
-        three_start=config.scoring.scoring_regions.three_start,
-        three_end=config.scoring.scoring_regions.three_end
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
+        bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
+        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
     )
 
     # Score introns
@@ -235,7 +418,7 @@ def normalize_scores(
     config: IntronICConfig,
     reporter: IntronICProgressReporter,
     logger: logging.Logger
-) -> List[Intron]:
+) -> Tuple[List[Intron], List[Intron], List[Intron]]:
     """Normalize intron scores using z-score transformation.
 
     Args:
@@ -245,25 +428,80 @@ def normalize_scores(
         logger: Logger instance
 
     Returns:
-        List of introns with normalized z-scores
+        Tuple of (normalized experimental introns, u12 reference, u2 reference)
     """
-    reporter.print_info("Normalizing scores")
-    logger.info("Normalizing scores with z-score transformation")
+    reporter.print_info("Loading reference sequences")
+    logger.info("Loading reference sequences for normalization")
 
-    # Load reference sequences for normalization
-    # TODO: Implement reference sequence loading
+    # Load reference data
+    data_dir = Path(__file__).parent.parent / "intronIC" / "data"
+    u12_file = data_dir / "u12_reference.introns.iic.gz"
+    u2_file = data_dir / "u2_reference.introns.iic.gz"
+
+    if not u12_file.exists() or not u2_file.exists():
+        raise FileNotFoundError(f"Reference data not found in {data_dir}")
+
+    u12_reference = load_reference_sequences(u12_file, logger=logger)
+    u2_reference = load_reference_sequences(u2_file, logger=logger)
+
+    logger.info(f"Loaded {len(u12_reference)} U12 and {len(u2_reference)} U2 reference introns")
+
+    # Score reference introns
+    reporter.print_info("Scoring reference sequences")
+    logger.info("Scoring reference sequences with PWMs")
+
+    # Load PWM matrices
+    pwm_file = data_dir / "scoring_matrices.fasta.iic"
+    pwm_sets = PWMLoader.load_from_file(pwm_file)
+
+    # Load U2 BP matrix from separate file (fallback/conserved matrix)
+    from dataclasses import replace
+    u2_bp_file = data_dir / "u2.conserved_empirical_bp_pwm.iic"
+    if u2_bp_file.exists():
+        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file)
+        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
+            pwm_sets['bp'] = replace(
+                pwm_sets['bp'],
+                u2_canonical=u2_bp_matrices['bp'].u2_canonical
+            )
+            logger.info("Loaded conserved U2 BP matrix for reference scoring")
+
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
+        bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
+        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
+    )
+
+    # Score reference introns
+    u12_scored = [scorer.score_intron(i) for i in u12_reference]
+    u2_scored = [scorer.score_intron(i) for i in u2_reference]
+    reference_introns = u12_scored + u2_scored
+
+    # Normalize scores
+    reporter.print_info("Normalizing scores with z-score transformation")
+    logger.info("Fitting normalizer on reference data")
+
     normalizer = ScoreNormalizer()
+    normalizer.fit(reference_introns, dataset_type='reference')
 
-    # Fit on reference data and transform experimental
-    # normalized = normalizer.fit_transform(reference_introns, introns)
+    # Transform reference introns (needed for classification)
+    # Note: transform() takes an iterable and returns an iterator, so we materialize with list()
+    u12_normalized = list(normalizer.transform(u12_scored, dataset_type='reference'))
+    u2_normalized = list(normalizer.transform(u2_scored, dataset_type='reference'))
 
-    # For now, return as-is (would need reference data)
-    logger.warning("Score normalization not fully implemented yet")
-    return introns
+    # Transform experimental introns
+    normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
+
+    logger.info(f"Normalized {len(normalized_introns)} experimental introns")
+    logger.info(f"Normalized {len(u12_normalized)} U12 and {len(u2_normalized)} U2 reference introns")
+    return normalized_introns, u12_normalized, u2_normalized
 
 
 def classify_introns(
     introns: List[Intron],
+    u12_reference: List[Intron],
+    u2_reference: List[Intron],
     config: IntronICConfig,
     reporter: IntronICProgressReporter,
     logger: logging.Logger
@@ -272,6 +510,8 @@ def classify_introns(
 
     Args:
         introns: List of introns with z-scores
+        u12_reference: U12 reference introns (scored and normalized)
+        u2_reference: U2 reference introns (scored and normalized)
         config: Pipeline configuration
         reporter: Progress reporter
         logger: Logger instance
@@ -282,21 +522,45 @@ def classify_introns(
     reporter.print_info("Training SVM classifier")
     logger.info("Starting SVM classification")
 
-    # Load reference sequences
-    # TODO: Implement reference sequence loading from default or custom paths
-
+    # Create classifier with correct parameter names
+    # IntronClassifier API uses:
+    # - classification_threshold (not threshold)
+    # - n_ensemble_models (not n_models)
+    # - fixed_c (not fixed_C)
+    # - random_state (not seed)
     classifier = IntronClassifier(
-        threshold=config.scoring.threshold,
-        n_models=config.training.n_models,
-        fixed_C=config.training.fixed_C,
-        n_processes=config.performance.processes,
-        cv_processes=config.performance.cv_processes,
-        seed=config.training.seed
+        classification_threshold=config.scoring.threshold,
+        n_ensemble_models=config.training.n_models,
+        fixed_c=config.training.fixed_C,
+        optimize_c=(config.training.fixed_C is None),
+        random_state=config.training.seed
     )
 
-    # For now, return as-is (would need reference data)
-    logger.warning("Classification not fully implemented yet")
-    return introns, {}
+    # Run complete classification pipeline (optimize + train + classify)
+    logger.info(f"Running classification on {len(introns)} experimental introns")
+    logger.info(f"Reference data: {len(u12_reference)} U12, {len(u2_reference)} U2")
+
+    result = classifier.classify(
+        u12_reference=u12_reference,
+        u2_reference=u2_reference,
+        experimental=introns
+    )
+
+    # Extract metrics from result
+    metrics = {
+        'optimized_C': result.parameters.C,
+        'cv_score': result.parameters.cv_score,
+        'mean_f1': result.ensemble.mean_f1,
+        'mean_pr_auc': result.ensemble.mean_pr_auc,
+        'n_models': len(result.ensemble.models)
+    }
+
+    logger.info(f"Classification complete")
+    logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
+    logger.info(f"  Mean F1: {metrics['mean_f1']:.4f}")
+    logger.info(f"  Mean PR-AUC: {metrics['mean_pr_auc']:.4f}")
+
+    return list(result.classified_introns), metrics
 
 
 def write_outputs(
@@ -316,22 +580,55 @@ def write_outputs(
     reporter.print_info("Writing output files")
     logger.info("Writing output files")
 
-    # TODO: Implement output writers
-    # - .meta.iic: Metadata file
-    # - .bed.iic: BED-like coordinates
-    # - .seqs.iic: Sequences
-    # - .scores.iic: Detailed scores
+    output_dir = config.output.output_dir
+    base_name = config.output.base_filename
+
+    # Write BED file
+    bed_path = output_dir / f"{base_name}.bed.iic"
+    logger.info(f"Writing BED file: {bed_path}")
+    bed_writer = BEDWriter(bed_path)
+    with bed_writer:
+        for intron in introns:
+            bed_writer.write_intron(intron)
+    logger.info(f"Wrote {len(introns)} introns to BED file")
+
+    # Write metadata file
+    meta_path = output_dir / f"{base_name}.meta.iic"
+    logger.info(f"Writing metadata file: {meta_path}")
+    meta_writer = MetaWriter(meta_path)
+    with meta_writer:
+        for intron in introns:
+            meta_writer.write_intron(intron)
+    logger.info(f"Wrote metadata for {len(introns)} introns")
+
+    # Write sequences file
+    seq_path = output_dir / f"{base_name}.introns.iic"
+    logger.info(f"Writing sequences file: {seq_path}")
+    seq_writer = SequenceWriter(seq_path)
+    with seq_writer:
+        for intron in introns:
+            seq_writer.write_intron(intron)
+    logger.info(f"Wrote sequences for {len(introns)} introns")
+
+    # Write score info file
+    score_path = output_dir / f"{base_name}.score_info.iic"
+    logger.info(f"Writing score info file: {score_path}")
+    score_writer = ScoreWriter(score_path)
+    with score_writer:
+        for intron in introns:
+            score_writer.write_intron(intron)
+    logger.info(f"Wrote score info for {len(introns)} introns")
 
     output_files = {
-        "Metadata": config.output.get_output_path('.meta.iic'),
-        "BED": config.output.get_output_path('.bed.iic'),
-        "Sequences": config.output.get_output_path('.seqs.iic'),
-        "Scores": config.output.get_output_path('.scores.iic'),
+        "Metadata": meta_path,
+        "BED": bed_path,
+        "Sequences": seq_path,
+        "Scores": score_path,
         "Log": config.output.get_output_path('.log'),
     }
 
     reporter.print_file_tree(output_files)
-    logger.info("Output files written successfully")
+    logger.info("All output files written successfully")
 
 
 def run_pipeline(config: IntronICConfig):
@@ -405,7 +702,7 @@ def run_pipeline(config: IntronICConfig):
         # Step 4: Normalize scores
         reporter.print_section("Step 4: Normalize Scores", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=4)
-        normalized_introns = normalize_scores(
+        normalized_introns, u12_reference, u2_reference = normalize_scores(
             scored_introns, config, reporter, logger
         )
         reporter.print_success("Scores normalized")
@@ -414,7 +711,7 @@ def run_pipeline(config: IntronICConfig):
         reporter.print_section("Step 5: Classify Introns", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=5)
         classified_introns, metrics = classify_introns(
-            normalized_introns, config, reporter, logger
+            normalized_introns, u12_reference, u2_reference, config, reporter, logger
         )
 
         # Count classifications
