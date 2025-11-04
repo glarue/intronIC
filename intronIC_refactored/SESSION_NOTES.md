@@ -1,5 +1,152 @@
 # intronIC Refactoring - Session Notes
 
+## Session 2025-11-02 (continued #3): M1.3 COMPLETE - Extraction Pipeline ✅
+
+### Completed Work
+
+#### 1. Fixed Model Compatibility Issues
+**Problem:** Extraction modules written against old intronIC model structure needed adaptation to new M1.1 models with GenomicCoordinate abstraction.
+
+**Changes Made:**
+
+**annotator.py:**
+- ✅ Fixed coordinate creation: Uses `GenomicCoordinate(chromosome, start, stop, strand, system='1-based')`
+- ✅ Fixed coordinate field names: `chromosome`/`stop` (not `seqid`/`end`)
+- ✅ Fixed CoordinateSystem: Uses string literal `'1-based'` (not enum)
+- ✅ Fixed single-base features: Skip features where start >= stop
+
+**intronator.py:**
+- ✅ Updated coordinate access: `exon.coordinates.start` instead of `exon.start`
+- ✅ Fixed overlap check: Uses `coordinates.start`, `coordinates.stop`
+- ✅ Added feature_index parameter: Methods now require feature_index to resolve IDs
+- ✅ Added exception handling: Skips invalid introns (overlapping, too short)
+- ✅ Removed fractional_position setter: It's a computed property
+
+**filters.py:**
+- ✅ Fixed coordinate property names: `coordinates.chromosome`, `coordinates.stop`
+
+**sequences.py:**
+- ✅ Fixed coordinate property names: `coordinates.chromosome`, `coordinates.stop`
+
+**intron.py (core model):**
+- ✅ Added `five_prime_dnt` and `three_prime_dnt` to IntronSequences
+- ✅ Added `parent_length` to IntronMetadata
+
+#### 2. Handled Missing Hierarchy Levels
+**Critical Feature:** Annotation files may be missing gene or transcript features. Original intronIC handles this by using the same ID for missing levels.
+
+**Implementation (annotator.py lines 214-248, 366-377):**
+- ✅ Wrap orphan transcripts in synthetic Gene objects
+- ✅ Set grandparent to parent ID when grandparent is missing
+- ✅ Use `dataclasses.replace()` to update frozen objects
+- ✅ Create placeholder parents/grandparents with dummy coordinates
+
+**User Guidance:** "child:parent mapping is not 1:1; there are many cases where the same exon/CDS feature is shared across multiple parents. Also, certain annotation files may be missing either `gene` or `transcript` features."
+
+#### 3. Verified Multi-Level Hierarchies
+**Confirmed Working:**
+- ✅ Gene → Multiple Transcripts (tested with gene having 16 transcripts)
+- ✅ Transcript → Multiple Exons
+- ✅ Exon → Multiple Transcripts (via unique naming: `exon_Parent=T1:1000_1100`)
+
+#### 4. Updated Integration Tests
+**Fixed test_extraction_pipeline.py:**
+- ✅ Updated field references: `feature_id` → `intron_id`, `.name` → `.feature_id`
+- ✅ Added `feature_index` parameter to all `generate_from_genes()` calls
+- ✅ Fixed attribute checks to work with new model
+- ✅ All 6 integration tests passing in 27.47s
+
+### Test Results
+```bash
+tests/integration/test_extraction_pipeline.py - 6 tests PASSING ✅
+  ✓ test_annotation_hierarchy_building
+  ✓ test_intron_generation_from_genes
+  ✓ test_sequence_extraction
+  ✓ test_full_pipeline_intron_count
+  ✓ test_filtering_omission_codes
+  ✓ test_quick_extraction (58,903 introns from chr19)
+```
+
+### Key Technical Decisions
+
+**1. Unique Naming for Shared Exons:**
+```python
+# For child features (exon/cds), create unique name per parent
+if feat_type in self.child_features:
+    name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
+else:
+    name = feat.feature_id
+```
+
+**2. Missing Gene Feature Handling:**
+```python
+# Wrap orphan transcript in Gene with synthetic ID
+gene_id = f"gene_wrapper:{transcript.feature_id}"
+gene = Gene(feature_id=gene_id, coordinates=transcript.coordinates, ...)
+updated_transcript = replace(transcript, parent_id=gene_id)
+```
+
+**3. Min/Max Coordinate Calculation:**
+```python
+# Handle exons in any order (coding vs genomic direction)
+intron_start = min(exon1.stop, exon2.stop) + 1
+intron_stop = max(exon1.start, exon2.start) - 1
+```
+
+### Milestone M1.3: Extraction Pipeline - COMPLETE ✅
+
+**Total Lines:** 1,350 lines of extraction code + tests
+- extraction/annotator.py: 413 lines
+- extraction/intronator.py: 282 lines
+- extraction/sequences.py: 327 lines
+- extraction/filters.py: 374 lines
+- tests/integration/test_extraction_pipeline.py: 194 lines
+
+**Capabilities:**
+- ✅ Parse GFF3/GTF annotations with NetworkX DAG
+- ✅ Handle gene→transcript→exon hierarchies (including missing levels)
+- ✅ Generate introns from exon pairs with metadata
+- ✅ Extract sequences with flanks and scoring regions
+- ✅ Filter by length, quality, canonical status, overlaps, isoforms
+- ✅ Tag duplicates and overlaps with proper resolution
+- ✅ All using new M1.1 model interface
+
+### Files Modified This Session
+```
+extraction/
+├── annotator.py        - Model interface updates, missing hierarchy handling
+├── intronator.py       - Coordinate access fixes, feature_index param
+├── filters.py          - Coordinate property name fixes
+└── sequences.py        - Coordinate property name fixes
+
+core/
+└── intron.py          - Added five_prime_dnt, three_prime_dnt, parent_length
+
+tests/integration/
+└── test_extraction_pipeline.py - Updated for new model interface
+```
+
+### What's Next: Phase 2 - Scoring & Classification
+
+**Milestone M1.4: Scoring (next)**
+- PWM (Position Weight Matrix) scoring
+- Branch point detection
+- Z-score normalization
+- Files to create:
+  - scoring/pwm.py
+  - scoring/normalizer.py
+  - scoring/branch_point.py
+
+**Milestone M1.5: Classification**
+- SVM classifier
+- Training/prediction
+- Ensemble methods
+- Files to create:
+  - classification/svm_classifier.py
+  - classification/trainer.py
+
+---
+
 ## Session 2025-11-02 (continued #2): Tag Format Clarification - COMPLETE ✅
 
 ### Important Tag Format Correction
@@ -210,73 +357,13 @@ tests/unit/
    - Type safe (full type hints)
    - Preserves optimizations from original
 
-### What's Next (M1.2 completion)
-
-#### Still TODO:
-1. **file_io/writers.py** (estimated 500-800 lines):
-   - MetaWriter: `.meta.iic` format
-   - BEDWriter: `.bed.iic` format
-   - SequenceWriter: `.introns.iic` format (sequences)
-   - ScoreWriter: `.score_info.iic` format
-   - MappingWriter: `.dupe_map.iic`, `.overlap_map.iic`
-
-2. **tests/unit/test_parsers.py** (estimated 30-40 tests):
-   - Test BioGLAnnotationParser with real GFF3/GTF
-   - Test BEDParser
-   - Test SequenceParser
-
-3. **tests/unit/test_writers.py** (estimated 25-35 tests):
-   - Test all writer formats
-   - Verify output matches gold standard format
-
-4. **Integration test**:
-   - Run parsers on chr19 annotation
-   - Verify output structure
-
-5. **Update MILESTONES.md**: Mark M1.2 complete
-
-### Output Format Reference
-
-From gold standard files:
-
-**`.meta.iic`** (Tab-delimited metadata):
-```
-name    rel_score    dnts    motif_schematic    bp_context    length    parent    grandparent    index    family_size    frac_pos    phase    type_id    feature
-```
-
-**`.bed.iic`** (BED format, 0-based):
-```
-chrom    start    stop    name    score    strand
-```
-
-**`.introns.iic`** (Sequences with flanks):
-```
-name    score    upstream_flank    sequence    downstream_flank
-```
-
-**`.score_info.iic`** (Detailed scores):
-```
-name    rel_score    svm_score    decision_dist    5'_seq    5'_raw    5'_z    bp_seq_u12    bp_seq_u2    bp_raw    bp_z    3'_seq    3'_raw    3'_z
-```
-
-**`.dupe_map.iic`** (Duplicate mappings):
-```
-duplicate_name    representative_name
-```
-
 ### Git Status
 - All work committed (commit: `92f2d3d`)
 - Branch: `refactor/phase-0-foundation`
-- Tests: 166 passing (144 from Phase 0/M1.1 + 22 from M1.2)
+- Tests: 268 passing (262 from M1.1/M1.2 + 6 from M1.3)
 
 ### Performance Notes
 - GenomeReader tested with chr19 (~58MB)
 - Loads in ~1.4 seconds cached
 - Memory efficient streaming works well
 - No performance regressions from original
-
-### Important Reminders for Next Session
-1. Check original for any performance optimizations before implementing writers
-2. Writers need to be generator-friendly (don't hold all data in memory)
-3. Output formats must match gold standard exactly
-4. Test with chr19 data for integration verification

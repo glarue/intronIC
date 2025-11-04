@@ -19,13 +19,15 @@ Date: 2025-11-02
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Literal
+from typing import Literal, Optional
+
 from utils.coordinates import GenomicCoordinate
 
-
 # Type aliases for clarity
-IntronType = Literal['u2', 'u12', 'unknown']
-OmissionCode = Optional[Literal['s', 'a', 'n', 'i', 'v', 'd']]  # short, ambiguous, noncanonical, isoform, overlap, duplicate
+IntronType = Literal["u2", "u12", "unknown"]
+OmissionCode = Optional[
+    Literal["s", "a", "n", "i", "v", "d"]
+]  # short, ambiguous, noncanonical, isoform, overlap, duplicate
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,15 +86,17 @@ class IntronScores:
 
     def has_all_scores(self) -> bool:
         """Check if all scoring fields are populated."""
-        return all([
-            self.five_raw_score is not None,
-            self.bp_raw_score is not None,
-            self.three_raw_score is not None,
-            self.five_z_score is not None,
-            self.bp_z_score is not None,
-            self.three_z_score is not None,
-            self.svm_score is not None,
-        ])
+        return all(
+            [
+                self.five_raw_score is not None,
+                self.bp_raw_score is not None,
+                self.three_raw_score is not None,
+                self.five_z_score is not None,
+                self.bp_z_score is not None,
+                self.three_z_score is not None,
+                self.svm_score is not None,
+            ]
+        )
 
     def __str__(self) -> str:
         """Human-readable string representation."""
@@ -116,6 +120,8 @@ class IntronSequences:
         bp_region_seq: Full branch point search region
         upstream_flank: Exonic sequence upstream of intron
         downstream_flank: Exonic sequence downstream of intron
+        five_prime_dnt: Terminal 5' dinucleotide (e.g., 'GT')
+        three_prime_dnt: Terminal 3' dinucleotide (e.g., 'AG')
 
     Examples:
         >>> seqs = IntronSequences(
@@ -139,21 +145,27 @@ class IntronSequences:
     bp_region_seq: Optional[str] = None
     upstream_flank: Optional[str] = None
     downstream_flank: Optional[str] = None
+    five_prime_dnt: Optional[str] = None
+    three_prime_dnt: Optional[str] = None
 
     def has_sequences(self) -> bool:
         """Check if core sequences are populated."""
-        return all([
-            self.seq is not None,
-            self.five_seq is not None,
-            self.three_seq is not None,
-        ])
+        return all(
+            [
+                self.seq is not None,
+                self.five_seq is not None,
+                self.three_seq is not None,
+            ]
+        )
 
     def has_flanks(self) -> bool:
         """Check if flanking sequences are populated."""
-        return all([
-            self.upstream_flank is not None,
-            self.downstream_flank is not None,
-        ])
+        return all(
+            [
+                self.upstream_flank is not None,
+                self.downstream_flank is not None,
+            ]
+        )
 
     @property
     def terminal_dinucleotides(self) -> Optional[str]:
@@ -189,6 +201,7 @@ class IntronMetadata:
         grandparent: Gene ID this intron belongs to
         index: Ordinal position in transcript (1-based)
         family_size: Total number of introns in this transcript
+        parent_length: Length of parent transcript (for tiebreaking)
         type_id: Classification ('u2', 'u12', 'unknown')
         noncanonical: Whether intron has non-standard boundaries
         omitted: Omission reason code (None if not omitted)
@@ -206,7 +219,8 @@ class IntronMetadata:
     grandparent: Optional[str] = None
     index: Optional[int] = None
     family_size: Optional[int] = None
-    type_id: IntronType = 'unknown'
+    parent_length: Optional[int] = None
+    type_id: IntronType = "unknown"
     noncanonical: bool = False
     omitted: OmissionCode = None
     duplicate: Optional[str] = None
@@ -246,7 +260,7 @@ class IntronMetadata:
             parts.append(f"parent:{self.parent}")
         if self.index is not None and self.family_size is not None:
             parts.append(f"i{self.index}/{self.family_size}")
-        if self.type_id != 'unknown':
+        if self.type_id != "unknown":
             parts.append(self.type_id)
         if self.omitted:
             parts.append(f"omitted:{self.omitted}")
@@ -306,7 +320,7 @@ class Intron:
             raise ValueError("intron_id cannot be empty")
 
         # Ensure coordinates are in 1-based system
-        if self.coordinates.system != '1-based':
+        if self.coordinates.system != "1-based":
             raise ValueError(
                 f"Intron requires 1-based coordinates, got {self.coordinates.system}"
             )
@@ -365,7 +379,7 @@ class Intron:
     @property
     def type_id(self) -> IntronType:
         """Intron type ('u2', 'u12', 'unknown')."""
-        return self.metadata.type_id if self.metadata else 'unknown'
+        return self.metadata.type_id if self.metadata else "unknown"
 
     @property
     def terminal_dinucleotides(self) -> Optional[str]:
@@ -380,7 +394,7 @@ class Intron:
         exon1,  # Type would be Exon but avoiding circular import
         exon2,  # Type would be Exon
         intron_id: Optional[str] = None,
-    ) -> 'Intron':
+    ) -> "Intron":
         """
         Create an Intron from a pair of adjacent exons.
 
@@ -422,21 +436,19 @@ class Intron:
             )
 
         # Determine intron coordinates (gap between exons)
-        intron_start = exon1.stop + 1
-        intron_stop = exon2.start - 1
+        # Use min/max to handle exons in any order (works for both strands)
+        intron_start = min(exon1.stop, exon2.stop) + 1
+        intron_stop = max(exon1.start, exon2.start) - 1
 
         if intron_start >= intron_stop:
             raise ValueError(
-                f"Exons overlap or touch: exon1.stop={exon1.stop}, exon2.start={exon2.start}"
+                f"Exons overlap or touch: min_stop={min(exon1.stop, exon2.stop)}, "
+                f"max_start={max(exon1.start, exon2.start)}"
             )
 
         # Create coordinate
         coord = GenomicCoordinate(
-            exon1.chromosome,
-            intron_start,
-            intron_stop,
-            exon1.strand,
-            '1-based'
+            exon1.chromosome, intron_start, intron_stop, exon1.strand, "1-based"
         )
 
         # Auto-generate ID if not provided
@@ -450,15 +462,11 @@ class Intron:
             grandparent=None,  # Will be filled in later if available
         )
 
-        return cls(
-            intron_id=intron_id,
-            coordinates=coord,
-            metadata=metadata
-        )
+        return cls(intron_id=intron_id, coordinates=coord, metadata=metadata)
 
     # Convenience methods for updating mutable metadata
 
-    def with_scores(self, scores: IntronScores) -> 'Intron':
+    def with_scores(self, scores: IntronScores) -> "Intron":
         """
         Create a new Intron with updated scores.
 
@@ -475,10 +483,10 @@ class Intron:
             coordinates=self.coordinates,
             scores=scores,
             sequences=self.sequences,
-            metadata=self.metadata
+            metadata=self.metadata,
         )
 
-    def with_sequences(self, sequences: IntronSequences) -> 'Intron':
+    def with_sequences(self, sequences: IntronSequences) -> "Intron":
         """
         Create a new Intron with updated sequences.
 
@@ -493,10 +501,10 @@ class Intron:
             coordinates=self.coordinates,
             scores=self.scores,
             sequences=sequences,
-            metadata=self.metadata
+            metadata=self.metadata,
         )
 
-    def with_metadata(self, metadata: IntronMetadata) -> 'Intron':
+    def with_metadata(self, metadata: IntronMetadata) -> "Intron":
         """
         Create a new Intron with updated metadata.
 
@@ -511,7 +519,7 @@ class Intron:
             coordinates=self.coordinates,
             scores=self.scores,
             sequences=self.sequences,
-            metadata=metadata
+            metadata=metadata,
         )
 
     def __str__(self) -> str:
@@ -540,4 +548,5 @@ class Intron:
 
 if __name__ == "__main__":
     import doctest
+
     doctest.testmod()

@@ -31,6 +31,7 @@ dependencies = [
     "biogl",
     "matplotlib",
     "networkx>=2.5.1",
+    "rich>=10.0",
 ]
 
 [project.urls]
@@ -39,10 +40,10 @@ Repository = "https://github.com/glarue/intronIC"
 Issues = "https://github.com/glarue/intronIC/issues"
 
 [project.scripts]
-intronIC = "intronIC.intronIC:main"
+intronIC = "cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["intronIC"]
+packages = ["cli", "core", "extraction", "file_io", "scoring", "classification", "utils"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "intronIC/data" = "intronIC/data"
@@ -52,6 +53,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+pythonpath = ["."]
 
 [tool.black]
 line-length = 88
