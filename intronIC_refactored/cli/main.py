@@ -485,11 +485,16 @@ def normalize_scores(
     normalizer = ScoreNormalizer()
     normalizer.fit(reference_introns, dataset_type='reference')
 
+    # Transform reference introns (needed for classification)
+    u12_normalized = [normalizer.transform(i, dataset_type='reference') for i in u12_scored]
+    u2_normalized = [normalizer.transform(i, dataset_type='reference') for i in u2_scored]
+
     # Transform experimental introns
     normalized_introns = [normalizer.transform(i, dataset_type='experimental') for i in introns]
 
     logger.info(f"Normalized {len(normalized_introns)} experimental introns")
-    return normalized_introns, u12_scored, u2_scored
+    logger.info(f"Normalized {len(u12_normalized)} U12 and {len(u2_normalized)} U2 reference introns")
+    return normalized_introns, u12_normalized, u2_normalized
 
 
 def classify_introns(
