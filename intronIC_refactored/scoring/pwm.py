@@ -112,6 +112,10 @@ class PWM:
             # Calculate position in PWM (accounting for start_index)
             pwm_position = i + self.start_index
 
+            # Skip positions outside PWM length (for flexible scoring)
+            if pwm_position >= self.length:
+                continue
+
             # Check if this position should be ignored
             # Port from: intronIC.py:2127-2128
             if ignore_positions is not None and pwm_position in ignore_positions:
@@ -139,6 +143,10 @@ class PWM:
                 score = base_freq
             else:
                 score *= base_freq
+
+        # Return neutral score for empty sequences
+        if score is None:
+            score = 1.0
 
         return score
 

@@ -244,18 +244,29 @@ def test_ignore_positions(canonical_five_prime_pwm):
 
 
 def test_sequence_length_mismatch(simple_pwm):
-    """Test that sequences must match PWM length."""
-    with pytest.raises((ValueError, IndexError)):
-        simple_pwm.score_sequence("AC")  # Too short
+    """Test that sequences can be different lengths (flexible scoring).
 
-    with pytest.raises((ValueError, IndexError)):
-        simple_pwm.score_sequence("ACGTACGT")  # Too long
+    The PWM scoring now supports flexible sequence lengths to enable
+    partial matrix scoring (useful for branch point scanning).
+    """
+    # Short sequences should work
+    score_short = simple_pwm.score_sequence("AC")
+    assert isinstance(score_short, float)
+    assert score_short > 0
+
+    # Long sequences should work
+    score_long = simple_pwm.score_sequence("ACGTACGT")
+    assert isinstance(score_long, float)
+    assert score_long > 0
 
 
 def test_empty_sequence(simple_pwm):
-    """Test behavior with empty sequence."""
-    with pytest.raises((ValueError, IndexError)):
-        simple_pwm.score_sequence("")
+    """Test behavior with empty sequence.
+
+    Empty sequences should return 1.0 (neutral score in log space).
+    """
+    score = simple_pwm.score_sequence("")
+    assert score == 1.0  # No bases to score = neutral score
 
 
 # ============================================================================
