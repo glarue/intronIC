@@ -207,11 +207,22 @@ def extract_introns_from_annotation(
         genome_file=str(config.input.genome),
         use_cache=True
     )
-    introns = sequence_extractor.extract_sequences(
+    introns_with_seq = sequence_extractor.extract_sequences(
         introns_list,
         flank_size=config.extraction.flank_len
     )
-    logger.info(f"Extracted sequences for {len(introns)} introns")
+    # Materialize generator to list
+    introns_all = list(introns_with_seq)
+    logger.info(f"Extracted sequences for {len(introns_all)} introns")
+
+    # Filter by minimum length
+    introns = [
+        i for i in introns_all
+        if i.sequences and len(i.sequences.seq) >= config.extraction.min_intron_len
+    ]
+    filtered_count = len(introns_all) - len(introns)
+    if filtered_count > 0:
+        logger.info(f"Filtered out {filtered_count} introns shorter than {config.extraction.min_intron_len}bp")
 
     return introns
 
@@ -247,11 +258,22 @@ def extract_introns_from_bed(
         genome_file=str(config.input.genome),
         use_cache=True
     )
-    introns = sequence_extractor.extract_sequences(
+    introns_with_seq = sequence_extractor.extract_sequences(
         introns_no_seq,
         flank_size=config.extraction.flank_len
     )
-    logger.info(f"Extracted sequences for {len(introns)} introns")
+    # Materialize generator to list
+    introns_all = list(introns_with_seq)
+    logger.info(f"Extracted sequences for {len(introns_all)} introns")
+
+    # Filter by minimum length
+    introns = [
+        i for i in introns_all
+        if i.sequences and len(i.sequences.seq) >= config.extraction.min_intron_len
+    ]
+    filtered_count = len(introns_all) - len(introns)
+    if filtered_count > 0:
+        logger.info(f"Filtered out {filtered_count} introns shorter than {config.extraction.min_intron_len}bp")
 
     return introns
 
@@ -316,12 +338,9 @@ def score_introns(
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
-        five_start=config.scoring.scoring_regions.five_start,
-        five_end=config.scoring.scoring_regions.five_end,
-        bp_start=config.scoring.scoring_regions.bp_start,
-        bp_end=config.scoring.scoring_regions.bp_end,
-        three_start=config.scoring.scoring_regions.three_start,
-        three_end=config.scoring.scoring_regions.three_end
+        five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
+        bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
+        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
     )
 
     # Score introns
@@ -385,12 +404,9 @@ def normalize_scores(
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
-        five_start=config.scoring.scoring_regions.five_start,
-        five_end=config.scoring.scoring_regions.five_end,
-        bp_start=config.scoring.scoring_regions.bp_start,
-        bp_end=config.scoring.scoring_regions.bp_end,
-        three_start=config.scoring.scoring_regions.three_start,
-        three_end=config.scoring.scoring_regions.three_end
+        five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
+        bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
+        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
     )
 
     # Score reference introns
