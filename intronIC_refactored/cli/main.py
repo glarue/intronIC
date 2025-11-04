@@ -70,7 +70,7 @@ def setup_logging(config: IntronICConfig) -> logging.Logger:
     return logger
 
 
-def load_reference_sequences(filepath: Path, max_count: int = None, logger: logging.Logger = None) -> List[Intron]:
+def load_reference_sequences(filepath: Path, max_count: int = None, min_length: int = 55, logger: logging.Logger = None) -> List[Intron]:
     """
     Load reference intron sequences from .iic.gz file.
 
@@ -86,12 +86,14 @@ def load_reference_sequences(filepath: Path, max_count: int = None, logger: logg
     Args:
         filepath: Path to .iic.gz file
         max_count: Maximum number to load (None = all)
+        min_length: Minimum intron length required (default: 55bp for scoring regions)
         logger: Optional logger instance
 
     Returns:
         List of Intron objects with sequences
     """
     introns = []
+    skipped_short = 0
 
     open_fn = gzip.open if str(filepath).endswith('.gz') else open
     with open_fn(filepath, 'rt') as f:
@@ -132,6 +134,11 @@ def load_reference_sequences(filepath: Path, max_count: int = None, logger: logg
                 three_prime_dnt=three_dnt
             )
 
+            # Skip if too short for scoring regions
+            if len(intron_seq) < min_length:
+                skipped_short += 1
+                continue
+
             # Create Intron
             intron = Intron(
                 intron_id=intron_id,
@@ -146,6 +153,8 @@ def load_reference_sequences(filepath: Path, max_count: int = None, logger: logg
 
     if logger:
         logger.info(f"Loaded {len(introns)} reference sequences from {filepath.name}")
+        if skipped_short > 0:
+            logger.info(f"Skipped {skipped_short} reference introns shorter than {min_length}bp")
 
     return introns
 
@@ -444,6 +453,18 @@ def normalize_scores(
     # Load PWM matrices
     pwm_file = data_dir / "scoring_matrices.fasta.iic"
     pwm_sets = PWMLoader.load_from_file(pwm_file)
+
+    # Load U2 BP matrix from separate file (fallback/conserved matrix)
+    from dataclasses import replace
+    u2_bp_file = data_dir / "u2.conserved_empirical_bp_pwm.iic"
+    if u2_bp_file.exists():
+        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file)
+        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
+            pwm_sets['bp'] = replace(
+                pwm_sets['bp'],
+                u2_canonical=u2_bp_matrices['bp'].u2_canonical
+            )
+            logger.info("Loaded conserved U2 BP matrix for reference scoring")
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
