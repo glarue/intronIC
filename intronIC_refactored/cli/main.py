@@ -358,6 +358,23 @@ def score_introns(
     pwm_sets = PWMLoader.load_from_file(pwm_file)
     logger.info(f"Loaded PWM matrices for {len(pwm_sets)} regions")
 
+    # Load U2 BP matrix from separate file (fallback/conserved matrix)
+    u2_bp_file = Path(__file__).parent.parent / "intronIC" / "data" / "u2.conserved_empirical_bp_pwm.iic"
+    if u2_bp_file.exists():
+        from dataclasses import replace
+        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file)
+        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
+            # PWMSet is frozen, so use replace() to create updated copy
+            pwm_sets['bp'] = replace(
+                pwm_sets['bp'],
+                u2_canonical=u2_bp_matrices['bp'].u2_canonical
+            )
+            logger.info("Loaded conserved U2 BP matrix")
+        else:
+            logger.warning("U2 BP matrix file found but couldn't extract U2 canonical PWM")
+    else:
+        logger.warning(f"U2 BP matrix file not found: {u2_bp_file}")
+
     # Create scorer
     reporter.print_info("Calculating PWM scores")
     logger.info("Starting PWM scoring")
