@@ -228,6 +228,7 @@ class IntronMetadata:
     longest_isoform: bool = False
     corrected: bool = False
     phase: Optional[int] = None
+    defined_by: Optional[str] = None  # 'cds' or 'exon' - which feature type defined this intron
 
     def is_omitted(self) -> bool:
         """Check if this intron should be omitted."""

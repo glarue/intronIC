@@ -125,7 +125,7 @@ class IntronGenerator:
 
         # Generate introns from consecutive pairs
         for index, (upstream_exon, downstream_exon) in enumerate(
-            self._sliding_window(sorted_exons)
+            self._sliding_window(sorted_exons), start=1
         ):
             # Check for overlapping exons (annotation error)
             if self._check_overlap(upstream_exon, downstream_exon):
@@ -152,7 +152,7 @@ class IntronGenerator:
             # intron.metadata.upstream_exon = upstream_exon.feature_id
             # intron.metadata.downstream_exon = downstream_exon.feature_id
 
-            # Set intron index (0-based position in transcript)
+            # Set intron index (1-based position in transcript, matching original)
             intron.metadata.index = index
 
             yield intron
@@ -207,6 +207,7 @@ class IntronGenerator:
         # Pass 1: Generate introns from CDS features
         if cds_features:
             for intron in self.generate_from_exons(cds_features):
+                intron.metadata.defined_by = 'cds'
                 non_redundant_introns.append(intron)
 
         # Pass 2: Generate introns from exon features, excluding overlaps
@@ -220,6 +221,7 @@ class IntronGenerator:
                 intron_coords = (intron.coordinates.start, intron.coordinates.stop)
                 if not self._check_intron_overlap(intron_coords, existing_coords):
                     # This is an exon-only intron (e.g., in UTR region)
+                    intron.metadata.defined_by = 'exon'
                     non_redundant_introns.append(intron)
 
         if not non_redundant_introns:
@@ -228,8 +230,19 @@ class IntronGenerator:
         # Set family size (total number of introns in transcript)
         family_size = len(non_redundant_introns)
 
-        for intron in non_redundant_introns:
-            # Update intron metadata
+        # Re-index introns sequentially (since they came from two separate generate calls)
+        # Introns need to be sorted by genomic position first
+        strand = non_redundant_introns[0].coordinates.strand if non_redundant_introns else '+'
+        if strand == '-':
+            # Negative strand: sort descending
+            non_redundant_introns.sort(key=lambda i: i.coordinates.start, reverse=True)
+        else:
+            # Positive strand: sort ascending
+            non_redundant_introns.sort(key=lambda i: i.coordinates.start)
+
+        for index, intron in enumerate(non_redundant_introns, start=1):
+            # Update intron metadata (1-based indexing to match original)
+            intron.metadata.index = index  # Re-index sequentially
             intron.metadata.family_size = family_size
             intron.metadata.parent = transcript.feature_id
             intron.metadata.parent_length = transcript.length  # For longest isoform determination

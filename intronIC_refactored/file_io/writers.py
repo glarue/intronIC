@@ -435,8 +435,10 @@ class MetaWriter:
         # Type ID
         type_id = intron.type_id
 
-        # Feature type (exon/cds)
-        feature = null  # TODO: track feature type
+        # Feature type (exon/cds) - defined_by field tracks which feature type defined this intron
+        feature = null
+        if intron.metadata and intron.metadata.defined_by:
+            feature = intron.metadata.defined_by
 
         # Generate verbose attributes
         attributes = generate_attributes(intron)
