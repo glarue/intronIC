@@ -40,7 +40,7 @@ Repository = "https://github.com/glarue/intronIC"
 Issues = "https://github.com/glarue/intronIC/issues"
 
 [project.scripts]
-intronIC = "cli:main"
+intronIC = "cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cli", "core", "extraction", "file_io", "scoring", "classification", "utils"]
