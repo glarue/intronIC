@@ -136,7 +136,7 @@ def apply_u12_correction(
     """
     # Rotate phase by shift amount
     # Port from: intronIC.py:2315-2323, 2346
-    new_phase = _rotate_phase(intron.metadata.phase if intron.metadata else None, shift)
+    new_phase = _rotate_phase(intron.metadata.exon_phase if intron.metadata else None, shift)
 
     # Calculate new coordinates
     # Port from: intronIC.py:2348-2351
@@ -162,7 +162,7 @@ def apply_u12_correction(
     updated_metadata = replace(
         intron.metadata,
         corrected=shift,  # Store shift amount
-        phase=new_phase
+        exon_phase=new_phase
     )
 
     # Create corrected intron
