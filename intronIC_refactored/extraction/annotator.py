@@ -118,8 +118,9 @@ class AnnotationHierarchyBuilder:
         unique_coords: Dict[str, Set[Tuple]] = defaultdict(set)
 
         for ann in annotations:
-            # Skip single-base features (not supported by GenomicCoordinate)
-            if ann.start >= ann.stop:
+            # Skip invalid features where start > stop (annotation errors)
+            # Note: Allow start == stop for 1bp features (now supported by GenomicCoordinate)
+            if ann.start > ann.stop:
                 continue
 
             features = self._create_features_from_annotation(ann)
