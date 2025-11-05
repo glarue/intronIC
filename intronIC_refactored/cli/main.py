@@ -114,7 +114,7 @@ def setup_logging(config: IntronICConfig) -> logging.Logger:
     return logger
 
 
-def load_reference_sequences(filepath: Path, max_count: int = None, min_length: int = 55, logger: logging.Logger = None) -> List[Intron]:
+def load_reference_sequences(filepath: Path, max_count: int = None, logger: logging.Logger = None) -> List[Intron]:
     """
     Load reference intron sequences from .iic.gz file.
 
@@ -130,14 +130,17 @@ def load_reference_sequences(filepath: Path, max_count: int = None, min_length: 
     Args:
         filepath: Path to .iic.gz file
         max_count: Maximum number to load (None = all)
-        min_length: Minimum intron length required (default: 55bp for scoring regions)
         logger: Optional logger instance
 
     Returns:
         List of Intron objects with sequences
+
+    Note:
+        No length filtering is applied here. Reference introns are filtered
+        later using omit_check() after scoring regions are extracted, matching
+        the original intronIC behavior.
     """
     introns = []
-    skipped_short = 0
 
     open_fn = gzip.open if str(filepath).endswith('.gz') else open
     with open_fn(filepath, 'rt') as f:
@@ -178,12 +181,7 @@ def load_reference_sequences(filepath: Path, max_count: int = None, min_length: 
                 three_prime_dnt=three_dnt
             )
 
-            # Skip if too short for scoring regions
-            if len(intron_seq) < min_length:
-                skipped_short += 1
-                continue
-
-            # Create Intron
+            # Create Intron (no length filtering - done later via omit_check)
             intron = Intron(
                 intron_id=intron_id,
                 coordinates=coord,
@@ -197,8 +195,6 @@ def load_reference_sequences(filepath: Path, max_count: int = None, min_length: 
 
     if logger:
         logger.info(f"Loaded {len(introns)} reference sequences from {filepath.name}")
-        if skipped_short > 0:
-            logger.info(f"Skipped {skipped_short} reference introns shorter than {min_length}bp")
 
     return introns
 
