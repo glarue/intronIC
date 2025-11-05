@@ -268,6 +268,48 @@ def extract_introns_from_annotation(
     introns_all = list(introns_with_seq)
     logger.info(f"Extracted sequences for {len(introns_all)} introns")
 
+    # Step 3b: Apply U12 boundary correction to non-canonical introns (if enabled)
+    # Port from: intronIC.py:2692 (u12_nc_ss_adjustment and u12_correction)
+    # CRITICAL: This happens AFTER initial sequence extraction but BEFORE scoring
+    # Corrected introns need sequence re-extraction with new coordinates
+    if config.extraction.u12_boundary_correction:
+        from extraction.boundary_correction import correct_intron_if_needed
+
+        reporter.print_info("Checking non-canonical introns for U12 boundary corrections")
+        corrected_count = 0
+        corrected_introns = []
+
+        for intron in introns_all:
+            # Check and apply correction if needed
+            corrected_intron, was_corrected = correct_intron_if_needed(
+                intron,
+                correction_enabled=True,
+                use_strict_motif=True
+            )
+
+            # If corrected, re-extract sequences with new coordinates
+            if was_corrected:
+                # Re-extract sequences using corrected coordinates
+                corrected_with_seq = sequence_extractor.extract_sequences(
+                    [corrected_intron],
+                    flank_size=config.extraction.flank_len
+                )
+                corrected_intron = list(corrected_with_seq)[0]
+                corrected_count += 1
+                logger.debug(
+                    f"Corrected {intron.intron_id}: "
+                    f"shift={corrected_intron.metadata.corrected}bp, "
+                    f"new coords={corrected_intron.coordinates}"
+                )
+
+            corrected_introns.append(corrected_intron)
+
+        introns_all = corrected_introns
+        if corrected_count > 0:
+            logger.info(f"Applied U12 boundary corrections to {corrected_count} non-canonical introns")
+    else:
+        logger.info("U12 boundary correction disabled (--no_nc_ss_adjustment)")
+
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
     pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
@@ -340,6 +382,35 @@ def extract_introns_from_bed(
     # Materialize generator to list
     introns_all = list(introns_with_seq)
     logger.info(f"Extracted sequences for {len(introns_all)} introns")
+
+    # Apply U12 boundary correction (if enabled)
+    if config.extraction.u12_boundary_correction:
+        from extraction.boundary_correction import correct_intron_if_needed
+
+        reporter.print_info("Checking non-canonical introns for U12 boundary corrections")
+        corrected_count = 0
+        corrected_introns = []
+
+        for intron in introns_all:
+            corrected_intron, was_corrected = correct_intron_if_needed(
+                intron,
+                correction_enabled=True,
+                use_strict_motif=True
+            )
+
+            if was_corrected:
+                corrected_with_seq = sequence_extractor.extract_sequences(
+                    [corrected_intron],
+                    flank_size=config.extraction.flank_len
+                )
+                corrected_intron = list(corrected_with_seq)[0]
+                corrected_count += 1
+
+            corrected_introns.append(corrected_intron)
+
+        introns_all = corrected_introns
+        if corrected_count > 0:
+            logger.info(f"Applied U12 boundary corrections to {corrected_count} non-canonical introns")
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
