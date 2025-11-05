@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from .args import IntronICArgumentParser
-from .config import IntronICConfig
+from .config import IntronICConfig, ScoringRegions
 from .progress import IntronICProgressReporter
 
 # Import pipeline components
@@ -27,6 +27,50 @@ from scoring.scorer import IntronScorer
 from scoring.normalizer import ScoreNormalizer
 from classification.classifier import IntronClassifier
 import gzip
+
+
+def calculate_minimum_intron_length(
+    scoring_regions: ScoringRegions,
+    bp_matrix_length: int
+) -> int:
+    """Calculate minimum intron length needed for scoring.
+
+    Port from: intronIC.py:4600-4607
+
+    The minimum length is determined by how much of the intron is consumed
+    by the scoring regions. The key insight: we need the actual BP matrix
+    length (e.g., 12bp), not the search window size (e.g., 50bp).
+
+    Args:
+        scoring_regions: Scoring region coordinates
+        bp_matrix_length: Length of branch point PWM matrix
+
+    Returns:
+        Minimum intron length in bp
+    """
+    # Calculate intronic positions in 5' region (positions >= 0)
+    # Port from: intronIC.py:4601
+    five_range = range(scoring_regions.five_start, scoring_regions.five_end)
+    intronic_five = len([e for e in five_range if e >= 0])
+
+    # Calculate intronic positions in 3' region (positions < 0)
+    # Port from: intronIC.py:4602
+    three_range = range(scoring_regions.three_start, scoring_regions.three_end)
+    intronic_three_from_score = len([e for e in three_range if e < 0])
+
+    # BP region needs: BP_MATRIX_LENGTH + distance from 3' end
+    # Port from: intronIC.py:4598, 4603-4604
+    bp_margin = abs(scoring_regions.bp_end)
+    intronic_three_from_bp = bp_matrix_length + bp_margin
+
+    # Use whichever is larger
+    intronic_three = max(intronic_three_from_bp, intronic_three_from_score)
+
+    # Total minimum = positions needed at 5' end + positions needed at 3' end
+    # Port from: intronIC.py:4607
+    minimum_length = intronic_five + intronic_three
+
+    return minimum_length
 
 
 def setup_logging(config: IntronICConfig) -> logging.Logger:
@@ -224,17 +268,27 @@ def extract_introns_from_annotation(
     introns_all = list(introns_with_seq)
     logger.info(f"Extracted sequences for {len(introns_all)} introns")
 
-    # Calculate actual minimum length needed for scoring regions
-    # 5' region: relative to start, needs positions up to five_end
-    # 3' region: relative to end, needs positions from three_start (negative)
-    # BP region: relative to end, needs positions from bp_start (negative)
-    min_for_five = abs(config.scoring.scoring_regions.five_end)
-    min_for_three = abs(config.scoring.scoring_regions.three_start)
-    min_for_bp = abs(config.scoring.scoring_regions.bp_start)
+    # Load PWM matrices to get BP matrix length for minimum calculation
+    # Port from: intronIC.py:4591-4592
+    pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+    if not pwm_file.exists():
+        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
-    # Intron must be long enough for all regions
-    calculated_min = max(min_for_five + min_for_three, min_for_bp)
+    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    bp_matrix_length = pwm_sets['bp'].u12_canonical.length
+    logger.debug(f"BP matrix length: {bp_matrix_length}bp")
+
+    # Calculate actual minimum length needed for scoring regions
+    # Port from: intronIC.py:4600-4617
+    calculated_min = calculate_minimum_intron_length(
+        config.scoring.scoring_regions,
+        bp_matrix_length
+    )
     actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+
+    logger.info(f"Minimum intron length: {actual_min_length}bp "
+               f"(user: {config.extraction.min_intron_len}bp, "
+               f"scoring regions: {calculated_min}bp)")
 
     # Filter by minimum length
     introns = [
@@ -243,8 +297,7 @@ def extract_introns_from_annotation(
     ]
     filtered_count = len(introns_all) - len(introns)
     if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp "
-                   f"(required for scoring regions; user min was {config.extraction.min_intron_len}bp)")
+        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
 
     return introns
 
@@ -288,17 +341,27 @@ def extract_introns_from_bed(
     introns_all = list(introns_with_seq)
     logger.info(f"Extracted sequences for {len(introns_all)} introns")
 
-    # Calculate actual minimum length needed for scoring regions
-    # 5' region: relative to start, needs positions up to five_end
-    # 3' region: relative to end, needs positions from three_start (negative)
-    # BP region: relative to end, needs positions from bp_start (negative)
-    min_for_five = abs(config.scoring.scoring_regions.five_end)
-    min_for_three = abs(config.scoring.scoring_regions.three_start)
-    min_for_bp = abs(config.scoring.scoring_regions.bp_start)
+    # Load PWM matrices to get BP matrix length for minimum calculation
+    # Port from: intronIC.py:4591-4592
+    pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+    if not pwm_file.exists():
+        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
-    # Intron must be long enough for all regions
-    calculated_min = max(min_for_five + min_for_three, min_for_bp)
+    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    bp_matrix_length = pwm_sets['bp'].u12_canonical.length
+    logger.debug(f"BP matrix length: {bp_matrix_length}bp")
+
+    # Calculate actual minimum length needed for scoring regions
+    # Port from: intronIC.py:4600-4617
+    calculated_min = calculate_minimum_intron_length(
+        config.scoring.scoring_regions,
+        bp_matrix_length
+    )
     actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+
+    logger.info(f"Minimum intron length: {actual_min_length}bp "
+               f"(user: {config.extraction.min_intron_len}bp, "
+               f"scoring regions: {calculated_min}bp)")
 
     # Filter by minimum length
     introns = [
@@ -307,8 +370,7 @@ def extract_introns_from_bed(
     ]
     filtered_count = len(introns_all) - len(introns)
     if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp "
-                   f"(required for scoring regions; user min was {config.extraction.min_intron_len}bp)")
+        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
 
     return introns
 
