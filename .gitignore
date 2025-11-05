@@ -40,3 +40,10 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+# Validation and test outputs
+validation_outputs/
+*.iic
+*.iic.png
+intronIC_patched.py
+run.log
