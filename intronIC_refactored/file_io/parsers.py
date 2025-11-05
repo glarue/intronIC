@@ -181,8 +181,19 @@ class BioGLAnnotationParser:
                 except (ValueError, TypeError):
                     phase = None
 
+        # Generate unique ID for features without IDs (common for exons in Ensembl GFF3)
+        # biogl returns 'exon_None' string (not Python None) for exons without IDs
+        # Use location-based identifier: feattype_parent_chrom_start_stop_strand
+        feature_name = line_info.name
+        if feature_name is None or feature_name == 'exon_None' or 'None' in str(feature_name):
+            parent_str = parent_list[0] if parent_list else "none"
+            feature_name = (
+                f"{line_info.feat_type}_{parent_str}_"
+                f"{line_info.region}_{line_info.start}_{line_info.stop}_{line_info.strand}"
+            )
+
         return AnnotationLine(
-            name=line_info.name,
+            name=feature_name,
             feat_type=line_info.feat_type.lower(),  # Normalize to lowercase
             parent=parent_list,
             grandparent=line_info.grandparent,
