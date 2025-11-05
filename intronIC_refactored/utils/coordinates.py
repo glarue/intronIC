@@ -133,11 +133,10 @@ class GenomicCoordinate:
         Raises:
             ValueError: If coordinates are invalid
         """
-        # Validate start < stop (strict inequality)
-        if self.start >= self.stop:
+        # Validate start <= stop (allow 1bp features to match original behavior)
+        if self.start > self.stop:
             raise ValueError(
-                f"start ({self.start}) must be < stop ({self.stop}). "
-                f"Single-base features are not supported."
+                f"start ({self.start}) must be <= stop ({self.stop})."
             )
 
         # Validate strand

@@ -128,14 +128,16 @@ class TestBEDParsing:
 
         BED: [100, 101) represents a single base at position 101 (1-based)
 
-        Note: Single-base features result in start==stop after conversion,
-        which our validation rejects (requires start < stop). This is fine
-        for intronIC since introns must be ≥30bp anyway.
+        Note: Single-base features (start==stop) are now allowed to match
+        original intronIC behavior, which extracts very short (<30bp) introns
+        and marks them as omitted during filtering.
         """
         # BED [100, 101) converts to internal [101, 101]
-        # This should be rejected by our validation
-        with pytest.raises(ValueError, match="start .* must be < stop"):
-            bed_to_internal("chr1", 100, 101, '+')
+        # This is now accepted (1bp feature)
+        coord = bed_to_internal("chr1", 100, 101, '+')
+        assert coord.start == 101
+        assert coord.stop == 101
+        assert coord.length == 1
 
 
 class TestBEDOutput:
@@ -201,14 +203,16 @@ class TestCoordinateValidation:
         assert coord.start == 100
         assert coord.stop == 200
 
-    def test_start_equals_stop_invalid(self):
-        """Test that start == stop is rejected."""
-        with pytest.raises(ValueError, match="start .* must be < stop"):
-            GenomicCoordinate("chr1", 100, 100, '+')
+    def test_start_equals_stop_valid(self):
+        """Test that start == stop is now allowed (1bp features)."""
+        coord = GenomicCoordinate("chr1", 100, 100, '+')
+        assert coord.start == 100
+        assert coord.stop == 100
+        assert coord.length == 1
 
     def test_start_greater_than_stop_invalid(self):
         """Test that start > stop is rejected."""
-        with pytest.raises(ValueError, match="start .* must be < stop"):
+        with pytest.raises(ValueError, match="start .* must be <= stop"):
             GenomicCoordinate("chr1", 200, 100, '+')
 
     def test_negative_start_invalid(self):
@@ -265,12 +269,12 @@ class TestEdgeCases:
         """
         Test minimum feature size (1 base).
 
-        Our validation requires start < stop, so single-base features are rejected.
-        This is appropriate for intronIC since introns must be ≥30bp.
+        Single-base features are now allowed to match original intronIC behavior.
+        They will be marked as omitted during filtering (< 30bp minimum).
         """
-        # Single base [100, 100] should be rejected
-        with pytest.raises(ValueError, match="start .* must be < stop"):
-            GenomicCoordinate("chr1", 100, 100, '+')
+        # Single base [100, 100] is now accepted (1bp feature)
+        coord = GenomicCoordinate("chr1", 100, 100, '+')
+        assert coord.length == 1
 
     def test_typical_intron_sizes(self):
         """Test coordinate handling for typical intron sizes."""

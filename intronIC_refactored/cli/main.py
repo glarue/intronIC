@@ -330,13 +330,21 @@ def extract_introns_from_annotation(
                f"scoring regions: {calculated_min}bp)")
 
     # Filter by minimum length
-    introns = [
-        i for i in introns_all
-        if i.sequences and len(i.sequences.seq) >= actual_min_length
-    ]
-    filtered_count = len(introns_all) - len(introns)
-    if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
+    # NOTE: In sequences-only mode, the original outputs ALL introns regardless of length
+    # (see intronIC.py:4820-4825 where omitted is set to False in ONLY_SEQS mode)
+    if config.scoring.sequences_only:
+        # Sequences-only mode: keep all introns (matching original behavior)
+        introns = introns_all
+        logger.info("Sequences-only mode: keeping all introns regardless of length")
+    else:
+        # Normal mode: filter by minimum length
+        introns = [
+            i for i in introns_all
+            if i.sequences and len(i.sequences.seq) >= actual_min_length
+        ]
+        filtered_count = len(introns_all) - len(introns)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
 
     return introns
 
@@ -432,13 +440,21 @@ def extract_introns_from_bed(
                f"scoring regions: {calculated_min}bp)")
 
     # Filter by minimum length
-    introns = [
-        i for i in introns_all
-        if i.sequences and len(i.sequences.seq) >= actual_min_length
-    ]
-    filtered_count = len(introns_all) - len(introns)
-    if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
+    # NOTE: In sequences-only mode, the original outputs ALL introns regardless of length
+    # (see intronIC.py:4820-4825 where omitted is set to False in ONLY_SEQS mode)
+    if config.scoring.sequences_only:
+        # Sequences-only mode: keep all introns (matching original behavior)
+        introns = introns_all
+        logger.info("Sequences-only mode: keeping all introns regardless of length")
+    else:
+        # Normal mode: filter by minimum length
+        introns = [
+            i for i in introns_all
+            if i.sequences and len(i.sequences.seq) >= actual_min_length
+        ]
+        filtered_count = len(introns_all) - len(introns)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
 
     return introns
 

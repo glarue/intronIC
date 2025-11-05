@@ -441,7 +441,7 @@ class Intron:
         intron_start = min(exon1.stop, exon2.stop) + 1
         intron_stop = max(exon1.start, exon2.start) - 1
 
-        if intron_start >= intron_stop:
+        if intron_start > intron_stop:
             raise ValueError(
                 f"Exons overlap or touch: min_stop={min(exon1.stop, exon2.stop)}, "
                 f"max_start={max(exon1.start, exon2.start)}"
