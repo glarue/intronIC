@@ -262,19 +262,20 @@ class IntronGenerator:
         existing_coords: List[Tuple[int, int]]
     ) -> bool:
         """
-        Check if intron coordinates overlap with any existing intron coordinates.
+        Check if intron coordinates overlap with or match any existing intron coordinates.
 
         Args:
             intron_coords: (start, stop) tuple for intron to check
             existing_coords: List of (start, stop) tuples for existing introns
 
         Returns:
-            True if overlap found, False otherwise
+            True if overlap or exact match found, False otherwise
         """
         for existing in existing_coords:
             # Using the elegant overlap formula: (a.start - b.stop) * (a.stop - b.start) < 0
+            # Note: For exact matches (same coordinates), val = 0, so use <= 0 to detect them
             val = (intron_coords[0] - existing[1]) * (intron_coords[1] - existing[0])
-            if val < 0:
+            if val <= 0:
                 return True
         return False
 
