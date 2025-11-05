@@ -22,6 +22,7 @@ from file_io.writers import BEDWriter, MetaWriter, SequenceWriter, ScoreWriter, 
 from extraction.annotator import AnnotationHierarchyBuilder
 from extraction.intronator import IntronGenerator
 from extraction.sequences import SequenceExtractor
+from extraction.filters import IntronFilter
 from scoring.pwm import PWMLoader
 from scoring.scorer import IntronScorer
 from scoring.normalizer import ScoreNormalizer
@@ -847,10 +848,56 @@ def run_pipeline(config: IntronICConfig):
         reporter.print_pipeline_steps(pipeline_steps, current_step=2)
         reporter.print_success(f"Extracted {len(introns):,} introns")
 
+        # Filter introns before scoring (duplicates, short introns, longest isoform)
+        # This matches original intronIC behavior where filtering happens BEFORE scoring
+        # to avoid scoring 5x more introns than necessary (which causes O(n²) slowdown)
+        reporter.print_info("Filtering introns before scoring")
+        logger.info("Applying pre-scoring filters (duplicates, omissions, longest isoform)")
+
+        # Create filter with scoring-appropriate settings:
+        # - longest_only=True: Only score longest isoform per gene (filters ~8k introns)
+        # - include_duplicates=False: Don't score duplicates (filters ~38k introns)
+        # - min_length: Filter short introns
+        # - allow_noncanonical: Based on exclude_noncanonical flag
+        # - allow_overlap: Based on no_intron_overlap flag
+        intron_filter = IntronFilter(
+            min_length=config.extraction.min_intron_len,
+            bp_matrix_length=7,  # Default from original
+            scoring_regions=['five', 'three'],  # Check these for ambiguous bases
+            allow_noncanonical=not config.scoring.exclude_noncanonical,
+            allow_overlap=not config.extraction.no_intron_overlap,
+            longest_only=True,  # ALWAYS filter to longest isoform for scoring
+            include_duplicates=False  # ALWAYS filter duplicates for scoring
+        )
+
+        filtered_introns = intron_filter.filter_introns(introns)
+
+        # Report filtering statistics
+        stats = intron_filter.stats
+        logger.info(
+            f"Filtering results: {stats.kept_introns:,}/{stats.total_introns:,} introns "
+            f"kept for scoring"
+        )
+        logger.info(
+            f"Omitted: {stats.omitted_short} short, {stats.omitted_ambiguous} ambiguous, "
+            f"{stats.omitted_noncanonical} non-canonical, {stats.omitted_isoform} non-longest isoform, "
+            f"{stats.omitted_overlap} overlapping"
+        )
+        logger.info(f"Duplicates marked: {stats.duplicates}")
+
+        reporter.print_success(
+            f"Filtered to {len(filtered_introns):,} introns for scoring "
+            f"(removed {len(introns) - len(filtered_introns):,})"
+        )
+
+        # Important: Use filtered_introns for scoring, but keep original introns list
+        # for potential output (user may want duplicates via -d flag)
+        introns_for_scoring = filtered_introns
+
         # Step 3: Score introns
         reporter.print_section("Step 3: Score Introns", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=3)
-        scored_introns = score_introns(introns, config, reporter, logger)
+        scored_introns = score_introns(introns_for_scoring, config, reporter, logger)
         reporter.print_success(f"Scored {len(scored_introns):,} introns")
 
         # Step 4: Normalize scores
