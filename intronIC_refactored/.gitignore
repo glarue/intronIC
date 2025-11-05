@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pixi environment
+.pixi/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+.DS_Store
+
+# Output files (except gold standard baseline)
+# We keep homo_sapiens_gold.* for the baseline
+# but ignore future test outputs
+homo_sapiens_test.*
+*.iic
+*.png
+*.log
+!homo_sapiens_gold.*
+
+# Unless they're in the gold standard
+!gold_standard_baseline/
