@@ -165,6 +165,14 @@ class IntronGenerator:
         """
         Generate introns from all exons in a transcript.
 
+        Implements two-pass algorithm matching original intronIC:
+        1. Generate introns from CDS features (is_coding=True)
+        2. Generate introns from exon features (is_coding=False)
+        3. Only add exon-derived introns that don't overlap CDS-derived ones
+
+        This ensures CDS-defined intron boundaries take priority, and
+        exon-only introns (e.g., in UTR regions) fill in the gaps.
+
         Args:
             transcript: Transcript object with children (IDs)
             feature_index: Dictionary mapping feature IDs to objects
@@ -177,24 +185,50 @@ class IntronGenerator:
             >>> for intron in generator.generate_from_transcript(transcript, feat_index):
             ...     print(intron.metadata.parent)
         """
-        # Resolve exon IDs to Exon objects
-        exons = []
+        # Resolve exon IDs to Exon objects and separate by feature type
+        cds_features = []
+        exon_features = []
+
         for child_id in transcript.children:
             child = feature_index.get(child_id)
             if child and isinstance(child, Exon):
                 # Verify exon belongs to this transcript
                 if child.parent_id == transcript.feature_id:
-                    exons.append(child)
+                    if child.is_coding:
+                        cds_features.append(child)
+                    else:
+                        exon_features.append(child)
                 else:
                     print(f"[!] Warning: Exon {child.feature_id} claims parent {child.parent_id} but is child of {transcript.feature_id}")
 
-        if not exons:
+        # Two-pass algorithm: CDS first, then exon (with overlap checking)
+        non_redundant_introns = []
+
+        # Pass 1: Generate introns from CDS features
+        if cds_features:
+            for intron in self.generate_from_exons(cds_features):
+                non_redundant_introns.append(intron)
+
+        # Pass 2: Generate introns from exon features, excluding overlaps
+        if exon_features:
+            # Get coordinates of existing (CDS) introns for overlap checking
+            existing_coords = [(i.coordinates.start, i.coordinates.stop)
+                             for i in non_redundant_introns]
+
+            for intron in self.generate_from_exons(exon_features):
+                # Check if this exon-derived intron overlaps any CDS-derived intron
+                intron_coords = (intron.coordinates.start, intron.coordinates.stop)
+                if not self._check_intron_overlap(intron_coords, existing_coords):
+                    # This is an exon-only intron (e.g., in UTR region)
+                    non_redundant_introns.append(intron)
+
+        if not non_redundant_introns:
             return
 
         # Set family size (total number of introns in transcript)
-        family_size = len(exons) - 1 if len(exons) > 1 else 0
+        family_size = len(non_redundant_introns)
 
-        for intron in self.generate_from_exons(exons):
+        for intron in non_redundant_introns:
             # Update intron metadata
             intron.metadata.family_size = family_size
             intron.metadata.parent = transcript.feature_id
@@ -208,6 +242,28 @@ class IntronGenerator:
             # No need to set it manually
 
             yield intron
+
+    @staticmethod
+    def _check_intron_overlap(
+        intron_coords: Tuple[int, int],
+        existing_coords: List[Tuple[int, int]]
+    ) -> bool:
+        """
+        Check if intron coordinates overlap with any existing intron coordinates.
+
+        Args:
+            intron_coords: (start, stop) tuple for intron to check
+            existing_coords: List of (start, stop) tuples for existing introns
+
+        Returns:
+            True if overlap found, False otherwise
+        """
+        for existing in existing_coords:
+            # Using the elegant overlap formula: (a.start - b.stop) * (a.stop - b.start) < 0
+            val = (intron_coords[0] - existing[1]) * (intron_coords[1] - existing[0])
+            if val < 0:
+                return True
+        return False
 
     def generate_from_gene(
         self,
