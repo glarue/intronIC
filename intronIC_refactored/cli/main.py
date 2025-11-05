@@ -658,6 +658,15 @@ def write_outputs(
     reporter.print_info("Writing output files")
     logger.info("Writing output files")
 
+    # Filter duplicates if not including them
+    # Port from: intronIC.py uses -d/--include_duplicates flag
+    if not config.extraction.include_duplicates:
+        original_count = len(introns)
+        introns = [i for i in introns if not (i.metadata and i.metadata.duplicate)]
+        filtered_count = original_count - len(introns)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} duplicate introns (use -d to include)")
+
     output_dir = config.output.output_dir
     base_name = config.output.base_filename
 
