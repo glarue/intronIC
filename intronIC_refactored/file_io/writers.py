@@ -430,7 +430,7 @@ class MetaWriter:
             family_size = str(intron.metadata.family_size) if intron.metadata.family_size else null
             frac_pos_val = intron.metadata.fractional_position
             frac_pos = str(round(frac_pos_val, 4)) if frac_pos_val is not None else null
-            phase = str(intron.metadata.exon_phase) if intron.metadata.exon_phase is not None else null
+            phase = str(intron.metadata.phase) if intron.metadata.phase is not None else null
 
         # Type ID
         type_id = intron.type_id

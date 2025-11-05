@@ -209,7 +209,7 @@ class IntronMetadata:
         overlap: Overlapping coordinate record
         longest_isoform: Whether from longest transcript
         corrected: Whether boundaries were adjusted
-        exon_phase: Coding phase information
+        phase: Coding phase information
 
     Note:
         Mutable (not frozen) to allow updating tags during pipeline.
@@ -227,7 +227,7 @@ class IntronMetadata:
     overlap: Optional[str] = None
     longest_isoform: bool = False
     corrected: bool = False
-    exon_phase: Optional[int] = None
+    phase: Optional[int] = None
 
     def is_omitted(self) -> bool:
         """Check if this intron should be omitted."""
@@ -459,15 +459,15 @@ class Intron:
         # Derive phase from upstream exon (CDS) phase annotation (if available)
         # Formula: phase = (exon_length - exon_phase) % 3
         # This calculates the reading frame at the start of the next exon
-        exon_phase = None
+        phase = None
         if exon1.phase is not None:
-            exon_phase = (exon1.length - exon1.phase) % 3
+            phase = (exon1.length - exon1.phase) % 3
 
         # Create metadata with parent info
         metadata = IntronMetadata(
             parent=exon1.parent_id,
             grandparent=None,  # Will be filled in later if available
-            exon_phase=exon_phase,
+            phase=phase,
         )
 
         return cls(intron_id=intron_id, coordinates=coord, metadata=metadata)

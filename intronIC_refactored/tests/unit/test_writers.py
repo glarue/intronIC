@@ -71,7 +71,7 @@ def full_intron():
         type_id='u12',
         noncanonical=False,
         longest_isoform=True,
-        exon_phase=0
+        phase=0
     )
 
     return Intron("intron_full", coord, scores, sequences, metadata)
