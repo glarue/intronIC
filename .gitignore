@@ -47,3 +47,4 @@ validation_outputs/
 *.iic.png
 intronIC_patched.py
 run.log
+comparison_outputs/
