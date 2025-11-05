@@ -49,6 +49,13 @@ Examples:
 """
         )
 
+        # Version
+        parser.add_argument(
+            '--version',
+            action='version',
+            version='intronIC 1.5.1'
+        )
+
         # Required arguments
         required = parser.add_argument_group('required arguments')
         required.add_argument(
@@ -117,6 +124,22 @@ Examples:
             action='store_true',
             help='Exclude non-canonical introns from scoring'
         )
+        scoring_group.add_argument(
+            '--pseudocount',
+            type=float,
+            default=0.0001,
+            help='Pseudocount value for PWM scoring to avoid division by zero (default: 0.0001)'
+        )
+        scoring_group.add_argument(
+            '--no_ignore_nc_dnts',
+            action='store_true',
+            help='Include terminal dinucleotides when scoring non-canonical introns (default: ignore them)'
+        )
+        scoring_group.add_argument(
+            '--no_nc_ss_adjustment',
+            action='store_true',
+            help='Disable U12 boundary correction for non-canonical introns (default: enabled)'
+        )
 
         # Performance options
         perf_group = parser.add_argument_group('performance options')
@@ -144,6 +167,11 @@ Examples:
             '-v', '--no_intron_overlap',
             action='store_true',
             help='Exclude overlapping introns'
+        )
+        isoform_group.add_argument(
+            '-d', '--include_duplicates',
+            action='store_true',
+            help='Include introns with duplicate coordinates in output (default: exclude)'
         )
 
         # Training options

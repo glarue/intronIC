@@ -53,6 +53,8 @@ class ExtractionConfig:
     flank_len: int = 50
     allow_multiple_isoforms: bool = False
     no_intron_overlap: bool = False
+    include_duplicates: bool = False
+    u12_boundary_correction: bool = True  # Enable U12 correction by default
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +72,8 @@ class ScoringConfig:
     reference_u12s: Optional[Path] = None
     reference_u2s: Optional[Path] = None
     generate_u2_bps_pwm: bool = False
+    pseudocount: float = 0.0001
+    ignore_nc_dnts: bool = True  # Ignore terminal dinucleotides for NC introns by default
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +156,9 @@ class IntronICConfig:
             min_intron_len=args.min_intron_len,
             flank_len=args.flank_len,
             allow_multiple_isoforms=args.allow_multiple_isoforms,
-            no_intron_overlap=args.no_intron_overlap
+            no_intron_overlap=args.no_intron_overlap,
+            include_duplicates=args.include_duplicates,
+            u12_boundary_correction=not args.no_nc_ss_adjustment
         )
 
         # Scoring regions
@@ -174,7 +180,9 @@ class IntronICConfig:
             pwm_file=args.pwms,
             reference_u12s=args.reference_u12s,
             reference_u2s=args.reference_u2s,
-            generate_u2_bps_pwm=args.generate_u2_bps_pwm
+            generate_u2_bps_pwm=args.generate_u2_bps_pwm,
+            pseudocount=args.pseudocount,
+            ignore_nc_dnts=not args.no_ignore_nc_dnts
         )
 
         # Training configuration

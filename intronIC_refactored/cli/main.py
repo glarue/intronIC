@@ -274,7 +274,7 @@ def extract_introns_from_annotation(
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
-    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     bp_matrix_length = pwm_sets['bp'].u12_canonical.length
     logger.debug(f"BP matrix length: {bp_matrix_length}bp")
 
@@ -347,7 +347,7 @@ def extract_introns_from_bed(
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
-    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     bp_matrix_length = pwm_sets['bp'].u12_canonical.length
     logger.debug(f"BP matrix length: {bp_matrix_length}bp")
 
@@ -426,14 +426,14 @@ def score_introns(
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
-    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     logger.info(f"Loaded PWM matrices for {len(pwm_sets)} regions")
 
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
     u2_bp_file = Path(__file__).parent.parent / "intronIC" / "data" / "u2.conserved_empirical_bp_pwm.iic"
     if u2_bp_file.exists():
         from dataclasses import replace
-        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file)
+        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
         if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
             # PWMSet is frozen, so use replace() to create updated copy
             pwm_sets['bp'] = replace(
@@ -528,13 +528,13 @@ def normalize_scores(
 
     # Load PWM matrices
     pwm_file = data_dir / "scoring_matrices.fasta.iic"
-    pwm_sets = PWMLoader.load_from_file(pwm_file)
+    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
 
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
     from dataclasses import replace
     u2_bp_file = data_dir / "u2.conserved_empirical_bp_pwm.iic"
     if u2_bp_file.exists():
-        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file)
+        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
         if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
             pwm_sets['bp'] = replace(
                 pwm_sets['bp'],

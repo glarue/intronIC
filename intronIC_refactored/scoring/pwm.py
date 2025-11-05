@@ -199,12 +199,13 @@ class PWMLoader:
     """
 
     @staticmethod
-    def load_from_file(filepath: Path) -> Dict[str, PWMSet]:
+    def load_from_file(filepath: Path, pseudocount: float = 0.0001) -> Dict[str, PWMSet]:
         """
         Load all PWMs from scoring_matrices.fasta.iic file.
 
         Args:
             filepath: Path to scoring_matrices.fasta.iic
+            pseudocount: Pseudocount value to use for PWM scoring (default: 0.0001)
 
         Returns:
             Dictionary mapping region to PWMSet:
@@ -226,7 +227,7 @@ class PWMLoader:
         matrices = PWMLoader._parse_matrix_file(filepath)
 
         # Group matrices by region (five, bp, three)
-        pwm_sets = PWMLoader._group_into_pwm_sets(matrices)
+        pwm_sets = PWMLoader._group_into_pwm_sets(matrices, pseudocount)
 
         return pwm_sets
 
@@ -360,13 +361,15 @@ class PWMLoader:
 
     @staticmethod
     def _group_into_pwm_sets(
-        matrices: Dict[tuple, Dict]
+        matrices: Dict[tuple, Dict],
+        pseudocount: float = 0.0001
     ) -> Dict[str, PWMSet]:
         """
         Group parsed matrices into PWMSet objects by region.
 
         Args:
             matrices: Dictionary from _parse_matrix_file
+            pseudocount: Pseudocount value for PWM scoring
 
         Returns:
             Dictionary mapping region name to PWMSet:
@@ -391,7 +394,8 @@ class PWMLoader:
             pwm = PWMLoader._dict_to_pwm(
                 name='_'.join(name_tuple),
                 matrix_dict=data['matrix'],
-                start_index=data['start_index']
+                start_index=data['start_index'],
+                pseudocount=pseudocount
             )
 
             # Store in appropriate category
@@ -424,7 +428,8 @@ class PWMLoader:
     def _dict_to_pwm(
         name: str,
         matrix_dict: Dict[str, Dict[int, float]],
-        start_index: int
+        start_index: int,
+        pseudocount: float = 0.0001
     ) -> PWM:
         """
         Convert parsed dictionary to PWM object with numpy array.
@@ -433,6 +438,7 @@ class PWMLoader:
             name: PWM name
             matrix_dict: {'A': {0: 0.25, 1: 0.30}, 'C': {...}, ...}
             start_index: Starting position index
+            pseudocount: Pseudocount value for PWM scoring
 
         Returns:
             PWM object with numpy matrix
@@ -464,5 +470,6 @@ class PWMLoader:
             name=name,
             matrix=matrix,
             length=length,
+            pseudocount=pseudocount,
             start_index=start_index
         )
