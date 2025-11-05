@@ -155,6 +155,12 @@ class BranchPointScorer:
         """
         Extract search region from intron sequence.
 
+        Port from: intronIC.py:2527-2560 (_short_bp_adjust), 2607-2610
+
+        For short introns, the search window is automatically adjusted to fit
+        within the intron boundaries. This ensures we search the maximum
+        available region rather than failing for short introns.
+
         Args:
             intron: Intron object
             search_window: (start, stop) relative to 3' end (negative values)
@@ -167,6 +173,12 @@ class BranchPointScorer:
             - start_pos = 100 + (-55) = 45
             - stop_pos = 100 + (-5) = 95
             - Returns intron.seq[45:95]
+
+            For 50bp intron with window (-55, -5):
+            - start_pos would be 50 + (-55) = -5 (INVALID!)
+            - Clamp to 0: start_pos = 0
+            - stop_pos = 50 + (-5) = 45
+            - Returns intron.seq[0:45] (45bp search region)
         """
         intron_length = len(intron.sequences.seq)
 
@@ -174,6 +186,12 @@ class BranchPointScorer:
         # search_window values are negative (e.g., -55, -5)
         start_pos = intron_length + search_window[0]
         stop_pos = intron_length + search_window[1]
+
+        # Clamp start position to stay within intron boundaries
+        # Port from: intronIC.py:2527-2560 (_short_bp_adjust)
+        # If start_pos < 0, the window extends before the intron start
+        if start_pos < 0:
+            start_pos = 0
 
         # Extract region
         return intron.sequences.seq[start_pos:stop_pos]
