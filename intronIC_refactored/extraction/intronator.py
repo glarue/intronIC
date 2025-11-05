@@ -198,6 +198,7 @@ class IntronGenerator:
             # Update intron metadata
             intron.metadata.family_size = family_size
             intron.metadata.parent = transcript.feature_id
+            intron.metadata.parent_length = transcript.length  # For longest isoform determination
 
             # Set grandparent if available
             if transcript.parent_id and transcript.parent_id in feature_index:

@@ -103,11 +103,15 @@ class IntronFilter:
         filtered_introns = []
         self.stats.total_introns = len(introns)
 
+        # First pass: Identify longest transcripts per gene
+        self._identify_longest_isoforms(introns)
+
+        # Second pass: Filter introns
         for intron in introns:
             # Step 1: Check omission criteria
             self._check_omission(intron)
 
-            # Step 2: Tag duplicates and isoforms
+            # Step 2: Tag duplicates and longest isoforms
             self._tag_intron(intron)
 
             # Step 3: Re-check omission (may change based on tags)
@@ -122,6 +126,35 @@ class IntronFilter:
                 self.stats.kept_introns += 1
 
         return filtered_introns
+
+    def _identify_longest_isoforms(self, introns: List[Intron]) -> None:
+        """
+        First pass: identify longest transcript per gene.
+
+        Populates self.longest_isoforms dictionary with the longest transcript
+        for each gene based on transcript length.
+
+        Args:
+            introns: List of all introns
+        """
+        for intron in introns:
+            grandparent = intron.metadata.grandparent
+            parent = intron.metadata.parent
+            parent_length = intron.metadata.parent_length or 0
+
+            if grandparent:
+                if grandparent not in self.longest_isoforms:
+                    # First transcript for this gene
+                    self.longest_isoforms[grandparent] = {
+                        'transcript': parent,
+                        'length': parent_length
+                    }
+                else:
+                    # Update if this transcript is longer
+                    current = self.longest_isoforms[grandparent]
+                    if parent_length > current['length']:
+                        current['transcript'] = parent
+                        current['length'] = parent_length
 
     def _check_omission(self, intron: Intron) -> None:
         """
@@ -233,17 +266,14 @@ class IntronFilter:
             intron.metadata.overlap = intron.metadata.duplicate
 
         # Check for longest isoform
+        # longest_isoforms dictionary already populated by _identify_longest_isoforms
         parent = intron.metadata.parent
         grandparent = intron.metadata.grandparent
 
-        if grandparent:
-            if grandparent not in self.longest_isoforms:
-                self.longest_isoforms[grandparent] = parent
-                intron.metadata.longest_isoform = True
-            elif self.longest_isoforms[grandparent] != parent:
-                intron.metadata.longest_isoform = False
-            else:
-                intron.metadata.longest_isoform = True
+        if grandparent and grandparent in self.longest_isoforms:
+            # Check if this intron's transcript is the longest for its gene
+            longest_transcript = self.longest_isoforms[grandparent]['transcript']
+            intron.metadata.longest_isoform = (parent == longest_transcript)
         else:
             # No grandparent info, assume longest
             intron.metadata.longest_isoform = True
