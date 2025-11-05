@@ -129,10 +129,11 @@ class IntronFilter:
 
     def _identify_longest_isoforms(self, introns: List[Intron]) -> None:
         """
-        First pass: identify longest transcript per gene.
+        First pass: identify "longest" transcript per gene using "first seen wins".
 
-        Populates self.longest_isoforms dictionary with the longest transcript
-        for each gene based on transcript length.
+        This matches the original intronIC behavior where the first transcript
+        seen for each gene (first intron from that gene) is marked as "longest".
+        This is not actually the longest by length, but the first in annotation order.
 
         Args:
             introns: List of all introns
@@ -140,21 +141,12 @@ class IntronFilter:
         for intron in introns:
             grandparent = intron.metadata.grandparent
             parent = intron.metadata.parent
-            parent_length = intron.metadata.parent_length or 0
 
             if grandparent:
                 if grandparent not in self.longest_isoforms:
-                    # First transcript for this gene
-                    self.longest_isoforms[grandparent] = {
-                        'transcript': parent,
-                        'length': parent_length
-                    }
-                else:
-                    # Update if this transcript is longer
-                    current = self.longest_isoforms[grandparent]
-                    if parent_length > current['length']:
-                        current['transcript'] = parent
-                        current['length'] = parent_length
+                    # First transcript for this gene - mark as "longest"
+                    # (matches original intronIC "first seen wins" behavior)
+                    self.longest_isoforms[grandparent] = parent
 
     def _check_omission(self, intron: Intron) -> None:
         """
@@ -170,6 +162,9 @@ class IntronFilter:
         Args:
             intron: Intron object to check
         """
+        # Clear omitted flag to re-evaluate (important for second pass after tagging)
+        intron.metadata.omitted = None
+
         # Check length
         if intron.length < self.min_length:
             intron.metadata.omitted = 's'
@@ -271,8 +266,8 @@ class IntronFilter:
         grandparent = intron.metadata.grandparent
 
         if grandparent and grandparent in self.longest_isoforms:
-            # Check if this intron's transcript is the longest for its gene
-            longest_transcript = self.longest_isoforms[grandparent]['transcript']
+            # Check if this intron's transcript is the "longest" (first seen) for its gene
+            longest_transcript = self.longest_isoforms[grandparent]
             intron.metadata.longest_isoform = (parent == longest_transcript)
         else:
             # No grandparent info, assume longest
