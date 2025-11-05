@@ -299,12 +299,15 @@ class IntronScorer:
         if u12_match is None:
             # Use pseudocount * matrix_length for both U12 and U2
             # This gives a low but non-zero score for short introns
-            u2_pwm = self.pwm_sets['bp'].u2_canonical
-            pseudocount_score = self.pseudocount * u2_pwm.length
+            u12_pwm = self.pwm_sets['bp'].u12_canonical
+            u2_pwm = self.pwm_sets['bp'].u2_canonical or u12_pwm  # Fall back to U12 if U2 is None
+            pseudocount_score = u2_pwm.pseudocount * u2_pwm.length
             return None, pseudocount_score
 
         # Score the same sequence with U2 PWM
-        u2_pwm = self.pwm_sets['bp'].u2_canonical
+        # Fall back to U12 PWM if U2 is None (happens when using default matrices)
+        u12_pwm = self.pwm_sets['bp'].u12_canonical
+        u2_pwm = self.pwm_sets['bp'].u2_canonical or u12_pwm
         u2_score = u2_pwm.score_sequence(u12_match.sequence)
 
         return u12_match, u2_score
