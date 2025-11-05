@@ -348,12 +348,16 @@ def test_search_window_at_intron_boundaries(u12_bp_pwm, u2_bp_pwm, simple_intron
 
 
 def test_search_window_too_small_for_pwm(u12_bp_pwm, u2_bp_pwm, simple_intron):
-    """Test search window smaller than PWM length."""
+    """Test search window smaller than PWM length returns None.
+
+    Port from: intronIC.py:2944 - returns None for short sequences,
+    which is then handled with pseudocount by the scorer.
+    """
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
 
-    # Window of only 5bp, but PWM is 7bp
-    with pytest.raises(ValueError, match="window.*too small|shorter than"):
-        scorer.find_best_match(simple_intron, search_window=(-10, -5))
+    # Window of only 5bp, but PWM is 7bp - should return None
+    match = scorer.find_best_match(simple_intron, search_window=(-10, -5))
+    assert match is None, "Should return None for windows too small for PWM"
 
 
 def test_negative_strand_intron(u12_bp_pwm, u2_bp_pwm):

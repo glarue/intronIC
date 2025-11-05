@@ -153,7 +153,16 @@ class IntronScorer:
         # Calculate log ratios
         # Port from: intronIC.py:3086-3103 (log_ratio calls)
         five_raw_score = self._calculate_log_ratio(five_u12_score, five_u2_score)
-        bp_raw_score = self._calculate_log_ratio(bp_u12_match.score, bp_u2_score)
+
+        # Handle None match from short introns - use pseudocount for both U12 and U2
+        # Port from: intronIC.py:2944
+        if bp_u12_match is None:
+            # When match is None, bp_u2_score already contains pseudocount
+            # Use same pseudocount for U12 score for consistency
+            bp_raw_score = self._calculate_log_ratio(bp_u2_score, bp_u2_score)
+        else:
+            bp_raw_score = self._calculate_log_ratio(bp_u12_match.score, bp_u2_score)
+
         three_raw_score = self._calculate_log_ratio(three_u12_score, three_u2_score)
 
         # Update intron with scores
@@ -262,23 +271,37 @@ class IntronScorer:
 
         return u12_score, u2_score
 
-    def _score_branch_point(self, intron: Intron) -> Tuple[BranchPointMatch, float]:
+    def _score_branch_point(self, intron: Intron) -> Tuple[BranchPointMatch | None, float]:
         """
         Find and score branch point with both U12 and U2 PWMs.
 
-        Port from: intronIC.py:2920-2930, 3078-3084
+        Port from: intronIC.py:2920-2930, 2944 (pseudocount), 3078-3084
 
         The U12 PWM is used to find the best position, then both U12 and U2
         PWMs score that sequence for the log ratio.
+
+        For introns where the search window is too small (e.g., short introns),
+        returns None for the match and uses a pseudocount for scoring.
 
         Args:
             intron: Intron to score
 
         Returns:
-            Tuple of (u12_match, u2_score)
+            Tuple of (u12_match, u2_score). u12_match will be None if the
+            search window is too small for the PWM.
         """
         # Find best match using U12 PWM
+        # Port from: intronIC.py:2943-2944 - handles None for short introns
         u12_match = self.bp_scorer.find_best_match(intron, search_window=self.bp_coords)
+
+        # If match is None (window too small), use pseudocount for both scores
+        # Port from: intronIC.py:2944
+        if u12_match is None:
+            # Use pseudocount * matrix_length for both U12 and U2
+            # This gives a low but non-zero score for short introns
+            u2_pwm = self.pwm_sets['bp'].u2_canonical
+            pseudocount_score = self.pseudocount * u2_pwm.length
+            return None, pseudocount_score
 
         # Score the same sequence with U2 PWM
         u2_pwm = self.pwm_sets['bp'].u2_canonical

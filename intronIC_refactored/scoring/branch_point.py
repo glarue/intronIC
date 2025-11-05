@@ -87,11 +87,11 @@ class BranchPointScorer:
         self,
         intron: Intron,
         search_window: Tuple[int, int] = (-55, -5)
-    ) -> BranchPointMatch:
+    ) -> BranchPointMatch | None:
         """
         Find the best branch point match in an intron.
 
-        Port from: intronIC.py:2143-2178 (bp_score)
+        Port from: intronIC.py:2143-2178 (bp_score), 2944 (None handling)
 
         Args:
             intron: Intron object with sequence
@@ -99,16 +99,17 @@ class BranchPointScorer:
                           Default: (-55, -5) matches original intronIC
 
         Returns:
-            BranchPointMatch with best-scoring sequence and position
+            BranchPointMatch with best-scoring sequence and position, or None
+            if the search window is too small for the PWM length.
 
         Raises:
             ValueError: If intron has no sequence
-            ValueError: If search window is too small for PWM
 
         Example:
             >>> scorer = BranchPointScorer(u12_pwm, u2_pwm)
             >>> match = scorer.find_best_match(intron, search_window=(-55, -5))
-            >>> print(f"Found {match.sequence} at position {match.position}")
+            >>> if match:
+            ...     print(f"Found {match.sequence} at position {match.position}")
             Found TACTAAC at position -30
         """
         # Validate intron has sequence
@@ -121,14 +122,12 @@ class BranchPointScorer:
         # Extract search region from intron
         search_region = self._extract_search_region(intron, search_window)
 
-        # Validate search region is long enough
+        # Check if search region is long enough for PWM
+        # Port from: intronIC.py:2944 - returns None for too-short sequences
         window_size = self.u12_pwm.length
         if len(search_region) < window_size:
-            raise ValueError(
-                f"Search window ({len(search_region)}bp) is too small for "
-                f"PWM length ({window_size}bp). "
-                f"Window: {search_window}, Intron length: {len(intron.sequences.seq)}bp"
-            )
+            # Return None instead of raising - caller will handle with pseudocount
+            return None
 
         # Find best match in search region
         match = self._find_best_in_sequence(search_region)
