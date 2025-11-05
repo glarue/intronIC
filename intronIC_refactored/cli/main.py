@@ -454,7 +454,8 @@ def score_introns(
         pwm_sets=pwm_sets,
         five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
         bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
-        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
+        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end),
+        ignore_nc_dnts=config.scoring.ignore_nc_dnts
     )
 
     # Score introns with error handling
@@ -546,7 +547,8 @@ def normalize_scores(
         pwm_sets=pwm_sets,
         five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
         bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
-        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end)
+        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end),
+        ignore_nc_dnts=config.scoring.ignore_nc_dnts
     )
 
     # Score reference introns
