@@ -329,22 +329,17 @@ def extract_introns_from_annotation(
                f"(user: {config.extraction.min_intron_len}bp, "
                f"scoring regions: {calculated_min}bp)")
 
-    # Filter by minimum length
-    # NOTE: In sequences-only mode, the original outputs ALL introns regardless of length
-    # (see intronIC.py:4820-4825 where omitted is set to False in ONLY_SEQS mode)
+    # Keep ALL introns at extraction time (matching original behavior)
+    # Let IntronFilter decide what to omit during the filtering phase
+    # This ensures short introns are marked as omitted and written to output files
+    # NOTE: The original keeps all introns through extraction, then marks short ones
+    # as omitted during filtering (see intronIC.py lines 4772-4786)
+    introns = introns_all
+
     if config.scoring.sequences_only:
-        # Sequences-only mode: keep all introns (matching original behavior)
-        introns = introns_all
-        logger.info("Sequences-only mode: keeping all introns regardless of length")
+        logger.info("Sequences-only mode: all introns will be output regardless of length")
     else:
-        # Normal mode: filter by minimum length
-        introns = [
-            i for i in introns_all
-            if i.sequences and len(i.sequences.seq) >= actual_min_length
-        ]
-        filtered_count = len(introns_all) - len(introns)
-        if filtered_count > 0:
-            logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
+        logger.info(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
 
     return introns
 
@@ -439,22 +434,17 @@ def extract_introns_from_bed(
                f"(user: {config.extraction.min_intron_len}bp, "
                f"scoring regions: {calculated_min}bp)")
 
-    # Filter by minimum length
-    # NOTE: In sequences-only mode, the original outputs ALL introns regardless of length
-    # (see intronIC.py:4820-4825 where omitted is set to False in ONLY_SEQS mode)
+    # Keep ALL introns at extraction time (matching original behavior)
+    # Let IntronFilter decide what to omit during the filtering phase
+    # This ensures short introns are marked as omitted and written to output files
+    # NOTE: The original keeps all introns through extraction, then marks short ones
+    # as omitted during filtering (see intronIC.py lines 4772-4786)
+    introns = introns_all
+
     if config.scoring.sequences_only:
-        # Sequences-only mode: keep all introns (matching original behavior)
-        introns = introns_all
-        logger.info("Sequences-only mode: keeping all introns regardless of length")
+        logger.info("Sequences-only mode: all introns will be output regardless of length")
     else:
-        # Normal mode: filter by minimum length
-        introns = [
-            i for i in introns_all
-            if i.sequences and len(i.sequences.seq) >= actual_min_length
-        ]
-        filtered_count = len(introns_all) - len(introns)
-        if filtered_count > 0:
-            logger.info(f"Filtered out {filtered_count} introns shorter than {actual_min_length}bp")
+        logger.info(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
 
     return introns
 

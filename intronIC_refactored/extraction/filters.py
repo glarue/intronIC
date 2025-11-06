@@ -103,11 +103,15 @@ class IntronFilter:
         filtered_introns = []
         self.stats.total_introns = len(introns)
 
-        # First pass: Identify longest transcripts per gene
-        self._identify_longest_isoforms(introns)
+        # Sort introns using hierarchical sort (matching original's get_sub_seqs sorting)
+        # This is CRITICAL: longest isoform identification depends on processing order!
+        sorted_introns = self._sort_introns(introns)
 
-        # Second pass: Filter introns
-        for intron in introns:
+        # First pass: Identify longest transcripts per gene (using sorted order)
+        self._identify_longest_isoforms(sorted_introns)
+
+        # Second pass: Filter introns (using sorted order)
+        for intron in sorted_introns:
             # Step 1: Check omission criteria
             self._check_omission(intron)
 
@@ -127,16 +131,45 @@ class IntronFilter:
 
         return filtered_introns
 
-    def _identify_longest_isoforms(self, introns: List[Intron]) -> None:
+    @staticmethod
+    def _sort_introns(introns: List[Intron]) -> List[Intron]:
         """
-        First pass: identify "longest" transcript per gene using "first seen wins".
+        Sort introns using hierarchical_sort_attrs logic from original.
 
-        This matches the original intronIC behavior where the first transcript
-        seen for each gene (first intron from that gene) is marked as "longest".
-        This is not actually the longest by length, but the first in annotation order.
+        Matches original intronIC's sorting in get_sub_seqs (line 2674):
+        - defined_by (CDS before exon)
+        - parent_length descending (KEY for longest isoform!)
+        - parent (transcript ID)
+        - family_size descending
+        - index (intron position)
 
         Args:
-            introns: List of all introns
+            introns: List of introns to sort
+
+        Returns:
+            Sorted list of introns
+        """
+        return sorted(
+            introns,
+            key=lambda i: (
+                i.metadata.defined_by or '',         # CDS before exon
+                -(i.metadata.parent_length or 0),   # Descending by parent length
+                i.metadata.parent or '',             # Transcript ID
+                -(i.metadata.family_size or 0),     # Descending by family size
+                i.metadata.index or 0                # Intron index
+            )
+        )
+
+    def _identify_longest_isoforms(self, introns: List[Intron]) -> None:
+        """
+        First pass: identify "longest" transcript per gene.
+
+        Expects introns to already be sorted by _sort_introns() (hierarchical order).
+        Since introns are sorted by parent_length descending, the first transcript
+        seen for each gene is the longest.
+
+        Args:
+            introns: List of introns (must already be sorted!)
         """
         for intron in introns:
             grandparent = intron.metadata.grandparent
@@ -144,8 +177,8 @@ class IntronFilter:
 
             if grandparent:
                 if grandparent not in self.longest_isoforms:
-                    # First transcript for this gene - mark as "longest"
-                    # (matches original intronIC "first seen wins" behavior)
+                    # First transcript for this gene (after hierarchical sorting)
+                    # Since sorted by parent_length descending, this IS the longest
                     self.longest_isoforms[grandparent] = parent
 
     def _check_omission(self, intron: Intron) -> None:
@@ -201,7 +234,10 @@ class IntronFilter:
             return
 
         # Check longest isoform
-        if self.longest_only and not intron.metadata.longest_isoform:
+        # IMPORTANT: Use 'is False' not 'not' to match original behavior
+        # Original only omits when explicitly False, not when None
+        # (see intronIC.py line 718: "if longest_only and self.longest_isoform is False")
+        if self.longest_only and intron.metadata.longest_isoform is False:
             intron.metadata.omitted = 'i'
             return
 
