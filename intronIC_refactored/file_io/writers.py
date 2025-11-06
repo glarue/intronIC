@@ -243,11 +243,12 @@ class BEDWriter:
         if species_name and not simple_name:
             parts.append(species_name)
 
-        # Add parent_index
+        # Add parent_index(family_size) - matching original format
         if intron.metadata and intron.metadata.parent:
             parent = intron.metadata.parent
             index = intron.metadata.index if intron.metadata.index else 1
-            parts.append(f"{parent}_{index}")
+            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
+            parts.append(f"{parent}_{index}({family_size})")
         else:
             parts.append(intron.intron_id)
 
@@ -483,7 +484,7 @@ class MetaWriter:
         """
         Generate intron name for metadata.
 
-        Format: [species_]parent_index
+        Format: [species_]parent_index(family_size)
 
         Args:
             intron: Intron object
@@ -501,7 +502,8 @@ class MetaWriter:
         if intron.metadata and intron.metadata.parent:
             parent = intron.metadata.parent
             index = intron.metadata.index if intron.metadata.index else 1
-            parts.append(f"{parent}_{index}")
+            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
+            parts.append(f"{parent}_{index}({family_size})")
         else:
             parts.append(intron.intron_id)
 
@@ -634,7 +636,7 @@ class SequenceWriter:
         species_name: Optional[str],
         simple_name: bool
     ) -> str:
-        """Generate intron name (same as MetaWriter)."""
+        """Generate intron name with family_size (same as MetaWriter)."""
         parts = []
 
         if species_name and not simple_name:
@@ -643,7 +645,8 @@ class SequenceWriter:
         if intron.metadata and intron.metadata.parent:
             parent = intron.metadata.parent
             index = intron.metadata.index if intron.metadata.index else 1
-            parts.append(f"{parent}_{index}")
+            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
+            parts.append(f"{parent}_{index}({family_size})")
         else:
             parts.append(intron.intron_id)
 
@@ -829,7 +832,7 @@ class ScoreWriter:
         species_name: Optional[str],
         simple_name: bool
     ) -> str:
-        """Generate intron name (same as MetaWriter)."""
+        """Generate intron name with family_size (same as MetaWriter)."""
         parts = []
 
         if species_name and not simple_name:
@@ -838,7 +841,8 @@ class ScoreWriter:
         if intron.metadata and intron.metadata.parent:
             parent = intron.metadata.parent
             index = intron.metadata.index if intron.metadata.index else 1
-            parts.append(f"{parent}_{index}")
+            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
+            parts.append(f"{parent}_{index}({family_size})")
         else:
             parts.append(intron.intron_id)
 
