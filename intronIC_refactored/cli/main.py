@@ -691,8 +691,8 @@ def classify_introns(
         fixed_c=config.training.fixed_C,
         optimize_c=(config.training.fixed_C is None),
         random_state=config.training.seed,
-        cv_processes=config.cv_processes,
-        classification_processes=config.processes
+        cv_processes=config.performance.cv_processes,
+        classification_processes=config.performance.processes
     )
 
     # Run complete classification pipeline (optimize + train + classify)
