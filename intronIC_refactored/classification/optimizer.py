@@ -16,6 +16,7 @@ Related: intronIC.py:5290-5322 (helper functions)
 
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional
+import os
 import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.svm import SVC
@@ -107,6 +108,17 @@ class SVMOptimizer:
         Raises:
             ValueError: If introns lack z-scores
         """
+        # Prevent thread oversubscription when using parallelization
+        # GridSearchCV with n_jobs > 1 spawns worker processes, and each worker
+        # may use multi-threaded BLAS (OpenBLAS, MKL, etc.). This causes
+        # n_jobs × BLAS_threads competing threads, leading to severe slowdown.
+        # Solution: Force single-threaded BLAS in each worker.
+        if self.n_jobs > 1:
+            os.environ['OPENBLAS_NUM_THREADS'] = '1'
+            os.environ['MKL_NUM_THREADS'] = '1'
+            os.environ['OMP_NUM_THREADS'] = '1'
+            os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
         # Extract features and labels
         X, y = self._prepare_training_data(u12_introns, u2_introns)
 

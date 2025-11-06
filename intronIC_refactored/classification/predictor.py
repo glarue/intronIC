@@ -17,6 +17,7 @@ Port from: intronIC.py:5651-5687 (average_svm_score_info), 5816-5900 (parallel_s
 from dataclasses import replace
 from typing import Sequence
 from multiprocessing import Pool, cpu_count
+import os
 import numpy as np
 
 from core.intron import Intron, IntronScores, IntronMetadata
@@ -169,6 +170,15 @@ class SVMPredictor:
         # Sequential processing for n_jobs=1 or small datasets
         if self.n_jobs == 1 or len(introns) < 100:
             return self._predict_chunk(ensemble, introns)
+
+        # Prevent thread oversubscription when using parallelization
+        # Pool workers may use multi-threaded BLAS (OpenBLAS, MKL, etc.), causing
+        # n_jobs × BLAS_threads competing threads and severe slowdown.
+        # Solution: Force single-threaded BLAS in each worker.
+        os.environ['OPENBLAS_NUM_THREADS'] = '1'
+        os.environ['MKL_NUM_THREADS'] = '1'
+        os.environ['OMP_NUM_THREADS'] = '1'
+        os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
         # Parallel processing: split introns into chunks
         n_workers = min(self.n_jobs, cpu_count(), len(introns))
