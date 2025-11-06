@@ -142,6 +142,7 @@ class IntronFilter:
         - parent (transcript ID)
         - family_size descending
         - index (intron position)
+        - line_number (final tiebreaker for reproducibility)
 
         Args:
             introns: List of introns to sort
@@ -156,7 +157,8 @@ class IntronFilter:
                 -(i.metadata.parent_length or 0),   # Descending by parent length
                 i.metadata.parent or '',             # Transcript ID
                 -(i.metadata.family_size or 0),     # Descending by family size
-                i.metadata.index or 0                # Intron index
+                i.metadata.index or 0,               # Intron index
+                i.metadata.line_number or 0          # Final tiebreaker
             )
         )
 

@@ -155,6 +155,12 @@ class IntronGenerator:
             # Set intron index (1-based position in transcript, matching original)
             intron.metadata.index = index
 
+            # Set line_number as average of both exons (matching original intronIC.py:573)
+            # This enables tie-breaking in hierarchical sort for duplicate parent attributes
+            upstream_line = upstream_exon.attributes.get('_line_number', 0)
+            downstream_line = downstream_exon.attributes.get('_line_number', 0)
+            intron.metadata.line_number = (upstream_line + downstream_line) / 2
+
             yield intron
 
     def generate_from_transcript(

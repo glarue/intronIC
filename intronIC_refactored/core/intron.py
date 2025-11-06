@@ -202,6 +202,7 @@ class IntronMetadata:
         index: Ordinal position in transcript (1-based)
         family_size: Total number of introns in this transcript
         parent_length: Length of parent transcript (for tiebreaking)
+        line_number: Annotation line number (for final tiebreaking)
         type_id: Classification ('u2', 'u12', 'unknown')
         noncanonical: Whether intron has non-standard boundaries
         omitted: Omission reason code (None if not omitted)
@@ -220,6 +221,7 @@ class IntronMetadata:
     index: Optional[int] = None
     family_size: Optional[int] = None
     parent_length: Optional[int] = None
+    line_number: Optional[int] = None  # Annotation line number for hierarchical sort tiebreaker
     type_id: IntronType = "unknown"
     noncanonical: bool = False
     omitted: OmissionCode = None
