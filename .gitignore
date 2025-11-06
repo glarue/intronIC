@@ -48,3 +48,5 @@ validation_outputs/
 intronIC_patched.py
 run.log
 comparison_outputs/
+homo_sapiens_*.log
+homo_sapiens_*.* 
