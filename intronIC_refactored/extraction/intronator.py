@@ -207,6 +207,16 @@ class IntronGenerator:
                 else:
                     print(f"[!] Warning: Exon {child.feature_id} claims parent {child.parent_id} but is child of {transcript.feature_id}")
 
+        # Calculate coding length (sum of CDS/exon feature lengths, not genomic span)
+        # Matches original intronIC.py logic: prefer CDS length, fall back to exon length
+        # This is used for longest isoform determination (parent_length sort key)
+        if cds_features:
+            coding_length = sum(cds.length for cds in cds_features)
+        elif exon_features:
+            coding_length = sum(exon.length for exon in exon_features)
+        else:
+            coding_length = 0  # No exons/CDS (shouldn't happen for valid transcripts)
+
         # Two-pass algorithm: CDS first, then exon (with overlap checking)
         non_redundant_introns = []
 
@@ -251,7 +261,7 @@ class IntronGenerator:
             intron.metadata.index = index  # Re-index sequentially
             intron.metadata.family_size = family_size
             intron.metadata.parent = transcript.feature_id
-            intron.metadata.parent_length = transcript.length  # For longest isoform determination
+            intron.metadata.parent_length = coding_length  # Sum of CDS/exon lengths (not genomic span)
 
             # Set grandparent if available
             if transcript.parent_id and transcript.parent_id in feature_index:
