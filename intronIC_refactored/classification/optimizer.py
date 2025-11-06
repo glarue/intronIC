@@ -108,17 +108,6 @@ class SVMOptimizer:
         Raises:
             ValueError: If introns lack z-scores
         """
-        # Prevent thread oversubscription when using parallelization
-        # GridSearchCV with n_jobs > 1 spawns worker processes, and each worker
-        # may use multi-threaded BLAS (OpenBLAS, MKL, etc.). This causes
-        # n_jobs × BLAS_threads competing threads, leading to severe slowdown.
-        # Solution: Force single-threaded BLAS in each worker.
-        if self.n_jobs > 1:
-            os.environ['OPENBLAS_NUM_THREADS'] = '1'
-            os.environ['MKL_NUM_THREADS'] = '1'
-            os.environ['OMP_NUM_THREADS'] = '1'
-            os.environ['NUMEXPR_NUM_THREADS'] = '1'
-
         # Extract features and labels
         X, y = self._prepare_training_data(u12_introns, u2_introns)
 
@@ -254,6 +243,7 @@ class SVMOptimizer:
         base_svm = SVC(
             kernel='linear',
             class_weight='balanced',
+            cache_size=1000,  # MB - critical for performance with large datasets
             random_state=self.random_state + round_idx
         )
 
@@ -358,6 +348,7 @@ class SVMOptimizer:
             C=C,
             kernel='linear',
             class_weight='balanced',
+            cache_size=1000,  # MB - critical for performance with large datasets
             random_state=self.random_state
         )
 

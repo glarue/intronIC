@@ -14,12 +14,9 @@ if 'forkserver' in fork_types:
 elif 'spawn' in fork_types:
     set_start_method('spawn')
 
-# Set BLAS thread environment variables to prevent thread oversubscription
-import os
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['NUMEXPR_NUM_THREADS'] = '1'
+# NOTE: Intentionally NOT setting BLAS thread environment variables here
+# to test if they're interfering with joblib's worker spawning.
+# Joblib's loky backend should handle thread management automatically.
 
 import sys
 from cli.main import main

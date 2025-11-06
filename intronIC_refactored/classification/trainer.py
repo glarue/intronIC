@@ -171,6 +171,7 @@ class SVMTrainer:
             kernel=self.kernel,
             class_weight='balanced',
             probability=True,  # Enable predict_proba
+            cache_size=1000,  # MB - critical for performance with large datasets
             random_state=seed
         )
         svm.fit(X_train, y_train)
