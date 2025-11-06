@@ -5,17 +5,21 @@ Usage:
     python -m intronIC_refactored [arguments]
 """
 
-# Set BLAS thread environment variables BEFORE any imports
-# This prevents thread oversubscription: n_jobs × BLAS_threads competing threads
-# Must be set before numpy/sklearn initialization
+# CRITICAL: Set multiprocessing start method BEFORE any imports
+# Must match original's approach (intronIC.py:5042-5046)
+from multiprocessing import get_all_start_methods, set_start_method
+fork_types = get_all_start_methods()
+if 'forkserver' in fork_types:
+    set_start_method('forkserver')
+elif 'spawn' in fork_types:
+    set_start_method('spawn')
+
+# Set BLAS thread environment variables to prevent thread oversubscription
 import os
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1'
-
-# Let joblib/sklearn handle multiprocessing backend selection
-# Joblib's 'loky' backend (default in modern sklearn) handles process spawning correctly
 
 import sys
 from cli.main import main
