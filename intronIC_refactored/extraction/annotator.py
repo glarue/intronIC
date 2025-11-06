@@ -32,14 +32,16 @@ class AnnotationHierarchyBuilder:
         parent_class_map: Maps feature types to their parent/grandparent classes
     """
 
-    def __init__(self, child_features: List[str]):
+    def __init__(self, child_features: List[str], clean_names: bool = True):
         """
         Initialize the hierarchy builder.
 
         Args:
             child_features: List of feature types to extract (e.g., ['exon', 'cds'])
+            clean_names: If True, remove 'transcript:' and 'gene:' prefixes from IDs
         """
         self.child_features = [f.lower() for f in child_features]
+        self.clean_names = clean_names
 
         # Maps feature types to expected parent classes
         self.parent_class_map = {
@@ -96,7 +98,7 @@ class AnnotationHierarchyBuilder:
             >>> print(f"{gene.name}: {len(gene.children)} transcripts")
         """
         # Parse annotation file
-        parser = BioGLAnnotationParser()
+        parser = BioGLAnnotationParser(clean_names=self.clean_names)
         annotations = list(parser.parse_file(annotation_file))
 
         # Build hierarchy

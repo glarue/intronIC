@@ -139,6 +139,9 @@ class BioGLAnnotationParser:
     - Extracts all needed metadata
     - Battle-tested in original intronIC
 
+    Args:
+        clean_names: If True, remove 'transcript:' and 'gene:' prefixes from IDs
+
     Examples:
         >>> parser = BioGLAnnotationParser()
         >>> # line = parser.parse_line("chr1\\tENSEMBL\\texon\\t1000\\t2000\\t.\\t+\\t.\\tID=exon1;Parent=trans1", 1)
@@ -146,10 +149,36 @@ class BioGLAnnotationParser:
         >>> # 'exon'
     """
 
-    def __init__(self):
-        """Initialize parser."""
+    def __init__(self, clean_names: bool = True):
+        """Initialize parser.
+
+        Args:
+            clean_names: If True, remove 'transcript:' and 'gene:' prefixes from IDs
+        """
         from biogl import GxfParse
         self._gxf_parse = GxfParse
+        self._clean_names = clean_names
+
+    @staticmethod
+    def _clean_id(id_str: Optional[str]) -> Optional[str]:
+        """
+        Remove common GFF3 ID prefixes.
+
+        Args:
+            id_str: Feature ID string
+
+        Returns:
+            Cleaned ID string
+        """
+        if not id_str:
+            return id_str
+
+        # Remove common prefixes
+        for prefix in ['transcript:', 'gene:', 'mRNA:', 'exon:', 'CDS:']:
+            if id_str.startswith(prefix):
+                return id_str[len(prefix):]
+
+        return id_str
 
     def parse_line(self, line: str, line_number: int) -> Optional[AnnotationLine]:
         """
@@ -192,11 +221,19 @@ class BioGLAnnotationParser:
                 f"{line_info.region}_{line_info.start}_{line_info.stop}_{line_info.strand}"
             )
 
+        # Clean ID prefixes if requested
+        if self._clean_names:
+            feature_name = self._clean_id(feature_name)
+            parent_list = [self._clean_id(p) for p in parent_list if p]
+            grandparent = self._clean_id(line_info.grandparent)
+        else:
+            grandparent = line_info.grandparent
+
         return AnnotationLine(
             name=feature_name,
             feat_type=line_info.feat_type.lower(),  # Normalize to lowercase
             parent=parent_list,
-            grandparent=line_info.grandparent,
+            grandparent=grandparent,
             region=line_info.region,
             strand=line_info.strand,
             start=line_info.start,

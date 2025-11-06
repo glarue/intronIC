@@ -99,6 +99,18 @@ Examples:
             default=Path.cwd(),
             help='Output directory (default: current directory)'
         )
+        output_group.add_argument(
+            '--clean_names',
+            action='store_true',
+            default=True,
+            help='Remove "transcript:" and "gene:" prefixes from IDs (default: True)'
+        )
+        output_group.add_argument(
+            '--no_clean_names',
+            dest='clean_names',
+            action='store_false',
+            help='Keep "transcript:" and "gene:" prefixes in IDs'
+        )
 
         # Scoring options
         scoring_group = parser.add_argument_group('scoring options')

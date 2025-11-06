@@ -240,7 +240,10 @@ def extract_introns_from_annotation(
 
     # Step 1: Build annotation hierarchy
     feature_types = ['exon'] if config.extraction.feature_type == 'exon' else ['cds']
-    builder = AnnotationHierarchyBuilder(child_features=feature_types)
+    builder = AnnotationHierarchyBuilder(
+        child_features=feature_types,
+        clean_names=config.output.clean_names
+    )
     genes = builder.build_from_file(config.input.annotation)
     logger.info(f"Built hierarchy with {len(genes)} genes")
 

@@ -98,6 +98,7 @@ class OutputConfig:
     """Configuration for output."""
     output_dir: Path
     species_name: str
+    clean_names: bool = True
     quiet: bool = False
     debug: bool = False
 
@@ -211,6 +212,7 @@ class IntronICConfig:
         output_config = OutputConfig(
             output_dir=args.output_dir,
             species_name=args.species_name,
+            clean_names=args.clean_names,
             quiet=args.quiet,
             debug=args.debug
         )
