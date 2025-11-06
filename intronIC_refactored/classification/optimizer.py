@@ -258,18 +258,18 @@ class SVMOptimizer:
         )
 
         # Run grid search
+        print(f"  GridSearchCV with n_jobs={self.n_jobs}, testing {len(C_grid)} C values...")
         grid_search = GridSearchCV(
             base_svm,
             param_grid={'C': C_grid},
             cv=self.cv_folds,
             scoring='balanced_accuracy',
             n_jobs=self.n_jobs,  # Parallelize CV folds
-            error_score=np.nan
+            error_score=np.nan,
+            verbose=2  # Show detailed progress
         )
 
-        # Thread oversubscription prevention handled by:
-        # 1. Multiprocessing start method ('forkserver'/'spawn') set in __main__.py
-        # 2. Environment variables (OPENBLAS_NUM_THREADS=1, etc.) set in __main__.py
+        # Thread oversubscription prevention handled by environment variables in __main__.py
         grid_search.fit(X, y)
 
         # Extract results
