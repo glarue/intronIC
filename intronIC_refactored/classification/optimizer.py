@@ -21,7 +21,6 @@ import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.svm import SVC
 from scipy.stats import gmean
-from joblib import parallel_backend
 
 from core.intron import Intron
 
@@ -268,11 +267,10 @@ class SVMOptimizer:
             error_score=np.nan
         )
 
-        # Use parallel_backend to control joblib's multiprocessing
-        # 'loky' backend with inner_max_num_threads=1 prevents thread oversubscription
-        # by forcing single-threaded BLAS in each worker process
-        with parallel_backend('loky', inner_max_num_threads=1):
-            grid_search.fit(X, y)
+        # Thread oversubscription prevention handled by:
+        # 1. Multiprocessing start method ('forkserver'/'spawn') set in __main__.py
+        # 2. Environment variables (OPENBLAS_NUM_THREADS=1, etc.) set in __main__.py
+        grid_search.fit(X, y)
 
         # Extract results
         cv_results = grid_search.cv_results_
@@ -363,15 +361,13 @@ class SVMOptimizer:
             random_state=self.random_state
         )
 
-        # Use parallel_backend to prevent thread oversubscription
-        with parallel_backend('loky', inner_max_num_threads=1):
-            scores = cross_val_score(
-                svm,
-                X,
-                y,
-                cv=self.cv_folds,
-                scoring='balanced_accuracy',
-                n_jobs=self.n_jobs  # Parallelize CV folds
-            )
+        scores = cross_val_score(
+            svm,
+            X,
+            y,
+            cv=self.cv_folds,
+            scoring='balanced_accuracy',
+            n_jobs=self.n_jobs  # Parallelize CV folds
+        )
 
         return float(np.mean(scores))
