@@ -9,16 +9,113 @@ Key features:
 - Decision boundary distance calculation for confidence estimation
 - Type assignment based on probability threshold (default: 90%)
 - No re-normalization of z-scores (prevents data leakage)
+- Parallel processing support for large datasets
 
 Port from: intronIC.py:5651-5687 (average_svm_score_info), 5816-5900 (parallel_svm_score)
 """
 
 from dataclasses import replace
 from typing import Sequence
+from multiprocessing import Pool, cpu_count
 import numpy as np
 
-from core.intron import Intron, IntronScores
+from core.intron import Intron, IntronScores, IntronMetadata
 from classification.trainer import SVMEnsemble
+
+
+def _predict_chunk_worker(
+    ensemble: SVMEnsemble,
+    introns: Sequence[Intron],
+    threshold: float
+) -> Sequence[Intron]:
+    """
+    Worker function for parallel classification.
+
+    This function is defined at module level so it can be pickled for
+    multiprocessing. It processes a chunk of introns using the same logic
+    as SVMPredictor._predict_chunk().
+
+    Args:
+        ensemble: Trained SVM ensemble
+        introns: Chunk of introns to classify
+        threshold: U12 probability threshold
+
+    Returns:
+        Classified introns with scores and type_id
+    """
+    if not introns:
+        return []
+
+    # Prepare feature matrix
+    features = []
+    for intron in introns:
+        if intron.scores is None:
+            raise ValueError(f"Intron {intron.intron_id} has no scores")
+        if (intron.scores.five_z_score is None or
+            intron.scores.bp_z_score is None or
+            intron.scores.three_z_score is None):
+            raise ValueError(f"Intron {intron.intron_id} missing z-scores")
+
+        features.append([
+            intron.scores.five_z_score,
+            intron.scores.bp_z_score,
+            intron.scores.three_z_score
+        ])
+
+    X = np.array(features)
+
+    # Get predictions from each model
+    probas = []
+    for model in ensemble.models:
+        proba = model.model.predict_proba(X)[:, 1]
+        probas.append(proba)
+
+    probas = np.array(probas)
+
+    # F1-weighted averaging
+    f1_scores = np.array([m.f1_score for m in ensemble.models])
+    weights = f1_scores / f1_scores.sum()
+    avg_probas = np.dot(weights, probas)
+
+    # Convert to 0-100 scale
+    svm_scores = avg_probas * 100.0
+
+    # Calculate decision function scores
+    decision_scores = ensemble.models[0].model.decision_function(X)
+
+    # Update introns with classification results
+    classified_introns = []
+    for i, intron in enumerate(introns):
+        svm_score = float(svm_scores[i])
+        relative_score = float(decision_scores[i])
+        type_id = 'u12' if svm_score >= threshold else 'u2'
+
+        # Update scores
+        new_scores = replace(
+            intron.scores,
+            svm_score=svm_score,
+            relative_score=relative_score
+        )
+
+        # Update metadata with type_id
+        if intron.metadata is None:
+            new_metadata = IntronMetadata(type_id=type_id)
+        else:
+            new_metadata = replace(
+                intron.metadata,
+                type_id=type_id
+            )
+
+        # Update intron
+        new_intron = replace(
+            intron,
+            scores=new_scores,
+            metadata=new_metadata
+        )
+
+        classified_introns.append(new_intron)
+
+    return classified_introns
 
 
 class SVMPredictor:
@@ -31,16 +128,18 @@ class SVMPredictor:
     Port from: intronIC.py:5651-5900
     """
 
-    def __init__(self, threshold: float = 90.0):
+    def __init__(self, threshold: float = 90.0, n_jobs: int = 1):
         """
         Initialize predictor.
 
         Args:
             threshold: U12 probability threshold (0-100, default: 90)
+            n_jobs: Number of parallel processes for classification (default: 1)
         """
         if not 0 <= threshold <= 100:
             raise ValueError(f"Threshold must be between 0 and 100, got {threshold}")
         self.threshold = threshold
+        self.n_jobs = n_jobs
 
     def predict(
         self,
@@ -49,6 +148,10 @@ class SVMPredictor:
     ) -> Sequence[Intron]:
         """
         Classify introns using trained ensemble.
+
+        Uses parallel processing if n_jobs > 1. For efficiency, introns are
+        split into chunks (one per worker) and each chunk is processed using
+        vectorized sklearn operations.
 
         Args:
             ensemble: Trained ensemble of SVM models
@@ -62,6 +165,64 @@ class SVMPredictor:
         """
         if not ensemble.models:
             raise ValueError("Ensemble has no models")
+
+        # Sequential processing for n_jobs=1 or small datasets
+        if self.n_jobs == 1 or len(introns) < 100:
+            return self._predict_chunk(ensemble, introns)
+
+        # Parallel processing: split introns into chunks
+        n_workers = min(self.n_jobs, cpu_count(), len(introns))
+        chunk_size = max(1, len(introns) // n_workers)
+
+        # Create chunks
+        chunks = []
+        for i in range(0, len(introns), chunk_size):
+            chunk = introns[i:i + chunk_size]
+            chunks.append(chunk)
+
+        # Process chunks in parallel
+        # Use Pool.starmap to pass ensemble and chunk to worker function
+        with Pool(processes=n_workers) as pool:
+            try:
+                # Each worker processes its chunk independently
+                chunk_results = pool.starmap(
+                    _predict_chunk_worker,
+                    [(ensemble, chunk, self.threshold) for chunk in chunks]
+                )
+            except KeyboardInterrupt:
+                pool.terminate()
+                raise
+            finally:
+                pool.close()
+                pool.join()
+
+        # Flatten results from all chunks
+        classified_introns = []
+        for chunk_result in chunk_results:
+            classified_introns.extend(chunk_result)
+
+        return classified_introns
+
+    def _predict_chunk(
+        self,
+        ensemble: SVMEnsemble,
+        introns: Sequence[Intron]
+    ) -> Sequence[Intron]:
+        """
+        Classify a chunk of introns (internal helper for predict()).
+
+        This method performs the actual classification using vectorized
+        sklearn operations for efficiency.
+
+        Args:
+            ensemble: Trained ensemble of SVM models
+            introns: Introns to classify
+
+        Returns:
+            Classified introns with scores and type_id
+        """
+        if not introns:
+            return []
 
         # Prepare feature matrix
         X = self._prepare_features(introns)
@@ -107,7 +268,6 @@ class SVMPredictor:
             # Update metadata with type_id
             # IntronMetadata is mutable, but since Intron is frozen,
             # we need to create a new metadata object
-            from core.intron import IntronMetadata
             if intron.metadata is None:
                 new_metadata = IntronMetadata(type_id=type_id)
             else:

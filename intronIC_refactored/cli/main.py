@@ -683,12 +683,16 @@ def classify_introns(
     # - n_ensemble_models (not n_models)
     # - fixed_c (not fixed_C)
     # - random_state (not seed)
+    # - cv_processes (for cross-validation parallelization)
+    # - classification_processes (for prediction parallelization)
     classifier = IntronClassifier(
         classification_threshold=config.scoring.threshold,
         n_ensemble_models=config.training.n_models,
         fixed_c=config.training.fixed_C,
         optimize_c=(config.training.fixed_C is None),
-        random_state=config.training.seed
+        random_state=config.training.seed,
+        cv_processes=config.cv_processes,
+        classification_processes=config.processes
     )
 
     # Run complete classification pipeline (optimize + train + classify)

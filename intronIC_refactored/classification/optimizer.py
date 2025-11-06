@@ -65,7 +65,8 @@ class SVMOptimizer:
         n_points_initial: int = 13,
         n_points_refine: int = 100,
         cv_folds: int = 5,
-        random_state: int = 42
+        random_state: int = 42,
+        n_jobs: int = 1
     ):
         """
         Initialize optimizer.
@@ -76,12 +77,14 @@ class SVMOptimizer:
             n_points_refine: Grid points for rounds 2-5 (default: 100)
             cv_folds: Cross-validation folds (default: 5)
             random_state: Random seed for reproducibility
+            n_jobs: Number of parallel jobs for GridSearchCV (default: 1)
         """
         self.n_rounds = n_rounds
         self.n_points_initial = n_points_initial
         self.n_points_refine = n_points_refine
         self.cv_folds = cv_folds
         self.random_state = random_state
+        self.n_jobs = n_jobs
         self.rounds_: list[OptimizationRound] = []
 
     def optimize(
@@ -248,7 +251,7 @@ class SVMOptimizer:
             param_grid={'C': C_grid},
             cv=self.cv_folds,
             scoring='balanced_accuracy',
-            n_jobs=1,
+            n_jobs=self.n_jobs,  # Parallelize CV folds
             error_score=np.nan
         )
 
@@ -349,7 +352,7 @@ class SVMOptimizer:
             y,
             cv=self.cv_folds,
             scoring='balanced_accuracy',
-            n_jobs=1
+            n_jobs=self.n_jobs  # Parallelize CV folds
         )
 
         return float(np.mean(scores))

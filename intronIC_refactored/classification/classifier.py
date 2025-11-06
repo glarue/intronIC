@@ -122,7 +122,9 @@ class IntronClassifier:
         subsample_ratio: float = 0.8,
         random_state: int = 42,
         optimize_c: bool = True,
-        fixed_c: Optional[float] = None
+        fixed_c: Optional[float] = None,
+        cv_processes: int = 1,
+        classification_processes: int = 1
     ):
         """
         Initialize classifier.
@@ -136,6 +138,8 @@ class IntronClassifier:
             random_state: Random seed for reproducibility (default: 42)
             optimize_c: Whether to optimize C parameter (default: True)
             fixed_c: Fixed C value if not optimizing (default: None)
+            cv_processes: Number of parallel jobs for cross-validation (default: 1)
+            classification_processes: Number of parallel jobs for classification (default: 1)
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -145,6 +149,8 @@ class IntronClassifier:
         self.random_state = random_state
         self.optimize_c = optimize_c
         self.fixed_c = fixed_c
+        self.cv_processes = cv_processes
+        self.classification_processes = classification_processes
 
         # Validate parameters
         if not 0 <= classification_threshold <= 100:
@@ -191,7 +197,8 @@ class IntronClassifier:
             print("\n=== Stage 1: Hyperparameter Optimization ===")
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
-                random_state=self.random_state
+                random_state=self.random_state,
+                n_jobs=self.cv_processes
             )
             parameters = optimizer.optimize(u12_reference, u2_reference)
             print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
@@ -223,7 +230,10 @@ class IntronClassifier:
 
         # Stage 3: Classify experimental introns
         print("\n=== Stage 3: Classification ===")
-        predictor = SVMPredictor(threshold=self.classification_threshold)
+        predictor = SVMPredictor(
+            threshold=self.classification_threshold,
+            n_jobs=self.classification_processes
+        )
         classified = predictor.predict(ensemble, experimental)
 
         # Count classifications
@@ -280,7 +290,8 @@ class IntronClassifier:
             print("\n=== Stage 1: Hyperparameter Optimization ===")
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
-                random_state=self.random_state
+                random_state=self.random_state,
+                n_jobs=self.cv_processes
             )
             parameters = optimizer.optimize(u12_reference, u2_reference)
         else:
@@ -306,7 +317,10 @@ class IntronClassifier:
 
         # Stage 3: Classify in batches
         print("\n=== Stage 3: Classification (Batch Mode) ===")
-        predictor = SVMPredictor(threshold=self.classification_threshold)
+        predictor = SVMPredictor(
+            threshold=self.classification_threshold,
+            n_jobs=self.classification_processes
+        )
         classified = predictor.predict_batch(ensemble, experimental, batch_size)
 
         n_u12 = sum(
