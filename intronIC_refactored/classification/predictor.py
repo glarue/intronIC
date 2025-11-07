@@ -81,14 +81,19 @@ def _predict_chunk_worker(
     # Convert to 0-100 scale
     svm_scores = avg_probas * 100.0
 
-    # Calculate decision function scores
-    decision_scores = ensemble.models[0].model.decision_function(X)
+    # Calculate relative scores (confidence measure)
+    # CalibratedClassifierCV doesn't support decision_function()
+    # Use log-odds as an alternative confidence metric: log(p / (1-p))
+    # This gives negative values for U2, positive for U12, zero at threshold
+    epsilon = 1e-10  # Avoid log(0)
+    clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
+    relative_scores = np.log(clipped_probas / (1 - clipped_probas))
 
     # Update introns with classification results
     classified_introns = []
     for i, intron in enumerate(introns):
         svm_score = float(svm_scores[i])
-        relative_score = float(decision_scores[i])
+        relative_score = float(relative_scores[i])
         type_id = 'u12' if svm_score >= threshold else 'u2'
 
         # Update scores
@@ -257,15 +262,19 @@ class SVMPredictor:
         # Convert to 0-100 scale (Port from: intronIC.py:5678)
         svm_scores = avg_probas * 100.0
 
-        # Calculate decision function scores for relative_score
-        # Use first model for consistency (all use same C parameter)
-        decision_scores = ensemble.models[0].model.decision_function(X)
+        # Calculate relative scores (confidence measure)
+        # CalibratedClassifierCV doesn't support decision_function()
+        # Use log-odds as an alternative confidence metric: log(p / (1-p))
+        # This gives negative values for U2, positive for U12, zero at threshold
+        epsilon = 1e-10  # Avoid log(0)
+        clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
+        relative_scores = np.log(clipped_probas / (1 - clipped_probas))
 
         # Update introns with classification results
         classified_introns = []
         for i, intron in enumerate(introns):
             svm_score = float(svm_scores[i])
-            relative_score = float(decision_scores[i])
+            relative_score = float(relative_scores[i])
             type_id = 'u12' if svm_score >= self.threshold else 'u2'
 
             # Update scores (create new IntronScores with added fields)
