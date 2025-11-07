@@ -259,6 +259,7 @@ class SVMOptimizer:
             param_name = 'C'
         else:
             # Refactored approach: LinearSVC + scaling + external calibration
+            # Note: intercept_scaling will be grid-searched, not hardcoded
             base_svm_pipeline = Pipeline([
                 ('scale', MaxAbsScaler()),
                 ('svm', LinearSVC(
@@ -266,7 +267,7 @@ class SVMOptimizer:
                     loss='squared_hinge',
                     penalty='l2',
                     dual=False,
-                    intercept_scaling=1000.0,  # Critical for imbalanced data
+                    # intercept_scaling: optimized via grid search
                     max_iter=10000,
                     tol=1e-4,
                     random_state=self.random_state + round_idx
@@ -274,7 +275,7 @@ class SVMOptimizer:
             ])
             model = CalibratedClassifierCV(
                 base_svm_pipeline,
-                method='sigmoid',
+                method='isotonic',  # More flexible for squashed scores
                 cv=5
             )
             param_name = 'estimator__svm__C'  # Deeper path through pipeline
@@ -287,13 +288,23 @@ class SVMOptimizer:
             random_state=self.random_state + round_idx
         )
 
-        # Optimize C parameter
+        # Optimize C parameter (and intercept_scaling for LinearSVC)
         # Use neg_log_loss to optimize for probability quality (best practice)
         # This is critical when deploying at custom thresholds (e.g., 0.90)
         # instead of the default 0.5 threshold
+
+        # Build param grid: optimize both C and intercept_scaling for LinearSVC
+        if param_name == 'estimator__svm__C':  # LinearSVC path
+            param_grid = {
+                param_name: C_grid,
+                'estimator__svm__intercept_scaling': [10.0, 100.0, 1000.0]  # Grid search this too
+            }
+        else:  # SVC path
+            param_grid = {param_name: C_grid}
+
         grid_search = GridSearchCV(
             model,
-            param_grid={param_name: C_grid},
+            param_grid=param_grid,
             cv=self.cv_folds,
             scoring='neg_log_loss',  # Optimize for calibrated probabilities
             n_jobs=self.n_jobs,
@@ -334,7 +345,13 @@ class SVMOptimizer:
         best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_[param_name]
         best_score = grid_search.best_score_
 
-        print(f"Round {round_idx + 1} complete: best_C={best_C:.6e}, best_score={best_score:.4f}")
+        # Print best parameters (including intercept_scaling if optimized)
+        best_params_str = f"best_C={best_C:.6e}"
+        if 'estimator__svm__intercept_scaling' in grid_search.best_params_:
+            best_intercept = grid_search.best_params_['estimator__svm__intercept_scaling']
+            best_params_str += f", best_intercept_scaling={best_intercept:.1f}"
+
+        print(f"Round {round_idx + 1} complete: {best_params_str}, best_score={best_score:.4f}")
         print(f"  Rank-1 C values: {[f'{c:.2e}' for c in rank_one_Cs]}")
 
         return OptimizationRound(
@@ -423,7 +440,7 @@ class SVMOptimizer:
 
         model = CalibratedClassifierCV(
             base_svm_pipeline,
-            method='sigmoid',
+            method='isotonic',  # More flexible for squashed scores
             cv=5
         )
 

@@ -192,9 +192,10 @@ class SVMTrainer:
 
         # Calibrate for probability estimates
         # Using cv=5 (best practice) instead of cv=3 for better calibration
+        # Using isotonic calibration (more flexible than sigmoid for squashed scores)
         svm = CalibratedClassifierCV(
             base_svm_pipeline,
-            method='sigmoid',  # Platt scaling
+            method='isotonic',  # More flexible than sigmoid, good for ~77 positives/fold
             cv=5  # Best practice: use 5-fold CV for calibration
         )
         svm.fit(X_train, y_train)
