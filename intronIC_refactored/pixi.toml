@@ -23,12 +23,12 @@ biogl = "*"
 # Installation task to install in development mode
 install = "pip install -e ."
 
-# Run refactored intronIC
-intronic = "python -m intronIC_refactored"
+# Run refactored intronIC (runs __main__.py directly, no install needed)
+intronic = "python __main__.py"
 
 # Test with small reference sets (fast, ~2-5 minutes)
 test-small = """
-python -m intronIC_refactored \
+python __main__.py \
   -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
   -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n homo_sapiens_test_small \
@@ -39,7 +39,7 @@ python -m intronIC_refactored \
 
 # Test with full reference sets (~5-15 minutes)
 test-full = """
-python -m intronIC_refactored \
+python __main__.py \
   -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
   -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n homo_sapiens_test_full \
@@ -48,16 +48,16 @@ python -m intronIC_refactored \
 
 # Extract sequences only (no classification, ~1-2 minutes)
 test-seqs-only = """
-python -m intronIC_refactored \
+python __main__.py \
   -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
   -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n homo_sapiens_seqs \
   -s
 """
 
-# Legacy: Run old monolithic version
-intronic-legacy = "python -m intronIC.intronIC"
-test-legacy = "python -m intronIC.intronIC -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens_legacy"
+# Legacy: Run old monolithic version (from parent directory)
+intronic-legacy = "cd .. && python -m intronIC.intronIC"
+test-legacy = "cd .. && python -m intronIC.intronIC -g intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz -a intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens_legacy"
 
 [feature.dev.dependencies]
 pytest = "*"
