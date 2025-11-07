@@ -295,6 +295,23 @@ class SVMOptimizer:
         cv_results = grid_search.cv_results_
         scores = cv_results['mean_test_score']
 
+        # DEBUG: Print detailed results for round 1 only
+        if round_idx == 0:
+            print("\n" + "="*80)
+            print("ROUND 1 DETAILED RESULTS - CV Scores for each C value")
+            print("="*80)
+            print(f"{'C Value':<15} {'Mean CV Score':<15} {'Std CV Score':<15} {'Rank':<8}")
+            print("-"*80)
+            for i, (param, score, std, rank) in enumerate(zip(
+                cv_results['params'],
+                cv_results['mean_test_score'],
+                cv_results['std_test_score'],
+                cv_results['rank_test_score']
+            )):
+                c_val = param['estimator__C']
+                print(f"{c_val:<15.2e} {score:<15.4f} {std:<15.4f} {rank:<8}")
+            print("="*80)
+
         # Find rank-1 (best) C values
         # Following original logic in rank_ones() and rank1_param_avg()
         # NOTE: Parameter is 'estimator__C' since we're optimizing CalibratedClassifierCV
@@ -305,6 +322,9 @@ class SVMOptimizer:
         # Best C is geometric mean of rank-1 values
         best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['estimator__C']
         best_score = grid_search.best_score_
+
+        print(f"Round {round_idx + 1} complete: best_C={best_C:.6e}, best_score={best_score:.4f}")
+        print(f"  Rank-1 C values: {[f'{c:.2e}' for c in rank_one_Cs]}")
 
         return OptimizationRound(
             grid_points=C_grid,

@@ -28,3 +28,17 @@
 2025-11-07 18:20:31,071 - intronIC - INFO - Starting SVM classification
 2025-11-07 18:20:31,071 - intronIC - INFO - Running classification on 12074 experimental introns
 2025-11-07 18:20:31,072 - intronIC - INFO - Reference data: 387 U12, 20690 U2
+2025-11-07 18:21:09,226 - intronIC - INFO - Classification complete
+2025-11-07 18:21:09,226 - intronIC - INFO -   Optimized C: 9.321564e-05
+2025-11-07 18:21:09,227 - intronIC - INFO -   Mean F1: 0.3137
+2025-11-07 18:21:09,227 - intronIC - INFO -   Mean PR-AUC: 0.3806
+2025-11-07 18:21:09,233 - intronIC - INFO - Writing output files
+2025-11-07 18:21:09,234 - intronIC - INFO - Writing BED file: ../comparison_test/refactored_output/test_fixed.bed.iic
+2025-11-07 18:21:09,280 - intronIC - INFO - Wrote 12074 introns to BED file
+2025-11-07 18:21:09,280 - intronIC - INFO - Writing metadata file: ../comparison_test/refactored_output/test_fixed.meta.iic
+2025-11-07 18:21:09,343 - intronIC - INFO - Wrote metadata for 12074 introns
+2025-11-07 18:21:09,343 - intronIC - INFO - Writing sequences file: ../comparison_test/refactored_output/test_fixed.introns.iic
+2025-11-07 18:21:09,432 - intronIC - INFO - Wrote sequences for 12074 introns
+2025-11-07 18:21:09,432 - intronIC - INFO - Writing score info file: ../comparison_test/refactored_output/test_fixed.score_info.iic
+2025-11-07 18:21:09,525 - intronIC - INFO - Wrote score info for 12074 introns
+2025-11-07 18:21:09,527 - intronIC - INFO - All output files written successfully
