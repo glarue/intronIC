@@ -242,18 +242,27 @@ class SVMOptimizer:
         """
         # Create base model - Use LinearSVC (liblinear) instead of SVC (libsvm)
         # LinearSVC is 10-100x faster for linear kernels, especially at high C values
-        # Following sklearn best practices for imbalanced data:
-        # - dual=True: n_features (3) << n_samples (~21k)
+        # Following sklearn best practices:
+        # - dual=False: n_samples (~17k) >> n_features (3)
         # - loss='squared_hinge': smooth/stable, fastest general choice
-        # - penalty='l2': works with dual=True
+        # - penalty='l2': L2 regularization
         base_svm = LinearSVC(
-            class_weight='balanced',  # CRITICAL: 990 U2 vs 97 U12 = 10:1 imbalance
+            class_weight='balanced',  # CRITICAL: Handle U12/U2 imbalance
             loss='squared_hinge',  # Smooth/stable loss function
             penalty='l2',  # L2 regularization
-            dual=True,  # Correct for n_features << n_samples
+            dual=False,  # Correct for n_samples >> n_features
             max_iter=10000,  # Increase for convergence with imbalanced data
             tol=1e-4,  # Convergence tolerance
             random_state=self.random_state + round_idx
+        )
+
+        # Wrap in CalibratedClassifierCV to match what trainer uses
+        # CRITICAL: Optimize the same model structure used in training
+        # Otherwise optimal C for bare LinearSVC != optimal C for calibrated version
+        calibrated_svm = CalibratedClassifierCV(
+            base_svm,
+            method='sigmoid',  # Platt scaling
+            cv=5  # 5-fold calibration (best practice)
         )
 
         # Use 80% train split for GridSearchCV (matches original)
@@ -266,9 +275,12 @@ class SVMOptimizer:
             random_state=self.random_state + round_idx
         )
 
+        # Optimize C parameter for the calibrated model
+        # Note: param_grid uses 'estimator__C' to access LinearSVC's C parameter
+        # (sklearn changed from 'base_estimator' to 'estimator' in recent versions)
         grid_search = GridSearchCV(
-            base_svm,
-            param_grid={'C': C_grid},
+            calibrated_svm,
+            param_grid={'estimator__C': C_grid},
             cv=self.cv_folds,
             scoring='balanced_accuracy',
             n_jobs=self.n_jobs,  # Parallelize CV folds
@@ -285,12 +297,13 @@ class SVMOptimizer:
 
         # Find rank-1 (best) C values
         # Following original logic in rank_ones() and rank1_param_avg()
+        # NOTE: Parameter is 'estimator__C' since we're optimizing CalibratedClassifierCV
         ranks = cv_results['rank_test_score']
         params = cv_results['params']
-        rank_one_Cs = [p['C'] for p, r in zip(params, ranks) if r == 1]
+        rank_one_Cs = [p['estimator__C'] for p, r in zip(params, ranks) if r == 1]
 
         # Best C is geometric mean of rank-1 values
-        best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['C']
+        best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['estimator__C']
         best_score = grid_search.best_score_
 
         return OptimizationRound(

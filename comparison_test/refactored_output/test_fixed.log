@@ -1,0 +1,30 @@
+2025-11-07 18:20:06,833 - intronIC - INFO - Loading genome: ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz
+2025-11-07 18:20:07,633 - intronIC - INFO - Loaded 1 sequences into memory
+2025-11-07 18:20:07,634 - intronIC - INFO - Parsing annotation: ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz
+2025-11-07 18:20:15,302 - intronIC - INFO - Built hierarchy with 2953 genes
+2025-11-07 18:20:16,447 - intronIC - INFO - Generated 58933 introns
+2025-11-07 18:20:22,587 - intronIC - INFO - Extracted sequences for 58933 introns
+2025-11-07 18:20:23,473 - intronIC - INFO - Applied U12 boundary corrections to 12 non-canonical introns
+2025-11-07 18:20:23,475 - intronIC - INFO - Minimum intron length: 30bp (user: 30bp, scoring regions: 26bp)
+2025-11-07 18:20:23,476 - intronIC - INFO - Extracted 58,933 introns (length filtering during scoring filter phase)
+2025-11-07 18:20:23,534 - intronIC - INFO - Applying pre-scoring filters (duplicates, omissions, longest isoform)
+2025-11-07 18:20:24,052 - intronIC - INFO - Filtering results: 12,074/58,933 introns kept for scoring
+2025-11-07 18:20:24,052 - intronIC - INFO - Omitted: 70 short, 0 ambiguous, 0 non-canonical, 46290 non-longest isoform, 0 overlapping
+2025-11-07 18:20:24,052 - intronIC - INFO - Duplicates marked: 38681
+2025-11-07 18:20:24,056 - intronIC - INFO - Loading PWM matrices
+2025-11-07 18:20:24,058 - intronIC - INFO - Loaded PWM matrices for 3 regions
+2025-11-07 18:20:24,058 - intronIC - INFO - Loaded conserved U2 BP matrix
+2025-11-07 18:20:24,059 - intronIC - INFO - Starting PWM scoring
+2025-11-07 18:20:26,249 - intronIC - INFO - Scored 12074 introns successfully
+2025-11-07 18:20:26,252 - intronIC - INFO - Loading reference sequences for normalization
+2025-11-07 18:20:26,258 - intronIC - INFO - Loaded 387 reference sequences from u12_reference.introns.iic.gz
+2025-11-07 18:20:26,534 - intronIC - INFO - Loaded 20690 reference sequences from u2_reference.introns.iic.gz
+2025-11-07 18:20:26,535 - intronIC - INFO - Loaded 387 U12 and 20690 U2 reference introns
+2025-11-07 18:20:26,535 - intronIC - INFO - Scoring reference sequences with PWMs
+2025-11-07 18:20:26,537 - intronIC - INFO - Loaded conserved U2 BP matrix for reference scoring
+2025-11-07 18:20:30,571 - intronIC - INFO - Fitting normalizer on reference data
+2025-11-07 18:20:31,060 - intronIC - INFO - Normalized 12074 experimental introns
+2025-11-07 18:20:31,060 - intronIC - INFO - Normalized 387 U12 and 20690 U2 reference introns
+2025-11-07 18:20:31,071 - intronIC - INFO - Starting SVM classification
+2025-11-07 18:20:31,071 - intronIC - INFO - Running classification on 12074 experimental introns
+2025-11-07 18:20:31,072 - intronIC - INFO - Reference data: 387 U12, 20690 U2

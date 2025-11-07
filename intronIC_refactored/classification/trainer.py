@@ -167,16 +167,16 @@ class SVMTrainer:
         )
 
         # Train LinearSVC (liblinear) for 10-100x speedup vs SVC (libsvm)
-        # Following sklearn best practices for imbalanced data:
-        # - dual=True: n_features (3) << n_samples (~21k)
+        # Following sklearn best practices:
+        # - dual=False: n_samples (~17k) >> n_features (3)
         # - loss='squared_hinge': smooth/stable, fastest general choice
-        # - penalty='l2': works with dual=True
+        # - penalty='l2': L2 regularization
         base_svm = LinearSVC(
             C=parameters.C,
             class_weight='balanced',
             loss='squared_hinge',  # Smooth/stable loss function
             penalty='l2',          # L2 regularization
-            dual=True,             # Correct for n_features << n_samples
+            dual=False,            # Correct for n_samples >> n_features
             max_iter=10000,        # Increased for convergence with imbalanced data
             tol=1e-4,             # Convergence tolerance
             random_state=seed
