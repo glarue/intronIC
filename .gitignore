@@ -54,4 +54,8 @@ homo_sapiens_*.*
 tiny_*.log
 small_*.log
 micro_*.log
-*_output.log 
+refactored_*.log
+original_*.log
+*_output.log
+*_test.log
+*_fix.log 
