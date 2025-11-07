@@ -17,13 +17,13 @@ Port from: intronIC.py:5345-5430 (train_svm)
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional, Any
 import numpy as np
-from sklearn.svm import SVC, LinearSVC
+from sklearn.svm import SVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, average_precision_score
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import MaxAbsScaler
+from sklearn.preprocessing import RobustScaler
 
 from core.intron import Intron
 from classification.optimizer import SVMParameters
@@ -33,7 +33,7 @@ from classification.optimizer import SVMParameters
 class SVMModel:
     """Trained SVM model with metadata."""
 
-    model: Any  # Trained sklearn model (LinearSVC wrapped in CalibratedClassifierCV)
+    model: Any  # Trained sklearn model (SVC with external calibration)
     f1_score: float  # F1 on test set
     precision_recall_auc: float  # PR-AUC on test set
     train_size: int  # Number of training samples
@@ -168,35 +168,33 @@ class SVMTrainer:
             random_state=seed
         )
 
-        # Train LinearSVC (liblinear) for 10-100x speedup vs SVC (libsvm)
-        # Following sklearn best practices:
-        # - MaxAbsScaler: Scale features while preserving sparsity (z-scores can be neg/pos)
-        # - dual=False: n_samples (~17k) >> n_features (3)
-        # - loss='squared_hinge': smooth/stable, fastest general choice
-        # - penalty='l2': L2 regularization
-        # - intercept_scaling=1000: Reduce regularization on intercept for imbalanced data
-        base_svm_pipeline = Pipeline([
-            ('scale', MaxAbsScaler()),  # Critical: scale features first
-            ('svm', LinearSVC(
+        # Train SVC with external calibration
+        # Following sklearn best practices for rare-class classification:
+        # - RobustScaler: Matches legacy median/IQR scaling, robust to outliers
+        # - SVC(kernel='linear', probability=False): Linear margin without slow internal Platt
+        # - class_weight='balanced': Handle 1.8% positive class
+        # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
+        #   Calibration method chosen by optimizer via grid search
+        base_pipeline = Pipeline([
+            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
+            ('svc', SVC(
                 C=parameters.C,
-                class_weight='balanced',
-                loss='squared_hinge',  # Smooth/stable loss function
-                penalty='l2',          # L2 regularization
-                dual=False,            # Correct for n_samples >> n_features
-                intercept_scaling=1000.0,  # Critical for imbalanced data with dual=False
-                max_iter=10000,        # Increased for convergence with imbalanced data
-                tol=1e-4,             # Convergence tolerance
+                kernel='linear',
+                probability=False,  # We calibrate externally
+                class_weight='balanced',  # Critical for imbalanced data
+                cache_size=1000,
                 random_state=seed
             ))
         ])
 
-        # Calibrate for probability estimates
-        # Using cv=5 (best practice) instead of cv=3 for better calibration
-        # Using isotonic calibration (more flexible than sigmoid for squashed scores)
+        # External calibration wrapper
+        # Method (sigmoid vs isotonic) chosen by hyperparameter optimization
+        # ensemble='auto' uses per-fold fit + averaging for stable tails
         svm = CalibratedClassifierCV(
-            base_svm_pipeline,
-            method='isotonic',  # More flexible than sigmoid, good for ~77 positives/fold
-            cv=5  # Best practice: use 5-fold CV for calibration
+            base_pipeline,
+            method=parameters.calibration_method,  # From optimizer: 'sigmoid' or 'isotonic'
+            cv=5,  # Stratified 5-fold
+            ensemble='auto'  # Per-fold calibrators averaged
         )
         svm.fit(X_train, y_train)
 
