@@ -1,0 +1,12 @@
+[22:36:53] ================================================================================
+[22:36:53] Testing SVC + CalibratedClassifierCV with SMALL reference subset
+[22:36:53] ================================================================================
+[22:36:53] Extracting experimental introns from test data...
+Traceback (most recent call last):
+  File "/home/user/intronIC/test_small_ref_svc.py", line 245, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/user/intronIC/test_small_ref_svc.py", line 65, in main
+    experimental_introns = list(introns_from_annotation(args))
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: introns_from_annotation() missing 1 required positional argument: 'feature'
