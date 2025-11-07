@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "intronic-refactored"
 version = "1.5.1"
 description = "Intron classification tool for identifying U2-type and U12-type introns using SVM (refactored version)"
