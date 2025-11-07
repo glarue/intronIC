@@ -257,15 +257,13 @@ class SVMOptimizer:
         )
 
         # Run grid search on training portion only (not full dataset)
-        print(f"  GridSearchCV with n_jobs={self.n_jobs}, testing {len(C_grid)} C values on {len(X_train)} samples...")
         grid_search = GridSearchCV(
             base_svm,
             param_grid={'C': C_grid},
             cv=self.cv_folds,
             scoring='balanced_accuracy',
             n_jobs=self.n_jobs,  # Parallelize CV folds
-            error_score=np.nan,
-            verbose=2  # Show detailed progress
+            error_score=np.nan
         )
 
         # Fit only on training portion (80% of data)
