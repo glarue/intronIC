@@ -167,20 +167,26 @@ class SVMTrainer:
         )
 
         # Train LinearSVC (liblinear) for 10-100x speedup vs SVC (libsvm)
-        # Wrap in CalibratedClassifierCV to get predict_proba() functionality
+        # Following sklearn best practices for imbalanced data:
+        # - dual=True: n_features (3) << n_samples (~21k)
+        # - loss='squared_hinge': smooth/stable, fastest general choice
+        # - penalty='l2': works with dual=True
         base_svm = LinearSVC(
             C=parameters.C,
             class_weight='balanced',
-            dual='auto',  # Automatically choose primal/dual
-            max_iter=2000,  # Reasonable limit
+            loss='squared_hinge',  # Smooth/stable loss function
+            penalty='l2',          # L2 regularization
+            dual=True,             # Correct for n_features << n_samples
+            max_iter=2000,
             random_state=seed
         )
 
-        # Calibrate for probability estimates (fast, ~0.5-1s overhead)
+        # Calibrate for probability estimates
+        # Using cv=5 (best practice) instead of cv=3 for better calibration
         svm = CalibratedClassifierCV(
             base_svm,
-            method='sigmoid',  # Platt scaling (faster than isotonic)
-            cv=3  # Use 3 folds for speed (vs 5)
+            method='sigmoid',  # Platt scaling
+            cv=5  # Best practice: use 5-fold CV for calibration
         )
         svm.fit(X_train, y_train)
 

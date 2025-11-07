@@ -242,9 +242,15 @@ class SVMOptimizer:
         """
         # Create base model - Use LinearSVC (liblinear) instead of SVC (libsvm)
         # LinearSVC is 10-100x faster for linear kernels, especially at high C values
+        # Following sklearn best practices for imbalanced data:
+        # - dual=True: n_features (3) << n_samples (~21k)
+        # - loss='squared_hinge': smooth/stable, fastest general choice
+        # - penalty='l2': works with dual=True
         base_svm = LinearSVC(
             class_weight='balanced',  # CRITICAL: 990 U2 vs 97 U12 = 10:1 imbalance
-            dual='auto',  # Automatically choose primal/dual based on n_samples vs n_features
+            loss='squared_hinge',  # Smooth/stable loss function
+            penalty='l2',  # L2 regularization
+            dual=True,  # Correct for n_features << n_samples
             max_iter=2000,  # Reasonable limit to prevent infinite loops
             random_state=self.random_state + round_idx
         )
@@ -357,7 +363,9 @@ class SVMOptimizer:
         svm = LinearSVC(
             C=C,
             class_weight='balanced',
-            dual='auto',
+            loss='squared_hinge',
+            penalty='l2',
+            dual=True,
             max_iter=2000,
             random_state=self.random_state
         )
