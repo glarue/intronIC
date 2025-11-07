@@ -160,24 +160,43 @@ C=10000: CV=0.5687
 
 ## Conclusion
 
-**The LinearSVC + CalibratedClassifierCV approach cannot work for this problem.**
+**✅ AUDIT COMPLETE: The optimizer IS exploring the full C range correctly.**
 
-The external calibration process makes all C values above ~1e-3 equivalent, preventing the optimizer from finding the true optimal value. This is a fundamental architectural issue, not a bug or configuration problem.
+The initial question "Is the optimizer testing C≈1000?" has been definitively answered: **YES**.
 
-**Recommendation:** Revert to SVC(kernel='linear', probability=True)
+**Key Findings:**
+1. The C search grid correctly includes values from 1e-6 to 1e+6 (C=1000 is position 10/13)
+2. The optimizer logic is working as designed
+3. LinearSVC + CalibratedClassifierCV shows CV score saturation at C > 1e-3
+4. All C values from 1e-3 to 1e+6 give **identical** CV scores (0.5687 ± 0.0081)
 
-While slower (2-3 minutes vs 40 seconds), it's the only approach that:
-- Sees meaningful CV score variation across C values
-- Can find the optimal C≈1000
-- Achieves the required classification performance
+**Implication:**
+The performance problem (F1=0.31 vs F1=1.0) is NOT due to:
+- ❌ Incorrect C search range
+- ❌ Broken optimizer logic
+- ❌ Missing high C values in the grid
+
+**The root cause is a fundamental implementation difference between:**
+- LinearSVC + external calibration (CalibratedClassifierCV)
+- SVC + internal calibration (probability=True)
+
+**Next Steps:**
+The CV score saturation may be normal for well-separated classes (as the user noted). Further investigation should focus on:
+1. Why LinearSVC+external calibration fails to classify any U12s despite similar CV scores
+2. Whether the decision boundary placement differs fundamentally between the two approaches
+3. How probability calibration timing (internal vs external) affects final predictions
+
+**Note on SVC Comparison Test:**
+An attempt to compare original SVC CV scores was abandoned after 5+ minutes runtime due to SVC's prohibitive slowness (25 fits per C value due to nested CV). The audit question has been answered without needing this comparison.
 
 ---
 
 ## Files Modified
 
-- `intronIC_refactored/classification/optimizer.py`: Added debug logging
+- `intronIC_refactored/classification/optimizer.py`: Added debug logging (lines 302-317)
+- `intronIC/intronIC.py`: Added debug logging to original (lines 5477-5494)
 - `test_c_values.py`: Created test script (incomplete due to import issues)
 - `comparison_test/refactored_output/test_fixed.log`: Debug run output
 
-**Commit:** 158b955
+**Commit:** (pending)
 **Branch:** claude/investigate-ref-performance-011CUt9YD4yNb4AzXF2TKAU9
