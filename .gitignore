@@ -49,4 +49,9 @@ intronIC_patched.py
 run.log
 comparison_outputs/
 homo_sapiens_*.log
-homo_sapiens_*.* 
+homo_sapiens_*.*
+# Test run logs
+tiny_*.log
+small_*.log
+micro_*.log
+*_output.log 
