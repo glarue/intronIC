@@ -1,0 +1,10 @@
+/home/user/intronIC/intronIC/intronIC.py:47: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+[#] Run command: [/home/user/intronIC/intronIC/intronIC.py -g /home/user/intronIC/intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz -a /home/user/intronIC/intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n original_small_fixed --reference_u12s /home/user/intronIC/intronIC_refactored/intronIC/data/u12_reference_small.introns.iic.gz --reference_u2s /home/user/intronIC/intronIC_refactored/intronIC/data/u2_reference_small.introns.iic.gz --pwms /home/user/intronIC/intronIC/data/scoring_matrices.fasta.iic -p 4]
+[#] [58933] introns found in [intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz]
+Starting optimization round 1/5
+Starting optimization round 2/5
+Starting optimization round 3/5
+Starting optimization round 4/5
+Starting optimization round 5/5
+[#] [10] putative AT-AC U12-type introns found.
+[#] [32] putative U12-type introns found with scores > [90]%

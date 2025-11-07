@@ -239,10 +239,10 @@ class SVMOptimizer:
         Returns:
             Results from this round
         """
-        # Create base model
+        # Create base model - MUST have class_weight='balanced' for imbalanced classes!
         base_svm = SVC(
             kernel='linear',
-            class_weight='balanced',
+            class_weight='balanced',  # CRITICAL: 990 U2 vs 97 U12 = 10:1 imbalance
             cache_size=1000,  # MB - critical for performance with large datasets
             random_state=self.random_state + round_idx
         )
