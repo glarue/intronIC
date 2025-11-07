@@ -1,0 +1,52 @@
+/home/user/intronIC/intronIC/intronIC_patched.py:47: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+  import pkg_resources
+[#] Starting intronIC [0+untagged.187.g907e6eb] run on [original_verbose (OriVer)]
+[#] Run command: [/home/user/intronIC/intronIC/intronIC_patched.py -g /home/user/intronIC/intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz -a /home/user/intronIC/intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n original_verbose -p 4]
+[#] Using [cds,exon] features to define introns
+[#] [58933] introns found in [test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz]
+[#] [38681] introns with redundant coordinates excluded
+[#] [8178] introns omitted from scoring based on the following criteria:
+[#] * short (<30 nt): 66
+[#] * ambiguous nucleotides in scoring regions: 0
+[#] * non-canonical boundaries: 0
+[#] * overlapping coordinates: 0
+[#] * not in longest isoform: 8112
+[#] Most common non-canonical splice sites:
+[#] * AT-AG (16/328, 4.88%)
+[#] * GT-TG (12/328, 3.66%)
+[#] * GG-AG (12/328, 3.66%)
+[#] * GA-AG (11/328, 3.35%)
+[#] * AG-AG (10/328, 3.05%)
+[#] [12] ([3] unique, [9] redundant) putatively misannotated U12-type introns corrected in [original_verbose.annotation.iic]
+[#] [12074] introns included in scoring analysis
+[#] Scoring introns using the following regions: [five, bp, three]
+[#] Raw scores calculated for [20690] U2 and [387] U12 reference introns
+[#] Raw scores calculated for [12074] annotated introns
+[#] Training set score vectors constructed: [20690] U2, [387] U12
+[#] Training SVM using reference data
+Starting optimization round 1/5
+Starting optimization round 2/5
+Starting optimization round 3/5
+Starting optimization round 4/5
+Starting optimization round 5/5
+[#] Range for 'C' after [5] rounds of optimization: [976.5411685881513]-[976.5419176464368]
+[#] Set classifier value for 'C': [976.5415431172212]
+[#] Training classifier with optimized hyperparameters
+[#] Average classifier performance on training data:
+	F1	[1.0]
+	P-R AUC	[1.0]
+[#] Classifier performance details:
+              precision    recall  f1-score   support
+
+          U2       1.00      1.00      1.00      4139
+         U12       1.00      1.00      1.00        77
+
+    accuracy                           1.00      4216
+   macro avg       1.00      1.00      1.00      4216
+weighted avg       1.00      1.00      1.00      4216
+
+[#] [10] putative AT-AC U12-type introns found.
+[#] [32] putative U12-type introns found with scores > [90]%
+[#] Adding scores to intron sequences file
+[#] Generating figures
+[#] Run finished in [2.817 minutes]
