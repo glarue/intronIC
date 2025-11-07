@@ -338,6 +338,7 @@ class SVMOptimizer:
             grid_points=C_grid,
             scores=scores,
             best_C=best_C,
+            best_method=best_method,
             best_score=best_score,
             rank_one_Cs=rank_one_Cs
         )
