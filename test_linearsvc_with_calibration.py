@@ -126,7 +126,7 @@ precalib_base = CalibratedClassifierCV(
 # Note: Parameter names are now nested!
 grid2 = GridSearchCV(
     precalib_base,
-    param_grid={'estimator__C': C_grid},  # Note the 'estimator__' prefix
+    param_grid={'estimator__C': C_grid},  # Note: sklearn 0.24+ uses 'estimator__' prefix
     cv=5,
     scoring='balanced_accuracy',
     n_jobs=4,

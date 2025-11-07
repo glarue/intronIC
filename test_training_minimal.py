@@ -138,7 +138,7 @@ model3 = CalibratedClassifierCV(base_svm, method='sigmoid', cv=3)
 
 grid3 = GridSearchCV(
     model3,
-    param_grid={'base_estimator__C': C_grid_small},  # Note the nested parameter
+    param_grid={'estimator__C': C_grid_small},  # Note: sklearn 0.24+ uses 'estimator' not 'base_estimator'
     cv=5,
     scoring='balanced_accuracy',
     n_jobs=4,
@@ -151,7 +151,7 @@ grid3.fit(X_train, y_train)
 elapsed3 = time.time() - start3
 
 print(f"\nElapsed: {elapsed3:.2f} seconds")
-print(f"Best C: {grid3.best_params_['base_estimator__C']:.2e}")
+print(f"Best C: {grid3.best_params_['estimator__C']:.2e}")
 print(f"Best score: {grid3.best_score_:.4f}")
 print()
 
