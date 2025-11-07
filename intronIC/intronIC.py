@@ -5473,7 +5473,26 @@ def optimize_svm(
                 iterations=iterations,
                 cv_parameters=cv_params,
                 seed=round_seed)
-            
+
+            # DEBUG: Print CV scores for round 1 to compare with refactored version
+            if search_round == 0:
+                print("\n" + "="*80)
+                print("ORIGINAL SVC - ROUND 1 CV SCORES")
+                print("="*80)
+                print(f"{'C Value':<15} {'Mean CV Score':<15} {'Std CV Score':<15} {'Rank':<8}")
+                print("-"*80)
+                for m in search_model:
+                    cv_results = m.cv_results_
+                    for param, score, std, rank in zip(
+                        cv_results['params'],
+                        cv_results['mean_test_score'],
+                        cv_results['std_test_score'],
+                        cv_results['rank_test_score']
+                    ):
+                        c_val = param['C']
+                        print(f"{c_val:<15.2e} {score:<15.4f} {std:<15.4f} {rank:<8}")
+                print("="*80)
+
             # print out cross-validation performance stats for C
             # import pandas as pd
             # with open('{}.r{}_stats.txt'.format(SPECIES, search_round), 'w') as f:

@@ -240,34 +240,40 @@ class SVMOptimizer:
         Returns:
             Results from this round
         """
-        # Create base model - Use LinearSVC (liblinear) instead of SVC (libsvm)
-        # LinearSVC is 10-100x faster for linear kernels, especially at high C values
-        # Following sklearn best practices:
-        # - dual=False: n_samples (~17k) >> n_features (3)
-        # - loss='squared_hinge': smooth/stable, fastest general choice
-        # - penalty='l2': L2 regularization
-        base_svm = LinearSVC(
-            class_weight='balanced',  # CRITICAL: Handle U12/U2 imbalance
-            loss='squared_hinge',  # Smooth/stable loss function
-            penalty='l2',  # L2 regularization
-            dual=False,  # Correct for n_samples >> n_features
-            max_iter=10000,  # Increase for convergence with imbalanced data
-            tol=1e-4,  # Convergence tolerance
-            random_state=self.random_state + round_idx
-        )
+        # TEST: Use original SVC approach to compare CV scores
+        # If SVC also shows saturation, then LinearSVC saturation is normal
+        use_original_svc = os.environ.get('TEST_ORIGINAL_SVC', 'false').lower() == 'true'
 
-        # Wrap in CalibratedClassifierCV to match what trainer uses
-        # CRITICAL: Optimize the same model structure used in training
-        # Otherwise optimal C for bare LinearSVC != optimal C for calibrated version
-        calibrated_svm = CalibratedClassifierCV(
-            base_svm,
-            method='sigmoid',  # Platt scaling
-            cv=5  # 5-fold calibration (best practice)
-        )
+        if use_original_svc:
+            # Original approach: SVC with built-in probability
+            print("  [TEST MODE] Using SVC(kernel='linear', probability=True)")
+            model = SVC(
+                kernel='linear',
+                probability=True,  # Built-in Platt scaling
+                class_weight='balanced',
+                cache_size=1000,
+                random_state=self.random_state + round_idx
+            )
+            param_name = 'C'
+        else:
+            # Refactored approach: LinearSVC + external calibration
+            base_svm = LinearSVC(
+                class_weight='balanced',
+                loss='squared_hinge',
+                penalty='l2',
+                dual=False,
+                max_iter=10000,
+                tol=1e-4,
+                random_state=self.random_state + round_idx
+            )
+            model = CalibratedClassifierCV(
+                base_svm,
+                method='sigmoid',
+                cv=5
+            )
+            param_name = 'estimator__C'
 
         # Use 80% train split for GridSearchCV (matches original)
-        # Reduces dataset size to speed up optimization
-        # Testing showed this helps with larger datasets (1000+ samples)
         X_train, X_test, y_train, y_test = train_test_split(
             X, y,
             train_size=0.80,
@@ -275,17 +281,15 @@ class SVMOptimizer:
             random_state=self.random_state + round_idx
         )
 
-        # Optimize C parameter for the calibrated model
-        # Note: param_grid uses 'estimator__C' to access LinearSVC's C parameter
-        # (sklearn changed from 'base_estimator' to 'estimator' in recent versions)
+        # Optimize C parameter
         grid_search = GridSearchCV(
-            calibrated_svm,
-            param_grid={'estimator__C': C_grid},
+            model,
+            param_grid={param_name: C_grid},
             cv=self.cv_folds,
             scoring='balanced_accuracy',
-            n_jobs=self.n_jobs,  # Parallelize CV folds
+            n_jobs=self.n_jobs,
             error_score=np.nan,
-            verbose=2  # Show real-time progress
+            verbose=2
         )
 
         # Fit on 80% subset for faster optimization
@@ -308,19 +312,17 @@ class SVMOptimizer:
                 cv_results['std_test_score'],
                 cv_results['rank_test_score']
             )):
-                c_val = param['estimator__C']
+                c_val = param[param_name]
                 print(f"{c_val:<15.2e} {score:<15.4f} {std:<15.4f} {rank:<8}")
             print("="*80)
 
         # Find rank-1 (best) C values
-        # Following original logic in rank_ones() and rank1_param_avg()
-        # NOTE: Parameter is 'estimator__C' since we're optimizing CalibratedClassifierCV
         ranks = cv_results['rank_test_score']
         params = cv_results['params']
-        rank_one_Cs = [p['estimator__C'] for p, r in zip(params, ranks) if r == 1]
+        rank_one_Cs = [p[param_name] for p, r in zip(params, ranks) if r == 1]
 
         # Best C is geometric mean of rank-1 values
-        best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['estimator__C']
+        best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_[param_name]
         best_score = grid_search.best_score_
 
         print(f"Round {round_idx + 1} complete: best_C={best_C:.6e}, best_score={best_score:.4f}")
