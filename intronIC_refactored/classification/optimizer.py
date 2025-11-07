@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional
 import os
 import numpy as np
-from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
+from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.svm import SVC
 from scipy.stats import gmean
 
@@ -239,15 +239,6 @@ class SVMOptimizer:
         Returns:
             Results from this round
         """
-        # Split data for GridSearchCV (matches original's approach in intronIC.py:5398-5406)
-        # Original uses train_fraction=0.80 to reduce GridSearchCV dataset size
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            train_size=0.80,
-            stratify=y,
-            random_state=self.random_state + round_idx
-        )
-
         # Create base model
         base_svm = SVC(
             kernel='linear',
@@ -256,7 +247,8 @@ class SVMOptimizer:
             random_state=self.random_state + round_idx
         )
 
-        # Run grid search on training portion only (not full dataset)
+        # Run grid search on full dataset
+        # Note: Minimal testing showed train_test_split actually SLOWS things down
         grid_search = GridSearchCV(
             base_svm,
             param_grid={'C': C_grid},
@@ -266,9 +258,7 @@ class SVMOptimizer:
             error_score=np.nan
         )
 
-        # Fit only on training portion (80% of data)
-        # This matches original's behavior and significantly speeds up optimization
-        grid_search.fit(X_train, y_train)
+        grid_search.fit(X, y)
 
         # Extract results
         cv_results = grid_search.cv_results_
