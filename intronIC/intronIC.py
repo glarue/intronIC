@@ -300,7 +300,7 @@ class GenomeFeature(object):
         # TODO reverse the region seq once outside of the 
         # function to speed things up?
         if strand_correct and self.strand == '-':
-            seq = rev_comp(seq, use_lower=False)
+            seq = rev_comp(seq, ignore_lowercase=True)
         if flank:
             try:
                 up_flank_length, down_flank_length = flank
@@ -327,7 +327,7 @@ class GenomeFeature(object):
             start = max(stop - n, 0) # no negative indices
         seq = region_seq[start:stop]
         if strand_correct and self.strand == '-':
-            seq = rev_comp(seq, use_lower=False)
+            seq = rev_comp(seq, ignore_lowercase=True)
 
         return seq
 
@@ -345,7 +345,7 @@ class GenomeFeature(object):
             stop = start + n
         seq = region_seq[start:stop]
         if strand_correct and self.strand == '-':
-            seq = rev_comp(seq, use_lower=False)
+            seq = rev_comp(seq, ignore_lowercase=True)
 
         return seq
 
