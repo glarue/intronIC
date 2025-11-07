@@ -22,6 +22,8 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, average_precision_score
 from sklearn.base import clone
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import MaxAbsScaler
 
 from core.intron import Intron
 from classification.optimizer import SVMParameters
@@ -168,24 +170,30 @@ class SVMTrainer:
 
         # Train LinearSVC (liblinear) for 10-100x speedup vs SVC (libsvm)
         # Following sklearn best practices:
+        # - MaxAbsScaler: Scale features while preserving sparsity (z-scores can be neg/pos)
         # - dual=False: n_samples (~17k) >> n_features (3)
         # - loss='squared_hinge': smooth/stable, fastest general choice
         # - penalty='l2': L2 regularization
-        base_svm = LinearSVC(
-            C=parameters.C,
-            class_weight='balanced',
-            loss='squared_hinge',  # Smooth/stable loss function
-            penalty='l2',          # L2 regularization
-            dual=False,            # Correct for n_samples >> n_features
-            max_iter=10000,        # Increased for convergence with imbalanced data
-            tol=1e-4,             # Convergence tolerance
-            random_state=seed
-        )
+        # - intercept_scaling=1000: Reduce regularization on intercept for imbalanced data
+        base_svm_pipeline = Pipeline([
+            ('scale', MaxAbsScaler()),  # Critical: scale features first
+            ('svm', LinearSVC(
+                C=parameters.C,
+                class_weight='balanced',
+                loss='squared_hinge',  # Smooth/stable loss function
+                penalty='l2',          # L2 regularization
+                dual=False,            # Correct for n_samples >> n_features
+                intercept_scaling=1000.0,  # Critical for imbalanced data with dual=False
+                max_iter=10000,        # Increased for convergence with imbalanced data
+                tol=1e-4,             # Convergence tolerance
+                random_state=seed
+            ))
+        ])
 
         # Calibrate for probability estimates
         # Using cv=5 (best practice) instead of cv=3 for better calibration
         svm = CalibratedClassifierCV(
-            base_svm,
+            base_svm_pipeline,
             method='sigmoid',  # Platt scaling
             cv=5  # Best practice: use 5-fold CV for calibration
         )

@@ -21,6 +21,8 @@ import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
 from sklearn.svm import SVC, LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import MaxAbsScaler
 from scipy.stats import gmean
 
 from core.intron import Intron
@@ -256,22 +258,26 @@ class SVMOptimizer:
             )
             param_name = 'C'
         else:
-            # Refactored approach: LinearSVC + external calibration
-            base_svm = LinearSVC(
-                class_weight='balanced',
-                loss='squared_hinge',
-                penalty='l2',
-                dual=False,
-                max_iter=10000,
-                tol=1e-4,
-                random_state=self.random_state + round_idx
-            )
+            # Refactored approach: LinearSVC + scaling + external calibration
+            base_svm_pipeline = Pipeline([
+                ('scale', MaxAbsScaler()),
+                ('svm', LinearSVC(
+                    class_weight='balanced',
+                    loss='squared_hinge',
+                    penalty='l2',
+                    dual=False,
+                    intercept_scaling=1000.0,  # Critical for imbalanced data
+                    max_iter=10000,
+                    tol=1e-4,
+                    random_state=self.random_state + round_idx
+                ))
+            ])
             model = CalibratedClassifierCV(
-                base_svm,
+                base_svm_pipeline,
                 method='sigmoid',
                 cv=5
             )
-            param_name = 'estimator__C'
+            param_name = 'estimator__svm__C'  # Deeper path through pipeline
 
         # Use 80% train split for GridSearchCV (matches original)
         X_train, X_test, y_train, y_test = train_test_split(
@@ -400,19 +406,23 @@ class SVMOptimizer:
             Cross-validation neg_log_loss score
         """
         # Wrap with calibrator for probability evaluation
-        base_svm = LinearSVC(
-            C=C,
-            class_weight='balanced',
-            loss='squared_hinge',
-            penalty='l2',
-            dual=False,
-            max_iter=10000,
-            tol=1e-4,
-            random_state=self.random_state
-        )
+        base_svm_pipeline = Pipeline([
+            ('scale', MaxAbsScaler()),
+            ('svm', LinearSVC(
+                C=C,
+                class_weight='balanced',
+                loss='squared_hinge',
+                penalty='l2',
+                dual=False,
+                intercept_scaling=1000.0,  # Critical for imbalanced data
+                max_iter=10000,
+                tol=1e-4,
+                random_state=self.random_state
+            ))
+        ])
 
         model = CalibratedClassifierCV(
-            base_svm,
+            base_svm_pipeline,
             method='sigmoid',
             cv=5
         )
