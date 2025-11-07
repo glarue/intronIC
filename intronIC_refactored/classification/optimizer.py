@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional
 import os
 import numpy as np
-from sklearn.model_selection import GridSearchCV, cross_val_score
+from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
 from sklearn.svm import SVC
 from scipy.stats import gmean
 
@@ -247,18 +247,28 @@ class SVMOptimizer:
             random_state=self.random_state + round_idx
         )
 
-        # Run grid search on full dataset
-        # Note: Minimal testing showed train_test_split actually SLOWS things down
+        # Use 80% train split for GridSearchCV (matches original)
+        # Reduces dataset size to speed up optimization
+        # Testing showed this helps with larger datasets (1000+ samples)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y,
+            train_size=0.80,
+            stratify=y,
+            random_state=self.random_state + round_idx
+        )
+
         grid_search = GridSearchCV(
             base_svm,
             param_grid={'C': C_grid},
             cv=self.cv_folds,
             scoring='balanced_accuracy',
             n_jobs=self.n_jobs,  # Parallelize CV folds
-            error_score=np.nan
+            error_score=np.nan,
+            verbose=2  # Show real-time progress
         )
 
-        grid_search.fit(X, y)
+        # Fit on 80% subset for faster optimization
+        grid_search.fit(X_train, y_train)
 
         # Extract results
         cv_results = grid_search.cv_results_
@@ -356,7 +366,8 @@ class SVMOptimizer:
             y,
             cv=self.cv_folds,
             scoring='balanced_accuracy',
-            n_jobs=self.n_jobs  # Parallelize CV folds
+            n_jobs=self.n_jobs,  # Parallelize CV folds
+            verbose=2  # Show real-time progress
         )
 
         return float(np.mean(scores))
