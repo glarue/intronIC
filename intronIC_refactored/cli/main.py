@@ -587,13 +587,23 @@ def normalize_scores(
     reporter.print_info("Loading reference sequences")
     logger.info("Loading reference sequences for normalization")
 
-    # Load reference data
+    # Load reference data - use custom paths if provided, otherwise use defaults
     data_dir = Path(__file__).parent.parent / "intronIC" / "data"
-    u12_file = data_dir / "u12_reference.introns.iic.gz"
-    u2_file = data_dir / "u2_reference.introns.iic.gz"
+
+    if config.training.reference_u12s:
+        u12_file = config.training.reference_u12s
+    else:
+        u12_file = data_dir / "u12_reference.introns.iic.gz"
+
+    if config.training.reference_u2s:
+        u2_file = config.training.reference_u2s
+    else:
+        u2_file = data_dir / "u2_reference.introns.iic.gz"
 
     if not u12_file.exists() or not u2_file.exists():
-        raise FileNotFoundError(f"Reference data not found in {data_dir}")
+        raise FileNotFoundError(
+            f"Reference data not found. U12: {u12_file}, U2: {u2_file}"
+        )
 
     u12_reference = load_reference_sequences(u12_file, logger=logger)
     u2_reference = load_reference_sequences(u2_file, logger=logger)
