@@ -282,11 +282,14 @@ class SVMOptimizer:
         )
 
         # Optimize C parameter
+        # Use neg_log_loss to optimize for probability quality (best practice)
+        # This is critical when deploying at custom thresholds (e.g., 0.90)
+        # instead of the default 0.5 threshold
         grid_search = GridSearchCV(
             model,
             param_grid={param_name: C_grid},
             cv=self.cv_folds,
-            scoring='balanced_accuracy',
+            scoring='neg_log_loss',  # Optimize for calibrated probabilities
             n_jobs=self.n_jobs,
             error_score=np.nan,
             verbose=2
@@ -394,25 +397,32 @@ class SVMOptimizer:
             C: C value to evaluate
 
         Returns:
-            Cross-validation balanced accuracy score
+            Cross-validation neg_log_loss score
         """
-        svm = LinearSVC(
+        # Wrap with calibrator for probability evaluation
+        base_svm = LinearSVC(
             C=C,
             class_weight='balanced',
             loss='squared_hinge',
             penalty='l2',
-            dual=True,
+            dual=False,
             max_iter=10000,
             tol=1e-4,
             random_state=self.random_state
         )
 
+        model = CalibratedClassifierCV(
+            base_svm,
+            method='sigmoid',
+            cv=5
+        )
+
         scores = cross_val_score(
-            svm,
+            model,
             X,
             y,
             cv=self.cv_folds,
-            scoring='balanced_accuracy',
+            scoring='neg_log_loss',  # Evaluate probability quality
             n_jobs=self.n_jobs,  # Parallelize CV folds
             verbose=2  # Show real-time progress
         )
