@@ -15,9 +15,10 @@ Port from: intronIC.py:5345-5430 (train_svm)
 """
 
 from dataclasses import dataclass
-from typing import Sequence, Tuple, Optional
+from typing import Sequence, Tuple, Optional, Any
 import numpy as np
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, average_precision_score
 from sklearn.base import clone
@@ -30,7 +31,7 @@ from classification.optimizer import SVMParameters
 class SVMModel:
     """Trained SVM model with metadata."""
 
-    model: SVC  # Trained sklearn SVC
+    model: Any  # Trained sklearn model (LinearSVC wrapped in CalibratedClassifierCV)
     f1_score: float  # F1 on test set
     precision_recall_auc: float  # PR-AUC on test set
     train_size: int  # Number of training samples
@@ -165,14 +166,21 @@ class SVMTrainer:
             random_state=seed
         )
 
-        # Train SVM with balanced class weights
-        svm = SVC(
+        # Train LinearSVC (liblinear) for 10-100x speedup vs SVC (libsvm)
+        # Wrap in CalibratedClassifierCV to get predict_proba() functionality
+        base_svm = LinearSVC(
             C=parameters.C,
-            kernel=self.kernel,
             class_weight='balanced',
-            probability=True,  # Enable predict_proba
-            cache_size=1000,  # MB - critical for performance with large datasets
+            dual='auto',  # Automatically choose primal/dual
+            max_iter=2000,  # Reasonable limit
             random_state=seed
+        )
+
+        # Calibrate for probability estimates (fast, ~0.5-1s overhead)
+        svm = CalibratedClassifierCV(
+            base_svm,
+            method='sigmoid',  # Platt scaling (faster than isotonic)
+            cv=3  # Use 3 folds for speed (vs 5)
         )
         svm.fit(X_train, y_train)
 

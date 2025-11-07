@@ -19,7 +19,8 @@ from typing import Sequence, Tuple, Optional
 import os
 import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
 from scipy.stats import gmean
 
 from core.intron import Intron
@@ -239,11 +240,12 @@ class SVMOptimizer:
         Returns:
             Results from this round
         """
-        # Create base model - MUST have class_weight='balanced' for imbalanced classes!
-        base_svm = SVC(
-            kernel='linear',
+        # Create base model - Use LinearSVC (liblinear) instead of SVC (libsvm)
+        # LinearSVC is 10-100x faster for linear kernels, especially at high C values
+        base_svm = LinearSVC(
             class_weight='balanced',  # CRITICAL: 990 U2 vs 97 U12 = 10:1 imbalance
-            cache_size=1000,  # MB - critical for performance with large datasets
+            dual='auto',  # Automatically choose primal/dual based on n_samples vs n_features
+            max_iter=2000,  # Reasonable limit to prevent infinite loops
             random_state=self.random_state + round_idx
         )
 
@@ -352,11 +354,11 @@ class SVMOptimizer:
         Returns:
             Cross-validation balanced accuracy score
         """
-        svm = SVC(
+        svm = LinearSVC(
             C=C,
-            kernel='linear',
             class_weight='balanced',
-            cache_size=1000,  # MB - critical for performance with large datasets
+            dual='auto',
+            max_iter=2000,
             random_state=self.random_state
         )
 
