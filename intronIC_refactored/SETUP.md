@@ -56,7 +56,86 @@ rich >=10.0
 
 ### Installation Options
 
-#### Option 1: Use Existing Environment (If Original intronIC Works)
+#### Option 1: Using pixi (Recommended)
+
+[pixi](https://pixi.sh/) is a modern, fast package manager that handles both conda and PyPI packages:
+
+```bash
+# Install pixi if you haven't already
+curl -fsSL https://pixi.sh/install.sh | bash
+
+# Navigate to the refactored directory
+cd intronIC_refactored
+
+# Install dependencies (creates .pixi environment automatically)
+pixi install
+
+# Run intronIC
+pixi run intronic [args]
+
+# Or run tests
+pixi run test-small   # Fast test with small reference sets
+pixi run test-full    # Full test with complete references
+```
+
+**Benefits:**
+- Single command to set up everything
+- Isolated environment (no conflicts with system packages)
+- Reproducible across platforms (Linux, macOS, Windows)
+- Built-in task runner for common operations
+
+#### Option 2: Using uv (Fast Alternative)
+
+[uv](https://github.com/astral-sh/uv) is an extremely fast Python package installer:
+
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Navigate to the refactored directory
+cd intronIC_refactored
+
+# Create virtual environment and install
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv pip install -e .
+
+# Run intronIC
+python -m intronIC_refactored [args]
+
+# Install with dev dependencies
+uv pip install -e ".[dev]"
+```
+
+**Benefits:**
+- 10-100x faster than pip
+- Uses existing pyproject.toml
+- Drop-in replacement for pip
+- Simple virtual environment management
+
+#### Option 3: Traditional pip
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install in development mode
+cd intronIC_refactored
+pip install -e .
+
+# Or install dependencies only
+pip install \
+  "numpy>=1.19.0,<2.0" \
+  "scipy>=1.5.0" \
+  "scikit-learn>=0.22,<2.0" \
+  biogl \
+  "matplotlib>=3.3.0" \
+  "networkx>=2.5.1" \
+  "rich>=10.0"
+```
+
+#### Option 4: Use Existing Environment (If Original intronIC Works)
 
 If you already have the original intronIC working, the refactored version uses the same dependencies:
 
@@ -65,58 +144,55 @@ If you already have the original intronIC working, the refactored version uses t
 python -m intronIC_refactored [args]
 ```
 
-#### Option 2: Install Dependencies Manually
-
-```bash
-pip install \
-  "numpy<2.0" \
-  scipy \
-  "scikit-learn>=0.22" \
-  biogl \
-  matplotlib \
-  "networkx>=2.5.1" \
-  "rich>=10.0"
-```
-
-#### Option 3: Install in Development Mode
-
-```bash
-cd intronIC_refactored
-pip install -e .
-```
-
-This makes `intronIC` available as a command globally.
-
 ---
 
 ## Running intronIC_refactored
 
-### Method 1: Python Module (Recommended)
+### Method 1: Using pixi (Recommended)
+
+From the `intronIC_refactored/` directory:
+
+```bash
+cd intronIC_refactored
+
+# Run with custom arguments
+pixi run intronic \
+  -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+  -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+  -n test_run
+
+# Or use predefined tasks
+pixi run test-small      # Fast test with small references
+pixi run test-full       # Full test with complete references
+pixi run test-seqs-only  # Extract sequences only
+```
+
+### Method 2: Python Module
 
 From the **repository root**:
 
 ```bash
 python -m intronIC_refactored \
-  -g intronIC_refactored/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-  -a intronIC_refactored/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+  -g intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+  -a intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n test_run
 ```
 
-### Method 2: Direct Execution
+### Method 3: Direct Execution
 
 From the `intronIC_refactored/` directory:
 
 ```bash
 cd intronIC_refactored
 python __main__.py \
-  -g test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-  -a test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+  -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+  -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n test_run
 ```
 
-### Method 3: Installed Package
+### Method 4: Installed Package
 
-If installed via `pip install -e .`:
+If installed via `pip install -e .` or `uv pip install -e .`:
 
 ```bash
 intronIC \
