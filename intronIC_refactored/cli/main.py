@@ -590,13 +590,13 @@ def normalize_scores(
     # Load reference data - use custom paths if provided, otherwise use defaults
     data_dir = Path(__file__).parent.parent / "intronIC" / "data"
 
-    if config.training.reference_u12s:
-        u12_file = config.training.reference_u12s
+    if config.scoring.reference_u12s:
+        u12_file = config.scoring.reference_u12s
     else:
         u12_file = data_dir / "u12_reference.introns.iic.gz"
 
-    if config.training.reference_u2s:
-        u2_file = config.training.reference_u2s
+    if config.scoring.reference_u2s:
+        u2_file = config.scoring.reference_u2s
     else:
         u2_file = data_dir / "u2_reference.introns.iic.gz"
 
