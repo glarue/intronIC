@@ -177,7 +177,8 @@ class SVMTrainer:
             loss='squared_hinge',  # Smooth/stable loss function
             penalty='l2',          # L2 regularization
             dual=True,             # Correct for n_features << n_samples
-            max_iter=2000,
+            max_iter=10000,        # Increased for convergence with imbalanced data
+            tol=1e-4,             # Convergence tolerance
             random_state=seed
         )
 

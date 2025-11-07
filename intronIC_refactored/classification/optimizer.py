@@ -251,7 +251,8 @@ class SVMOptimizer:
             loss='squared_hinge',  # Smooth/stable loss function
             penalty='l2',  # L2 regularization
             dual=True,  # Correct for n_features << n_samples
-            max_iter=2000,  # Reasonable limit to prevent infinite loops
+            max_iter=10000,  # Increase for convergence with imbalanced data
+            tol=1e-4,  # Convergence tolerance
             random_state=self.random_state + round_idx
         )
 
@@ -366,7 +367,8 @@ class SVMOptimizer:
             loss='squared_hinge',
             penalty='l2',
             dual=True,
-            max_iter=2000,
+            max_iter=10000,
+            tol=1e-4,
             random_state=self.random_state
         )
 
