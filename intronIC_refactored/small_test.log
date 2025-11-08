@@ -1,0 +1,44 @@
+2025-11-08 13:58:47,066 - intronIC - INFO - Loading genome: ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz
+2025-11-08 13:58:47,436 - intronIC - INFO - Loaded 1 sequences into memory
+2025-11-08 13:58:47,436 - intronIC - INFO - Parsing annotation: ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz
+2025-11-08 13:58:50,957 - intronIC - INFO - Built hierarchy with 2953 genes
+2025-11-08 13:58:51,519 - intronIC - INFO - Generated 58933 introns
+2025-11-08 13:58:55,470 - intronIC - INFO - Extracted sequences for 58933 introns
+2025-11-08 13:58:55,695 - intronIC - INFO - Applied U12 boundary corrections to 12 non-canonical introns
+2025-11-08 13:58:55,696 - intronIC - INFO - Minimum intron length: 30bp (user: 30bp, scoring regions: 26bp)
+2025-11-08 13:58:55,696 - intronIC - INFO - Extracted 58,933 introns (length filtering during scoring filter phase)
+2025-11-08 13:58:55,719 - intronIC - INFO - Applying pre-scoring filters (duplicates, omissions, longest isoform)
+2025-11-08 13:58:56,036 - intronIC - INFO - Filtering results: 12,074/58,933 introns kept for scoring
+2025-11-08 13:58:56,036 - intronIC - INFO - Omitted: 70 short, 0 ambiguous, 0 non-canonical, 46290 non-longest isoform, 0 overlapping
+2025-11-08 13:58:56,036 - intronIC - INFO - Duplicates marked: 38681
+2025-11-08 13:58:56,037 - intronIC - INFO - Loading PWM matrices
+2025-11-08 13:58:56,038 - intronIC - INFO - Loaded PWM matrices for 3 regions
+2025-11-08 13:58:56,039 - intronIC - INFO - Loaded conserved U2 BP matrix
+2025-11-08 13:58:56,039 - intronIC - INFO - Starting PWM scoring
+2025-11-08 13:58:57,344 - intronIC - INFO - Scored 12074 introns successfully
+2025-11-08 13:58:57,345 - intronIC - INFO - Loading reference sequences for normalization
+2025-11-08 13:58:57,347 - intronIC - INFO - Loaded 49 reference sequences from u12_reference_small.introns.iic.gz
+2025-11-08 13:58:57,383 - intronIC - INFO - Loaded 4997 reference sequences from u2_reference_small.introns.iic.gz
+2025-11-08 13:58:57,383 - intronIC - INFO - Loaded 49 U12 and 4997 U2 reference introns
+2025-11-08 13:58:57,383 - intronIC - INFO - Scoring reference sequences with PWMs
+2025-11-08 13:58:57,384 - intronIC - INFO - Loaded conserved U2 BP matrix for reference scoring
+2025-11-08 13:58:57,908 - intronIC - INFO - Fitting normalizer on reference data
+2025-11-08 13:58:57,977 - intronIC - INFO - Normalized 12074 experimental introns
+2025-11-08 13:58:57,977 - intronIC - INFO - Normalized 49 U12 and 4997 U2 reference introns
+2025-11-08 13:58:57,979 - intronIC - INFO - Starting SVM classification
+2025-11-08 13:58:57,979 - intronIC - INFO - Running classification on 12074 experimental introns
+2025-11-08 13:58:57,979 - intronIC - INFO - Reference data: 49 U12, 4997 U2
+2025-11-08 14:39:25,095 - intronIC - INFO - Classification complete
+2025-11-08 14:39:25,095 - intronIC - INFO -   Optimized C: 2.850686e-04
+2025-11-08 14:39:25,095 - intronIC - INFO -   Mean F1: 0.1667
+2025-11-08 14:39:25,095 - intronIC - INFO -   Mean PR-AUC: 0.1875
+2025-11-08 14:39:25,098 - intronIC - INFO - Writing output files
+2025-11-08 14:39:25,099 - intronIC - INFO - Writing BED file: /Users/graham/Documents/code/intronIC/intronIC_refactored/small_test.bed.iic
+2025-11-08 14:39:25,122 - intronIC - INFO - Wrote 12074 introns to BED file
+2025-11-08 14:39:25,122 - intronIC - INFO - Writing metadata file: /Users/graham/Documents/code/intronIC/intronIC_refactored/small_test.meta.iic
+2025-11-08 14:39:25,161 - intronIC - INFO - Wrote metadata for 12074 introns
+2025-11-08 14:39:25,161 - intronIC - INFO - Writing sequences file: /Users/graham/Documents/code/intronIC/intronIC_refactored/small_test.introns.iic
+2025-11-08 14:39:25,195 - intronIC - INFO - Wrote sequences for 12074 introns
+2025-11-08 14:39:25,195 - intronIC - INFO - Writing score info file: /Users/graham/Documents/code/intronIC/intronIC_refactored/small_test.score_info.iic
+2025-11-08 14:39:25,244 - intronIC - INFO - Wrote score info for 12074 introns
+2025-11-08 14:39:25,244 - intronIC - INFO - All output files written successfully
