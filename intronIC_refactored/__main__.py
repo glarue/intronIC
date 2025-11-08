@@ -14,12 +14,20 @@ if str(package_dir) not in sys.path:
 
 # CRITICAL: Set multiprocessing start method BEFORE any imports
 # Must match original's approach (intronIC.py:5042-5046)
-from multiprocessing import get_all_start_methods, set_start_method
-fork_types = get_all_start_methods()
-if 'forkserver' in fork_types:
-    set_start_method('forkserver')
-elif 'spawn' in fork_types:
-    set_start_method('spawn')
+# IMPORTANT: Only set when running as main script, not when spawned by multiprocessing
+if __name__ == '__main__':
+    from multiprocessing import get_all_start_methods, get_context, set_start_method
+    fork_types = get_all_start_methods()
+
+    # Only set if not already set (avoid RuntimeError in child processes)
+    try:
+        if 'forkserver' in fork_types:
+            set_start_method('forkserver', force=False)
+        elif 'spawn' in fork_types:
+            set_start_method('spawn', force=False)
+    except RuntimeError:
+        # Context already set (e.g., by parent process or previous import)
+        pass
 
 # NOTE: Intentionally NOT setting BLAS thread environment variables here
 # to test if they're interfering with joblib's worker spawning.
