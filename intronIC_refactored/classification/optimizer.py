@@ -124,7 +124,7 @@ class SVMOptimizer:
 
         # Run geometric refinement
         for round_idx in range(self.n_rounds):
-            print(f"Optimization round {round_idx + 1}/{self.n_rounds}...")
+            print(f"Optimization round {round_idx + 1}/{self.n_rounds}...", flush=True)
 
             round_result = self._grid_search_round(
                 X, y, current_grid, round_idx
@@ -142,7 +142,7 @@ class SVMOptimizer:
         # Evaluate final C with final method
         final_score = self._evaluate_C(X, y, final_C, final_method)
 
-        print(f"Optimal C={final_C:.6e}, method={final_method}, CV score={final_score:.4f}")
+        print(f"Optimal C={final_C:.6e}, method={final_method}, CV score={final_score:.4f}", flush=True)
 
         return SVMParameters(
             C=final_C,
@@ -300,13 +300,13 @@ class SVMOptimizer:
         )
 
         if self.verbose:
-            print(f"\n{'='*80}")
-            print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search")
-            print(f"{'='*80}")
-            print(f"Testing {len(C_grid)} C values × 2 calibration methods = {len(C_grid) * 2} total fits")
-            print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]")
-            print(f"CV folds: {self.cv_folds}, Jobs: {self.n_jobs}")
-            print(f"{'='*80}\n")
+            print(f"\n{'='*80}", flush=True)
+            print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
+            print(f"{'='*80}", flush=True)
+            print(f"Testing {len(C_grid)} C values × 2 calibration methods = {len(C_grid) * 2} total fits", flush=True)
+            print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
+            print(f"CV folds: {self.cv_folds}, Jobs: {self.n_jobs}", flush=True)
+            print(f"{'='*80}\n", flush=True)
 
         # Fit on 80% subset for faster optimization
         grid_search.fit(X_train, y_train)
@@ -317,11 +317,11 @@ class SVMOptimizer:
 
         # Print detailed results for all rounds (verbose mode)
         if self.verbose:
-            print(f"\n{'='*80}")
-            print(f"ROUND {round_idx + 1} DETAILED RESULTS - CV Scores (neg_log_loss)")
-            print(f"{'='*80}")
-            print(f"{'C Value':<15} {'Method':<10} {'Mean Score':<12} {'Std':<10} {'Rank':<8}")
-            print(f"{'-'*80}")
+            print(f"\n{'='*80}", flush=True)
+            print(f"ROUND {round_idx + 1} DETAILED RESULTS - CV Scores (neg_log_loss)", flush=True)
+            print(f"{'='*80}", flush=True)
+            print(f"{'C Value':<15} {'Method':<10} {'Mean Score':<12} {'Std':<10} {'Rank':<8}", flush=True)
+            print(f"{'-'*80}", flush=True)
 
             # Sort by rank for easier reading
             sorted_indices = np.argsort(cv_results['rank_test_score'])
@@ -332,11 +332,11 @@ class SVMOptimizer:
                 rank = cv_results['rank_test_score'][idx]
                 c_val = param['estimator__svc__C']
                 method = param['method']
-                print(f"{c_val:<15.2e} {method:<10} {score:<12.4f} {std:<10.4f} {int(rank):<8}")
+                print(f"{c_val:<15.2e} {method:<10} {score:<12.4f} {std:<10.4f} {int(rank):<8}", flush=True)
 
             if len(C_grid) * 2 > 10:
-                print(f"... ({len(C_grid) * 2 - 10} more combinations)")
-            print(f"{'='*80}\n")
+                print(f"... ({len(C_grid) * 2 - 10} more combinations)", flush=True)
+            print(f"{'='*80}\n", flush=True)
 
         # Find rank-1 (best) C values and method
         ranks = cv_results['rank_test_score']
@@ -349,14 +349,14 @@ class SVMOptimizer:
         best_score = grid_search.best_score_
 
         if self.verbose:
-            print(f"\n{'='*80}")
-            print(f"ROUND {round_idx + 1} SUMMARY")
-            print(f"{'='*80}")
-            print(f"Best C (geometric mean of rank-1): {best_C:.6e}")
-            print(f"Best calibration method: {best_method}")
-            print(f"Best CV score (neg_log_loss): {best_score:.4f}")
-            print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}")
-            print(f"{'='*80}\n")
+            print(f"\n{'='*80}", flush=True)
+            print(f"ROUND {round_idx + 1} SUMMARY", flush=True)
+            print(f"{'='*80}", flush=True)
+            print(f"Best C (geometric mean of rank-1): {best_C:.6e}", flush=True)
+            print(f"Best calibration method: {best_method}", flush=True)
+            print(f"Best CV score (neg_log_loss): {best_score:.4f}", flush=True)
+            print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
+            print(f"{'='*80}\n", flush=True)
 
         return OptimizationRound(
             grid_points=C_grid,
