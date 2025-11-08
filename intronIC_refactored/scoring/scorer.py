@@ -231,9 +231,9 @@ class IntronScorer:
         five_region = self._extract_five_region(intron)
 
         # Get dinucleotides and select appropriate PWMs
-        # Convert dinucleotides like "GT-AG" to "gtag"
-        if intron.metadata and intron.metadata.dnts:
-            dnts = ''.join(intron.metadata.dnts).lower().replace('-', '')
+        # Combine five_prime_dnt and three_prime_dnt (e.g., 'GT' + 'AG' = 'gtag')
+        if intron.sequences and intron.sequences.five_prime_dnt and intron.sequences.three_prime_dnt:
+            dnts = (intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt).lower()
         else:
             dnts = 'gtag'  # Default to GT-AG
 
@@ -272,9 +272,9 @@ class IntronScorer:
         three_region = self._extract_three_region(intron)
 
         # Get dinucleotides and select appropriate PWMs
-        # Convert dinucleotides like "GT-AG" to "gtag"
-        if intron.metadata and intron.metadata.dnts:
-            dnts = ''.join(intron.metadata.dnts).lower().replace('-', '')
+        # Combine five_prime_dnt and three_prime_dnt (e.g., 'GT' + 'AG' = 'gtag')
+        if intron.sequences and intron.sequences.five_prime_dnt and intron.sequences.three_prime_dnt:
+            dnts = (intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt).lower()
         else:
             dnts = 'gtag'  # Default to GT-AG
 
@@ -312,8 +312,9 @@ class IntronScorer:
             search window is too small for the PWM.
         """
         # Get dinucleotides and select appropriate PWMs
-        if intron.metadata and intron.metadata.dnts:
-            dnts = ''.join(intron.metadata.dnts).lower().replace('-', '')
+        # Combine five_prime_dnt and three_prime_dnt (e.g., 'GT' + 'AG' = 'gtag')
+        if intron.sequences and intron.sequences.five_prime_dnt and intron.sequences.three_prime_dnt:
+            dnts = (intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt).lower()
         else:
             dnts = 'gtag'  # Default to GT-AG
 

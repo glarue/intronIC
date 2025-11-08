@@ -160,6 +160,11 @@ class PWM:
             else:
                 score *= base_freq
 
+        # If all positions were skipped (score still None), use pseudocount
+        # This can happen when sequence position doesn't overlap with PWM coverage
+        if score is None:
+            score = self.pseudocount
+
         return score
 
 

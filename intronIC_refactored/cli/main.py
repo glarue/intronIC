@@ -317,7 +317,8 @@ def extract_introns_from_annotation(
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
-    bp_matrix_length = pwm_sets['bp'].u12_canonical.length
+    # Get any U12 BP matrix to determine length (all should be same length)
+    bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
     logger.debug(f"BP matrix length: {bp_matrix_length}bp")
 
     # Calculate actual minimum length needed for scoring regions
@@ -422,7 +423,8 @@ def extract_introns_from_bed(
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
-    bp_matrix_length = pwm_sets['bp'].u12_canonical.length
+    # Get any U12 BP matrix to determine length (all should be same length)
+    bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
     logger.debug(f"BP matrix length: {bp_matrix_length}bp")
 
     # Calculate actual minimum length needed for scoring regions
@@ -509,17 +511,16 @@ def score_introns(
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
     u2_bp_file = Path(__file__).parent.parent / "intronIC" / "data" / "u2.conserved_empirical_bp_pwm.iic"
     if u2_bp_file.exists():
-        from dataclasses import replace
+        from scoring.pwm import PWMSet
         u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
-        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
-            # PWMSet is frozen, so use replace() to create updated copy
-            pwm_sets['bp'] = replace(
-                pwm_sets['bp'],
-                u2_canonical=u2_bp_matrices['bp'].u2_canonical
-            )
+        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
+            # PWMSet is frozen, so create new PWMSet with updated U2 GTAG matrix
+            updated_matrices = dict(pwm_sets['bp'].matrices)
+            updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
+            pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
             logger.info("Loaded conserved U2 BP matrix")
         else:
-            logger.warning("U2 BP matrix file found but couldn't extract U2 canonical PWM")
+            logger.warning("U2 BP matrix file found but couldn't extract U2 GTAG PWM")
     else:
         logger.warning(f"U2 BP matrix file not found: {u2_bp_file}")
 
@@ -619,15 +620,15 @@ def normalize_scores(
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
 
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
-    from dataclasses import replace
+    from scoring.pwm import PWMSet
     u2_bp_file = data_dir / "u2.conserved_empirical_bp_pwm.iic"
     if u2_bp_file.exists():
         u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
-        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_canonical:
-            pwm_sets['bp'] = replace(
-                pwm_sets['bp'],
-                u2_canonical=u2_bp_matrices['bp'].u2_canonical
-            )
+        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
+            # PWMSet is frozen, so create new PWMSet with updated U2 GTAG matrix
+            updated_matrices = dict(pwm_sets['bp'].matrices)
+            updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
+            pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
             logger.info("Loaded conserved U2 BP matrix for reference scoring")
 
     scorer = IntronScorer(
