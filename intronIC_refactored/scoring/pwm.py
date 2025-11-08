@@ -14,7 +14,7 @@ Design:
 """
 
 from dataclasses import dataclass
-from typing import Optional, Set, Dict
+from typing import Optional, Set, Dict, Tuple
 from pathlib import Path
 from collections import defaultdict
 import numpy as np
@@ -65,6 +65,7 @@ class PWM:
     def score_sequence(
         self,
         seq: str,
+        seq_start_position: int = 0,
         ignore_positions: Optional[Set[int]] = None
     ) -> float:
         """
@@ -76,24 +77,25 @@ class PWM:
         Port from: intronIC.py:2114-2140 (seq_score)
 
         Args:
-            seq: Sequence to score (must match PWM length)
-            ignore_positions: Set of PWM positions to ignore (set freq to 1.0)
+            seq: Sequence to score
+            seq_start_position: Logical position of first base in sequence
+                               (e.g., -3 for 5' region starting at -3)
+                               Corresponds to enumerate(seq, start=start_index)
+            ignore_positions: Set of logical positions to ignore (set freq to 1.0)
                              Used to skip canonical dinucleotides in scoring
 
         Returns:
             Score as product of frequencies (float)
 
         Raises:
-            ValueError: If sequence length doesn't match PWM length
+            ValueError: If sequence is empty
             ValueError: If sequence contains lowercase (should be uppercase)
 
         Example:
-            >>> pwm = PWM("test", matrix, length=4)
-            >>> pwm.score_sequence("ACGT")
-            0.125
-            >>> # Ignore positions 0 and 1 (canonical GT)
-            >>> pwm.score_sequence("GTAAGT", ignore_positions={0, 1})
-            0.5
+            >>> # Score 5' region starting at position -3
+            >>> pwm = PWM("u12_five", matrix, length=40, start_index=-20)
+            >>> pwm.score_sequence("TCAGTATCCTTC", seq_start_position=-3)
+            0.00384  # U12 score
         """
         # Validate sequence is not empty
         if len(seq) == 0:
@@ -115,24 +117,31 @@ class PWM:
 
         # Iterate through sequence positions
         # Port from: intronIC.py:2126-2138
+        # The original uses: for i, e in enumerate(seq, start=start_index)
+        # where start_index is the logical position of the first base
         for i, base in enumerate(seq):
-            # Calculate position in PWM (accounting for start_index)
-            pwm_position = i + self.start_index
+            # Calculate logical position of this base
+            # For example: seq_start_position=-3, i=0 → logical_pos=-3
+            logical_position = seq_start_position + i
+
+            # Convert logical position to matrix array index
+            # For example: logical_pos=-3, start_index=-20 → matrix_index=17
+            matrix_index = logical_position - self.start_index
 
             # Skip positions outside PWM length (for flexible scoring)
-            if pwm_position >= self.length:
+            if matrix_index < 0 or matrix_index >= self.length:
                 continue
 
             # Check if this position should be ignored
             # Port from: intronIC.py:2127-2128
-            if ignore_positions is not None and pwm_position in ignore_positions:
+            # Note: ignore_positions uses logical positions, not matrix indices
+            if ignore_positions is not None and logical_position in ignore_positions:
                 base_freq = 1.0
             else:
                 # Look up base frequency in matrix
                 try:
                     base_index = BASE_TO_INDEX[base]
-                    # Use pwm_position to index into matrix, not i
-                    base_freq = self.matrix[base_index, pwm_position]
+                    base_freq = self.matrix[base_index, matrix_index]
 
                     # Apply pseudocount if frequency is zero
                     # Port from: intronIC.py:2134
@@ -157,24 +166,84 @@ class PWM:
 @dataclass(frozen=True, slots=True)
 class PWMSet:
     """
-    U2 and U12 PWMs for a single splice site region.
+    U2 and U12 PWMs for a single splice site region, organized by dinucleotide type.
 
-    Each region (five, bp, three) has separate PWMs for:
-    - U2 canonical (e.g., GT-AG)
-    - U2 non-canonical (e.g., GC-AG)
-    - U12 canonical (e.g., AT-AC)
-    - U12 non-canonical (rare)
+    Each region (five, bp, three) has separate PWMs for different intron subtypes:
+    - U2 GT-AG (most common U2)
+    - U2 GC-AG (non-canonical U2)
+    - U12 GT-AG (most common U12 - ~70% of U12 introns)
+    - U12 AT-AC (classic U12 marker - ~25% of U12 introns)
+
+    Note: U12 introns are identified by motif characteristics, not just dinucleotides.
+    Most U12 introns have GT-AG boundaries but U12-specific motifs throughout.
 
     Attributes:
-        u2_canonical: U2-type PWM for canonical boundaries
-        u2_noncanonical: Optional U2-type PWM for non-canonical boundaries
-        u12_canonical: U12-type PWM for canonical boundaries
-        u12_noncanonical: Optional U12-type PWM for non-canonical boundaries
+        matrices: Dictionary mapping (subtype, boundary) to PWM
+                 e.g., {('u12', 'gtag'): PWM, ('u12', 'atac'): PWM, ...}
     """
-    u2_canonical: PWM
-    u2_noncanonical: Optional[PWM]
-    u12_canonical: PWM
-    u12_noncanonical: Optional[PWM]
+    matrices: Dict[Tuple[str, str], PWM]
+
+    def select_best(self, intron_type: str, dinucleotides: str) -> PWM:
+        """
+        Select the best PWM for an intron based on type and dinucleotides.
+
+        Args:
+            intron_type: 'u12' or 'u2'
+            dinucleotides: e.g., 'gtag', 'atac', 'gcag'
+
+        Returns:
+            Best matching PWM
+
+        Example:
+            >>> pwm_set.select_best('u12', 'gtag')  # Returns U12 GT-AG matrix
+            >>> pwm_set.select_best('u12', 'atac')  # Returns U12 AT-AC matrix
+            >>> pwm_set.select_best('u2', 'gtag')   # Returns U2 GT-AG matrix
+        """
+        # First try exact match
+        key = (intron_type, dinucleotides)
+        if key in self.matrices:
+            return self.matrices[key]
+
+        # Fall back to most common type for this subtype
+        if intron_type == 'u12':
+            # Try GT-AG first (most common U12), then AT-AC
+            for fallback in ['gtag', 'atac']:
+                key = ('u12', fallback)
+                if key in self.matrices:
+                    return self.matrices[key]
+        else:  # u2
+            # Try GT-AG first (most common U2), then GC-AG
+            for fallback in ['gtag', 'gcag']:
+                key = ('u2', fallback)
+                if key in self.matrices:
+                    return self.matrices[key]
+
+        # Last resort: return any matrix of the right type
+        for key, pwm in self.matrices.items():
+            if key[0] == intron_type:
+                return pwm
+
+        raise ValueError(f"No PWM found for {intron_type}")
+
+    @property
+    def u2_gtag(self) -> Optional[PWM]:
+        """Convenience property for U2 GT-AG matrix."""
+        return self.matrices.get(('u2', 'gtag'))
+
+    @property
+    def u2_gcag(self) -> Optional[PWM]:
+        """Convenience property for U2 GC-AG matrix."""
+        return self.matrices.get(('u2', 'gcag'))
+
+    @property
+    def u12_gtag(self) -> Optional[PWM]:
+        """Convenience property for U12 GT-AG matrix."""
+        return self.matrices.get(('u12', 'gtag'))
+
+    @property
+    def u12_atac(self) -> Optional[PWM]:
+        """Convenience property for U12 AT-AC matrix."""
+        return self.matrices.get(('u12', 'atac'))
 
 
 class PWMLoader:
@@ -398,13 +467,9 @@ class PWMLoader:
                 pseudocount=pseudocount
             )
 
-            # Store in appropriate category
-            # Canonical: GTAG (U2), ATAC (U12)
-            # Non-canonical: GCAG, etc.
-            is_canonical = (boundary == 'gtag' and intron_type == 'u2') or \
-                          (boundary == 'atac' and intron_type == 'u12')
-
-            key = f"{intron_type}_{'canonical' if is_canonical else 'noncanonical'}"
+            # Store by (intron_type, boundary) key
+            # e.g., ('u12', 'gtag'), ('u12', 'atac'), ('u2', 'gtag'), ('u2', 'gcag')
+            key = (intron_type, boundary)
             by_region[region][key] = pwm
 
         # Build PWMSets
@@ -413,14 +478,7 @@ class PWMLoader:
             if region not in by_region:
                 continue
 
-            pwms = by_region[region]
-
-            pwm_sets[region] = PWMSet(
-                u2_canonical=pwms.get('u2_canonical'),
-                u2_noncanonical=pwms.get('u2_noncanonical'),
-                u12_canonical=pwms.get('u12_canonical'),
-                u12_noncanonical=pwms.get('u12_noncanonical')
-            )
+            pwm_sets[region] = PWMSet(matrices=by_region[region])
 
         return pwm_sets
 

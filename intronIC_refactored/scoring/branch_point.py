@@ -130,7 +130,8 @@ class BranchPointScorer:
             return None
 
         # Find best match in search region
-        match = self._find_best_in_sequence(search_region)
+        # Pass search_window[0] so scorer knows the genomic position of the search region
+        match = self._find_best_in_sequence(search_region, search_window_start=search_window[0])
 
         # Calculate position relative to 3' end
         # search_window[0] is negative (e.g., -55)
@@ -196,7 +197,7 @@ class BranchPointScorer:
         # Extract region
         return intron.sequences.seq[start_pos:stop_pos]
 
-    def _find_best_in_sequence(self, sequence: str) -> BranchPointMatch:
+    def _find_best_in_sequence(self, sequence: str, search_window_start: int) -> BranchPointMatch:
         """
         Find best-scoring subsequence using sliding window.
 
@@ -210,6 +211,8 @@ class BranchPointScorer:
 
         Args:
             sequence: Search region sequence
+            search_window_start: Starting position of search region (e.g., -55)
+                                Used to calculate seq_start_position for each window
 
         Returns:
             BranchPointMatch with best score
@@ -240,7 +243,11 @@ class BranchPointScorer:
         for sub_seq in self._sliding_window(sequence, window_size):
             # Score this window
             # Port from: intronIC.py:2164
-            new_score = self.u12_pwm.score_sequence(sub_seq)
+            # Calculate the genomic position of this window
+            # search_window_start is e.g., -55, start is offset 0, 1, 2...
+            # So window position is -55, -54, -53, etc.
+            window_position = search_window_start + start
+            new_score = self.u12_pwm.score_sequence(sub_seq, seq_start_position=window_position)
             new_coords = (start, stop)
 
             # Check if this is the best so far

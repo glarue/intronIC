@@ -73,11 +73,8 @@ class IntronScorer:
         self.three_coords = three_coords
         self.ignore_nc_dnts = ignore_nc_dnts
 
-        # Initialize branch point scorer
-        self.bp_scorer = BranchPointScorer(
-            u12_pwm=pwm_sets['bp'].u12_canonical,
-            u2_pwm=pwm_sets['bp'].u2_canonical
-        )
+        # Branch point scorer will be created with appropriate PWMs per intron
+        # No longer storing a single scorer instance
 
     def score_introns(
         self,
@@ -219,6 +216,8 @@ class IntronScorer:
         """
         Score 5' splice site with U12 and U2 PWMs.
 
+        Selects appropriate matrices based on intron dinucleotides.
+
         Port from: intronIC.py:2862-2944 (multi_matrix_score for 'five' region)
 
         Args:
@@ -231,13 +230,22 @@ class IntronScorer:
         # Extract 5' region
         five_region = self._extract_five_region(intron)
 
-        # Get PWMs
-        u12_pwm = self.pwm_sets['five'].u12_canonical
-        u2_pwm = self.pwm_sets['five'].u2_canonical
+        # Get dinucleotides and select appropriate PWMs
+        # Convert dinucleotides like "GT-AG" to "gtag"
+        if intron.metadata and intron.metadata.dnts:
+            dnts = ''.join(intron.metadata.dnts).lower().replace('-', '')
+        else:
+            dnts = 'gtag'  # Default to GT-AG
+
+        # Select best matrices for this intron
+        u12_pwm = self.pwm_sets['five'].select_best('u12', dnts)
+        u2_pwm = self.pwm_sets['five'].select_best('u2', dnts)
 
         # Score with both PWMs
-        u12_score = u12_pwm.score_sequence(five_region, ignore_positions=ignore_positions)
-        u2_score = u2_pwm.score_sequence(five_region, ignore_positions=ignore_positions)
+        # Pass the starting position of the 5' region (first coordinate)
+        seq_start_pos = self.five_coords[0]  # e.g., -3
+        u12_score = u12_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+        u2_score = u2_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
 
         return u12_score, u2_score
 
@@ -248,6 +256,8 @@ class IntronScorer:
     ) -> Tuple[float, float]:
         """
         Score 3' splice site with U12 and U2 PWMs.
+
+        Selects appropriate matrices based on intron dinucleotides.
 
         Port from: intronIC.py:2862-2944 (multi_matrix_score for 'three' region)
 
@@ -261,19 +271,30 @@ class IntronScorer:
         # Extract 3' region
         three_region = self._extract_three_region(intron)
 
-        # Get PWMs
-        u12_pwm = self.pwm_sets['three'].u12_canonical
-        u2_pwm = self.pwm_sets['three'].u2_canonical
+        # Get dinucleotides and select appropriate PWMs
+        # Convert dinucleotides like "GT-AG" to "gtag"
+        if intron.metadata and intron.metadata.dnts:
+            dnts = ''.join(intron.metadata.dnts).lower().replace('-', '')
+        else:
+            dnts = 'gtag'  # Default to GT-AG
+
+        # Select best matrices for this intron
+        u12_pwm = self.pwm_sets['three'].select_best('u12', dnts)
+        u2_pwm = self.pwm_sets['three'].select_best('u2', dnts)
 
         # Score with both PWMs
-        u12_score = u12_pwm.score_sequence(three_region, ignore_positions=ignore_positions)
-        u2_score = u2_pwm.score_sequence(three_region, ignore_positions=ignore_positions)
+        # Pass the starting position of the 3' region (first coordinate)
+        seq_start_pos = self.three_coords[0]  # e.g., -6
+        u12_score = u12_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+        u2_score = u2_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
 
         return u12_score, u2_score
 
     def _score_branch_point(self, intron: Intron) -> Tuple[BranchPointMatch | None, float]:
         """
         Find and score branch point with both U12 and U2 PWMs.
+
+        Selects appropriate matrices based on intron dinucleotides.
 
         Port from: intronIC.py:2920-2930, 2944 (pseudocount), 3078-3084
 
@@ -290,24 +311,32 @@ class IntronScorer:
             Tuple of (u12_match, u2_score). u12_match will be None if the
             search window is too small for the PWM.
         """
+        # Get dinucleotides and select appropriate PWMs
+        if intron.metadata and intron.metadata.dnts:
+            dnts = ''.join(intron.metadata.dnts).lower().replace('-', '')
+        else:
+            dnts = 'gtag'  # Default to GT-AG
+
+        # Select best matrices for this intron
+        u12_pwm = self.pwm_sets['bp'].select_best('u12', dnts)
+        u2_pwm = self.pwm_sets['bp'].select_best('u2', dnts)
+
+        # Create a branch point scorer with the selected U12 PWM
+        bp_scorer = BranchPointScorer(u12_pwm=u12_pwm, u2_pwm=u2_pwm)
+
         # Find best match using U12 PWM
         # Port from: intronIC.py:2943-2944 - handles None for short introns
-        u12_match = self.bp_scorer.find_best_match(intron, search_window=self.bp_coords)
+        u12_match = bp_scorer.find_best_match(intron, search_window=self.bp_coords)
 
         # If match is None (window too small), use pseudocount for both scores
         # Port from: intronIC.py:2944
         if u12_match is None:
             # Use pseudocount * matrix_length for both U12 and U2
             # This gives a low but non-zero score for short introns
-            u12_pwm = self.pwm_sets['bp'].u12_canonical
-            u2_pwm = self.pwm_sets['bp'].u2_canonical or u12_pwm  # Fall back to U12 if U2 is None
             pseudocount_score = u2_pwm.pseudocount * u2_pwm.length
             return None, pseudocount_score
 
         # Score the same sequence with U2 PWM
-        # Fall back to U12 PWM if U2 is None (happens when using default matrices)
-        u12_pwm = self.pwm_sets['bp'].u12_canonical
-        u2_pwm = self.pwm_sets['bp'].u2_canonical or u12_pwm
         u2_score = u2_pwm.score_sequence(u12_match.sequence)
 
         return u12_match, u2_score
