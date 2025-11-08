@@ -296,7 +296,7 @@ class SVMOptimizer:
             scoring='neg_log_loss',  # Optimize for calibrated probabilities
             n_jobs=self.n_jobs,
             error_score=np.nan,
-            verbose=1 if self.verbose else 0
+            verbose=10 if self.verbose else 0  # Max verbosity to force output
         )
 
         if self.verbose:
@@ -304,12 +304,22 @@ class SVMOptimizer:
             print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"Testing {len(C_grid)} C values × 2 calibration methods = {len(C_grid) * 2} total fits", flush=True)
+            print(f"Each fit trains {self.cv_folds} CV folds + final model", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
             print(f"CV folds: {self.cv_folds}, Jobs: {self.n_jobs}", flush=True)
-            print(f"{'='*80}\n", flush=True)
+            print(f"{'='*80}", flush=True)
+            print(f"Starting grid search... (this may take a few minutes)", flush=True)
+            import sys
+            sys.stdout.flush()
 
         # Fit on 80% subset for faster optimization
+        import time
+        start_time = time.time()
         grid_search.fit(X_train, y_train)
+        elapsed = time.time() - start_time
+
+        if self.verbose:
+            print(f"\nGrid search completed in {elapsed:.1f} seconds", flush=True)
 
         # Extract results
         cv_results = grid_search.cv_results_
