@@ -99,7 +99,7 @@ class IntronClassifier:
     Example:
         >>> # After scoring and normalization
         >>> classifier = IntronClassifier(
-        ...     n_optimization_rounds=5,
+        ...     n_optimization_rounds=3,
         ...     n_ensemble_models=3,
         ...     classification_threshold=90.0
         ... )
@@ -115,7 +115,7 @@ class IntronClassifier:
 
     def __init__(
         self,
-        n_optimization_rounds: int = 5,
+        n_optimization_rounds: int = 3,
         n_ensemble_models: int = 3,
         classification_threshold: float = 90.0,
         subsample_u2: bool = True,
@@ -130,7 +130,7 @@ class IntronClassifier:
         Initialize classifier.
 
         Args:
-            n_optimization_rounds: Number of grid search refinement rounds (default: 5)
+            n_optimization_rounds: Number of grid search refinement rounds (default: 3)
             n_ensemble_models: Number of models in ensemble (default: 3)
             classification_threshold: U12 probability threshold 0-100 (default: 90.0)
             subsample_u2: Whether to subsample U2 for ensemble diversity (default: True)
