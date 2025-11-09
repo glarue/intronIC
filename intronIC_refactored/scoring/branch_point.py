@@ -32,11 +32,13 @@ class BranchPointMatch:
     Result from branch point search.
 
     Attributes:
-        sequence: The best-matching branch point sequence
-        score: PWM score for this sequence
+        sequence: The best-matching U12 branch point sequence
+        score: PWM score for U12 sequence
         position: Position relative to intron 3' end (negative, e.g., -30)
         start_in_region: Start coordinate within search region (0-based)
         stop_in_region: Stop coordinate within search region (exclusive)
+        sequence_u2: The best-matching U2 branch point sequence
+        score_u2: PWM score for U2 sequence
 
     Example:
         >>> match = BranchPointMatch(
@@ -44,18 +46,22 @@ class BranchPointMatch:
         ...     score=0.85,
         ...     position=-30,
         ...     start_in_region=20,
-        ...     stop_in_region=27
+        ...     stop_in_region=27,
+        ...     sequence_u2="CACAG",
+        ...     score_u2=0.65
         ... )
         >>> match.sequence
         'TACTAAC'
-        >>> match.position
-        -30
+        >>> match.sequence_u2
+        'CACAG'
     """
-    sequence: str
-    score: float
+    sequence: str  # U12 BP sequence
+    score: float  # U12 score
     position: int  # Relative to 3' end (negative)
     start_in_region: int  # Position in search region
     stop_in_region: int  # Position in search region (exclusive)
+    sequence_u2: str | None = None  # U2 BP sequence
+    score_u2: float | None = None  # U2 score
 
 
 class BranchPointScorer:
@@ -129,23 +135,27 @@ class BranchPointScorer:
             # Return None instead of raising - caller will handle with pseudocount
             return None
 
-        # Find best match in search region
+        # Find best match in search region for both U12 and U2
         # Pass search_window[0] so scorer knows the genomic position of the search region
-        match = self._find_best_in_sequence(search_region, search_window_start=search_window[0])
+        u12_match = self._find_best_in_sequence(search_region, self.u12_pwm, search_window_start=search_window[0])
+        u2_match = self._find_best_in_sequence(search_region, self.u2_pwm, search_window_start=search_window[0])
 
         # Calculate position relative to 3' end
         # search_window[0] is negative (e.g., -55)
-        # match.start_in_region is offset into region (e.g., 20)
+        # u12_match.start_in_region is offset into region (e.g., 20)
         # position = start_of_region + offset_in_region
-        position = search_window[0] + match.start_in_region
+        position = search_window[0] + u12_match.start_in_region
 
-        # Create new match with updated position
+        # Create combined match with U12 and U2 results
+        # Use U12 position as primary (for bp_relative_coords)
         return BranchPointMatch(
-            sequence=match.sequence,
-            score=match.score,
+            sequence=u12_match.sequence,
+            score=u12_match.score,
             position=position,
-            start_in_region=match.start_in_region,
-            stop_in_region=match.stop_in_region
+            start_in_region=u12_match.start_in_region,
+            stop_in_region=u12_match.stop_in_region,
+            sequence_u2=u2_match.sequence,
+            score_u2=u2_match.score
         )
 
     def _extract_search_region(
@@ -197,7 +207,7 @@ class BranchPointScorer:
         # Extract region
         return intron.sequences.seq[start_pos:stop_pos]
 
-    def _find_best_in_sequence(self, sequence: str, search_window_start: int) -> BranchPointMatch:
+    def _find_best_in_sequence(self, sequence: str, pwm: PWM, search_window_start: int) -> BranchPointMatch:
         """
         Find best-scoring subsequence using sliding window.
 
@@ -211,6 +221,7 @@ class BranchPointScorer:
 
         Args:
             sequence: Search region sequence
+            pwm: PWM to use for scoring (U12 or U2)
             search_window_start: Starting position of search region (e.g., -55)
                                 Used to calculate seq_start_position for each window
 
@@ -220,7 +231,7 @@ class BranchPointScorer:
         Raises:
             ValueError: If sequence is shorter than PWM length
         """
-        window_size = self.u12_pwm.length
+        window_size = pwm.length
 
         # Validate sequence length
         if len(sequence) < window_size:
@@ -247,7 +258,7 @@ class BranchPointScorer:
             # search_window_start is e.g., -55, start is offset 0, 1, 2...
             # So window position is -55, -54, -53, etc.
             window_position = search_window_start + start
-            new_score = self.u12_pwm.score_sequence(sub_seq, seq_start_position=window_position)
+            new_score = pwm.score_sequence(sub_seq, seq_start_position=window_position)
             new_coords = (start, stop)
 
             # Check if this is the best so far

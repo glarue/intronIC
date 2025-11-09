@@ -23,7 +23,7 @@ from dataclasses import replace
 
 from scoring.pwm import PWMSet
 from scoring.branch_point import BranchPointScorer, BranchPointMatch
-from core.intron import Intron, IntronScores
+from core.intron import Intron, IntronScores, IntronSequences
 
 
 class IntronScorer:
@@ -171,7 +171,18 @@ class IntronScorer:
             three_raw_score=three_raw_score
         )
 
-        return replace(intron, scores=updated_scores)
+        # Update sequences with BP information if match was found
+        # Port from: intronIC.py:3080-3084, 3105-3106
+        updated_sequences = intron.sequences
+        if bp_u12_match is not None and intron.sequences is not None:
+            updated_sequences = replace(
+                intron.sequences,
+                bp_seq=bp_u12_match.sequence,
+                bp_seq_u2=bp_u12_match.sequence_u2,
+                bp_relative_coords=(bp_u12_match.start_in_region, bp_u12_match.stop_in_region)
+            )
+
+        return replace(intron, scores=updated_scores, sequences=updated_sequences)
 
     def _get_ignore_positions(self, intron: Intron) -> Tuple[Optional[Set[int]], Optional[Set[int]]]:
         """
@@ -322,25 +333,27 @@ class IntronScorer:
         u12_pwm = self.pwm_sets['bp'].select_best('u12', dnts)
         u2_pwm = self.pwm_sets['bp'].select_best('u2', dnts)
 
-        # Create a branch point scorer with the selected U12 PWM
+        # Create a branch point scorer with both U12 and U2 PWMs
+        # The scorer will find best matches for both and return combined result
         bp_scorer = BranchPointScorer(u12_pwm=u12_pwm, u2_pwm=u2_pwm)
 
-        # Find best match using U12 PWM
-        # Port from: intronIC.py:2943-2944 - handles None for short introns
-        u12_match = bp_scorer.find_best_match(intron, search_window=self.bp_coords)
+        # Find best matches for both U12 and U2 PWMs
+        # Port from: intronIC.py:2943-2944, 3078-3084
+        match = bp_scorer.find_best_match(intron, search_window=self.bp_coords)
 
         # If match is None (window too small), use pseudocount for both scores
         # Port from: intronIC.py:2944
-        if u12_match is None:
+        if match is None:
             # Use pseudocount * matrix_length for both U12 and U2
             # This gives a low but non-zero score for short introns
             pseudocount_score = u2_pwm.pseudocount * u2_pwm.length
             return None, pseudocount_score
 
-        # Score the same sequence with U2 PWM
-        u2_score = u2_pwm.score_sequence(u12_match.sequence)
+        # Match contains both U12 and U2 results
+        # Port from: intronIC.py:3083-3084 (separate U2 BP sequence)
+        u2_score = match.score_u2
 
-        return u12_match, u2_score
+        return match, u2_score
 
     def _extract_five_region(self, intron: Intron) -> str:
         """
