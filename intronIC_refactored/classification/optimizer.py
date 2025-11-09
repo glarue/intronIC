@@ -19,7 +19,7 @@ from typing import Sequence, Tuple, Optional
 import os
 import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split, StratifiedKFold
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
@@ -30,10 +30,12 @@ from core.intron import Intron
 
 @dataclass(frozen=True, slots=True)
 class SVMParameters:
-    """Optimized SVM hyperparameters."""
+    """Optimized SVM hyperparameters for LinearSVC."""
 
     C: float  # Soft-margin penalty
     calibration_method: str  # 'sigmoid' or 'isotonic'
+    dual: bool  # Primal (False) or dual (True) formulation
+    intercept_scaling: float  # Scaling for intercept (when dual=False)
     cv_score: float  # Cross-validation neg_log_loss
     round_found: int  # Which optimization round found these params (-1 = averaged)
 
@@ -43,9 +45,11 @@ class OptimizationRound:
     """Results from one round of grid search."""
 
     grid_points: np.ndarray  # C values tested
-    scores: np.ndarray  # CV scores for each C
+    scores: np.ndarray  # CV scores for each parameter combination
     best_C: float
     best_method: str  # 'sigmoid' or 'isotonic'
+    best_dual: bool  # Primal (False) or dual (True) formulation
+    best_intercept_scaling: float  # Intercept scaling parameter
     best_score: float
     rank_one_Cs: list[float]  # All rank-1 C values
 
@@ -135,18 +139,22 @@ class SVMOptimizer:
             if round_idx < self.n_rounds - 1:
                 current_grid = self._refine_grid(current_grid, round_result.best_C)
 
-        # Final parameter: geometric mean of final round's rank-1 values
+        # Final parameters from best round
         final_C = gmean(self.rounds_[-1].rank_one_Cs)
         final_method = self.rounds_[-1].best_method
+        final_dual = self.rounds_[-1].best_dual
+        final_intercept_scaling = self.rounds_[-1].best_intercept_scaling
 
-        # Evaluate final C with final method
-        final_score = self._evaluate_C(X, y, final_C, final_method)
+        # Evaluate final parameters
+        final_score = self._evaluate_params(X, y, final_C, final_method, final_dual, final_intercept_scaling)
 
-        print(f"Optimal C={final_C:.6e}, method={final_method}, CV score={final_score:.4f}", flush=True)
+        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, intercept_scaling={final_intercept_scaling}, CV score={final_score:.4f}", flush=True)
 
         return SVMParameters(
             C=final_C,
             calibration_method=final_method,
+            dual=final_dual,
+            intercept_scaling=final_intercept_scaling,
             cv_score=final_score,
             round_found=-1  # -1 indicates averaged result
         )
@@ -249,19 +257,20 @@ class SVMOptimizer:
         Returns:
             Results from this round
         """
-        # SVC with external calibration (best practice)
+        # LinearSVC with external calibration (best practice)
         # - RobustScaler: Matches legacy median/IQR scaling
-        # - SVC(probability=False): Linear margin without slow internal Platt
+        # - LinearSVC: Optimized for linear case, faster than SVC(kernel='linear')
         # - CalibratedClassifierCV: External calibration (method grid-searched)
         cv_splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state + round_idx)
 
         base_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=True, with_scaling=True)),
-            ('svc', SVC(
-                kernel='linear',
-                probability=False,  # We calibrate externally
-                class_weight='balanced',
-                cache_size=1000,
+            ('svc', LinearSVC(
+                loss='squared_hinge',  # Default loss for LinearSVC
+                penalty='l2',  # L2 regularization
+                class_weight='balanced',  # Critical for imbalanced data
+                max_iter=20000,  # Generous iteration limit
+                tol=1e-4,  # Tighter tolerance
                 random_state=self.random_state + round_idx
             ))
         ])
@@ -281,11 +290,13 @@ class SVMOptimizer:
             random_state=self.random_state + round_idx
         )
 
-        # Optimize C and calibration method
+        # Optimize C, dual, intercept_scaling, and calibration method
         # Use neg_log_loss to optimize for probability quality (best practice)
         # This is critical when deploying at custom thresholds (e.g., 0.90)
         param_grid = {
             'estimator__svc__C': C_grid,  # C parameter through pipeline
+            'estimator__svc__dual': [False, True],  # Primal vs dual formulation
+            'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
             'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
         }
 
@@ -300,15 +311,16 @@ class SVMOptimizer:
         )
 
         if self.verbose:
+            n_combinations = len(C_grid) * 2 * 3 * 2  # C × dual × intercept_scaling × calibration method
             print(f"\n{'='*80}", flush=True)
             print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Testing {len(C_grid)} C values × 2 calibration methods = {len(C_grid) * 2} total fits", flush=True)
+            print(f"Testing {len(C_grid)} C × 2 dual × 3 intercept_scaling × 2 calibration = {n_combinations} total fits", flush=True)
             print(f"Each fit trains {self.cv_folds} CV folds + final model", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
             print(f"CV folds: {self.cv_folds}, Jobs: {self.n_jobs}", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Starting grid search... (this may take a few minutes)", flush=True)
+            print(f"Starting grid search... (this may take a while)", flush=True)
             import sys
             sys.stdout.flush()
 
@@ -348,7 +360,7 @@ class SVMOptimizer:
                 print(f"... ({len(C_grid) * 2 - 10} more combinations)", flush=True)
             print(f"{'='*80}\n", flush=True)
 
-        # Find rank-1 (best) C values and method
+        # Find rank-1 (best) parameter values
         ranks = cv_results['rank_test_score']
         params = cv_results['params']
         rank_one_Cs = [p['estimator__svc__C'] for p, r in zip(params, ranks) if r == 1]
@@ -356,6 +368,8 @@ class SVMOptimizer:
         # Best C is geometric mean of rank-1 values
         best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['estimator__svc__C']
         best_method = grid_search.best_params_['method']
+        best_dual = grid_search.best_params_['estimator__svc__dual']
+        best_intercept_scaling = grid_search.best_params_['estimator__svc__intercept_scaling']
         best_score = grid_search.best_score_
 
         if self.verbose:
@@ -364,6 +378,8 @@ class SVMOptimizer:
             print(f"{'='*80}", flush=True)
             print(f"Best C (geometric mean of rank-1): {best_C:.6e}", flush=True)
             print(f"Best calibration method: {best_method}", flush=True)
+            print(f"Best dual formulation: {best_dual}", flush=True)
+            print(f"Best intercept_scaling: {best_intercept_scaling}", flush=True)
             print(f"Best CV score (neg_log_loss): {best_score:.4f}", flush=True)
             print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
             print(f"{'='*80}\n", flush=True)
@@ -373,6 +389,8 @@ class SVMOptimizer:
             scores=scores,
             best_C=best_C,
             best_method=best_method,
+            best_dual=best_dual,
+            best_intercept_scaling=best_intercept_scaling,
             best_score=best_score,
             rank_one_Cs=rank_one_Cs
         )
@@ -425,31 +443,44 @@ class SVMOptimizer:
         idx = (np.abs(array - value)).argmin()
         return int(idx)
 
-    def _evaluate_C(self, X: np.ndarray, y: np.ndarray, C: float, method: str) -> float:
+    def _evaluate_params(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        C: float,
+        method: str,
+        dual: bool,
+        intercept_scaling: float
+    ) -> float:
         """
-        Evaluate a specific C value and calibration method via cross-validation.
+        Evaluate specific hyperparameters via cross-validation.
 
         Args:
             X: Feature matrix
             y: Labels
             C: C value to evaluate
             method: Calibration method ('sigmoid' or 'isotonic')
+            dual: Primal (False) or dual (True) formulation
+            intercept_scaling: Intercept scaling parameter
 
         Returns:
             Cross-validation neg_log_loss score
         """
-        # SVC with external calibration (matches training approach)
-        # - RobustScaler: Matches legacy median/IQR scaling
-        # - SVC(probability=False): Linear margin without slow internal Platt
+        # LinearSVC with external calibration (matches training approach)
+        # - RobustScaler: Median/IQR scaling for robustness
+        # - LinearSVC: Optimized for linear case
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=True, with_scaling=True)),
-            ('svc', SVC(
+            ('svc', LinearSVC(
                 C=C,
-                kernel='linear',
-                probability=False,  # We calibrate externally
+                dual=dual,
+                loss='squared_hinge',
+                penalty='l2',
+                intercept_scaling=intercept_scaling,
                 class_weight='balanced',
-                cache_size=1000,
+                max_iter=20000,
+                tol=1e-4,
                 random_state=self.random_state
             ))
         ])

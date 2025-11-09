@@ -207,10 +207,12 @@ class IntronClassifier:
             parameters = SVMParameters(
                 C=self.fixed_c,
                 calibration_method='sigmoid',  # Default calibration method
+                dual=False,  # Primal formulation (n_samples >> n_features: 21k >> 3)
+                intercept_scaling=1000.0,  # High value to avoid over-regularizing intercept
                 cv_score=0.0,  # Not computed
                 round_found=0   # Fixed, not optimized
             )
-            print(f"Using fixed C={parameters.C:.6e}")
+            print(f"Using fixed C={parameters.C:.6e}, dual={parameters.dual}, intercept_scaling={parameters.intercept_scaling}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")

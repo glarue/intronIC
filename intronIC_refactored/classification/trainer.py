@@ -17,7 +17,7 @@ Port from: intronIC.py:5345-5430 (train_svm)
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional, Any
 import numpy as np
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, average_precision_score
@@ -168,21 +168,27 @@ class SVMTrainer:
             random_state=seed
         )
 
-        # Train SVC with external calibration
+        # Train LinearSVC with external calibration
         # Following sklearn best practices for rare-class classification:
-        # - RobustScaler: Matches legacy median/IQR scaling, robust to outliers
-        # - SVC(kernel='linear', probability=False): Linear margin without slow internal Platt
+        # - RobustScaler: Feature-wise scaling with median/IQR (robust to heavy tails)
+        # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
+        #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 3)
+        #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
+        #   - max_iter=20000, tol=1e-4: Generous convergence settings
         # - class_weight='balanced': Handle 1.8% positive class
         # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
         #   Calibration method chosen by optimizer via grid search
         base_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=True, with_scaling=True)),
-            ('svc', SVC(
+            ('svc', LinearSVC(
                 C=parameters.C,
-                kernel='linear',
-                probability=False,  # We calibrate externally
+                dual=parameters.dual,  # From optimizer (typically False for our data)
+                loss='squared_hinge',  # Default loss for LinearSVC
+                penalty='l2',  # L2 regularization
+                intercept_scaling=parameters.intercept_scaling,  # High value when dual=False
                 class_weight='balanced',  # Critical for imbalanced data
-                cache_size=1000,
+                max_iter=20000,  # Generous iteration limit
+                tol=1e-4,  # Tighter tolerance
                 random_state=seed
             ))
         ])
