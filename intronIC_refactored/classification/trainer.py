@@ -30,6 +30,9 @@ from sklearn.exceptions import ConvergenceWarning
 from core.intron import Intron
 from classification.optimizer import SVMParameters
 
+# Global filter for convergence warnings (persists across multiprocessing forks)
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
 
 @contextlib.contextmanager
 def suppress_convergence_warnings(verbose: bool = True):
