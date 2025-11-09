@@ -231,6 +231,16 @@ class SequenceExtractor:
         # Check if canonical
         is_canonical = self._is_canonical(five_prime_dnt, three_prime_dnt)
 
+        # Display sequences for motif schematic (following original implementation)
+        # five_display_seq: first 10bp of intron for 5' boundary display
+        five_display_length = 10
+        five_display_seq = intron_seq[:five_display_length] if len(intron_seq) >= five_display_length else intron_seq
+
+        # three_display_seq: from bp search region end to intron end
+        # bp_coords[1] is relative to 3' end (e.g., -5 means 5bp from end)
+        # This will be used for 3' boundary display in motif schematic
+        three_display_seq = intron_seq[bp_coords[1]:] if len(intron_seq) >= abs(bp_coords[1]) else intron_seq
+
         # Create sequences object
         sequences = IntronSequences(
             seq=intron_seq,
@@ -240,7 +250,10 @@ class SequenceExtractor:
             three_seq=three_seq,
             bp_region_seq=bp_region_seq,
             five_prime_dnt=five_prime_dnt,
-            three_prime_dnt=three_prime_dnt
+            three_prime_dnt=three_prime_dnt,
+            five_display_seq=five_display_seq,
+            three_display_seq=three_display_seq
+            # bp_seq_u2 and bp_relative_coords populated during PWM scoring
         )
 
         # Update intron metadata
