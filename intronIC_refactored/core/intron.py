@@ -122,6 +122,10 @@ class IntronSequences:
         downstream_flank: Exonic sequence downstream of intron
         five_prime_dnt: Terminal 5' dinucleotide (e.g., 'GT')
         three_prime_dnt: Terminal 3' dinucleotide (e.g., 'AG')
+        five_display_seq: First 10bp of intron for display (motif schematic)
+        three_display_seq: From BP end to intron end for display
+        bp_seq_u2: U2-type branch point sequence
+        bp_relative_coords: (start, stop) position of BP within bp_region_seq
 
     Examples:
         >>> seqs = IntronSequences(
@@ -147,6 +151,13 @@ class IntronSequences:
     downstream_flank: Optional[str] = None
     five_prime_dnt: Optional[str] = None
     three_prime_dnt: Optional[str] = None
+    # Display sequences for motif schematic generation
+    five_display_seq: Optional[str] = None
+    three_display_seq: Optional[str] = None
+    # U2 branch point information
+    bp_seq_u2: Optional[str] = None
+    # Branch point coordinates within bp_region_seq
+    bp_relative_coords: Optional[tuple[int, int]] = None
 
     def has_sequences(self) -> bool:
         """Check if core sequences are populated."""
@@ -211,6 +222,8 @@ class IntronMetadata:
         longest_isoform: Whether from longest transcript
         corrected: Whether boundaries were adjusted
         phase: Coding phase information
+        dynamic_tags: Set of dynamic tags ([c:N], [d], [e], [n], [i], etc.)
+        correction_distance: Distance boundaries were shifted (for [c:N] tag)
 
     Note:
         Mutable (not frozen) to allow updating tags during pipeline.
@@ -231,6 +244,9 @@ class IntronMetadata:
     corrected: bool = False
     phase: Optional[int] = None
     defined_by: Optional[str] = None  # 'cds' or 'exon' - which feature type defined this intron
+    # Dynamic tagging system for various intron states
+    dynamic_tags: set[str] = field(default_factory=set)
+    correction_distance: Optional[int] = None
 
     def is_omitted(self) -> bool:
         """Check if this intron should be omitted."""
