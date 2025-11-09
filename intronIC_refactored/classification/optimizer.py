@@ -501,7 +501,7 @@ class SVMOptimizer:
             cv=self.cv_folds,
             scoring='neg_log_loss',  # Evaluate probability quality
             n_jobs=self.n_jobs,  # Parallelize CV folds
-            verbose=2  # Show real-time progress
+            verbose=1  # Minimal progress output
         )
 
         return float(np.mean(scores))
