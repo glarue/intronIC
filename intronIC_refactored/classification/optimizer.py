@@ -77,7 +77,8 @@ class SVMOptimizer:
         cv_folds: int = 5,
         random_state: int = 42,
         n_jobs: int = 1,
-        verbose: bool = True
+        verbose: bool = True,
+        max_iter: int = 100000
     ):
         """
         Initialize optimizer.
@@ -90,6 +91,7 @@ class SVMOptimizer:
             random_state: Random seed for reproducibility
             n_jobs: Number of parallel jobs for GridSearchCV (default: 1)
             verbose: Whether to print detailed progress (default: True)
+            max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
         """
         self.n_rounds = n_rounds
         self.n_points_initial = n_points_initial
@@ -98,6 +100,7 @@ class SVMOptimizer:
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.verbose = verbose
+        self.max_iter = max_iter
         self.rounds_: list[OptimizationRound] = []
 
     def optimize(
@@ -269,7 +272,7 @@ class SVMOptimizer:
                 loss='squared_hinge',  # Default loss for LinearSVC
                 penalty='l2',  # L2 regularization
                 class_weight='balanced',  # Critical for imbalanced data
-                max_iter=20000,  # Generous iteration limit
+                max_iter=self.max_iter,  # Maximum iterations for convergence
                 tol=1e-4,  # Tighter tolerance
                 random_state=self.random_state + round_idx
             ))
@@ -479,7 +482,7 @@ class SVMOptimizer:
                 penalty='l2',
                 intercept_scaling=intercept_scaling,
                 class_weight='balanced',
-                max_iter=20000,
+                max_iter=self.max_iter,
                 tol=1e-4,
                 random_state=self.random_state
             ))

@@ -124,7 +124,8 @@ class IntronClassifier:
         optimize_c: bool = True,
         fixed_c: Optional[float] = None,
         cv_processes: int = 1,
-        classification_processes: int = 1
+        classification_processes: int = 1,
+        max_iter: int = 100000
     ):
         """
         Initialize classifier.
@@ -140,6 +141,7 @@ class IntronClassifier:
             fixed_c: Fixed C value if not optimizing (default: None)
             cv_processes: Number of parallel jobs for cross-validation (default: 1)
             classification_processes: Number of parallel jobs for classification (default: 1)
+            max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -151,6 +153,7 @@ class IntronClassifier:
         self.fixed_c = fixed_c
         self.cv_processes = cv_processes
         self.classification_processes = classification_processes
+        self.max_iter = max_iter
 
         # Validate parameters
         if not 0 <= classification_threshold <= 100:
@@ -198,7 +201,8 @@ class IntronClassifier:
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
                 random_state=self.random_state,
-                n_jobs=self.cv_processes
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter
             )
             parameters = optimizer.optimize(u12_reference, u2_reference)
             print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
@@ -218,7 +222,8 @@ class IntronClassifier:
         print("\n=== Stage 2: Ensemble Training ===")
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
-            random_state=self.random_state
+            random_state=self.random_state,
+            max_iter=self.max_iter
         )
         ensemble = trainer.train_ensemble(
             u12_reference,

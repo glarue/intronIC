@@ -84,6 +84,7 @@ class TrainingConfig:
     recursive: bool = False
     recursive_subset: Optional[int] = None
     seed: int = 42
+    max_iter: int = 100000
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +200,8 @@ class IntronICConfig:
             n_models=args.n_models,
             recursive=bool(args.recursive),
             recursive_subset=recursive_subset,
-            seed=args.seed
+            seed=args.seed,
+            max_iter=args.max_iter
         )
 
         # Performance configuration

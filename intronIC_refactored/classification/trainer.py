@@ -72,7 +72,8 @@ class SVMTrainer:
         n_models: int = 3,
         test_size: float = 0.2,
         random_state: int = 42,
-        kernel: str = 'linear'
+        kernel: str = 'linear',
+        max_iter: int = 100000
     ):
         """
         Initialize trainer.
@@ -82,11 +83,13 @@ class SVMTrainer:
             test_size: Fraction for test set (default: 0.2)
             random_state: Random seed
             kernel: SVM kernel type (default: 'linear')
+            max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
         """
         self.n_models = n_models
         self.test_size = test_size
         self.random_state = random_state
         self.kernel = kernel
+        self.max_iter = max_iter
 
     def train_ensemble(
         self,
@@ -174,7 +177,8 @@ class SVMTrainer:
         # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
         #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 3)
         #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
-        #   - max_iter=20000, tol=1e-4: Generous convergence settings
+        #   - max_iter: Configurable iteration limit (default: 100000)
+        #   - tol=1e-4: Tight convergence tolerance
         # - class_weight='balanced': Handle 1.8% positive class
         # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
         #   Calibration method chosen by optimizer via grid search
@@ -187,7 +191,7 @@ class SVMTrainer:
                 penalty='l2',  # L2 regularization
                 intercept_scaling=parameters.intercept_scaling,  # High value when dual=False
                 class_weight='balanced',  # Critical for imbalanced data
-                max_iter=20000,  # Generous iteration limit
+                max_iter=self.max_iter,  # Maximum iterations for convergence
                 tol=1e-4,  # Tighter tolerance
                 random_state=seed
             ))

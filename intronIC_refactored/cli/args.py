@@ -225,6 +225,12 @@ Examples:
             default=1,
             help='Number of ensemble models to train (default: 1)'
         )
+        training_group.add_argument(
+            '--max_iter',
+            type=int,
+            default=100000,
+            help='Maximum iterations for LinearSVC convergence (default: 100000)'
+        )
 
         # Scoring region coordinates
         coords_group = parser.add_argument_group('scoring region coordinates')
