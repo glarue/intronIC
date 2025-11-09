@@ -22,7 +22,7 @@ from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_sp
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 from scipy.stats import gmean
 
 from core.intron import Intron
@@ -258,13 +258,13 @@ class SVMOptimizer:
             Results from this round
         """
         # LinearSVC with external calibration (best practice)
-        # - StandardScaler: Mean/std normalization (U12s are signal, not outliers)
+        # - RobustScaler: Median/IQR scaling gives better differentiation for tail values
         # - LinearSVC: Optimized for linear case, faster than SVC(kernel='linear')
         # - CalibratedClassifierCV: External calibration (method grid-searched)
         cv_splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state + round_idx)
 
         base_pipeline = Pipeline([
-            ('scale', StandardScaler(with_mean=True, with_std=True)),
+            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
             ('svc', LinearSVC(
                 loss='squared_hinge',  # Default loss for LinearSVC
                 penalty='l2',  # L2 regularization
@@ -467,11 +467,11 @@ class SVMOptimizer:
             Cross-validation neg_log_loss score
         """
         # LinearSVC with external calibration (matches training approach)
-        # - StandardScaler: Mean/std normalization (U12s are signal, not outliers)
+        # - RobustScaler: Median/IQR scaling gives better differentiation for tail values
         # - LinearSVC: Optimized for linear case
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
-            ('scale', StandardScaler(with_mean=True, with_std=True)),
+            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
             ('svc', LinearSVC(
                 C=C,
                 dual=dual,

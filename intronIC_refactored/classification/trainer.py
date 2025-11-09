@@ -23,7 +23,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, average_precision_score
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 
 from core.intron import Intron
 from classification.optimizer import SVMParameters
@@ -170,7 +170,7 @@ class SVMTrainer:
 
         # Train LinearSVC with external calibration
         # Following sklearn best practices for rare-class classification:
-        # - StandardScaler: Mean/std normalization (U12s are signal, not outliers)
+        # - RobustScaler: Median/IQR scaling gives better differentiation for tail values
         # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
         #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 3)
         #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
@@ -179,7 +179,7 @@ class SVMTrainer:
         # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
         #   Calibration method chosen by optimizer via grid search
         base_pipeline = Pipeline([
-            ('scale', StandardScaler(with_mean=True, with_std=True)),
+            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
             ('svc', LinearSVC(
                 C=parameters.C,
                 dual=parameters.dual,  # From optimizer (typically False for our data)
