@@ -6,6 +6,7 @@ Orchestrates the complete intron classification pipeline.
 
 import sys
 import logging
+import joblib
 from pathlib import Path
 from typing import List, Tuple
 
@@ -730,6 +731,12 @@ def classify_introns(
     logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
     logger.info(f"  Mean F1: {metrics['mean_f1']:.4f}")
     logger.info(f"  Mean PR-AUC: {metrics['mean_pr_auc']:.4f}")
+
+    # Save trained model
+    model_path = config.output.get_output_path('.model.pkl')
+    logger.info(f"Saving trained model to {model_path}")
+    joblib.dump(result.ensemble, model_path, compress=3)
+    logger.info(f"Model saved successfully")
 
     return list(result.classified_introns), metrics
 
