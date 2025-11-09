@@ -25,15 +25,43 @@ Related: intronIC.py:5290-5322 (helper functions)
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional, Dict, Any
 import os
+import contextlib
+import joblib
 import numpy as np
-from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold
+from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold, ParameterGrid
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
 from scipy.stats import gmean
+from tqdm.auto import tqdm
 
 from core.intron import Intron
+
+
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    """
+    Context manager to patch joblib to report into tqdm progress bar.
+
+    Usage:
+        with tqdm_joblib(tqdm(total=total_tasks, desc="GridSearchCV")):
+            grid.fit(X, y)
+
+    Adapted from: https://stackoverflow.com/a/58936697
+    """
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
 
 
 def compute_weight_aware_C_bounds(
@@ -427,31 +455,40 @@ class SVMOptimizer:
             scoring='neg_log_loss',  # Optimize for calibrated probabilities
             n_jobs=self.n_jobs,
             error_score=np.nan,
-            verbose=1 if self.verbose else 0  # Reduced verbosity
+            verbose=0  # Silence sklearn output, use tqdm instead
         )
 
+        # Calculate total tasks for progress bar
+        n_candidates = len(list(ParameterGrid(param_grid)))
+        n_outer_cv = cv_splitter.get_n_splits(y)  # GridSearchCV outer loop
+        n_inner_cv = cv_splitter.get_n_splits(y)  # CalibratedClassifierCV inner loop
+        total_tasks = n_candidates * n_outer_cv * n_inner_cv + 1  # +1 for final refit
+
         if self.verbose:
-            n_combinations = len(C_grid) * 2 * 3 * 2  # C × dual × intercept_scaling × calibration method
             print(f"\n{'='*80}", flush=True)
             print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Testing {len(C_grid)} C × 2 dual × 3 intercept_scaling × 2 calibration = {n_combinations} total fits", flush=True)
-            print(f"Each fit trains {self.cv_folds} CV folds + final model", flush=True)
+            print(f"Parameter combinations: {n_candidates} (C={len(C_grid)} × dual=2 × intercept=3 × method=2)", flush=True)
+            print(f"CV folds: outer={n_outer_cv}, inner={n_inner_cv} (calibration)", flush=True)
+            print(f"Total fits: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
-            print(f"CV folds: {self.cv_folds}, Jobs: {self.n_jobs}", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Starting grid search... (this may take a while)", flush=True)
-            import sys
-            sys.stdout.flush()
 
-        # Fit grid search on all data (internal CV provides validation)
+        # Fit grid search with progress bar
         import time
         start_time = time.time()
-        grid_search.fit(X, y)
+
+        if self.verbose:
+            desc = f"Round {round_idx + 1}/{self.n_rounds}"
+            with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
+                grid_search.fit(X, y)
+        else:
+            grid_search.fit(X, y)
+
         elapsed = time.time() - start_time
 
         if self.verbose:
-            print(f"\nGrid search completed in {elapsed:.1f} seconds", flush=True)
+            print(f"Completed in {elapsed:.1f}s", flush=True)
 
         # Extract results
         cv_results = grid_search.cv_results_
@@ -611,14 +648,34 @@ class SVMOptimizer:
             cv=5
         )
 
-        scores = cross_val_score(
-            model,
-            X,
-            y,
-            cv=self.cv_folds,
-            scoring='neg_log_loss',  # Evaluate probability quality
-            n_jobs=self.n_jobs,  # Parallelize CV folds
-            verbose=1  # Minimal progress output
-        )
+        # Calculate total tasks for progress bar
+        # cross_val_score runs cv_folds outer folds
+        # Each fold trains CalibratedClassifierCV with 5 inner folds
+        n_outer = self.cv_folds
+        n_inner = 5  # CalibratedClassifierCV's cv
+        total_tasks = n_outer * n_inner
+
+        if self.verbose:
+            desc = "Final param eval"
+            with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
+                scores = cross_val_score(
+                    model,
+                    X,
+                    y,
+                    cv=self.cv_folds,
+                    scoring='neg_log_loss',
+                    n_jobs=self.n_jobs,
+                    verbose=0  # Silence sklearn, use tqdm
+                )
+        else:
+            scores = cross_val_score(
+                model,
+                X,
+                y,
+                cv=self.cv_folds,
+                scoring='neg_log_loss',
+                n_jobs=self.n_jobs,
+                verbose=0
+            )
 
         return float(np.mean(scores))
