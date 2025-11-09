@@ -233,8 +233,6 @@ class IntronClassifier:
             subsample_ratio=self.subsample_ratio
         )
         print(f"Ensemble trained: {len(ensemble.models)} models")
-        print(f"  Mean F1: {ensemble.mean_f1:.4f}")
-        print(f"  Mean PR-AUC: {ensemble.mean_pr_auc:.4f}")
 
         # Stage 3: Classify experimental introns
         print("\n=== Stage 3: Classification ===")

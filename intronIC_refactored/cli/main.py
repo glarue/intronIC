@@ -722,15 +722,12 @@ def classify_introns(
     metrics = {
         'optimized_C': result.parameters.C,
         'cv_score': result.parameters.cv_score,
-        'mean_f1': result.ensemble.mean_f1,
-        'mean_pr_auc': result.ensemble.mean_pr_auc,
         'n_models': len(result.ensemble.models)
     }
 
     logger.info(f"Classification complete")
     logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
-    logger.info(f"  Mean F1: {metrics['mean_f1']:.4f}")
-    logger.info(f"  Mean PR-AUC: {metrics['mean_pr_auc']:.4f}")
+    logger.info(f"  Models trained: {metrics['n_models']}")
 
     # Save trained model
     model_path = config.output.get_output_path('.model.pkl')
