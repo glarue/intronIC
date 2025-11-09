@@ -206,6 +206,7 @@ class IntronClassifier:
             print("\n=== Stage 1: Using Fixed C Parameter ===")
             parameters = SVMParameters(
                 C=self.fixed_c,
+                calibration_method='sigmoid',  # Default calibration method
                 cv_score=0.0,  # Not computed
                 round_found=0   # Fixed, not optimized
             )
