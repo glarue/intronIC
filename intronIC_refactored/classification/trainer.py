@@ -34,47 +34,23 @@ from classification.optimizer import SVMParameters
 @contextlib.contextmanager
 def suppress_convergence_warnings(verbose: bool = True):
     """
-    Context manager to suppress sklearn ConvergenceWarning spam while logging occurrence.
+    Context manager to suppress sklearn ConvergenceWarning spam.
 
-    During model training, convergence warnings can spam the console with
-    many identical messages. This context manager:
-    1. Captures ConvergenceWarnings silently
-    2. Counts how many were raised
-    3. Logs a summary at the end if any occurred
+    During model training with CalibratedClassifierCV (5 folds), convergence warnings
+    can spam the console with many identical messages. This context manager suppresses
+    them to keep output clean.
 
     Args:
-        verbose: If True, print summary when warnings are captured (default: True)
+        verbose: If True, print note about suppression (default: True)
 
     Usage:
         with suppress_convergence_warnings(verbose=True):
             model.fit(X, y)
-        # Output: "  ⚠ Captured 5 convergence warnings during fitting"
     """
-    warning_count = []
-
-    def warning_handler(message, category, filename, lineno, file=None, line=None):
-        """Custom warning handler that counts ConvergenceWarnings."""
-        if category == ConvergenceWarning:
-            warning_count.append(1)
-        else:
-            # Show other warnings normally
-            warnings.showwarning(message, category, filename, lineno, file, line)
-
-    # Save old handler
-    old_showwarning = warnings.showwarning
-
-    try:
-        # Install custom handler
-        warnings.showwarning = warning_handler
+    with warnings.catch_warnings():
+        # Suppress convergence warnings
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
         yield
-    finally:
-        # Restore old handler
-        warnings.showwarning = old_showwarning
-
-        # Log summary if warnings were captured
-        if warning_count and verbose:
-            count = len(warning_count)
-            print(f"  ⚠ Captured {count} convergence warning{'s' if count != 1 else ''} during fitting")
 
 
 @dataclass(frozen=True, slots=True)

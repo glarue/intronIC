@@ -83,38 +83,17 @@ def suppress_convergence_warnings(verbose: bool = True):
     Usage:
         with suppress_convergence_warnings(verbose=True):
             grid.fit(X, y)
-        # Output: "Captured 42 convergence warnings during fitting"
+        # Output: "Suppressed convergence warnings (check max_iter if needed)"
 
     Example with nested context:
         with suppress_convergence_warnings():
             with tqdm_joblib(tqdm(total=100)):
                 grid.fit(X, y)
     """
-    warning_count = []
-
-    def warning_handler(message, category, filename, lineno, file=None, line=None):
-        """Custom warning handler that counts ConvergenceWarnings."""
-        if category == ConvergenceWarning:
-            warning_count.append(1)
-        else:
-            # Show other warnings normally
-            warnings.showwarning(message, category, filename, lineno, file, line)
-
-    # Save old handler
-    old_showwarning = warnings.showwarning
-
-    try:
-        # Install custom handler
-        warnings.showwarning = warning_handler
+    with warnings.catch_warnings():
+        # Suppress convergence warnings
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
         yield
-    finally:
-        # Restore old handler
-        warnings.showwarning = old_showwarning
-
-        # Log summary if warnings were captured
-        if warning_count and verbose:
-            count = len(warning_count)
-            print(f"  ⚠ Captured {count} convergence warning{'s' if count != 1 else ''} during fitting")
 
 
 def compute_weight_aware_C_bounds(
