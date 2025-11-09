@@ -85,6 +85,9 @@ class TrainingConfig:
     recursive_subset: Optional[int] = None
     seed: int = 42
     max_iter: int = 100000
+    eval_mode: str = 'nested_cv'
+    n_cv_folds: int = 5
+    test_fraction: float = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,7 +204,10 @@ class IntronICConfig:
             recursive=bool(args.recursive),
             recursive_subset=recursive_subset,
             seed=args.seed,
-            max_iter=args.max_iter
+            max_iter=args.max_iter,
+            eval_mode=args.eval_mode,
+            n_cv_folds=args.n_cv_folds,
+            test_fraction=args.test_fraction
         )
 
         # Performance configuration
