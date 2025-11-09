@@ -22,7 +22,7 @@ Pipeline stages:
 Port from: intronIC.py:5038-5900 (main pipeline)
 """
 
-from typing import Sequence, Optional, Tuple
+from typing import Sequence, Optional, Tuple, Any
 from dataclasses import dataclass
 
 from core.intron import Intron
@@ -44,6 +44,7 @@ class ClassificationResult:
         parameters: Optimized hyperparameters
         n_u12_reference: Number of U12 reference introns
         n_u2_reference: Number of U2 reference introns
+        eval_result: Optional evaluation results (NestedCVResult or SplitEvalResult)
     """
 
     classified_introns: Sequence[Intron]
@@ -51,6 +52,7 @@ class ClassificationResult:
     parameters: SVMParameters
     n_u12_reference: int
     n_u2_reference: int
+    eval_result: Optional[Any] = None
 
     def get_u12_predictions(self, threshold: float = 90.0) -> Sequence[Intron]:
         """
@@ -125,7 +127,10 @@ class IntronClassifier:
         fixed_c: Optional[float] = None,
         cv_processes: int = 1,
         classification_processes: int = 1,
-        max_iter: int = 100000
+        max_iter: int = 100000,
+        eval_mode: str = 'nested_cv',
+        n_cv_folds: int = 5,
+        test_fraction: float = 0.2
     ):
         """
         Initialize classifier.
@@ -142,6 +147,9 @@ class IntronClassifier:
             cv_processes: Number of parallel jobs for cross-validation (default: 1)
             classification_processes: Number of parallel jobs for classification (default: 1)
             max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
+            eval_mode: Evaluation mode: 'nested_cv', 'split', or 'none' (default: 'nested_cv')
+            n_cv_folds: Number of CV folds for nested CV (default: 5)
+            test_fraction: Test set fraction for split mode (default: 0.2)
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -154,6 +162,9 @@ class IntronClassifier:
         self.cv_processes = cv_processes
         self.classification_processes = classification_processes
         self.max_iter = max_iter
+        self.eval_mode = eval_mode
+        self.n_cv_folds = n_cv_folds
+        self.test_fraction = test_fraction
 
         # Validate parameters
         if not 0 <= classification_threshold <= 100:
@@ -162,6 +173,10 @@ class IntronClassifier:
             )
         if not optimize_c and fixed_c is None:
             raise ValueError("Must provide fixed_c if optimize_c is False")
+        if eval_mode not in ['nested_cv', 'split', 'none']:
+            raise ValueError(
+                f"eval_mode must be 'nested_cv', 'split', or 'none', got {eval_mode}"
+            )
 
     def classify(
         self,
@@ -194,6 +209,54 @@ class IntronClassifier:
         print(f"Classification pipeline starting...")
         print(f"  Reference: {len(u12_reference)} U12, {len(u2_reference)} U2")
         print(f"  Experimental: {len(experimental)} introns")
+
+        # ====================================================================
+        # PHASE 1: EVALUATION (Honest Performance Assessment)
+        # ====================================================================
+        eval_result = None
+
+        if self.eval_mode == 'nested_cv':
+            from classification.nested_cv import NestedCVEvaluator
+
+            evaluator = NestedCVEvaluator(
+                n_folds=self.n_cv_folds,
+                n_optimization_rounds=self.n_optimization_rounds,
+                n_ensemble_models=1,  # Use 1 for speed in CV
+                classification_threshold=self.classification_threshold,
+                subsample_u2=False,  # Disable for speed in CV
+                random_state=self.random_state,
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter,
+                verbose=True
+            )
+            eval_result = evaluator.evaluate(u12_reference, u2_reference)
+
+        elif self.eval_mode == 'split':
+            from classification.split_eval import SplitEvaluator
+
+            evaluator = SplitEvaluator(
+                test_fraction=self.test_fraction,
+                val_fraction=0.2,  # Fixed validation fraction
+                n_optimization_rounds=self.n_optimization_rounds,
+                n_ensemble_models=1,  # Use 1 for speed in evaluation
+                classification_threshold=self.classification_threshold,
+                subsample_u2=False,  # Disable for speed in evaluation
+                random_state=self.random_state,
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter,
+                verbose=True
+            )
+            eval_result = evaluator.evaluate(u12_reference, u2_reference)
+
+        # If eval_mode == 'none', skip evaluation entirely
+
+        # ====================================================================
+        # PHASE 2: PRODUCTION MODEL (Train on ALL reference data)
+        # ====================================================================
+        if self.eval_mode != 'none':
+            print("\n" + "="*80)
+            print("Production Model Training (all reference data)")
+            print("="*80)
 
         # Stage 1: Optimize hyperparameters
         if self.optimize_c:
@@ -257,7 +320,8 @@ class IntronClassifier:
             ensemble=ensemble,
             parameters=parameters,
             n_u12_reference=len(u12_reference),
-            n_u2_reference=len(u2_reference)
+            n_u2_reference=len(u2_reference),
+            eval_result=eval_result
         )
 
     def classify_batch(
@@ -291,27 +355,83 @@ class IntronClassifier:
         print(f"  Experimental: {len(experimental)} introns")
         print(f"  Batch size: {batch_size}")
 
-        # Stages 1-2: Optimize and train (same as regular classify)
+        # ====================================================================
+        # PHASE 1: EVALUATION (Honest Performance Assessment)
+        # ====================================================================
+        eval_result = None
+
+        if self.eval_mode == 'nested_cv':
+            from classification.nested_cv import NestedCVEvaluator
+
+            evaluator = NestedCVEvaluator(
+                n_folds=self.n_cv_folds,
+                n_optimization_rounds=self.n_optimization_rounds,
+                n_ensemble_models=1,  # Use 1 for speed in CV
+                classification_threshold=self.classification_threshold,
+                subsample_u2=False,  # Disable for speed in CV
+                random_state=self.random_state,
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter,
+                verbose=True
+            )
+            eval_result = evaluator.evaluate(u12_reference, u2_reference)
+
+        elif self.eval_mode == 'split':
+            from classification.split_eval import SplitEvaluator
+
+            evaluator = SplitEvaluator(
+                test_fraction=self.test_fraction,
+                val_fraction=0.2,  # Fixed validation fraction
+                n_optimization_rounds=self.n_optimization_rounds,
+                n_ensemble_models=1,  # Use 1 for speed in evaluation
+                classification_threshold=self.classification_threshold,
+                subsample_u2=False,  # Disable for speed in evaluation
+                random_state=self.random_state,
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter,
+                verbose=True
+            )
+            eval_result = evaluator.evaluate(u12_reference, u2_reference)
+
+        # If eval_mode == 'none', skip evaluation entirely
+
+        # ====================================================================
+        # PHASE 2: PRODUCTION MODEL (Train on ALL reference data)
+        # ====================================================================
+        if self.eval_mode != 'none':
+            print("\n" + "="*80)
+            print("Production Model Training (all reference data)")
+            print("="*80)
+
+        # Stage 1: Optimize hyperparameters
         if self.optimize_c:
             print("\n=== Stage 1: Hyperparameter Optimization ===")
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
                 random_state=self.random_state,
-                n_jobs=self.cv_processes
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter
             )
             parameters = optimizer.optimize(u12_reference, u2_reference)
+            print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
         else:
             print("\n=== Stage 1: Using Fixed C Parameter ===")
             parameters = SVMParameters(
                 C=self.fixed_c,
-                cv_score=0.0,
-                round_found=0
+                calibration_method='sigmoid',  # Default calibration method
+                dual=False,  # Primal formulation (n_samples >> n_features: 21k >> 3)
+                intercept_scaling=1000.0,  # High value to avoid over-regularizing intercept
+                cv_score=0.0,  # Not computed
+                round_found=0   # Fixed, not optimized
             )
+            print(f"Using fixed C={parameters.C:.6e}, dual={parameters.dual}, intercept_scaling={parameters.intercept_scaling}")
 
+        # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
-            random_state=self.random_state
+            random_state=self.random_state,
+            max_iter=self.max_iter
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
@@ -320,6 +440,7 @@ class IntronClassifier:
             subsample_u2=self.subsample_u2,
             subsample_ratio=self.subsample_ratio
         )
+        print(f"Ensemble trained: {len(ensemble.models)} models")
 
         # Stage 3: Classify in batches
         print("\n=== Stage 3: Classification (Batch Mode) ===")
@@ -343,7 +464,8 @@ class IntronClassifier:
             ensemble=ensemble,
             parameters=parameters,
             n_u12_reference=len(u12_reference),
-            n_u2_reference=len(u2_reference)
+            n_u2_reference=len(u2_reference),
+            eval_result=eval_result
         )
 
     def _validate_introns_have_zscores(
