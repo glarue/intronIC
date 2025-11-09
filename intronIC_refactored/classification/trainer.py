@@ -6,10 +6,11 @@ which trains multiple SVM models with different U2 subsamples to create
 a diverse ensemble for robust classification.
 
 Key features:
-- Stratified train/test splits to maintain class proportions
 - Balanced class weights to handle U12/U2 imbalance
 - Multiple models with different U2 subsamples for diversity
-- F1 score and Precision-Recall AUC for evaluation
+- External calibration for probability estimation
+
+Evaluation metrics are computed separately via nested CV or split evaluation modules.
 
 Port from: intronIC.py:5345-5430 (train_svm)
 """
@@ -19,8 +20,6 @@ from typing import Sequence, Tuple, Optional, Any
 import numpy as np
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score, average_precision_score
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
@@ -33,11 +32,8 @@ from classification.optimizer import SVMParameters
 class SVMModel:
     """Trained SVM model with metadata."""
 
-    model: Any  # Trained sklearn model (SVC with external calibration)
-    f1_score: float  # F1 on test set
-    precision_recall_auc: float  # PR-AUC on test set
+    model: Any  # Trained sklearn model (LinearSVC with external calibration)
     train_size: int  # Number of training samples
-    test_size: int  # Number of test samples
     u12_count: int  # U12 introns in training
     u2_count: int  # U2 introns in training
     parameters: SVMParameters  # Hyperparameters used
@@ -48,8 +44,6 @@ class SVMEnsemble:
     """Collection of trained models for ensemble prediction."""
 
     models: Sequence[SVMModel]
-    mean_f1: float
-    mean_pr_auc: float
 
     def __len__(self) -> int:
         return len(self.models)
@@ -62,7 +56,8 @@ class SVMTrainer:
     Handles class imbalance by:
     - Training multiple models with different U2 subsamples
     - Using balanced class weights
-    - Stratified train/test splits
+
+    Evaluation metrics are computed separately via nested CV or split evaluation.
 
     Port from: intronIC.py:5345-5430
     """
@@ -70,7 +65,6 @@ class SVMTrainer:
     def __init__(
         self,
         n_models: int = 3,
-        test_size: float = 0.2,
         random_state: int = 42,
         kernel: str = 'linear',
         max_iter: int = 100000
@@ -80,13 +74,11 @@ class SVMTrainer:
 
         Args:
             n_models: Number of models in ensemble (default: 3)
-            test_size: Fraction for test set (default: 0.2)
             random_state: Random seed
             kernel: SVM kernel type (default: 'linear')
             max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
         """
         self.n_models = n_models
-        self.test_size = test_size
         self.random_state = random_state
         self.kernel = kernel
         self.max_iter = max_iter
@@ -136,17 +128,9 @@ class SVMTrainer:
             )
             models.append(model)
 
-        # Calculate ensemble metrics
-        mean_f1 = float(np.mean([m.f1_score for m in models]))
-        mean_pr_auc = float(np.mean([m.precision_recall_auc for m in models]))
+        print(f"Ensemble training complete: {len(models)} models trained")
 
-        print(f"Ensemble training complete: mean F1={mean_f1:.4f}, mean PR-AUC={mean_pr_auc:.4f}")
-
-        return SVMEnsemble(
-            models=models,
-            mean_f1=mean_f1,
-            mean_pr_auc=mean_pr_auc
-        )
+        return SVMEnsemble(models=models)
 
     def _train_single_model(
         self,
@@ -162,14 +146,6 @@ class SVMTrainer:
         """
         # Prepare data
         X, y = self._prepare_training_data(u12_introns, u2_introns)
-
-        # Stratified train/test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            test_size=self.test_size,
-            stratify=y,
-            random_state=seed
-        )
 
         # Train LinearSVC with external calibration
         # Following sklearn best practices for rare-class classification:
@@ -206,21 +182,11 @@ class SVMTrainer:
             cv=5,  # Stratified 5-fold
             ensemble='auto'  # Per-fold calibrators averaged
         )
-        svm.fit(X_train, y_train)
-
-        # Evaluate on test set
-        y_pred = svm.predict(X_test)
-        y_proba = svm.predict_proba(X_test)[:, 1]  # U12 probabilities
-
-        f1 = f1_score(y_test, y_pred, pos_label=1)  # 1 = U12
-        pr_auc = average_precision_score(y_test, y_proba)
+        svm.fit(X, y)
 
         return SVMModel(
             model=svm,
-            f1_score=float(f1),
-            precision_recall_auc=float(pr_auc),
-            train_size=len(X_train),
-            test_size=len(X_test),
+            train_size=len(X),
             u12_count=int(np.sum(y == 1)),
             u2_count=int(np.sum(y == 0)),
             parameters=parameters
