@@ -17,15 +17,64 @@ Port from: intronIC.py:5345-5430 (train_svm)
 
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional, Any
+import warnings
+import contextlib
 import numpy as np
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
+from sklearn.exceptions import ConvergenceWarning
 
 from core.intron import Intron
 from classification.optimizer import SVMParameters
+
+
+@contextlib.contextmanager
+def suppress_convergence_warnings(verbose: bool = True):
+    """
+    Context manager to suppress sklearn ConvergenceWarning spam while logging occurrence.
+
+    During model training, convergence warnings can spam the console with
+    many identical messages. This context manager:
+    1. Captures ConvergenceWarnings silently
+    2. Counts how many were raised
+    3. Logs a summary at the end if any occurred
+
+    Args:
+        verbose: If True, print summary when warnings are captured (default: True)
+
+    Usage:
+        with suppress_convergence_warnings(verbose=True):
+            model.fit(X, y)
+        # Output: "  ⚠ Captured 5 convergence warnings during fitting"
+    """
+    warning_count = []
+
+    def warning_handler(message, category, filename, lineno, file=None, line=None):
+        """Custom warning handler that counts ConvergenceWarnings."""
+        if category == ConvergenceWarning:
+            warning_count.append(1)
+        else:
+            # Show other warnings normally
+            warnings.showwarning(message, category, filename, lineno, file, line)
+
+    # Save old handler
+    old_showwarning = warnings.showwarning
+
+    try:
+        # Install custom handler
+        warnings.showwarning = warning_handler
+        yield
+    finally:
+        # Restore old handler
+        warnings.showwarning = old_showwarning
+
+        # Log summary if warnings were captured
+        if warning_count and verbose:
+            count = len(warning_count)
+            print(f"  ⚠ Captured {count} convergence warning{'s' if count != 1 else ''} during fitting")
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +231,10 @@ class SVMTrainer:
             cv=5,  # Stratified 5-fold
             ensemble='auto'  # Per-fold calibrators averaged
         )
-        svm.fit(X, y)
+
+        # Suppress convergence warning spam but log summary
+        with suppress_convergence_warnings(verbose=True):
+            svm.fit(X, y)
 
         return SVMModel(
             model=svm,

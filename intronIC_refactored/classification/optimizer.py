@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional, Dict, Any
 import os
 import contextlib
+import warnings
 import joblib
 import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold, ParameterGrid
@@ -33,6 +34,7 @@ from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
+from sklearn.exceptions import ConvergenceWarning
 from scipy.stats import gmean
 from tqdm.auto import tqdm
 
@@ -62,6 +64,57 @@ def tqdm_joblib(tqdm_object):
     finally:
         joblib.parallel.BatchCompletionCallBack = old_batch_callback
         tqdm_object.close()
+
+
+@contextlib.contextmanager
+def suppress_convergence_warnings(verbose: bool = True):
+    """
+    Context manager to suppress sklearn ConvergenceWarning spam while logging occurrence.
+
+    During grid search or nested CV, convergence warnings can spam the console with
+    hundreds or thousands of identical messages. This context manager:
+    1. Captures ConvergenceWarnings silently
+    2. Counts how many were raised
+    3. Logs a summary at the end if any occurred
+
+    Args:
+        verbose: If True, print summary when warnings are captured (default: True)
+
+    Usage:
+        with suppress_convergence_warnings(verbose=True):
+            grid.fit(X, y)
+        # Output: "Captured 42 convergence warnings during fitting"
+
+    Example with nested context:
+        with suppress_convergence_warnings():
+            with tqdm_joblib(tqdm(total=100)):
+                grid.fit(X, y)
+    """
+    warning_count = []
+
+    def warning_handler(message, category, filename, lineno, file=None, line=None):
+        """Custom warning handler that counts ConvergenceWarnings."""
+        if category == ConvergenceWarning:
+            warning_count.append(1)
+        else:
+            # Show other warnings normally
+            warnings.showwarning(message, category, filename, lineno, file, line)
+
+    # Save old handler
+    old_showwarning = warnings.showwarning
+
+    try:
+        # Install custom handler
+        warnings.showwarning = warning_handler
+        yield
+    finally:
+        # Restore old handler
+        warnings.showwarning = old_showwarning
+
+        # Log summary if warnings were captured
+        if warning_count and verbose:
+            count = len(warning_count)
+            print(f"  ⚠ Captured {count} convergence warning{'s' if count != 1 else ''} during fitting")
 
 
 def compute_weight_aware_C_bounds(
@@ -480,10 +533,12 @@ class SVMOptimizer:
 
         if self.verbose:
             desc = f"Round {round_idx + 1}/{self.n_rounds}"
-            with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
-                grid_search.fit(X, y)
+            with suppress_convergence_warnings(verbose=True):
+                with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
+                    grid_search.fit(X, y)
         else:
-            grid_search.fit(X, y)
+            with suppress_convergence_warnings(verbose=False):
+                grid_search.fit(X, y)
 
         elapsed = time.time() - start_time
 
