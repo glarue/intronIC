@@ -706,15 +706,15 @@ def classify_with_pretrained_model(
 
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
-        # New format: {'ensemble': ..., 'normalizer': ..., 'threshold': ...}
+        # New format: {'ensemble': ..., 'threshold': ...}
         ensemble = model_data['ensemble']
         saved_threshold = model_data.get('threshold', config.scoring.threshold)
-        logger.info("Loaded model bundle (new format)")
+        logger.info("Loaded model bundle (dict format)")
     else:
         # Old format: SVMEnsemble directly (backward compatibility)
         ensemble = model_data
         saved_threshold = config.scoring.threshold
-        logger.info("Loaded model ensemble (old format - backward compatibility)")
+        logger.info("Loaded model ensemble (legacy format - backward compatibility)")
 
     logger.info(f"Loaded ensemble with {len(ensemble.models)} models")
     logger.info(f"Using threshold: {config.scoring.threshold}")
@@ -827,16 +827,15 @@ def classify_introns(
     logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
     logger.info(f"  Models trained: {metrics['n_models']}")
 
-    # Save trained model and normalizer together
+    # Save trained model (ensemble only - normalizer fitted per-species during inference)
     model_path = config.output.get_output_path('.model.pkl')
-    logger.info(f"Saving trained model and normalizer to {model_path}")
+    logger.info(f"Saving trained model to {model_path}")
     model_bundle = {
         'ensemble': result.ensemble,
-        'normalizer': normalizer,
         'threshold': config.scoring.threshold
     }
     joblib.dump(model_bundle, model_path, compress=3)
-    logger.info(f"Model bundle saved successfully")
+    logger.info(f"Model saved successfully")
 
     return list(result.classified_introns), metrics
 
