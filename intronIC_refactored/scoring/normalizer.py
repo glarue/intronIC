@@ -17,7 +17,7 @@ Design Principles:
 from typing import Literal, Optional, Iterable, Iterator
 from dataclasses import replace
 import numpy as np
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import StandardScaler
 
 from core.intron import Intron
 
@@ -44,14 +44,14 @@ class ScoreNormalizer:
         >>> normalizer.fit(experimental_introns, dataset_type="experimental")  # L Error!
 
     Attributes:
-        _scaler: sklearn RobustScaler (None until fitted)
+        _scaler: sklearn StandardScaler (None until fitted)
         _fitted_on: Which dataset type was used for fitting
         _is_fitted: Whether fit() has been called
     """
 
     def __init__(self):
         """Initialize an unfitted normalizer."""
-        self._scaler: Optional[RobustScaler] = None
+        self._scaler: Optional[StandardScaler] = None
         self._fitted_on: Optional[DatasetType] = None
         self._is_fitted: bool = False
 
@@ -103,9 +103,9 @@ class ScoreNormalizer:
         # Port from: intronIC.py:5696-5699 (get_score_vector)
         score_matrix = self._extract_score_matrix(intron_list)
 
-        # Fit RobustScaler (uses median/IQR, robust to heavy tails)
-        # Changed from StandardScaler per LinearSVC best practices
-        self._scaler = RobustScaler().fit(score_matrix)
+        # Fit StandardScaler (mean/std normalization)
+        # U12s are rare high-scoring signal, not outliers to ignore
+        self._scaler = StandardScaler().fit(score_matrix)
         self._fitted_on = dataset_type
         self._is_fitted = True
 
