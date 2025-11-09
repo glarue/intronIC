@@ -5,8 +5,16 @@ This module implements the optimization algorithm from intronIC.py:5431-5528,
 which uses 5 rounds of progressively refined grid search to find optimal
 SVM hyperparameters (specifically the soft-margin penalty C).
 
+Key improvements over original:
+- Weight-aware C bounds: Computes search range based on effective penalties
+  to avoid pathological extremes on imbalanced datasets (~1:200 U12:U2 ratio)
+- Example: Instead of C ∈ [1e-6, 1e6] → eff_C_pos ∈ [9.5e-5, 9.5e7] (BAD)
+           Use C ∈ [1e-4, 1.0] → eff_C_pos ∈ [1e-2, 1e2] (GOOD)
+- Reduces convergence warnings, speeds up CV, improves calibration
+
 Key algorithm:
-- Round 1: Coarse grid search (10^-6 to 10^6)
+- Compute weight-aware C bounds from class distribution
+- Round 1: Coarse grid search (weight-aware range)
 - Rounds 2-5: Refine around best C values from previous round
 - Final: Geometric mean of all rank-1 C values from final round
 
@@ -15,7 +23,7 @@ Related: intronIC.py:5290-5322 (helper functions)
 """
 
 from dataclasses import dataclass
-from typing import Sequence, Tuple, Optional
+from typing import Sequence, Tuple, Optional, Dict, Any
 import os
 import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold
@@ -26,6 +34,99 @@ from sklearn.preprocessing import RobustScaler
 from scipy.stats import gmean
 
 from core.intron import Intron
+
+
+def compute_weight_aware_C_bounds(
+    y: np.ndarray,
+    sample_weight: Optional[np.ndarray] = None,
+    class_weight: str = "balanced",
+    eff_C_pos_range: Tuple[float, float] = (1e-2, 1e2),
+    eff_C_neg_max: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Compute base-C bounds such that the effective positive-class penalty
+    C_eff_pos = C * w_pos * s_pos_max lies within eff_C_pos_range.
+
+    This prevents pathological extremes when using class_weight='balanced'
+    on heavily imbalanced datasets (e.g., ~1:200 U12:U2 ratio).
+
+    Args:
+        y: Binary labels (0/1 for U2/U12)
+        sample_weight: Optional per-sample weights
+        class_weight: 'balanced' or None
+        eff_C_pos_range: Target range for positive-class effective penalty (default: 1e-2 to 1e2)
+        eff_C_neg_max: Optional cap on negative-class effective penalty
+
+    Returns:
+        Dictionary with:
+            - 'C_min': Minimum base C value
+            - 'C_max': Maximum base C value
+            - 'class_weights': Dict with positive and negative class weights
+            - 'effective_C_range': Dict with effective penalties at bounds
+
+    Example:
+        With ~540 U12s and ~102K U2s:
+        - w_pos ≈ 95, w_neg ≈ 0.5 (from 'balanced')
+        - eff_C_pos_range = (1e-2, 1e2)
+        - C_min ≈ 1e-4, C_max ≈ 1.0
+        - Instead of C ∈ [1e-6, 1e6] → eff_C_pos ∈ [9.5e-5, 9.5e7]  (BAD)
+        - We get    C ∈ [1e-4, 1.0]  → eff_C_pos ∈ [1e-2, 1e2]       (GOOD)
+    """
+    y = np.asarray(y)
+    classes = np.unique(y)
+    if len(classes) != 2:
+        raise ValueError("This helper expects binary classification.")
+
+    # Map to positive/negative classes
+    pos = classes.max()  # U12 = 1
+    neg = classes.min()  # U2 = 0
+    pos_mask = (y == pos)
+    neg_mask = ~pos_mask
+    n = y.size
+    n_pos = pos_mask.sum()
+    n_neg = n - n_pos
+
+    # Compute class weights
+    if class_weight is None:
+        w_pos = w_neg = 1.0
+    elif class_weight == "balanced":
+        # sklearn rule: n / (n_classes * n_k)
+        w_pos = n / (2.0 * n_pos)
+        w_neg = n / (2.0 * n_neg)
+    else:
+        raise ValueError(f"Unsupported class_weight: {class_weight}")
+
+    # Sample weight maxima per class
+    if sample_weight is None:
+        s_pos_max = s_neg_max = 1.0
+    else:
+        sw = np.asarray(sample_weight)
+        s_pos_max = float(sw[pos_mask].max())
+        s_neg_max = float(sw[neg_mask].max())
+
+    # Derive base-C bounds from desired effective positive-class range
+    eff_C_min, eff_C_max = eff_C_pos_range
+    C_min = eff_C_min / (w_pos * s_pos_max)
+    C_max = eff_C_max / (w_pos * s_pos_max)
+
+    # Optional: also guard the negative class's effective penalty
+    if eff_C_neg_max is not None:
+        C_max = min(C_max, eff_C_neg_max / (w_neg * s_neg_max))
+
+    if not np.isfinite(C_min) or not np.isfinite(C_max) or C_max <= C_min:
+        raise ValueError(f"Invalid C bounds: C_min={C_min}, C_max={C_max}")
+
+    return {
+        'C_min': C_min,
+        'C_max': C_max,
+        'class_weights': {'pos': w_pos, 'neg': w_neg},
+        'sample_weight_max': {'pos': s_pos_max, 'neg': s_neg_max},
+        'effective_C_range': {
+            'pos': (C_min * w_pos * s_pos_max, C_max * w_pos * s_pos_max),
+            'neg': (C_min * w_neg * s_neg_max, C_max * w_neg * s_neg_max)
+        },
+        'class_counts': {'pos': int(n_pos), 'neg': int(n_neg), 'ratio': float(n_neg / n_pos)}
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,15 +208,20 @@ class SVMOptimizer:
         self,
         u12_introns: Sequence[Intron],
         u2_introns: Sequence[Intron],
-        initial_range: Tuple[float, float] = (1e-6, 1e6)
+        eff_C_pos_range: Tuple[float, float] = (1e-2, 1e2),
+        eff_C_neg_max: Optional[float] = None
     ) -> SVMParameters:
         """
         Find optimal C parameter via geometric grid search.
 
+        Uses weight-aware C bounds to avoid pathological effective penalties
+        on heavily imbalanced datasets (e.g., ~1:200 U12:U2 ratio).
+
         Args:
             u12_introns: Training U12-type introns (with z-scores)
             u2_introns: Training U2-type introns (with z-scores)
-            initial_range: Initial search range for C (min, max)
+            eff_C_pos_range: Target effective penalty range for positive class (default: 1e-2 to 1e2)
+            eff_C_neg_max: Optional cap on negative class effective penalty
 
         Returns:
             Optimized parameters with best C value
@@ -126,7 +232,26 @@ class SVMOptimizer:
         # Extract features and labels
         X, y = self._prepare_training_data(u12_introns, u2_introns)
 
-        # Initialize search range
+        # Compute weight-aware C bounds
+        bounds_info = compute_weight_aware_C_bounds(
+            y,
+            class_weight="balanced",
+            eff_C_pos_range=eff_C_pos_range,
+            eff_C_neg_max=eff_C_neg_max
+        )
+
+        if self.verbose:
+            print(f"Class distribution: {bounds_info['class_counts']['pos']} U12, "
+                  f"{bounds_info['class_counts']['neg']} U2 "
+                  f"(ratio: 1:{bounds_info['class_counts']['ratio']:.1f})")
+            print(f"Balanced class weights: w_pos={bounds_info['class_weights']['pos']:.2f}, "
+                  f"w_neg={bounds_info['class_weights']['neg']:.3f}")
+            print(f"Weight-aware C range: [{bounds_info['C_min']:.2e}, {bounds_info['C_max']:.2e}]")
+            print(f"  → Effective C_pos: {bounds_info['effective_C_range']['pos']}")
+            print(f"  → Effective C_neg: {bounds_info['effective_C_range']['neg']}")
+
+        # Initialize search range with weight-aware bounds
+        initial_range = (bounds_info['C_min'], bounds_info['C_max'])
         current_grid = self._create_initial_grid(initial_range)
 
         # Run geometric refinement
