@@ -6,6 +6,7 @@ Orchestrates the complete intron classification pipeline.
 
 import sys
 import logging
+import json
 import joblib
 from pathlib import Path
 from typing import List, Tuple
@@ -823,9 +824,34 @@ def classify_introns(
         'n_models': len(result.ensemble.models)
     }
 
+    # Add evaluation metrics if nested CV or split eval was performed
+    if result.eval_result is not None:
+        # Check if it's NestedCVResult (has mean_f1) or SplitEvalResult (has f1_score)
+        if hasattr(result.eval_result, 'mean_f1'):
+            # Nested CV result
+            metrics['mean_f1'] = result.eval_result.mean_f1
+            metrics['std_f1'] = result.eval_result.std_f1
+            metrics['mean_pr_auc'] = result.eval_result.mean_pr_auc
+            metrics['std_pr_auc'] = result.eval_result.std_pr_auc
+            metrics['n_cv_folds'] = result.eval_result.n_folds
+        elif hasattr(result.eval_result, 'f1_score'):
+            # Split evaluation result
+            metrics['f1'] = result.eval_result.f1_score
+            metrics['pr_auc'] = result.eval_result.pr_auc
+
     logger.info(f"Classification complete")
     logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
     logger.info(f"  Models trained: {metrics['n_models']}")
+
+    # Log evaluation metrics if available
+    if 'mean_f1' in metrics:
+        logger.info(f"  Nested CV results ({metrics['n_cv_folds']} folds):")
+        logger.info(f"    Mean F1: {metrics['mean_f1']:.4f} ± {metrics['std_f1']:.4f}")
+        logger.info(f"    Mean PR-AUC: {metrics['mean_pr_auc']:.4f} ± {metrics['std_pr_auc']:.4f}")
+    elif 'f1' in metrics:
+        logger.info(f"  Test set evaluation:")
+        logger.info(f"    F1: {metrics['f1']:.4f}")
+        logger.info(f"    PR-AUC: {metrics['pr_auc']:.4f}")
 
     # Save trained model (ensemble only - normalizer fitted per-species during inference)
     model_path = config.output.get_output_path('.model.pkl')
@@ -1069,6 +1095,13 @@ def run_pipeline(config: IntronICConfig):
             u2_count=u2_count,
             threshold=config.scoring.threshold
         )
+
+        # Save classification metrics to JSON file
+        if metrics:
+            metrics_path = config.output.get_output_path('.metrics.json')
+            logger.info(f"Saving classification metrics to {metrics_path}")
+            with open(metrics_path, 'w') as f:
+                json.dump(metrics, f, indent=2)
 
         # Step 6: Write outputs
         reporter.print_section("Step 6: Write Outputs", "bold blue")
