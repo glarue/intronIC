@@ -663,13 +663,11 @@ class MetaWriter:
         if intron.sequences and intron.sequences.terminal_dinucleotides:
             dnts = intron.sequences.terminal_dinucleotides
 
-        # Motif schematic (simplified - would need actual implementation)
-        motif = null  # TODO: implement motif_string property
+        # Motif schematic (using new formatting function)
+        motif = generate_motif_schematic(intron)
 
-        # Branch point context
-        bp_context = null
-        if intron.sequences and intron.sequences.bp_seq:
-            bp_context = intron.sequences.bp_seq
+        # Branch point context (using new formatting function)
+        bp_context = generate_bp_context(intron)
 
         # Length
         length = str(intron.length)
@@ -740,32 +738,62 @@ class MetaWriter:
         simple_name: bool
     ) -> str:
         """
-        Generate intron name for metadata.
+        Generate intron name matching original intronIC format.
 
-        Format: [species_]parent_index(family_size)
+        Port from: intronIC.py:622-646 (get_name)
+
+        Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
+
+        Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
 
         Args:
             intron: Intron object
-            species_name: Species name (optional)
-            simple_name: Exclude species prefix
+            species_name: Full species name (e.g., "homo_sapiens")
+            simple_name: Use simplified format (species-i_{intron_id})
 
         Returns:
-            Intron name string
+            Formatted intron name string
+
+        Examples:
+            >>> _generate_name(intron, "homo_sapiens", False)
+            'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104)'
+            >>> _generate_name(omitted_intron, "homo_sapiens", False)
+            'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i]'
         """
-        parts = []
+        if simple_name:
+            # Simple format: species-i_{intron_id}{tags}
+            # Original uses unique_num which we don't track, so use intron_id
+            species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+            omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
+            dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
+            return f"{species_abbrev}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
 
-        if species_name and not simple_name:
-            parts.append(species_name)
+        # Full format
+        if not intron.metadata:
+            # Fallback if no metadata - return intron_id
+            return intron.intron_id
 
-        if intron.metadata and intron.metadata.parent:
-            parent = intron.metadata.parent
-            index = intron.metadata.index if intron.metadata.index else 1
-            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
-            parts.append(f"{parent}_{index}({family_size})")
-        else:
-            parts.append(intron.intron_id)
+        # Species abbreviation (3+3 format)
+        species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
 
-        return '_'.join(parts) if parts else intron.intron_id
+        # Gene ID (grandparent) - preserve "gene:" prefix if present
+        grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
+
+        # Transcript ID (parent) - preserve "transcript:" prefix if present
+        parent = intron.metadata.parent if intron.metadata.parent else "?"
+
+        # Index and family size
+        index = intron.metadata.index if intron.metadata.index is not None else "?"
+        family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
+
+        # Format tags
+        omit_tag = format_omission_tag(intron.metadata.omitted)
+        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
+
+        # Build name: species-grandparent@parent-intron_index(family_size)tags
+        name = f"{species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
+
+        return name
 
 
 # ============================================================================
