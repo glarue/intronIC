@@ -297,6 +297,8 @@ class IntronFilter:
             # Duplicate found - reference the original
             intron.metadata.duplicate = region_idx[coord_key]['unique_id']
             intron.metadata.overlap = intron.metadata.duplicate
+            # Add dynamic tag for duplicates
+            intron.metadata.dynamic_tags.add('[d]')
 
         # Check for longest isoform
         # longest_isoforms dictionary already populated by _identify_longest_isoforms
@@ -307,6 +309,9 @@ class IntronFilter:
             # Check if this intron's transcript is the "longest" (first seen) for its gene
             longest_transcript = self.longest_isoforms[grandparent]
             intron.metadata.longest_isoform = (parent == longest_transcript)
+            # Add dynamic tag for non-longest isoforms
+            if not intron.metadata.longest_isoform:
+                intron.metadata.dynamic_tags.add('[i]')
         else:
             # No grandparent info, assume longest
             intron.metadata.longest_isoform = True

@@ -259,6 +259,10 @@ class SequenceExtractor:
         # Update intron metadata
         intron.metadata.noncanonical = not is_canonical
 
+        # Add dynamic tag for non-canonical introns
+        if intron.metadata.noncanonical:
+            intron.metadata.dynamic_tags.add('[n]')
+
         # Return intron with sequences
         return intron.with_sequences(sequences)
 
