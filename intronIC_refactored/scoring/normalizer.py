@@ -23,7 +23,7 @@ from core.intron import Intron
 
 
 # Type alias for dataset classification
-DatasetType = Literal["reference", "experimental"]
+DatasetType = Literal["reference", "experimental", "unlabeled"]
 
 
 class ScoreNormalizer:
@@ -63,15 +63,21 @@ class ScoreNormalizer:
         """
         Fit scaler on intron scores.
 
-        CRITICAL: This method enforces ML best practices by only allowing
-        fitting on reference data. Attempting to fit on experimental data
-        will raise ValueError.
+        This method enforces ML best practices with three dataset types:
+        - 'reference': Labeled training data (U12/U2 references) - standard case
+        - 'unlabeled': Unlabeled experimental data for domain adaptation (cross-species)
+        - 'experimental': FORBIDDEN - prevents post-classification re-normalization
 
         Args:
-            introns: Introns with raw scores populated. Should be REFERENCE
-                    introns only for proper ML practice.
-            dataset_type: Must be "reference" to prevent accidental misuse.
-                         If "experimental", raises ValueError.
+            introns: Introns with raw scores populated.
+            dataset_type:
+                - "reference": Fit on labeled training data (default)
+                - "unlabeled": Fit on unlabeled experimental data for cross-species
+                               domain adaptation. Valid because:
+                               * No label leakage (labels not used)
+                               * 99.5% U2 majority → robust estimators learn U2 baseline
+                               * Corrects covariate shift from species differences
+                - "experimental": FORBIDDEN - raises ValueError
 
         Returns:
             self (for method chaining)
@@ -81,15 +87,25 @@ class ScoreNormalizer:
             ValueError: If introns list is empty
             ValueError: If introns have missing raw scores
 
+        Cross-Species Use Case:
+            When applying pretrained models to new species without curated references,
+            fitting on unlabeled experimental data is statistically valid:
+            - It's unsupervised domain adaptation (covariate-shift correction)
+            - RobustScaler (median/IQR) is minimally affected by rare U12s (~0.5%)
+            - Captures species-specific baseline for PWM score distributions
+            - Allows pretrained SVM to detect U12s in correct coordinate system
+
         Port from: intronIC.py:3727-3731 (scale_scores - fitting part)
         DO NOT PORT: intronIC.py:5247-5251 (bad re-normalization)
         """
         # CRITICAL: Prevent Issue #1 by rejecting experimental data
+        # (experimental = labeled data after classification)
         if dataset_type == "experimental":
             raise ValueError(
                 "Cannot fit normalizer on experimental data! "
                 "This would cause data leakage and invalidate ML evaluation. "
-                "Use dataset_type='reference' for training/reference data only."
+                "Use dataset_type='reference' for training/reference data, or "
+                "dataset_type='unlabeled' for cross-species domain adaptation."
             )
 
         # Convert to list to check length and iterate multiple times

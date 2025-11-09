@@ -672,17 +672,28 @@ def classify_with_pretrained_model(
     reporter: IntronICProgressReporter,
     logger: logging.Logger
 ) -> Tuple[List[Intron], dict]:
-    """Classify introns using a pretrained model.
+    """Classify introns using a pretrained model with cross-species domain adaptation.
+
+    This function enables applying a trained SVM to new species without curated references.
+    It implements unsupervised domain adaptation by fitting the normalizer on unlabeled
+    experimental data, which is statistically valid because:
+    - 99.5% of introns are U2-type → robust estimators learn species-specific U2 baseline
+    - No label leakage (normalization uses only marginal feature distribution)
+    - Corrects covariate shift from species-specific sequence characteristics
 
     Args:
         introns: Experimental introns (scored, not normalized)
-        model_path: Path to pretrained model file
+        model_path: Path to pretrained model file (.model.pkl)
         config: Pipeline configuration
         reporter: Progress reporter
         logger: Logger instance
 
     Returns:
         Tuple of (classified introns, classification metrics)
+
+    Note:
+        The saved normalizer from training is NOT used. Instead, we fit a new normalizer
+        on the experimental data to correct for species-specific score distributions.
     """
     reporter.print_info(f"Loading pretrained model from {model_path}")
     logger.info(f"Loading pretrained model from {model_path}")
@@ -693,15 +704,22 @@ def classify_with_pretrained_model(
 
     model_bundle = joblib.load(model_path)
     ensemble = model_bundle['ensemble']
-    normalizer = model_bundle['normalizer']
     saved_threshold = model_bundle.get('threshold', config.scoring.threshold)
 
     logger.info(f"Loaded ensemble with {len(ensemble.models)} models")
     logger.info(f"Saved threshold: {saved_threshold}")
 
-    # Normalize experimental introns using loaded normalizer
-    reporter.print_info("Normalizing scores with loaded normalizer")
-    logger.info("Normalizing experimental introns")
+    # Fit normalizer on experimental data (cross-species domain adaptation)
+    # This is statistically valid for pretrained models:
+    # - Corrects covariate shift from species-specific score distributions
+    # - No label leakage (labels not used, only marginal feature distribution)
+    # - RobustScaler minimally affected by rare U12s (~0.5% of data)
+    reporter.print_info("Fitting normalizer on experimental data (domain adaptation)")
+    logger.info(f"Fitting normalizer on {len(introns)} experimental introns")
+
+    normalizer = ScoreNormalizer()
+    normalizer.fit(introns, dataset_type='unlabeled')
+
     normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
     logger.info(f"Normalized {len(normalized_introns)} experimental introns")
 
