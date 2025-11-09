@@ -1,29 +1,160 @@
 """
-Score normalization with ML integrity guarantees.
+Score normalization with Zero-Anchored Robust (ZAR) scaling.
 
-This module implements z-score normalization for intron PWM scores while
-preventing data leakage through API design.
+This module implements ZAR normalization for intron PWM log-odds ratio scores.
+ZAR preserves the semantic zero of LLRs while correcting for dispersion shifts.
 
-CRITICAL: This implementation fixes Issue #1 from SCORING_ANALYSIS.md by
-making it impossible to accidentally fit the normalizer on experimental data.
+CRITICAL: This implementation:
+1. Preserves semantic zero (zero = "U12 and U2 equally plausible")
+2. Prevents data leakage through explicit dataset_type API
+3. Enables cross-species deployment via unlabeled domain adaptation
 
 Design Principles:
-1. Explicit dataset_type parameter forces conscious decision
-2. Fitting on experimental data raises ValueError (fail-fast)
-3. Statistics are frozen after fitting (immutable)
-4. Clear separation between reference and experimental data
+1. Zero-anchored: Scale by spread around zero, never center
+2. Robust: Use median of absolute values with winsorization
+3. Explicit dataset_type parameter forces conscious decision
+4. Statistics frozen after fitting (immutable)
+
+Expert Guidance:
+For LLR features s = log(P(seq|PWM_U12)) - log(P(seq|PWM_U2)):
+- Zero means "U12 ≈ U2" (preserve this!)
+- Centering destroys semantic information
+- Scale by median(|s|) after winsorizing at 99.5th percentile
 """
 
 from typing import Literal, Optional, Iterable, Iterator
 from dataclasses import replace
 import numpy as np
-from sklearn.preprocessing import RobustScaler
 
 from core.intron import Intron
 
 
 # Type alias for dataset classification
 DatasetType = Literal["reference", "experimental", "unlabeled"]
+
+
+class ZeroAnchoredRobustScaler:
+    """
+    Zero-Anchored Robust (ZAR) scaler for log-odds ratio features.
+
+    Scales features by robust spread around zero WITHOUT centering,
+    preserving the semantic zero point of log-likelihood ratios.
+
+    Standard approach (RobustScaler):
+        z = (s - median) / IQR  ❌ Destroys semantic zero
+
+    ZAR approach:
+        z = s / median(|s|)     ✅ Preserves zero point
+
+    The transformation:
+    1. Winsorize |s| at high quantile (default: 99.5%) to reduce outlier impact
+    2. Compute scale = median(winsorized |s|)
+    3. Transform: z = s / scale
+
+    Properties:
+    - Zero stays zero (s=0 → z=0)
+    - Sign preserved (s>0 → z>0, s<0 → z<0)
+    - Robust to outliers (winsorization + median)
+    - Minimal contamination from rare U12s (~0.5% of data)
+
+    Attributes:
+        scales_: Per-feature scale factors (shape: n_features)
+        winsor_quantile_: Quantile for winsorization (default: 0.995)
+
+    Example:
+        >>> scaler = ZeroAnchoredRobustScaler()
+        >>> X_scaled = scaler.fit_transform(X_train)
+        >>> X_test_scaled = scaler.transform(X_test)
+    """
+
+    def __init__(self, winsor_quantile: float = 0.995):
+        """
+        Initialize ZAR scaler.
+
+        Args:
+            winsor_quantile: Quantile for winsorizing |s| (default: 0.995)
+                            Clamps extreme values before computing median
+        """
+        self.winsor_quantile_ = winsor_quantile
+        self.scales_: Optional[np.ndarray] = None
+
+    def fit(self, X: np.ndarray) -> "ZeroAnchoredRobustScaler":
+        """
+        Fit ZAR scaler on training data.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features)
+               For intron scoring: (n_introns, 3) for [five, bp, three] LLRs
+
+        Returns:
+            self (for method chaining)
+
+        Algorithm:
+            For each feature d:
+            1. Take absolute values: |s_d|
+            2. Winsorize at quantile q: clip(|s_d|, 0, Q_q)
+            3. Compute scale: σ_d = median(winsorized)
+            4. Store for transform: s → s/σ_d
+        """
+        X = np.asarray(X)
+
+        # Compute per-feature scales
+        scales = []
+        for feature_idx in range(X.shape[1]):
+            feature_values = X[:, feature_idx]
+
+            # Take absolute values
+            abs_values = np.abs(feature_values)
+
+            # Winsorize: clip at quantile to reduce outlier impact
+            clip_value = np.quantile(abs_values, self.winsor_quantile_)
+            winsorized = np.clip(abs_values, 0, clip_value)
+
+            # Compute robust spread: median of winsorized absolute values
+            scale = np.median(winsorized)
+
+            # Handle edge case: all values near zero
+            if scale == 0.0 or not np.isfinite(scale):
+                scale = 1.0  # Fallback to no scaling
+
+            scales.append(scale)
+
+        self.scales_ = np.array(scales)
+        return self
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """
+        Transform features using fitted scales.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features)
+
+        Returns:
+            Scaled features: z = s / scale (zero preserved)
+
+        Raises:
+            RuntimeError: If fit() hasn't been called yet
+        """
+        if self.scales_ is None:
+            raise RuntimeError("Must call fit() before transform()")
+
+        X = np.asarray(X)
+
+        # Divide by scales (element-wise per feature)
+        # Broadcasting: (n_samples, n_features) / (n_features,)
+        return X / self.scales_
+
+    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+        """
+        Fit and transform in one step.
+
+        Args:
+            X: Feature matrix
+
+        Returns:
+            Scaled features
+        """
+        return self.fit(X).transform(X)
 
 
 class ScoreNormalizer:
@@ -51,7 +182,7 @@ class ScoreNormalizer:
 
     def __init__(self):
         """Initialize an unfitted normalizer."""
-        self._scaler: Optional[RobustScaler] = None
+        self._scaler: Optional[ZeroAnchoredRobustScaler] = None
         self._fitted_on: Optional[DatasetType] = None
         self._is_fitted: bool = False
 
@@ -119,9 +250,9 @@ class ScoreNormalizer:
         # Port from: intronIC.py:5696-5699 (get_score_vector)
         score_matrix = self._extract_score_matrix(intron_list)
 
-        # Fit RobustScaler (median/IQR normalization)
-        # Uses middle 50% for scaling, giving better differentiation for tail values (U12s)
-        self._scaler = RobustScaler().fit(score_matrix)
+        # Fit Zero-Anchored Robust (ZAR) scaler
+        # Scales by median(|s|) after winsorization, preserving semantic zero
+        self._scaler = ZeroAnchoredRobustScaler().fit(score_matrix)
         self._fitted_on = dataset_type
         self._is_fitted = True
 
