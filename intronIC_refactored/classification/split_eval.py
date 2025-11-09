@@ -241,9 +241,9 @@ class SplitEvaluator:
         y_pred = []
         y_proba = []
         for intron in predicted_introns:
-            if intron.metadata and intron.metadata.svm_score is not None:
-                y_proba.append(intron.metadata.svm_score / 100.0)  # Convert to 0-1 range
-                y_pred.append(1 if intron.metadata.type_id == 'u12' else 0)
+            if intron.scores and intron.scores.svm_score is not None:
+                y_proba.append(intron.scores.svm_score / 100.0)  # Convert to 0-1 range
+                y_pred.append(1 if intron.type_id == 'u12' else 0)
             else:
                 # Shouldn't happen, but handle gracefully
                 y_proba.append(0.0)
