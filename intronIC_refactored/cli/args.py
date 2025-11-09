@@ -231,6 +231,24 @@ Examples:
             default=100000,
             help='Maximum iterations for LinearSVC convergence (default: 100000)'
         )
+        training_group.add_argument(
+            '--eval_mode',
+            choices=['nested_cv', 'split', 'none'],
+            default='nested_cv',
+            help='Model evaluation mode: nested_cv (default), split, or none'
+        )
+        training_group.add_argument(
+            '--n_cv_folds',
+            type=int,
+            default=5,
+            help='Number of folds for nested cross-validation (default: 5)'
+        )
+        training_group.add_argument(
+            '--test_fraction',
+            type=float,
+            default=0.2,
+            help='Test set fraction for split evaluation mode (default: 0.2)'
+        )
 
         # Scoring region coordinates
         coords_group = parser.add_argument_group('scoring region coordinates')
@@ -337,6 +355,14 @@ Examples:
         # Threshold validation
         if not 0 <= args.threshold <= 100:
             self.parser.error("Threshold must be between 0 and 100")
+
+        # Test fraction validation
+        if not 0 < args.test_fraction < 1:
+            self.parser.error("Test fraction must be between 0 and 1")
+
+        # CV folds validation
+        if args.n_cv_folds < 2:
+            self.parser.error("Number of CV folds must be >= 2")
 
         # Process count validation
         if args.processes < 1:
