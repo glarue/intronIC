@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional
 import os
 import numpy as np
-from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split, StratifiedKFold
+from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
@@ -285,14 +285,6 @@ class SVMOptimizer:
             ensemble='auto'  # Per-fold fit + averaging
         )
 
-        # Use 80% train split for GridSearchCV (matches original)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            train_size=0.80,
-            stratify=y,
-            random_state=self.random_state + round_idx
-        )
-
         # Optimize C, dual, intercept_scaling, and calibration method
         # Use neg_log_loss to optimize for probability quality (best practice)
         # This is critical when deploying at custom thresholds (e.g., 0.90)
@@ -327,10 +319,10 @@ class SVMOptimizer:
             import sys
             sys.stdout.flush()
 
-        # Fit on 80% subset for faster optimization
+        # Fit grid search on all data (internal CV provides validation)
         import time
         start_time = time.time()
-        grid_search.fit(X_train, y_train)
+        grid_search.fit(X, y)
         elapsed = time.time() - start_time
 
         if self.verbose:
