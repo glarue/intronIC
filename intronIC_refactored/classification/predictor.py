@@ -73,9 +73,16 @@ def _predict_chunk_worker(
 
     probas = np.array(probas)
 
-    # F1-weighted averaging
-    f1_scores = np.array([m.f1_score for m in ensemble.models])
-    weights = f1_scores / f1_scores.sum()
+    # F1-weighted averaging (if f1_scores available), else equal weights
+    # In nested CV, models don't have f1_scores, so use equal weights
+    try:
+        f1_scores = np.array([m.f1_score for m in ensemble.models])
+        weights = f1_scores / f1_scores.sum()
+    except AttributeError:
+        # Models don't have f1_scores (e.g., from nested CV)
+        # Use equal weights
+        weights = np.ones(len(ensemble.models)) / len(ensemble.models)
+
     avg_probas = np.dot(weights, probas)
 
     # Convert to 0-100 scale
