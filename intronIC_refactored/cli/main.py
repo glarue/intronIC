@@ -702,12 +702,22 @@ def classify_with_pretrained_model(
     if not model_path.exists():
         raise FileNotFoundError(f"Pretrained model not found: {model_path}")
 
-    model_bundle = joblib.load(model_path)
-    ensemble = model_bundle['ensemble']
-    saved_threshold = model_bundle.get('threshold', config.scoring.threshold)
+    model_data = joblib.load(model_path)
+
+    # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
+    if isinstance(model_data, dict):
+        # New format: {'ensemble': ..., 'normalizer': ..., 'threshold': ...}
+        ensemble = model_data['ensemble']
+        saved_threshold = model_data.get('threshold', config.scoring.threshold)
+        logger.info("Loaded model bundle (new format)")
+    else:
+        # Old format: SVMEnsemble directly (backward compatibility)
+        ensemble = model_data
+        saved_threshold = config.scoring.threshold
+        logger.info("Loaded model ensemble (old format - backward compatibility)")
 
     logger.info(f"Loaded ensemble with {len(ensemble.models)} models")
-    logger.info(f"Saved threshold: {saved_threshold}")
+    logger.info(f"Using threshold: {config.scoring.threshold}")
 
     # Fit normalizer on experimental data (cross-species domain adaptation)
     # This is statistically valid for pretrained models:
