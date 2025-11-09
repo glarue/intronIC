@@ -88,6 +88,264 @@ def generate_attributes(intron: Intron) -> str:
 
 
 # ============================================================================
+# Formatting Helper Functions
+# ============================================================================
+
+def generate_species_abbreviation(species_name: str) -> str:
+    """
+    Generate 3+3 character abbreviation from species name.
+
+    Follows original intronIC convention: first 3 chars of genus +
+    first 3 chars of species epithet, with title case.
+
+    Port from: intronIC.py (inferred from output format)
+
+    Args:
+        species_name: Full species name (e.g., "homo_sapiens" or "Homo sapiens")
+
+    Returns:
+        6-character abbreviation (e.g., "HomSap")
+
+    Examples:
+        >>> generate_species_abbreviation("homo_sapiens")
+        'HomSap'
+        >>> generate_species_abbreviation("drosophila_melanogaster")
+        'DroMel'
+        >>> generate_species_abbreviation("c_elegans")
+        'CEle'
+        >>> generate_species_abbreviation("Arabidopsis thaliana")
+        'AraTha'
+    """
+    # Normalize: replace underscores with spaces, split on whitespace
+    parts = species_name.replace('_', ' ').strip().split()
+
+    if len(parts) >= 2:
+        # Standard binomial nomenclature: Genus species
+        genus = parts[0]
+        species = parts[1]
+
+        # First 3 chars of each, with title case (capitalize first letter)
+        genus_abbrev = genus[:3].capitalize()
+        species_abbrev = species[:3].capitalize()
+
+        return genus_abbrev + species_abbrev
+
+    elif len(parts) == 1:
+        # Single name (unusual case)
+        name = parts[0]
+        if len(name) >= 6:
+            # Take first 6 chars
+            return name[:6].capitalize()
+        else:
+            # Pad short names with 'X'
+            return (name[:1].upper() + name[1:].lower()).ljust(6, 'X')
+
+    else:
+        # Empty or invalid - return placeholder
+        return "XXXXXX"
+
+
+def format_omission_tag(omitted: Optional[str]) -> str:
+    """
+    Format omission tag for intron name.
+
+    Port from: intronIC.py:629-632
+
+    Args:
+        omitted: Omission code (s/a/n/i/v) or None
+
+    Returns:
+        Formatted tag like ';[o:s]' or empty string if not omitted
+
+    Examples:
+        >>> format_omission_tag('s')
+        ';[o:s]'
+        >>> format_omission_tag('n')
+        ';[o:n]'
+        >>> format_omission_tag(None)
+        ''
+    """
+    if omitted:
+        return f';[o:{omitted}]'
+    return ''
+
+
+def format_dynamic_tags(tags: set[str]) -> str:
+    """
+    Format dynamic tags for intron name.
+
+    Port from: intronIC.py:633-636
+
+    Dynamic tags track various intron states:
+    - [c:N]: Boundary corrected by N bases
+    - [d]: Duplicate marker
+    - [e]: Edge case
+    - [n]: Non-canonical
+    - [i]: Isoform-related
+    - Terminal dinucleotides (e.g., GC-AG)
+
+    Args:
+        tags: Set of tag strings (may or may not have brackets)
+
+    Returns:
+        Formatted tag string like ';[c:5];[d]' or empty string if no tags
+
+    Examples:
+        >>> format_dynamic_tags({'[c:5]', '[d]'})
+        ';[c:5];[d]'
+        >>> format_dynamic_tags({'c:5', 'd'})
+        ';[c:5];[d]'
+        >>> format_dynamic_tags(set())
+        ''
+        >>> format_dynamic_tags({'[n]', 'GC-AG'})
+        ';[GC-AG];[n]'
+    """
+    if not tags:
+        return ''
+
+    # Ensure all tags have brackets
+    formatted_tags = []
+    for tag in sorted(tags):  # Sort for deterministic output
+        if not tag.startswith('['):
+            tag = f'[{tag}]'
+        formatted_tags.append(tag)
+
+    return ';' + ';'.join(formatted_tags)
+
+
+def generate_motif_schematic(intron: Intron, exonic: int = 3) -> str:
+    """
+    Generate motif schematic string for .meta.iic output.
+
+    Port from: intronIC.py:725-742 (motif_string)
+
+    Format: {exon_3bp}|{5'_10bp}...{bp_u12}/{bp_u2}...{3'_display}|{exon_3bp}
+
+    Example: AAG|GTCGGGGCTT...TACTAAC/CACAG...TTTAG|TCC
+
+    Args:
+        intron: Intron object with sequences
+        exonic: Number of exonic bases to show (default: 3)
+
+    Returns:
+        Motif schematic string or '.' if sequences missing
+
+    Examples:
+        >>> # intron with all sequences populated
+        >>> schematic = generate_motif_schematic(intron)
+        >>> schematic
+        'AAG|GTCGGGGCTT...TACTAAC/CACAG...TTTAG|TCC'
+    """
+    if not intron.sequences:
+        return '.'
+
+    seqs = intron.sequences
+
+    # Check for required sequences
+    if not all([
+        seqs.upstream_flank,
+        seqs.five_display_seq,
+        seqs.three_display_seq,
+        seqs.downstream_flank
+    ]):
+        return '.'
+
+    # Five prime boundary: {last 3bp of exon}|{first 10bp of intron}
+    five_boundary = f"{seqs.upstream_flank[-exonic:]}|{seqs.five_display_seq}"
+
+    # Three prime boundary: {last Nbp of intron}|{first 3bp of exon}
+    three_boundary = f"{seqs.three_display_seq}|{seqs.downstream_flank[:exonic]}"
+
+    # Branch point display: {U12_bp}/{U2_bp} or just {U12_bp} if U2 missing
+    bps_display = None
+    if seqs.bp_seq and seqs.bp_seq_u2:
+        bps_display = f"{seqs.bp_seq}/{seqs.bp_seq_u2}"
+    elif seqs.bp_seq:
+        bps_display = seqs.bp_seq
+
+    # Assemble schematic with '...' separators
+    schematic_parts = [five_boundary]
+    if bps_display:
+        schematic_parts.append(bps_display)
+    schematic_parts.append(three_boundary)
+
+    return '...'.join(schematic_parts)
+
+
+def annotate_sequence(sequence: str, start: int, stop: int) -> str:
+    """
+    Add brackets around substring.
+
+    Port from: intronIC.py:3208-3211
+
+    Args:
+        sequence: Full sequence
+        start: Start position (0-based)
+        stop: Stop position (0-based, exclusive)
+
+    Returns:
+        Annotated sequence with [brackets] around substring
+
+    Examples:
+        >>> annotate_sequence("ABCDEFGH", 2, 5)
+        'AB[CDE]FGH'
+        >>> annotate_sequence("TTGACAGGTACTAACGACTGA", 8, 15)
+        'TTGACAGG[TACTAAC]GACTGA'
+    """
+    return sequence[:start] + '[' + sequence[start:stop] + ']' + sequence[stop:]
+
+
+def generate_bp_context(intron: Intron) -> str:
+    """
+    Generate branch point context string for .meta.iic output.
+
+    Port from: intronIC.py:744-752 (bps_context), 3223-3226
+
+    Format: {bp_region with [brackets] around bp_seq} + {three_display_seq}
+
+    Example: TTGACAGGCAGTGATAT[TACTAAC]GACTGAGTTTAG
+
+    The BP sequence is wrapped in brackets within the bp_region_seq,
+    then the three_display_seq is appended.
+
+    Args:
+        intron: Intron object with sequences
+
+    Returns:
+        BP context string or '.' if sequences missing
+
+    Examples:
+        >>> # intron with BP information populated
+        >>> context = generate_bp_context(intron)
+        >>> context
+        'TTGACAGGCAGTGATAT[TACTAAC]GACTGAGTTTAG'
+    """
+    if not intron.sequences:
+        return '.'
+
+    seqs = intron.sequences
+
+    # Check for required sequences
+    if not all([
+        seqs.bp_region_seq,
+        seqs.bp_relative_coords,
+        seqs.three_display_seq
+    ]):
+        return '.'
+
+    try:
+        start, stop = seqs.bp_relative_coords
+        # Annotate BP region with brackets around the BP sequence
+        annotated_bp_region = annotate_sequence(seqs.bp_region_seq, start, stop)
+        # Append three_display_seq
+        context = annotated_bp_region + seqs.three_display_seq
+        return context
+    except Exception:
+        # If any error (e.g., invalid coordinates), return placeholder
+        return '.'
+
+
+# ============================================================================
 # BED Format Writer
 # ============================================================================
 
