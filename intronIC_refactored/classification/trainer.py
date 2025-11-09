@@ -92,7 +92,7 @@ class SVMTrainer:
         n_models: int = 3,
         random_state: int = 42,
         kernel: str = 'linear',
-        max_iter: int = 100000
+        max_iter: int = 20000
     ):
         """
         Initialize trainer.
@@ -101,7 +101,7 @@ class SVMTrainer:
             n_models: Number of models in ensemble (default: 3)
             random_state: Random seed
             kernel: SVM kernel type (default: 'linear')
-            max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
+            max_iter: Maximum iterations for LinearSVC convergence (default: 20000)
         """
         self.n_models = n_models
         self.random_state = random_state

@@ -127,7 +127,7 @@ class IntronClassifier:
         fixed_c: Optional[float] = None,
         cv_processes: int = 1,
         classification_processes: int = 1,
-        max_iter: int = 100000,
+        max_iter: int = 20000,
         eval_mode: str = 'nested_cv',
         n_cv_folds: int = 5,
         test_fraction: float = 0.2
@@ -146,7 +146,7 @@ class IntronClassifier:
             fixed_c: Fixed C value if not optimizing (default: None)
             cv_processes: Number of parallel jobs for cross-validation (default: 1)
             classification_processes: Number of parallel jobs for classification (default: 1)
-            max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
+            max_iter: Maximum iterations for LinearSVC convergence (default: 20000)
             eval_mode: Evaluation mode: 'nested_cv', 'split', or 'none' (default: 'nested_cv')
             n_cv_folds: Number of CV folds for nested CV (default: 5)
             test_fraction: Test set fraction for split mode (default: 0.2)
