@@ -88,6 +88,7 @@ class TrainingConfig:
     eval_mode: str = 'nested_cv'
     n_cv_folds: int = 5
     test_fraction: float = 0.2
+    pretrained_model_path: Optional[Path] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +208,8 @@ class IntronICConfig:
             max_iter=args.max_iter,
             eval_mode=args.eval_mode,
             n_cv_folds=args.n_cv_folds,
-            test_fraction=args.test_fraction
+            test_fraction=args.test_fraction,
+            pretrained_model_path=args.pretrained_model
         )
 
         # Performance configuration

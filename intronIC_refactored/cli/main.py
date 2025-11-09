@@ -574,7 +574,7 @@ def normalize_scores(
     config: IntronICConfig,
     reporter: IntronICProgressReporter,
     logger: logging.Logger
-) -> Tuple[List[Intron], List[Intron], List[Intron]]:
+) -> Tuple[List[Intron], List[Intron], List[Intron], 'ScoreNormalizer']:
     """Normalize intron scores using z-score transformation.
 
     Args:
@@ -584,7 +584,7 @@ def normalize_scores(
         logger: Logger instance
 
     Returns:
-        Tuple of (normalized experimental introns, u12 reference, u2 reference)
+        Tuple of (normalized experimental introns, u12 reference, u2 reference, normalizer)
     """
     reporter.print_info("Loading reference sequences")
     logger.info("Loading reference sequences for normalization")
@@ -662,13 +662,79 @@ def normalize_scores(
 
     logger.info(f"Normalized {len(normalized_introns)} experimental introns")
     logger.info(f"Normalized {len(u12_normalized)} U12 and {len(u2_normalized)} U2 reference introns")
-    return normalized_introns, u12_normalized, u2_normalized
+    return normalized_introns, u12_normalized, u2_normalized, normalizer
+
+
+def classify_with_pretrained_model(
+    introns: List[Intron],
+    model_path: Path,
+    config: IntronICConfig,
+    reporter: IntronICProgressReporter,
+    logger: logging.Logger
+) -> Tuple[List[Intron], dict]:
+    """Classify introns using a pretrained model.
+
+    Args:
+        introns: Experimental introns (scored, not normalized)
+        model_path: Path to pretrained model file
+        config: Pipeline configuration
+        reporter: Progress reporter
+        logger: Logger instance
+
+    Returns:
+        Tuple of (classified introns, classification metrics)
+    """
+    reporter.print_info(f"Loading pretrained model from {model_path}")
+    logger.info(f"Loading pretrained model from {model_path}")
+
+    # Load model bundle
+    if not model_path.exists():
+        raise FileNotFoundError(f"Pretrained model not found: {model_path}")
+
+    model_bundle = joblib.load(model_path)
+    ensemble = model_bundle['ensemble']
+    normalizer = model_bundle['normalizer']
+    saved_threshold = model_bundle.get('threshold', config.scoring.threshold)
+
+    logger.info(f"Loaded ensemble with {len(ensemble.models)} models")
+    logger.info(f"Saved threshold: {saved_threshold}")
+
+    # Normalize experimental introns using loaded normalizer
+    reporter.print_info("Normalizing scores with loaded normalizer")
+    logger.info("Normalizing experimental introns")
+    normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
+    logger.info(f"Normalized {len(normalized_introns)} experimental introns")
+
+    # Classify using loaded ensemble
+    reporter.print_info("Classifying with pretrained model")
+    logger.info("Classifying introns with loaded ensemble")
+
+    from classification.predictor import SVMPredictor
+    predictor = SVMPredictor(
+        threshold=config.scoring.threshold,  # Use config threshold (can override saved)
+        n_jobs=config.performance.processes
+    )
+
+    classified_introns = list(predictor.predict(ensemble, normalized_introns))
+    logger.info(f"Classified {len(classified_introns)} introns")
+
+    # Create metrics (limited since we skipped training)
+    metrics = {
+        'optimized_C': 'N/A (pretrained)',
+        'cv_score': 'N/A (pretrained)',
+        'n_models': len(ensemble.models),
+        'pretrained': True,
+        'model_path': str(model_path)
+    }
+
+    return classified_introns, metrics
 
 
 def classify_introns(
     introns: List[Intron],
     u12_reference: List[Intron],
     u2_reference: List[Intron],
+    normalizer: 'ScoreNormalizer',
     config: IntronICConfig,
     reporter: IntronICProgressReporter,
     logger: logging.Logger
@@ -679,6 +745,7 @@ def classify_introns(
         introns: List of introns with z-scores
         u12_reference: U12 reference introns (scored and normalized)
         u2_reference: U2 reference introns (scored and normalized)
+        normalizer: Fitted normalizer used for score transformation
         config: Pipeline configuration
         reporter: Progress reporter
         logger: Logger instance
@@ -732,11 +799,16 @@ def classify_introns(
     logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
     logger.info(f"  Models trained: {metrics['n_models']}")
 
-    # Save trained model
+    # Save trained model and normalizer together
     model_path = config.output.get_output_path('.model.pkl')
-    logger.info(f"Saving trained model to {model_path}")
-    joblib.dump(result.ensemble, model_path, compress=3)
-    logger.info(f"Model saved successfully")
+    logger.info(f"Saving trained model and normalizer to {model_path}")
+    model_bundle = {
+        'ensemble': result.ensemble,
+        'normalizer': normalizer,
+        'threshold': config.scoring.threshold
+    }
+    joblib.dump(model_bundle, model_path, compress=3)
+    logger.info(f"Model bundle saved successfully")
 
     return list(result.classified_introns), metrics
 
@@ -932,20 +1004,30 @@ def run_pipeline(config: IntronICConfig):
         scored_introns = score_introns(introns_for_scoring, config, reporter, logger)
         reporter.print_success(f"Scored {len(scored_introns):,} introns")
 
-        # Step 4: Normalize scores
-        reporter.print_section("Step 4: Normalize Scores", "bold blue")
-        reporter.print_pipeline_steps(pipeline_steps, current_step=4)
-        normalized_introns, u12_reference, u2_reference = normalize_scores(
-            scored_introns, config, reporter, logger
-        )
-        reporter.print_success("Scores normalized")
+        # Check if using pretrained model
+        if config.training.pretrained_model_path:
+            # Skip normalization/training - use pretrained model
+            reporter.print_section("Step 4-5: Classify with Pretrained Model", "bold blue")
+            reporter.print_pipeline_steps(pipeline_steps, current_step=4)
+            classified_introns, metrics = classify_with_pretrained_model(
+                scored_introns, config.training.pretrained_model_path, config, reporter, logger
+            )
+        else:
+            # Normal flow: normalize + train + classify
+            # Step 4: Normalize scores
+            reporter.print_section("Step 4: Normalize Scores", "bold blue")
+            reporter.print_pipeline_steps(pipeline_steps, current_step=4)
+            normalized_introns, u12_reference, u2_reference, normalizer = normalize_scores(
+                scored_introns, config, reporter, logger
+            )
+            reporter.print_success("Scores normalized")
 
-        # Step 5: Classify
-        reporter.print_section("Step 5: Classify Introns", "bold blue")
-        reporter.print_pipeline_steps(pipeline_steps, current_step=5)
-        classified_introns, metrics = classify_introns(
-            normalized_introns, u12_reference, u2_reference, config, reporter, logger
-        )
+            # Step 5: Classify
+            reporter.print_section("Step 5: Classify Introns", "bold blue")
+            reporter.print_pipeline_steps(pipeline_steps, current_step=5)
+            classified_introns, metrics = classify_introns(
+                normalized_introns, u12_reference, u2_reference, normalizer, config, reporter, logger
+            )
 
         # Count classifications
         u12_count = sum(

@@ -249,6 +249,11 @@ Examples:
             default=0.2,
             help='Test set fraction for split evaluation mode (default: 0.2)'
         )
+        training_group.add_argument(
+            '--pretrained_model',
+            type=Path,
+            help='Path to pretrained model file (.model.pkl). Skips training and uses saved model for classification'
+        )
 
         # Scoring region coordinates
         coords_group = parser.add_argument_group('scoring region coordinates')
