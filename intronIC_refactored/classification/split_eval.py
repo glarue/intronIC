@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Sequence
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score, average_precision_score
+from sklearn.metrics import f1_score, average_precision_score, precision_recall_curve
 
 from core.intron import Intron
 from classification.optimizer import SVMOptimizer
@@ -30,6 +30,8 @@ class SplitEvalResult:
 
     test_f1: float
     test_pr_auc: float
+    precision: np.ndarray  # Precision values for PR curve
+    recall: np.ndarray  # Recall values for PR curve
     n_u12_train: int
     n_u2_train: int
     n_u12_val: int
@@ -276,9 +278,14 @@ class SplitEvaluator:
         f1 = f1_score(test_labels, y_pred, pos_label=1)
         pr_auc = average_precision_score(test_labels, y_proba)
 
+        # Compute precision-recall curve for plotting
+        precision, recall, _ = precision_recall_curve(test_labels, y_proba, pos_label=1)
+
         result = SplitEvalResult(
             test_f1=float(f1),
             test_pr_auc=float(pr_auc),
+            precision=precision,
+            recall=recall,
             n_u12_train=n_u12_train,
             n_u2_train=n_u2_train,
             n_u12_val=n_u12_val,

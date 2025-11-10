@@ -855,6 +855,48 @@ def classify_introns(
         logger.info(f"    F1: {metrics['f1']:.4f}")
         logger.info(f"    PR-AUC: {metrics['pr_auc']:.4f}")
 
+    # Generate training reference plots if evaluation was performed
+    if result.eval_result is not None:
+        logger.info("Generating training reference plots")
+        try:
+            from visualization.plots import plot_training_results
+
+            # Extract normalized z-scores from reference introns
+            u2_scores = np.array([
+                [i.scores.five_z_score, i.scores.bp_z_score]
+                for i in u2_reference
+                if i.scores and i.scores.five_z_score is not None and i.scores.bp_z_score is not None
+            ])
+            u12_scores = np.array([
+                [i.scores.five_z_score, i.scores.bp_z_score]
+                for i in u12_reference
+                if i.scores and i.scores.five_z_score is not None and i.scores.bp_z_score is not None
+            ])
+
+            # Get PR curves and AUC based on evaluation type
+            if hasattr(result.eval_result, 'mean_f1'):
+                # Nested CV - multiple curves
+                pr_curves = result.eval_result.pr_curves
+                pr_auc = result.eval_result.mean_pr_auc
+            else:
+                # Split eval - single curve
+                pr_curves = [(result.eval_result.precision, result.eval_result.recall)]
+                pr_auc = result.eval_result.test_pr_auc
+
+            plot_training_results(
+                u2_scores=u2_scores,
+                u12_scores=u12_scores,
+                pr_curves=pr_curves,
+                pr_auc=pr_auc,
+                output_dir=config.output.output_dir,
+                species_name=config.output.base_filename,
+                fig_dpi=300
+            )
+            logger.info("Successfully generated training reference plots")
+        except Exception as plot_error:
+            logger.warning(f"Failed to generate training plots: {plot_error}")
+            # Continue even if plotting fails
+
     # Save trained model (ensemble only - normalizer fitted per-species during inference)
     model_path = config.output.get_output_path('.model.pkl')
     logger.info(f"Saving trained model to {model_path}")

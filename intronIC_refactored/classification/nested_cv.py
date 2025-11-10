@@ -12,10 +12,10 @@ Key features:
 """
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Sequence, List, Tuple
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import f1_score, average_precision_score
+from sklearn.metrics import f1_score, average_precision_score, precision_recall_curve
 
 from core.intron import Intron
 from classification.optimizer import SVMOptimizer
@@ -30,6 +30,8 @@ class FoldResult:
     fold_idx: int
     f1_score: float
     pr_auc: float
+    precision: np.ndarray  # Precision values for PR curve
+    recall: np.ndarray  # Recall values for PR curve
     n_u12_train: int
     n_u2_train: int
     n_u12_test: int
@@ -48,6 +50,7 @@ class NestedCVResult:
     mean_pr_auc: float
     std_pr_auc: float
     n_folds: int
+    pr_curves: List[Tuple[np.ndarray, np.ndarray]]  # List of (precision, recall) tuples from all folds
 
     def __str__(self) -> str:
         """Format results for display."""
@@ -267,6 +270,9 @@ class NestedCVEvaluator:
             f1 = f1_score(test_labels, y_pred, pos_label=1)
             pr_auc = average_precision_score(test_labels, y_proba)
 
+            # Compute precision-recall curve for plotting
+            precision, recall, _ = precision_recall_curve(test_labels, y_proba, pos_label=1)
+
             if self.verbose:
                 print(f"Fold {fold_idx + 1} Results: F1={f1:.4f}, PR-AUC={pr_auc:.4f}")
 
@@ -274,6 +280,8 @@ class NestedCVEvaluator:
                 fold_idx=fold_idx,
                 f1_score=float(f1),
                 pr_auc=float(pr_auc),
+                precision=precision,
+                recall=recall,
                 n_u12_train=n_u12_train,
                 n_u2_train=n_u2_train,
                 n_u12_test=n_u12_test,
@@ -285,6 +293,7 @@ class NestedCVEvaluator:
         # Aggregate results
         f1_scores = [fold.f1_score for fold in fold_results]
         pr_aucs = [fold.pr_auc for fold in fold_results]
+        pr_curves = [(fold.precision, fold.recall) for fold in fold_results]
 
         result = NestedCVResult(
             fold_results=fold_results,
@@ -292,7 +301,8 @@ class NestedCVEvaluator:
             std_f1=float(np.std(f1_scores)),
             mean_pr_auc=float(np.mean(pr_aucs)),
             std_pr_auc=float(np.std(pr_aucs)),
-            n_folds=self.n_folds
+            n_folds=self.n_folds,
+            pr_curves=pr_curves
         )
 
         if self.verbose:

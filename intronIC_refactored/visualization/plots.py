@@ -17,7 +17,7 @@ import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from core.intron import Intron
 
@@ -328,8 +328,7 @@ def histogram(
 def plot_training_results(
     u2_scores: np.ndarray,
     u12_scores: np.ndarray,
-    precision: np.ndarray,
-    recall: np.ndarray,
+    pr_curves: List[Tuple[np.ndarray, np.ndarray]],
     pr_auc: float,
     output_dir: Path,
     species_name: str,
@@ -338,16 +337,16 @@ def plot_training_results(
     """
     Generate training reference plots.
 
-    Creates two plots:
+    Creates three plots:
     1. Reference scatter plot (U2 vs U12 training data)
-    2. Precision-Recall AUC curve
+    2. Reference hexplot (density of reference data)
+    3. Precision-Recall AUC curve
 
     Args:
         u2_scores: Nx2 array of U2 reference scores (5' z, BP z)
         u12_scores: Nx2 array of U12 reference scores (5' z, BP z)
-        precision: Precision values for PR curve
-        recall: Recall values for PR curve
-        pr_auc: Precision-Recall AUC score
+        pr_curves: List of (precision, recall) tuples. Can be single curve or multiple (from CV folds)
+        pr_auc: Average Precision-Recall AUC score
         output_dir: Directory to save plots
         species_name: Species name for plot titles
         fig_dpi: Figure DPI
@@ -373,8 +372,10 @@ def plot_training_results(
     )
 
     # 3. Precision-Recall curve
+    # Plot all curves (matches original intronIC behavior for multiple CV folds)
     plt.figure(figsize=(8, 8))
-    plt.plot(recall, precision)
+    for precision, recall in pr_curves:
+        plt.plot(recall, precision)
     plt.xlabel('Recall', fontsize=14)
     plt.ylabel('Precision', fontsize=14)
     plt.title(f'{species_name} precision-recall AUC: {pr_auc:.3f}', fontsize=14)
