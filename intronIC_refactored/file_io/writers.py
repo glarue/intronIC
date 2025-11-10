@@ -623,7 +623,7 @@ class MetaWriter:
         header_fields = [
             "name", "rel_score", "dnts", "motif_schematic", "bp_context",
             "length", "parent", "grandparent", "index", "family_size",
-            "frac_pos", "phase", "type_id", "feature"
+            "frac_pos", "phase", "type_id", "feature", "attributes"
         ]
         self.file.write('\t'.join(header_fields) + '\n')
 
@@ -697,9 +697,12 @@ class MetaWriter:
         if intron.metadata and intron.metadata.defined_by:
             feature = intron.metadata.defined_by
 
+        # Generate verbose attributes
+        attributes = generate_attributes(intron)
+
         fields = [
             name, rel_score, dnts, motif, bp_context, length, parent, grandparent,
-            index, family_size, frac_pos, phase, type_id, feature
+            index, family_size, frac_pos, phase, type_id, feature, attributes
         ]
 
         self.file.write('\t'.join(fields) + '\n')
