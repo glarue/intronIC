@@ -344,6 +344,12 @@ class IntronScorer:
         # If match is None (window too small), use pseudocount for both scores
         # Port from: intronIC.py:2944
         if match is None:
+            # DEBUG: Log why match is None
+            import sys
+            print(f"DEBUG: BP match is None for intron {intron.intron_id if hasattr(intron, 'intron_id') else 'unknown'}", file=sys.stderr)
+            print(f"  Intron length: {len(intron.sequences.seq) if intron.sequences and intron.sequences.seq else 'N/A'}", file=sys.stderr)
+            print(f"  Search window: {self.bp_coords}", file=sys.stderr)
+            print(f"  PWM length: {u12_pwm.length}", file=sys.stderr)
             # Use pseudocount * matrix_length for both U12 and U2
             # This gives a low but non-zero score for short introns
             pseudocount_score = u2_pwm.pseudocount * u2_pwm.length
