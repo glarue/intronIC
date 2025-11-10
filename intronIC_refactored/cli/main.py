@@ -894,6 +894,7 @@ def write_outputs(
 
     output_dir = config.output.output_dir
     base_name = config.output.base_filename
+    species_name = config.output.species_name
 
     # Write BED file
     bed_path = output_dir / f"{base_name}.bed.iic"
@@ -901,7 +902,7 @@ def write_outputs(
     bed_writer = BEDWriter(bed_path)
     with bed_writer:
         for intron in introns:
-            bed_writer.write_intron(intron)
+            bed_writer.write_intron(intron, species_name=species_name)
     logger.info(f"Wrote {len(introns)} introns to BED file")
 
     # Write metadata file
@@ -910,7 +911,7 @@ def write_outputs(
     meta_writer = MetaWriter(meta_path)
     with meta_writer:
         for intron in introns:
-            meta_writer.write_intron(intron)
+            meta_writer.write_intron(intron, species_name=species_name)
     logger.info(f"Wrote metadata for {len(introns)} introns")
 
     # Write sequences file
@@ -919,7 +920,7 @@ def write_outputs(
     seq_writer = SequenceWriter(seq_path)
     with seq_writer:
         for intron in introns:
-            seq_writer.write_intron(intron)
+            seq_writer.write_intron(intron, species_name=species_name)
     logger.info(f"Wrote sequences for {len(introns)} introns")
 
     # Write score info file
@@ -928,7 +929,7 @@ def write_outputs(
     score_writer = ScoreWriter(score_path)
     with score_writer:
         for intron in introns:
-            score_writer.write_intron(intron)
+            score_writer.write_intron(intron, species_name=species_name)
     logger.info(f"Wrote score info for {len(introns)} introns")
 
     output_files = {

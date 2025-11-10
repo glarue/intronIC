@@ -922,21 +922,56 @@ class SequenceWriter:
         species_name: Optional[str],
         simple_name: bool
     ) -> str:
-        """Generate intron name with family_size (same as MetaWriter)."""
-        parts = []
+        """
+        Generate intron name matching original intronIC format.
 
-        if species_name and not simple_name:
-            parts.append(species_name)
+        Port from: intronIC.py:622-646 (get_name)
 
-        if intron.metadata and intron.metadata.parent:
-            parent = intron.metadata.parent
-            index = intron.metadata.index if intron.metadata.index else 1
-            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
-            parts.append(f"{parent}_{index}({family_size})")
-        else:
-            parts.append(intron.intron_id)
+        Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
 
-        return '_'.join(parts) if parts else intron.intron_id
+        Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
+
+        Args:
+            intron: Intron object
+            species_name: Full species name (e.g., "homo_sapiens")
+            simple_name: Use simplified format (species-i_{intron_id})
+
+        Returns:
+            Formatted intron name string
+        """
+        if simple_name:
+            # Simple format: species-i_{intron_id}{tags}
+            species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+            omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
+            dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
+            return f"{species_abbrev}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
+
+        # Full format
+        if not intron.metadata:
+            # Fallback if no metadata - return intron_id
+            return intron.intron_id
+
+        # Species abbreviation (3+3 format)
+        species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+
+        # Gene ID (grandparent) - preserve "gene:" prefix if present
+        grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
+
+        # Transcript ID (parent) - preserve "transcript:" prefix if present
+        parent = intron.metadata.parent if intron.metadata.parent else "?"
+
+        # Index and family size
+        index = intron.metadata.index if intron.metadata.index is not None else "?"
+        family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
+
+        # Format tags
+        omit_tag = format_omission_tag(intron.metadata.omitted)
+        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
+
+        # Build name: species-grandparent@parent-intron_index(family_size)tags
+        name = f"{species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
+
+        return name
 
 
 # ============================================================================
@@ -1118,21 +1153,56 @@ class ScoreWriter:
         species_name: Optional[str],
         simple_name: bool
     ) -> str:
-        """Generate intron name with family_size (same as MetaWriter)."""
-        parts = []
+        """
+        Generate intron name matching original intronIC format.
 
-        if species_name and not simple_name:
-            parts.append(species_name)
+        Port from: intronIC.py:622-646 (get_name)
 
-        if intron.metadata and intron.metadata.parent:
-            parent = intron.metadata.parent
-            index = intron.metadata.index if intron.metadata.index else 1
-            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
-            parts.append(f"{parent}_{index}({family_size})")
-        else:
-            parts.append(intron.intron_id)
+        Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
 
-        return '_'.join(parts) if parts else intron.intron_id
+        Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
+
+        Args:
+            intron: Intron object
+            species_name: Full species name (e.g., "homo_sapiens")
+            simple_name: Use simplified format (species-i_{intron_id})
+
+        Returns:
+            Formatted intron name string
+        """
+        if simple_name:
+            # Simple format: species-i_{intron_id}{tags}
+            species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+            omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
+            dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
+            return f"{species_abbrev}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
+
+        # Full format
+        if not intron.metadata:
+            # Fallback if no metadata - return intron_id
+            return intron.intron_id
+
+        # Species abbreviation (3+3 format)
+        species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+
+        # Gene ID (grandparent) - preserve "gene:" prefix if present
+        grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
+
+        # Transcript ID (parent) - preserve "transcript:" prefix if present
+        parent = intron.metadata.parent if intron.metadata.parent else "?"
+
+        # Index and family size
+        index = intron.metadata.index if intron.metadata.index is not None else "?"
+        family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
+
+        # Format tags
+        omit_tag = format_omission_tag(intron.metadata.omitted)
+        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
+
+        # Build name: species-grandparent@parent-intron_index(family_size)tags
+        name = f"{species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
+
+        return name
 
 
 # ============================================================================
