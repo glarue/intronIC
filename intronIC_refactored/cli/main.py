@@ -101,12 +101,13 @@ def setup_logging(config: IntronICConfig) -> logging.Logger:
     logger = logging.getLogger('intronIC')
     logger.setLevel(level)
 
-    # File handler
-    fh = logging.FileHandler(log_file, mode='w')
+    # File handler with enhanced formatting
+    fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
     fh.setLevel(logging.DEBUG)  # Always log everything to file
-    fh.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    ))
+
+    # Use enhanced formatter for better readability
+    from utils.logging_utils import EnhancedFormatter
+    fh.setFormatter(EnhancedFormatter(width=100))
     logger.addHandler(fh)
 
     # Console handler (only if not quiet)
@@ -761,6 +762,122 @@ def classify_with_pretrained_model(
     return classified_introns, metrics
 
 
+def _write_training_log(
+    log_path: Path,
+    classification_result,
+    u12_reference: List[Intron],
+    u2_reference: List[Intron],
+    config: IntronICConfig
+):
+    """
+    Write detailed training log with evaluation metrics and fold results.
+
+    Args:
+        log_path: Path to training log file
+        classification_result: ClassificationResult from IntronClassifier
+        u12_reference: U12 reference introns
+        u2_reference: U2 reference introns
+        config: Pipeline configuration
+    """
+    from utils.logging_utils import TrainingLogger
+
+    with TrainingLogger(str(log_path)) as tlog:
+        # Overview section
+        tlog.section("TRAINING CONFIGURATION")
+        tlog.metric("Species", config.output.species_name)
+        tlog.metric("Classification Threshold", f"{config.scoring.threshold}%")
+        tlog.metric("Random Seed", config.training.seed)
+        tlog.metric("Max Iterations", config.training.max_iter)
+        tlog.blank()
+
+        tlog.subsection("Reference Data")
+        tlog.metric("U12 reference introns", f"{len(u12_reference):,}")
+        tlog.metric("U2 reference introns", f"{len(u2_reference):,}")
+        tlog.metric("Total reference", f"{len(u12_reference) + len(u2_reference):,}")
+        tlog.blank()
+
+        tlog.subsection("Model Configuration")
+        tlog.metric("Ensemble models", config.training.n_models)
+        tlog.metric("Evaluation mode", config.training.eval_mode)
+
+        if config.training.fixed_C:
+            tlog.metric("C parameter", f"{config.training.fixed_C:.6e} (fixed)")
+        else:
+            tlog.metric("C parameter", "Optimized via grid search")
+            tlog.metric("Optimization rounds", config.training.n_optimization_rounds)
+
+        # Hyperparameter optimization section
+        tlog.section("HYPERPARAMETER OPTIMIZATION")
+        tlog.metric("Optimized C", f"{classification_result.parameters.C:.6e}")
+        tlog.metric("CV score (balanced accuracy)", f"{classification_result.parameters.cv_score:.4f}")
+        tlog.metric("Calibration method", classification_result.parameters.calibration_method)
+        tlog.metric("Dual formulation", classification_result.parameters.dual)
+        tlog.metric("Intercept scaling", classification_result.parameters.intercept_scaling)
+        tlog.blank()
+
+        # Evaluation results section
+        eval_result = classification_result.eval_result
+        if eval_result is not None:
+            if hasattr(eval_result, 'mean_f1'):
+                # Nested CV results
+                tlog.section("NESTED CROSS-VALIDATION RESULTS")
+                tlog.metric("Number of folds", eval_result.n_folds)
+                tlog.blank()
+
+                tlog.subsection("Aggregate Performance")
+                tlog.metric("Mean F1 Score", f"{eval_result.mean_f1:.4f} ± {eval_result.std_f1:.4f}")
+                tlog.metric("Mean PR-AUC", f"{eval_result.mean_pr_auc:.4f} ± {eval_result.std_pr_auc:.4f}")
+                tlog.blank()
+
+                tlog.subsection("Per-Fold Results")
+                headers = ["Fold", "F1 Score", "PR-AUC", "Train U12", "Train U2", "Test U12", "Test U2"]
+                rows = []
+                for fold in eval_result.fold_results:
+                    rows.append([
+                        f"{fold.fold_idx + 1}/{eval_result.n_folds}",
+                        f"{fold.f1_score:.4f}",
+                        f"{fold.pr_auc:.4f}",
+                        f"{fold.n_u12_train:,}",
+                        f"{fold.n_u2_train:,}",
+                        f"{fold.n_u12_test:,}",
+                        f"{fold.n_u2_test:,}"
+                    ])
+                tlog.table(headers, rows)
+
+            elif hasattr(eval_result, 'test_f1'):
+                # Split evaluation results
+                tlog.section("TRAIN/TEST SPLIT EVALUATION")
+                tlog.blank()
+
+                tlog.subsection("Data Split")
+                tlog.metric("Training set", f"{eval_result.n_u2_train + eval_result.n_u12_train:,} introns "
+                                           f"({eval_result.n_u2_train:,} U2, {eval_result.n_u12_train:,} U12)")
+                if hasattr(eval_result, 'n_u2_val'):
+                    tlog.metric("Validation set", f"{eval_result.n_u2_val + eval_result.n_u12_val:,} introns "
+                                                  f"({eval_result.n_u2_val:,} U2, {eval_result.n_u12_val:,} U12)")
+                tlog.metric("Test set", f"{eval_result.n_u2_test + eval_result.n_u12_test:,} introns "
+                                        f"({eval_result.n_u2_test:,} U2, {eval_result.n_u12_test:,} U12)")
+                tlog.blank()
+
+                tlog.subsection("Test Set Performance (Honest Evaluation)")
+                tlog.metric("F1 Score", f"{eval_result.test_f1:.4f}")
+                tlog.metric("PR-AUC", f"{eval_result.test_pr_auc:.4f}")
+
+        # Ensemble summary
+        tlog.section("TRAINED ENSEMBLE")
+        tlog.metric("Number of models", len(classification_result.ensemble.models))
+        tlog.blank()
+
+        tlog.subsection("Model Details")
+        for i, model in enumerate(classification_result.ensemble.models, 1):
+            tlog.info(f"Model {i}/{len(classification_result.ensemble.models)}:", indent=1)
+            tlog.metric(f"  Training samples", f"{model.train_size:,}")
+            tlog.metric(f"  U12 samples", f"{model.u12_count:,}")
+            tlog.metric(f"  U2 samples", f"{model.u2_count:,}")
+            tlog.metric(f"  C parameter", f"{model.parameters.C:.6e}")
+            tlog.blank()
+
+
 def classify_introns(
     introns: List[Intron],
     u12_reference: List[Intron],
@@ -786,6 +903,12 @@ def classify_introns(
     """
     reporter.print_info("Training SVM classifier")
     logger.info("Starting SVM classification")
+
+    # Create training log if we're actually training (not using pretrained model or fixed C)
+    training_log_path = None
+    if config.training.pretrained_model_path is None and config.training.eval_mode != 'none':
+        training_log_path = config.output.get_output_path('.training.log')
+        logger.info(f"Detailed training log will be written to: {training_log_path}")
 
     # Create classifier with correct parameter names
     # IntronClassifier API uses:
@@ -854,6 +977,21 @@ def classify_introns(
         logger.info(f"  Test set evaluation:")
         logger.info(f"    F1: {metrics['f1']:.4f}")
         logger.info(f"    PR-AUC: {metrics['pr_auc']:.4f}")
+
+    # Write detailed training log if evaluation was performed
+    if training_log_path and result.eval_result is not None:
+        try:
+            from utils.logging_utils import TrainingLogger
+            _write_training_log(
+                training_log_path,
+                result,
+                u12_reference,
+                u2_reference,
+                config
+            )
+            logger.info(f"Detailed training log written to: {training_log_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write training log: {e}")
 
     # Generate training reference plots if evaluation was performed
     if result.eval_result is not None:
@@ -1023,6 +1161,9 @@ def run_pipeline(config: IntronICConfig):
         # Step 1: Load input data
         reporter.print_section("Step 1: Load Input Data", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=1)
+        logger.info("=" * 80)
+        logger.info("STEP 1: LOAD INPUT DATA")
+        logger.info("=" * 80)
 
         if config.input.mode == 'annotation':
             genome_reader = load_genome(config, logger)
@@ -1051,6 +1192,9 @@ def run_pipeline(config: IntronICConfig):
         # Step 2: Extract introns (already done above)
         reporter.print_section("Step 2: Extract Introns", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=2)
+        logger.info("=" * 80)
+        logger.info("STEP 2: EXTRACT INTRONS")
+        logger.info("=" * 80)
         reporter.print_success(f"Extracted {len(introns):,} introns")
 
         # Filter introns before scoring (duplicates, short introns, longest isoform)
@@ -1102,6 +1246,9 @@ def run_pipeline(config: IntronICConfig):
         # Step 3: Score introns
         reporter.print_section("Step 3: Score Introns", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=3)
+        logger.info("=" * 80)
+        logger.info("STEP 3: SCORE INTRONS")
+        logger.info("=" * 80)
         scored_introns = score_introns(introns_for_scoring, config, reporter, logger)
         reporter.print_success(f"Scored {len(scored_introns):,} introns")
 
@@ -1118,6 +1265,9 @@ def run_pipeline(config: IntronICConfig):
             # Step 4: Normalize scores
             reporter.print_section("Step 4: Normalize Scores", "bold blue")
             reporter.print_pipeline_steps(pipeline_steps, current_step=4)
+            logger.info("=" * 80)
+            logger.info("STEP 4: NORMALIZE SCORES")
+            logger.info("=" * 80)
             normalized_introns, u12_reference, u2_reference, normalizer = normalize_scores(
                 scored_introns, config, reporter, logger
             )
@@ -1126,6 +1276,9 @@ def run_pipeline(config: IntronICConfig):
             # Step 5: Classify
             reporter.print_section("Step 5: Classify Introns", "bold blue")
             reporter.print_pipeline_steps(pipeline_steps, current_step=5)
+            logger.info("=" * 80)
+            logger.info("STEP 5: CLASSIFY INTRONS")
+            logger.info("=" * 80)
             classified_introns, metrics = classify_introns(
                 normalized_introns, u12_reference, u2_reference, normalizer, config, reporter, logger
             )
@@ -1197,6 +1350,9 @@ def run_pipeline(config: IntronICConfig):
         # Step 6: Write outputs
         reporter.print_section("Step 6: Write Outputs", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=6)
+        logger.info("=" * 80)
+        logger.info("STEP 6: WRITE OUTPUTS")
+        logger.info("=" * 80)
         write_outputs(classified_introns, config, reporter, logger)
 
         # Calculate and log total runtime
