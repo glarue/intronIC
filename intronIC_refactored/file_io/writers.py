@@ -623,7 +623,7 @@ class MetaWriter:
         header_fields = [
             "name", "rel_score", "dnts", "motif_schematic", "bp_context",
             "length", "parent", "grandparent", "index", "family_size",
-            "frac_pos", "phase", "type_id", "feature", "attributes"
+            "frac_pos", "phase", "type_id", "feature"
         ]
         self.file.write('\t'.join(header_fields) + '\n')
 
@@ -697,12 +697,9 @@ class MetaWriter:
         if intron.metadata and intron.metadata.defined_by:
             feature = intron.metadata.defined_by
 
-        # Generate verbose attributes
-        attributes = generate_attributes(intron)
-
         fields = [
             name, rel_score, dnts, motif, bp_context, length, parent, grandparent,
-            index, family_size, frac_pos, phase, type_id, feature, attributes
+            index, family_size, frac_pos, phase, type_id, feature
         ]
 
         self.file.write('\t'.join(fields) + '\n')
@@ -1032,10 +1029,10 @@ class ScoreWriter:
             raise ValueError("File not open. Call open() first or use context manager.")
 
         header_fields = [
-            "name", "rel_score", "svm_score", "decision_dist",
+            "name", "rel_score", "svm_score",
             "5'_seq", "5'_raw", "5'_z",
-            "bp_seq", "bp_region", "bp_raw", "bp_z",
-            "3'_seq", "3'_raw", "3'_z"
+            "bp_seq", "bp_seq_u2", "bp_raw", "bp_z",
+            "3'_seq", "3'_raw", "3'_z", "decision_dist"
         ]
         self.file.write('\t'.join(header_fields) + '\n')
 
@@ -1069,7 +1066,7 @@ class ScoreWriter:
         five_raw = null
         five_z = null
         bp_seq = null
-        bp_region = null
+        bp_seq_u2 = null
         bp_raw = null
         bp_z = null
         three_seq = null
@@ -1109,16 +1106,16 @@ class ScoreWriter:
                 five_seq = intron.sequences.five_seq
             if intron.sequences.bp_seq:
                 bp_seq = intron.sequences.bp_seq
-            if intron.sequences.bp_region_seq:
-                bp_region = intron.sequences.bp_region_seq
+            if intron.sequences.bp_seq_u2:
+                bp_seq_u2 = intron.sequences.bp_seq_u2
             if intron.sequences.three_seq:
                 three_seq = intron.sequences.three_seq
 
         fields = [
-            name, rel_score, svm_score, decision_dist,
+            name, rel_score, svm_score,
             five_seq, five_raw, five_z,
-            bp_seq, bp_region, bp_raw, bp_z,
-            three_seq, three_raw, three_z
+            bp_seq, bp_seq_u2, bp_raw, bp_z,
+            three_seq, three_raw, three_z, decision_dist
         ]
 
         self.file.write('\t'.join(fields) + '\n')
