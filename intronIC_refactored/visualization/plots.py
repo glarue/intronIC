@@ -14,6 +14,7 @@ import matplotlib
 matplotlib.use('Agg')  # Allow to run without X display server
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.gridspec as gridspec
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pathlib import Path
 from typing import List, Optional
@@ -149,13 +150,15 @@ def scatter_plot(
     fig_dpi: int = 300
 ):
     """
-    Create a scatter plot with U12s colored by confidence level.
+    Create a scatter plot with U12s colored by confidence level and marginal density distributions.
 
     U12 confidence levels:
     - High (green): score > threshold
     - Medium (orange): (threshold - stdev) < score <= threshold
     - Low (red): score <= (threshold - stdev)
     - U2 (grey): classified as U2
+
+    Marginal density distributions are shown on the top and right axes.
 
     Args:
         introns: List of classified introns
@@ -168,7 +171,23 @@ def scatter_plot(
         outfmt: Output format
         fig_dpi: Figure DPI
     """
-    plt.figure(figsize=(8, 8))
+    # Create figure with GridSpec for marginal distributions
+    fig = plt.figure(figsize=(10, 10))
+    gs = gridspec.GridSpec(
+        3, 3,
+        figure=fig,
+        width_ratios=[1, 4, 0.1],
+        height_ratios=[1, 4, 0.1],
+        hspace=0.05,
+        wspace=0.05
+    )
+
+    # Main scatter plot (center)
+    ax_main = fig.add_subplot(gs[1, 1])
+    # Top marginal (x distribution)
+    ax_top = fig.add_subplot(gs[0, 1], sharex=ax_main)
+    # Right marginal (y distribution)
+    ax_right = fig.add_subplot(gs[1, 2], sharey=ax_main)
 
     # Calculate threshold boundaries
     svm_scores = [i.scores.svm_score for i in introns if i.scores and i.scores.svm_score is not None]
@@ -218,8 +237,8 @@ def scatter_plot(
         patch = mpatches.Patch(color=color, label=label_with_count)
         legend_patches.append(patch)
 
-    # Plot scatter
-    plt.scatter(
+    # Plot main scatter
+    ax_main.scatter(
         *scores[:, :2].T,
         s=20,
         c=cluster_colors,
@@ -227,11 +246,25 @@ def scatter_plot(
         rasterized=True
     )
 
-    plt.legend(handles=legend_patches)
-    plt.xlabel(xlab, fontsize=fsize)
-    plt.ylabel(ylab, fontsize=fsize)
-    plt.title(title, fontsize=fsize)
-    plt.tight_layout()
+    ax_main.legend(handles=legend_patches, fontsize=fsize-2)
+    ax_main.set_xlabel(xlab, fontsize=fsize)
+    ax_main.set_ylabel(ylab, fontsize=fsize)
+    ax_main.set_title(title, fontsize=fsize)
+
+    # Plot marginal distributions
+    # Top: X distribution (5' z-score)
+    ax_top.hist(scores[:, 0], bins=50, color='steelblue', alpha=0.7, edgecolor='none')
+    ax_top.set_ylabel('Count', fontsize=fsize-2)
+    ax_top.tick_params(labelbottom=False)
+    ax_top.spines['top'].set_visible(False)
+    ax_top.spines['right'].set_visible(False)
+
+    # Right: Y distribution (BP z-score)
+    ax_right.hist(scores[:, 1], bins=50, orientation='horizontal', color='steelblue', alpha=0.7, edgecolor='none')
+    ax_right.set_xlabel('Count', fontsize=fsize-2)
+    ax_right.tick_params(labelleft=False)
+    ax_right.spines['top'].set_visible(False)
+    ax_right.spines['right'].set_visible(False)
 
     # Save figure
     output_path = f'{title}.iic.{outfmt}'
