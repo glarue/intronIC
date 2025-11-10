@@ -428,9 +428,11 @@ def ref_scatter(
 
     plt.xlabel("5' z-score", fontsize=fsize)
     plt.ylabel('BPS z-score', fontsize=fsize)
-    plt.legend()
+
+    # Set equal aspect ratio to match original intronIC
+    plt.axes().set_aspect('equal')
     plt.tight_layout()
 
     output_path = output_dir / f'{species_name}.plot.training_scatter.iic.png'
-    plt.savefig(output_path, dpi=fig_dpi, bbox_inches='tight')
+    plt.savefig(output_path, format='png', dpi=fig_dpi)
     plt.close()
