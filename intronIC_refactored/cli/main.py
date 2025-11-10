@@ -30,6 +30,7 @@ from scoring.pwm import PWMLoader
 from scoring.scorer import IntronScorer
 from scoring.normalizer import ScoreNormalizer
 from classification.classifier import IntronClassifier
+from visualization.plots import plot_classification_results
 import gzip
 
 
@@ -1135,6 +1136,21 @@ def run_pipeline(config: IntronICConfig):
             logger.info(f"Saving classification metrics to {metrics_path}")
             with open(metrics_path, 'w') as f:
                 json.dump(metrics, f, indent=2)
+
+        # Generate visualization plots
+        logger.info("Generating visualization plots")
+        try:
+            plot_classification_results(
+                introns=classified_introns,
+                output_dir=config.output.output_dir,
+                species_name=config.output.base_filename,
+                threshold=config.scoring.threshold,
+                fig_dpi=300
+            )
+            logger.info("Successfully generated classification plots")
+        except Exception as plot_error:
+            logger.warning(f"Failed to generate plots: {plot_error}")
+            # Continue even if plotting fails
 
         # Step 6: Write outputs
         reporter.print_section("Step 6: Write Outputs", "bold blue")
