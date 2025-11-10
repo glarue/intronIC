@@ -88,26 +88,32 @@ def _predict_chunk_worker(
     # Convert to 0-100 scale
     svm_scores = avg_probas * 100.0
 
-    # Calculate relative scores (confidence measure)
-    # CalibratedClassifierCV doesn't support decision_function()
-    # Use log-odds as an alternative confidence metric: log(p / (1-p))
-    # This gives negative values for U2, positive for U12, zero at threshold
+    # Calculate relative scores as distance from threshold
+    # This ensures U12s (score >= threshold) have relative_score >= 0
+    # and U2s (score < threshold) have relative_score < 0
+    # Matches original intronIC: relative_score = svm_score - threshold
+    relative_scores = svm_scores - threshold
+
+    # Also calculate log-odds for decision_distance (alternative confidence metric)
+    # log(p / (1-p)) gives negative for U2, positive for U12, zero at p=0.5
     epsilon = 1e-10  # Avoid log(0)
     clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
-    relative_scores = np.log(clipped_probas / (1 - clipped_probas))
+    log_odds = np.log(clipped_probas / (1 - clipped_probas))
 
     # Update introns with classification results
     classified_introns = []
     for i, intron in enumerate(introns):
         svm_score = float(svm_scores[i])
         relative_score = float(relative_scores[i])
+        decision_distance = float(log_odds[i])
         type_id = 'u12' if svm_score >= threshold else 'u2'
 
         # Update scores
         new_scores = replace(
             intron.scores,
             svm_score=svm_score,
-            relative_score=relative_score
+            relative_score=relative_score,
+            decision_distance=decision_distance
         )
 
         # Update metadata with type_id
