@@ -7,6 +7,7 @@ Orchestrates the complete intron classification pipeline.
 import sys
 import logging
 import json
+import time
 import joblib
 from pathlib import Path
 from typing import List, Tuple
@@ -950,6 +951,9 @@ def run_pipeline(config: IntronICConfig):
     Args:
         config: Pipeline configuration
     """
+    # Track start time for runtime reporting
+    start_time = time.time()
+
     # Setup logging and reporting
     logger = setup_logging(config)
     reporter = IntronICProgressReporter(quiet=config.output.quiet)
@@ -1136,6 +1140,20 @@ def run_pipeline(config: IntronICConfig):
         reporter.print_section("Step 6: Write Outputs", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=6)
         write_outputs(classified_introns, config, reporter, logger)
+
+        # Calculate and log total runtime
+        elapsed_seconds = time.time() - start_time
+        hours, remainder = divmod(int(elapsed_seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        if hours > 0:
+            runtime_str = f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            runtime_str = f"{minutes}m {seconds}s"
+        else:
+            runtime_str = f"{seconds}s"
+
+        logger.info(f"Run finished in {runtime_str}")
 
         reporter.print_success("Pipeline complete!")
 
