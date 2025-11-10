@@ -39,6 +39,7 @@ class BranchPointMatch:
         stop_in_region: Stop coordinate within search region (exclusive)
         sequence_u2: The best-matching U2 branch point sequence
         score_u2: PWM score for U2 sequence
+        search_region: The actual sequence searched (for bp_region_seq output)
 
     Example:
         >>> match = BranchPointMatch(
@@ -48,7 +49,8 @@ class BranchPointMatch:
         ...     start_in_region=20,
         ...     stop_in_region=27,
         ...     sequence_u2="CACAG",
-        ...     score_u2=0.65
+        ...     score_u2=0.65,
+        ...     search_region="ACGT..."*12
         ... )
         >>> match.sequence
         'TACTAAC'
@@ -62,6 +64,7 @@ class BranchPointMatch:
     stop_in_region: int  # Position in search region (exclusive)
     sequence_u2: str | None = None  # U2 BP sequence
     score_u2: float | None = None  # U2 score
+    search_region: str | None = None  # The actual search region sequence
 
 
 class BranchPointScorer:
@@ -159,6 +162,7 @@ class BranchPointScorer:
         # Create combined match with U12 and U2 results
         # CRITICAL: score_u2 is the U2 score of the U12's best-match sequence (for log ratio)
         # sequence_u2 is U2's own best match (for informational purposes only)
+        # Store the actual search_region so it can be saved to bp_region_seq
         return BranchPointMatch(
             sequence=u12_match.sequence,
             score=u12_match.score,
@@ -166,7 +170,8 @@ class BranchPointScorer:
             start_in_region=u12_match.start_in_region,
             stop_in_region=u12_match.stop_in_region,
             sequence_u2=u2_match.sequence,
-            score_u2=u2_score  # Score of U12's sequence with U2 PWM
+            score_u2=u2_score,  # Score of U12's sequence with U2 PWM
+            search_region=search_region  # The actual sequence that was searched
         )
 
     def _extract_search_region(

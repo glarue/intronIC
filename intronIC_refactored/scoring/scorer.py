@@ -179,7 +179,8 @@ class IntronScorer:
                 intron.sequences,
                 bp_seq=bp_u12_match.sequence,
                 bp_seq_u2=bp_u12_match.sequence_u2,
-                bp_relative_coords=(bp_u12_match.start_in_region, bp_u12_match.stop_in_region)
+                bp_relative_coords=(bp_u12_match.start_in_region, bp_u12_match.stop_in_region),
+                bp_region_seq=bp_u12_match.search_region  # Store the actual searched sequence
             )
 
         return replace(intron, scores=updated_scores, sequences=updated_sequences)
