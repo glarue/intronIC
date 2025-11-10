@@ -135,10 +135,10 @@ class BranchPointScorer:
             # Return None instead of raising - caller will handle with pseudocount
             return None
 
-        # Find best match in search region for both U12 and U2
+        # Find best match in search region using U12 PWM
+        # Port from: intronIC.py:2920-2944 (multi_matrix_score bp scoring)
         # Pass search_window[0] so scorer knows the genomic position of the search region
         u12_match = self._find_best_in_sequence(search_region, self.u12_pwm, search_window_start=search_window[0])
-        u2_match = self._find_best_in_sequence(search_region, self.u2_pwm, search_window_start=search_window[0])
 
         # Calculate position relative to 3' end
         # search_window[0] is negative (e.g., -55)
@@ -146,8 +146,19 @@ class BranchPointScorer:
         # position = start_of_region + offset_in_region
         position = search_window[0] + u12_match.start_in_region
 
+        # Score the SAME sequence (U12's best match) with the U2 PWM
+        # Port from: intronIC.py:3086-3095 (log_ratio using same bp_region_seq)
+        # This ensures we get a proper log-odds ratio: log2(P(seq|U12) / P(seq|U2))
+        window_position = search_window[0] + u12_match.start_in_region
+        u2_score = self.u2_pwm.score_sequence(u12_match.sequence, seq_start_position=window_position)
+
+        # Also find U2's own best match for bp_seq_u2 (diagnostic/output purposes)
+        # Port from: intronIC.py:3082-3084 (separate U2 BP sequence tracking)
+        u2_match = self._find_best_in_sequence(search_region, self.u2_pwm, search_window_start=search_window[0])
+
         # Create combined match with U12 and U2 results
-        # Use U12 position as primary (for bp_relative_coords)
+        # CRITICAL: score_u2 is the U2 score of the U12's best-match sequence (for log ratio)
+        # sequence_u2 is U2's own best match (for informational purposes only)
         return BranchPointMatch(
             sequence=u12_match.sequence,
             score=u12_match.score,
@@ -155,7 +166,7 @@ class BranchPointScorer:
             start_in_region=u12_match.start_in_region,
             stop_in_region=u12_match.stop_in_region,
             sequence_u2=u2_match.sequence,
-            score_u2=u2_match.score
+            score_u2=u2_score  # Score of U12's sequence with U2 PWM
         )
 
     def _extract_search_region(
