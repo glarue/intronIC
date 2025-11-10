@@ -359,6 +359,20 @@ class IntronScorer:
         # Port from: intronIC.py:3083-3084 (separate U2 BP sequence)
         u2_score = match.score_u2
 
+        # DEBUG: Log actual scores to identify issue
+        import sys
+        import math
+        if match.score > 0 and u2_score > 0:
+            log_ratio = math.log2(match.score / u2_score)
+            if abs(log_ratio) < 0.0001:  # Only log if scores are nearly identical (the bug)
+                print(f"DEBUG BP IDENTICAL: intron={intron.intron_id[:50] if hasattr(intron, 'intron_id') else 'unknown'} "
+                      f"u12={match.score:.10e} u2={u2_score:.10e} ratio={log_ratio:.6f} seq={match.sequence}",
+                      file=sys.stderr)
+        else:
+            print(f"DEBUG BP ZERO: intron={intron.intron_id[:50] if hasattr(intron, 'intron_id') else 'unknown'} "
+                  f"u12={match.score:.10e} u2={u2_score:.10e} seq={match.sequence}",
+                  file=sys.stderr)
+
         return match, u2_score
 
     def _extract_five_region(self, intron: Intron) -> str:
