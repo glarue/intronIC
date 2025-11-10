@@ -91,7 +91,9 @@ class SplitEvaluator:
         random_state: int = 42,
         n_jobs: int = 1,
         max_iter: int = 100000,
-        verbose: bool = True
+        verbose: bool = True,
+        optimize_c: bool = True,
+        fixed_c: float | None = None
     ):
         """
         Initialize split evaluator.
@@ -108,6 +110,8 @@ class SplitEvaluator:
             n_jobs: Parallel jobs for optimization/prediction
             max_iter: Max iterations for LinearSVC
             verbose: Print progress
+            optimize_c: Whether to optimize C parameter (default: True)
+            fixed_c: Fixed C value if not optimizing (default: None)
         """
         self.test_fraction = test_fraction
         self.val_fraction = val_fraction
@@ -128,6 +132,8 @@ class SplitEvaluator:
         self.n_jobs = n_jobs
         self.max_iter = max_iter
         self.verbose = verbose
+        self.optimize_c = optimize_c
+        self.fixed_c = fixed_c
 
     def evaluate(
         self,
@@ -195,20 +201,34 @@ class SplitEvaluator:
             print(f"Val:   {n_u2_val} U2, {n_u12_val} U12 ({self.val_fraction*100:.0f}%)")
             print(f"Test:  {n_u2_test} U2, {n_u12_test} U12 ({self.test_fraction*100:.0f}%)")
 
-        # Stage 1: Optimize hyperparameters on training data
+        # Stage 1: Optimize hyperparameters or use fixed C
         # Note: We could use train+val here, but using only train gives
         # a more conservative estimate
-        if self.verbose:
-            print("\nStage 1: Hyperparameter Optimization (training set)")
+        if self.optimize_c:
+            if self.verbose:
+                print("\nStage 1: Hyperparameter Optimization (training set)")
 
-        optimizer = SVMOptimizer(
-            n_rounds=self.n_optimization_rounds,
-            random_state=self.random_state,
-            n_jobs=self.n_jobs,
-            max_iter=self.max_iter,
-            verbose=self.verbose
-        )
-        parameters = optimizer.optimize(train_u12, train_u2)
+            optimizer = SVMOptimizer(
+                n_rounds=self.n_optimization_rounds,
+                random_state=self.random_state,
+                n_jobs=self.n_jobs,
+                max_iter=self.max_iter,
+                verbose=self.verbose
+            )
+            parameters = optimizer.optimize(train_u12, train_u2)
+        else:
+            if self.verbose:
+                print(f"\nStage 1: Using Fixed C={self.fixed_c:.6e}")
+
+            from classification.optimizer import SVMParameters
+            parameters = SVMParameters(
+                C=self.fixed_c,
+                calibration_method='sigmoid',
+                dual=False,
+                intercept_scaling=1000.0,
+                cv_score=0.0,  # Not computed when using fixed C
+                round_found=0   # Fixed, not optimized
+            )
 
         # Stage 2: Train ensemble on training data
         if self.verbose:

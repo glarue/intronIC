@@ -99,7 +99,9 @@ class NestedCVEvaluator:
         random_state: int = 42,
         n_jobs: int = 1,
         max_iter: int = 100000,
-        verbose: bool = True
+        verbose: bool = True,
+        optimize_c: bool = True,
+        fixed_c: float | None = None
     ):
         """
         Initialize nested CV evaluator.
@@ -115,6 +117,8 @@ class NestedCVEvaluator:
             n_jobs: Parallel jobs for optimization/prediction
             max_iter: Max iterations for LinearSVC
             verbose: Print progress
+            optimize_c: Whether to optimize C parameter (default: True)
+            fixed_c: Fixed C value if not optimizing (default: None)
         """
         self.n_folds = n_folds
         self.n_optimization_rounds = n_optimization_rounds
@@ -126,6 +130,8 @@ class NestedCVEvaluator:
         self.n_jobs = n_jobs
         self.max_iter = max_iter
         self.verbose = verbose
+        self.optimize_c = optimize_c
+        self.fixed_c = fixed_c
 
     def evaluate(
         self,
@@ -188,18 +194,32 @@ class NestedCVEvaluator:
                 print(f"Train: {n_u2_train} U2, {n_u12_train} U12")
                 print(f"Test:  {n_u2_test} U2, {n_u12_test} U12")
 
-            # Stage 1: Optimize hyperparameters on training fold
-            if self.verbose:
-                print(f"\nStage 1: Hyperparameter Optimization (fold {fold_idx + 1})")
+            # Stage 1: Optimize hyperparameters or use fixed C
+            if self.optimize_c:
+                if self.verbose:
+                    print(f"\nStage 1: Hyperparameter Optimization (fold {fold_idx + 1})")
 
-            optimizer = SVMOptimizer(
-                n_rounds=self.n_optimization_rounds,
-                random_state=self.random_state + fold_idx,
-                n_jobs=self.n_jobs,
-                max_iter=self.max_iter,
-                verbose=self.verbose
-            )
-            parameters = optimizer.optimize(train_u12, train_u2)
+                optimizer = SVMOptimizer(
+                    n_rounds=self.n_optimization_rounds,
+                    random_state=self.random_state + fold_idx,
+                    n_jobs=self.n_jobs,
+                    max_iter=self.max_iter,
+                    verbose=self.verbose
+                )
+                parameters = optimizer.optimize(train_u12, train_u2)
+            else:
+                if self.verbose:
+                    print(f"\nStage 1: Using Fixed C={self.fixed_c:.6e} (fold {fold_idx + 1})")
+
+                from classification.optimizer import SVMParameters
+                parameters = SVMParameters(
+                    C=self.fixed_c,
+                    calibration_method='sigmoid',
+                    dual=False,
+                    intercept_scaling=1000.0,
+                    cv_score=0.0,  # Not computed when using fixed C
+                    round_found=0   # Fixed, not optimized
+                )
 
             # Stage 2: Train ensemble on training fold
             if self.verbose:

@@ -227,7 +227,9 @@ class IntronClassifier:
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
-                verbose=True
+                verbose=True,
+                optimize_c=self.optimize_c,
+                fixed_c=self.fixed_c
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -244,7 +246,9 @@ class IntronClassifier:
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
-                verbose=True
+                verbose=True,
+                optimize_c=self.optimize_c,
+                fixed_c=self.fixed_c
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -372,7 +376,9 @@ class IntronClassifier:
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
-                verbose=True
+                verbose=True,
+                optimize_c=self.optimize_c,
+                fixed_c=self.fixed_c
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -389,7 +395,9 @@ class IntronClassifier:
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
-                verbose=True
+                verbose=True,
+                optimize_c=self.optimize_c,
+                fixed_c=self.fixed_c
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
