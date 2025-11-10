@@ -149,8 +149,8 @@ class BranchPointScorer:
         # Score the SAME sequence (U12's best match) with the U2 PWM
         # Port from: intronIC.py:3086-3095 (log_ratio using same bp_region_seq)
         # This ensures we get a proper log-odds ratio: log2(P(seq|U12) / P(seq|U2))
-        window_position = search_window[0] + u12_match.start_in_region
-        u2_score = self.u2_pwm.score_sequence(u12_match.sequence, seq_start_position=window_position)
+        # CRITICAL: BP PWMs use start_index=0, so use default seq_start_position=0
+        u2_score = self.u2_pwm.score_sequence(u12_match.sequence)  # Use default seq_start_position=0
 
         # Also find U2's own best match for bp_seq_u2 (diagnostic/output purposes)
         # Port from: intronIC.py:3082-3084 (separate U2 BP sequence tracking)
@@ -265,11 +265,11 @@ class BranchPointScorer:
         for sub_seq in self._sliding_window(sequence, window_size):
             # Score this window
             # Port from: intronIC.py:2164
-            # Calculate the genomic position of this window
-            # search_window_start is e.g., -55, start is offset 0, 1, 2...
-            # So window position is -55, -54, -53, etc.
-            window_position = search_window_start + start
-            new_score = pwm.score_sequence(sub_seq, seq_start_position=window_position)
+            # CRITICAL: BP PWMs have start_index=0 and expect positions 0-11
+            # The original bp_score() calls seq_score(sub_seq, matrix) with NO start_index,
+            # which defaults to 0. We must do the same - seq_start_position=0 (the default).
+            # DO NOT pass genomic position here!
+            new_score = pwm.score_sequence(sub_seq)  # Use default seq_start_position=0
             new_coords = (start, stop)
 
             # Check if this is the best so far
