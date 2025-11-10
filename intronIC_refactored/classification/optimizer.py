@@ -40,6 +40,9 @@ from tqdm.auto import tqdm
 
 from core.intron import Intron
 
+# Global filter for convergence warnings (persists across multiprocessing forks)
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
 
 @contextlib.contextmanager
 def tqdm_joblib(tqdm_object):
@@ -691,7 +694,19 @@ class SVMOptimizer:
 
         if self.verbose:
             desc = "Final param eval"
-            with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
+            with suppress_convergence_warnings(verbose=True):
+                with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
+                    scores = cross_val_score(
+                        model,
+                        X,
+                        y,
+                        cv=self.cv_folds,
+                        scoring='neg_log_loss',
+                        n_jobs=self.n_jobs,
+                        verbose=0  # Silence sklearn, use tqdm
+                    )
+        else:
+            with suppress_convergence_warnings(verbose=True):
                 scores = cross_val_score(
                     model,
                     X,
@@ -699,17 +714,7 @@ class SVMOptimizer:
                     cv=self.cv_folds,
                     scoring='neg_log_loss',
                     n_jobs=self.n_jobs,
-                    verbose=0  # Silence sklearn, use tqdm
+                    verbose=0
                 )
-        else:
-            scores = cross_val_score(
-                model,
-                X,
-                y,
-                cv=self.cv_folds,
-                scoring='neg_log_loss',
-                n_jobs=self.n_jobs,
-                verbose=0
-            )
 
         return float(np.mean(scores))
