@@ -162,9 +162,19 @@ class IntronClassifier:
         self.cv_processes = cv_processes
         self.classification_processes = classification_processes
         self.max_iter = max_iter
-        self.eval_mode = eval_mode
         self.n_cv_folds = n_cv_folds
         self.test_fraction = test_fraction
+
+        # Auto-skip evaluation when using fixed C
+        # Rationale: When C is pre-specified, evaluation metrics aren't useful
+        # since we're not comparing different hyperparameters
+        if not optimize_c and fixed_c is not None:
+            if eval_mode != 'none':
+                print(f"Using fixed C={fixed_c:.6e} - automatically skipping evaluation phase")
+                print("(Override with --eval-mode if you want to evaluate performance)")
+            self.eval_mode = 'none'
+        else:
+            self.eval_mode = eval_mode
 
         # Validate parameters
         if not 0 <= classification_threshold <= 100:
