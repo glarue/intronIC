@@ -1090,12 +1090,40 @@ def run_pipeline(config: IntronICConfig):
         )
         u2_count = len(classified_introns) - u12_count
 
+        # Count AT-AC introns (characteristic U12 boundaries)
+        atac_count = sum(
+            1 for i in classified_introns
+            if (i.metadata and i.metadata.type_id == 'u12' and
+                i.sequences and i.sequences.terminal_dinucleotides == 'AT-AC')
+        )
+
         reporter.print_classification_summary(
             total=len(classified_introns),
             u12_count=u12_count,
             u2_count=u2_count,
             threshold=config.scoring.threshold
         )
+
+        # Log classification summary to log file
+        logger.info(f"Classification results:")
+        logger.info(f"  {atac_count} putative AT-AC U12-type introns found")
+        logger.info(f"  {u12_count} putative U12-type introns found with scores > {config.scoring.threshold}%")
+        logger.info(f"  {u2_count} introns classified as U2-type")
+
+        # Collect and log non-canonical boundary statistics
+        from collections import Counter
+        nc_types = Counter()
+        for intron in classified_introns:
+            if (intron.metadata and intron.metadata.noncanonical and
+                intron.sequences and intron.sequences.terminal_dinucleotides):
+                nc_types[intron.sequences.terminal_dinucleotides] += 1
+
+        if nc_types:
+            logger.info("Most common non-canonical splice sites:")
+            total_nc = sum(nc_types.values())
+            for dnts, count in nc_types.most_common(10):  # Top 10
+                percentage = (count / total_nc) * 100
+                logger.info(f"  * {dnts} ({count}/{total_nc}, {percentage:.2f}%)")
 
         # Save classification metrics to JSON file
         if metrics:
