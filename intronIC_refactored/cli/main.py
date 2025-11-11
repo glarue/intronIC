@@ -1310,40 +1310,40 @@ def run_pipeline(config: IntronICConfig):
         logger.info(f"  {u12_count} putative U12-type introns found with scores > {config.scoring.threshold}%")
         logger.info(f"  {u2_count} introns classified as U2-type")
 
-        # Collect and log non-canonical boundary statistics (separate by U12/U2)
+        # Collect and log splice site boundary statistics (separate by U12/U2)
         from collections import Counter
-        nc_u12 = Counter()
-        nc_u2 = Counter()
+        boundaries_u12 = Counter()
+        boundaries_u2 = Counter()
 
         for intron in classified_introns:
-            if (intron.metadata and intron.metadata.noncanonical and
-                intron.sequences and intron.sequences.terminal_dinucleotides):
+            # Count all boundaries (canonical and non-canonical) by type
+            if intron.metadata and intron.sequences and intron.sequences.terminal_dinucleotides:
                 dnts = intron.sequences.terminal_dinucleotides
                 if intron.metadata.type_id == 'u12':
-                    nc_u12[dnts] += 1
+                    boundaries_u12[dnts] += 1
                 else:
-                    nc_u2[dnts] += 1
+                    boundaries_u2[dnts] += 1
 
-        # Log U12 non-canonical boundaries
-        if nc_u12:
+        # Log U12 boundary statistics
+        if boundaries_u12:
             logger.info("")
             logger.info("--" + "-" * 78)
-            logger.info("Top 20 non-canonical splice sites (U12-type introns)")
+            logger.info("Top 20 splice site boundaries (U12-type introns)")
             logger.info("--" + "-" * 78)
-            total_nc_u12 = sum(nc_u12.values())
-            for i, (dnts, count) in enumerate(nc_u12.most_common(20), 1):
-                percentage = (count / total_nc_u12) * 100
+            total_u12 = sum(boundaries_u12.values())
+            for i, (dnts, count) in enumerate(boundaries_u12.most_common(20), 1):
+                percentage = (count / total_u12) * 100
                 logger.info(f"  {i:2d}. {dnts:8s} {count:6,} ({percentage:5.2f}%)")
 
-        # Log U2 non-canonical boundaries
-        if nc_u2:
+        # Log U2 boundary statistics
+        if boundaries_u2:
             logger.info("")
             logger.info("--" + "-" * 78)
-            logger.info("Top 20 non-canonical splice sites (U2-type introns)")
+            logger.info("Top 20 splice site boundaries (U2-type introns)")
             logger.info("--" + "-" * 78)
-            total_nc_u2 = sum(nc_u2.values())
-            for i, (dnts, count) in enumerate(nc_u2.most_common(20), 1):
-                percentage = (count / total_nc_u2) * 100
+            total_u2 = sum(boundaries_u2.values())
+            for i, (dnts, count) in enumerate(boundaries_u2.most_common(20), 1):
+                percentage = (count / total_u2) * 100
                 logger.info(f"  {i:2d}. {dnts:8s} {count:6,} ({percentage:5.2f}%)")
 
         # Save classification metrics to JSON file
