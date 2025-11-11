@@ -689,8 +689,8 @@ class MetaWriter:
             frac_pos = str(round(frac_pos_val, 4)) if frac_pos_val is not None else null
             phase = str(intron.metadata.phase) if intron.metadata.phase is not None else null
 
-        # Type ID
-        type_id = intron.type_id
+        # Type ID - write '.' if unknown (for omitted introns)
+        type_id = null if intron.type_id == "unknown" else intron.type_id
 
         # Feature type (exon/cds) - defined_by field tracks which feature type defined this intron
         feature = null

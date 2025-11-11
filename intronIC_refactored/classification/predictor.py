@@ -271,7 +271,10 @@ class SVMPredictor:
         probas = np.array(probas)  # Shape: (n_models, n_introns)
 
         # F1-weighted averaging (Port from: intronIC.py:5671-5676)
-        f1_scores = np.array([m.f1_score for m in ensemble.models])
+        # Handle models that may not have f1_score (e.g., loaded from old format)
+        f1_scores = np.array([
+            getattr(m, 'f1_score', 1.0) for m in ensemble.models
+        ])
         weights = f1_scores / f1_scores.sum()
 
         # Weighted average across models

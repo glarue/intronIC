@@ -34,6 +34,51 @@ from visualization.plots import plot_classification_results
 import gzip
 
 
+def merge_scored_and_omitted_introns(
+    scored_introns: List[Intron],
+    all_introns: List[Intron],
+    logger: logging.Logger
+) -> List[Intron]:
+    """
+    Merge scored introns with unique omitted introns for complete meta output.
+
+    Matches original intronIC behavior where .meta.iic includes both:
+    - Scored introns (with classification results)
+    - Omitted introns (with [o:X] tags but no scores)
+
+    Duplicates are excluded from output (they're already filtered).
+
+    Args:
+        scored_introns: Introns that went through scoring/classification (have scores)
+        all_introns: All extracted introns (including omitted)
+        logger: Logger instance
+
+    Returns:
+        Combined list: scored introns + unique omitted introns (no duplicates)
+    """
+    # Create set of scored intron IDs for fast lookup
+    scored_ids = {id(intron) for intron in scored_introns}
+
+    # Find omitted introns that aren't duplicates
+    # These should have metadata.omitted set and NOT be duplicates
+    omitted_introns = [
+        intron for intron in all_introns
+        if id(intron) not in scored_ids
+        and intron.metadata
+        and intron.metadata.omitted
+        and not intron.metadata.duplicate
+    ]
+
+    logger.info(
+        f"Merging output: {len(scored_introns):,} scored + "
+        f"{len(omitted_introns):,} omitted = "
+        f"{len(scored_introns) + len(omitted_introns):,} total introns for meta file"
+    )
+
+    # Return scored + omitted (duplicates already excluded)
+    return scored_introns + omitted_introns
+
+
 def calculate_minimum_intron_length(
     scoring_regions: ScoringRegions,
     bp_matrix_length: int
@@ -1363,7 +1408,15 @@ def run_pipeline(config: IntronICConfig):
         reporter.print_section("Step 6: Write Outputs", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=6)
         logger.info("== STEP 6: WRITE OUTPUTS ==")
-        write_outputs(classified_introns, config, reporter, logger)
+
+        # Merge classified introns with omitted introns for complete meta output
+        # This matches original intronIC behavior where .meta.iic includes all introns
+        # (scored + omitted), not just the ones that went through classification
+        all_introns_for_output = merge_scored_and_omitted_introns(
+            classified_introns, introns, logger
+        )
+
+        write_outputs(all_introns_for_output, config, reporter, logger)
 
         # Calculate and log total runtime
         elapsed_seconds = time.time() - start_time
