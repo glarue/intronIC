@@ -11,30 +11,19 @@ from datetime import datetime
 
 class EnhancedFormatter(logging.Formatter):
     """
-    Custom log formatter with visual enhancements using Unicode box drawing.
+    Custom log formatter with simple visual enhancements.
 
     Makes plain text logs more readable with:
     - Section separators
-    - Aligned columns
-    - Visual hierarchy
+    - Clean formatting
     """
 
-    # Unicode box drawing characters
-    BOX_H = '─'  # Horizontal line
-    BOX_V = '│'  # Vertical line
-    BOX_TL = '┌'  # Top-left corner
-    BOX_TR = '┐'  # Top-right corner
-    BOX_BL = '└'  # Bottom-left corner
-    BOX_BR = '┘'  # Bottom-right corner
-    BOX_VR = '├'  # Vertical-right (left edge with branch)
-    BOX_VL = '┤'  # Vertical-left (right edge with branch)
-
-    def __init__(self, width: int = 80):
+    def __init__(self, width: int = 100):
         """
         Initialize formatter.
 
         Args:
-            width: Total line width for formatting (default: 80)
+            width: Total line width for formatting (default: 100)
         """
         super().__init__()
         self.width = width
@@ -53,63 +42,34 @@ class EnhancedFormatter(logging.Formatter):
         level = record.levelname.ljust(8)
         message = record.getMessage()
 
-        # Check if this is a section header (starts with "==" or contains multiple "=")
-        if message.startswith('==') or message.count('=') > 10:
+        # Check if this is a section header (starts with "==")
+        if message.startswith('=='):
             return self._format_section(message)
 
         # Check if this is a subsection header (starts with "--")
         if message.startswith('--'):
             return self._format_subsection(message)
 
-        # Regular message with visual prefix
-        prefix = f"{self.BOX_V} {timestamp} {self.BOX_V} {level} {self.BOX_V}"
-        indent = len(prefix)
-
-        # Handle multi-line messages
-        lines = message.split('\n')
-        formatted_lines = []
-
-        for i, line in enumerate(lines):
-            if i == 0:
-                formatted_lines.append(f"{prefix} {line}")
-            else:
-                # Indent continuation lines
-                formatted_lines.append(f"{self.BOX_V}{' ' * (indent - 1)}{self.BOX_V} {line}")
-
-        return '\n'.join(formatted_lines)
+        # Regular message
+        return f"[{timestamp}] {level} {message}"
 
     def _format_section(self, message: str) -> str:
         """Format a major section header."""
         # Extract the actual title (remove "==" markers)
         title = message.strip('= \n')
 
-        # Create top border and title line, with separator line below
-        # This creates an "open box" that subsequent messages will continue
-        title_line = f" {title} "
-        padding = (self.width - len(title_line) - 2) // 2
-
-        top = f"\n{self.BOX_TL}{self.BOX_H * (self.width - 2)}{self.BOX_TR}"
-        mid = f"{self.BOX_V}{' ' * padding}{title_line}{' ' * padding}"
-        # Adjust for odd widths
-        if len(mid) < self.width - 1:
-            mid += ' ' * (self.width - len(mid) - 1)
-        mid += self.BOX_V
-
-        # Add separator line between title and content
-        sep = f"{self.BOX_VR}{self.BOX_H * (self.width - 2)}{self.BOX_VL}"
-
-        return f"{top}\n{mid}\n{sep}"
+        # Simple format with separators
+        sep = "=" * self.width
+        return f"\n{sep}\n{title}\n{sep}"
 
     def _format_subsection(self, message: str) -> str:
         """Format a subsection header."""
         # Extract the actual title (remove "--" markers)
         title = message.strip('- \n')
 
-        # Create a simple separator with title
-        title_line = f" {title} "
-        separator = self.BOX_H * (self.width - len(title_line) - 2)
-
-        return f"\n{self.BOX_VR}{separator}{title_line}{self.BOX_VL}"
+        # Simple format with lighter separator
+        sep = "-" * self.width
+        return f"\n{title}\n{sep}"
 
 
 class TrainingLogger:
