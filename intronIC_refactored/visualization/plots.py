@@ -178,8 +178,12 @@ def scatter_plot(
         figure=fig,
         width_ratios=[1, 4, 0.1],
         height_ratios=[1, 4, 0.1],
-        hspace=0.05,
-        wspace=0.05
+        hspace=0.02,
+        wspace=0.02,
+        top=0.95,  # Leave space for suptitle
+        bottom=0.05,
+        left=0.05,
+        right=0.95
     )
 
     # Main scatter plot (center)
@@ -249,7 +253,6 @@ def scatter_plot(
     ax_main.legend(handles=legend_patches, fontsize=fsize-2)
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
-    ax_main.set_title(title, fontsize=fsize)
 
     # Plot marginal distributions
     # Top: X distribution (5' z-score)
@@ -265,6 +268,17 @@ def scatter_plot(
     ax_right.tick_params(labelleft=False)
     ax_right.spines['top'].set_visible(False)
     ax_right.spines['right'].set_visible(False)
+
+    # Add figure-level title above marginal distributions
+    # Extract just the base name from the title (remove path and extensions)
+    from pathlib import Path
+    base_name = Path(title).stem  # Gets filename without extension
+    if base_name.endswith('.plot.scatter'):
+        base_name = base_name.replace('.plot.scatter', '')
+    elif base_name.endswith('.scatter'):
+        base_name = base_name.replace('.scatter', '')
+
+    fig.suptitle(f'{base_name} - 2D Score Distribution', fontsize=fsize+2, y=0.98, weight='bold')
 
     # Save figure
     output_path = f'{title}.iic.{outfmt}'
