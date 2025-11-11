@@ -1161,9 +1161,7 @@ def run_pipeline(config: IntronICConfig):
         # Step 1: Load input data
         reporter.print_section("Step 1: Load Input Data", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=1)
-        logger.info("=" * 80)
-        logger.info("STEP 1: LOAD INPUT DATA")
-        logger.info("=" * 80)
+        logger.info("== STEP 1: LOAD INPUT DATA ==")
 
         if config.input.mode == 'annotation':
             genome_reader = load_genome(config, logger)
@@ -1192,9 +1190,7 @@ def run_pipeline(config: IntronICConfig):
         # Step 2: Extract introns (already done above)
         reporter.print_section("Step 2: Extract Introns", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=2)
-        logger.info("=" * 80)
-        logger.info("STEP 2: EXTRACT INTRONS")
-        logger.info("=" * 80)
+        logger.info("== STEP 2: EXTRACT INTRONS ==")
         reporter.print_success(f"Extracted {len(introns):,} introns")
 
         # Filter introns before scoring (duplicates, short introns, longest isoform)
@@ -1246,9 +1242,7 @@ def run_pipeline(config: IntronICConfig):
         # Step 3: Score introns
         reporter.print_section("Step 3: Score Introns", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=3)
-        logger.info("=" * 80)
-        logger.info("STEP 3: SCORE INTRONS")
-        logger.info("=" * 80)
+        logger.info("== STEP 3: SCORE INTRONS ==")
         scored_introns = score_introns(introns_for_scoring, config, reporter, logger)
         reporter.print_success(f"Scored {len(scored_introns):,} introns")
 
@@ -1265,9 +1259,7 @@ def run_pipeline(config: IntronICConfig):
             # Step 4: Normalize scores
             reporter.print_section("Step 4: Normalize Scores", "bold blue")
             reporter.print_pipeline_steps(pipeline_steps, current_step=4)
-            logger.info("=" * 80)
-            logger.info("STEP 4: NORMALIZE SCORES")
-            logger.info("=" * 80)
+            logger.info("== STEP 4: NORMALIZE SCORES ==")
             normalized_introns, u12_reference, u2_reference, normalizer = normalize_scores(
                 scored_introns, config, reporter, logger
             )
@@ -1276,9 +1268,7 @@ def run_pipeline(config: IntronICConfig):
             # Step 5: Classify
             reporter.print_section("Step 5: Classify Introns", "bold blue")
             reporter.print_pipeline_steps(pipeline_steps, current_step=5)
-            logger.info("=" * 80)
-            logger.info("STEP 5: CLASSIFY INTRONS")
-            logger.info("=" * 80)
+            logger.info("== STEP 5: CLASSIFY INTRONS ==")
             classified_introns, metrics = classify_introns(
                 normalized_introns, u12_reference, u2_reference, normalizer, config, reporter, logger
             )
@@ -1371,9 +1361,7 @@ def run_pipeline(config: IntronICConfig):
         # Step 6: Write outputs
         reporter.print_section("Step 6: Write Outputs", "bold blue")
         reporter.print_pipeline_steps(pipeline_steps, current_step=6)
-        logger.info("=" * 80)
-        logger.info("STEP 6: WRITE OUTPUTS")
-        logger.info("=" * 80)
+        logger.info("== STEP 6: WRITE OUTPUTS ==")
         write_outputs(classified_introns, config, reporter, logger)
 
         # Calculate and log total runtime

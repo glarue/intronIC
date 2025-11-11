@@ -83,18 +83,22 @@ class EnhancedFormatter(logging.Formatter):
         # Extract the actual title (remove "==" markers)
         title = message.strip('= \n')
 
-        # Create a box around the title
+        # Create top border and title line, with separator line below
+        # This creates an "open box" that subsequent messages will continue
         title_line = f" {title} "
         padding = (self.width - len(title_line) - 2) // 2
 
-        top = f"{self.BOX_TL}{self.BOX_H * (self.width - 2)}{self.BOX_TR}"
-        mid = f"{self.BOX_V}{' ' * padding}{title_line}{' ' * padding}{self.BOX_V}"
+        top = f"\n{self.BOX_TL}{self.BOX_H * (self.width - 2)}{self.BOX_TR}"
+        mid = f"{self.BOX_V}{' ' * padding}{title_line}{' ' * padding}"
         # Adjust for odd widths
-        if len(mid) < self.width:
-            mid += ' ' * (self.width - len(mid) - 1) + self.BOX_V
-        bot = f"{self.BOX_BL}{self.BOX_H * (self.width - 2)}{self.BOX_BR}"
+        if len(mid) < self.width - 1:
+            mid += ' ' * (self.width - len(mid) - 1)
+        mid += self.BOX_V
 
-        return f"\n{top}\n{mid}\n{bot}"
+        # Add separator line between title and content
+        sep = f"{self.BOX_VR}{self.BOX_H * (self.width - 2)}{self.BOX_VL}"
+
+        return f"{top}\n{mid}\n{sep}"
 
     def _format_subsection(self, message: str) -> str:
         """Format a subsection header."""
