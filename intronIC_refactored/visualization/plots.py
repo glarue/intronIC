@@ -176,7 +176,7 @@ def scatter_plot(
     gs = gridspec.GridSpec(
         3, 3,
         figure=fig,
-        width_ratios=[1, 4, 0.1],
+        width_ratios=[1, 4, 0.8],  # Increased right margin width for count labels
         height_ratios=[1, 4, 0.1],
         hspace=0.02,
         wspace=0.02,
@@ -265,7 +265,7 @@ def scatter_plot(
     # Right: Y distribution (BP z-score)
     ax_right.hist(scores[:, 1], bins=50, orientation='horizontal', color='steelblue', alpha=0.7, edgecolor='none')
     ax_right.set_xlabel('Count', fontsize=fsize-2)
-    ax_right.tick_params(labelleft=False)
+    ax_right.tick_params(labelleft=False, labelrotation=45)  # Rotate labels to prevent overlap
     ax_right.spines['top'].set_visible(False)
     ax_right.spines['right'].set_visible(False)
 
