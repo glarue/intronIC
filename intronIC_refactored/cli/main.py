@@ -1273,17 +1273,18 @@ def run_pipeline(config: IntronICConfig):
                 normalized_introns, u12_reference, u2_reference, normalizer, config, reporter, logger
             )
 
-        # Count classifications
+        # Count classifications based on threshold (for reporting "high confidence" U12s)
+        # Note: type_id is based on raw classifier (>50%), but reporting uses threshold
         u12_count = sum(
             1 for i in classified_introns
-            if i.metadata and i.metadata.type_id == 'u12'
+            if i.scores and i.scores.svm_score >= config.scoring.threshold
         )
         u2_count = len(classified_introns) - u12_count
 
-        # Count AT-AC introns (characteristic U12 boundaries)
+        # Count AT-AC introns among high-confidence U12s (score >= threshold)
         atac_count = sum(
             1 for i in classified_introns
-            if (i.metadata and i.metadata.type_id == 'u12' and
+            if (i.scores and i.scores.svm_score >= config.scoring.threshold and
                 i.sequences and i.sequences.terminal_dinucleotides == 'AT-AC')
         )
 
