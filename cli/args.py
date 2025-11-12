@@ -256,15 +256,15 @@ Examples:
             help='Test set fraction for split evaluation mode (default: 0.2)'
         )
         training_group.add_argument(
+            '--train',
+            action='store_true',
+            help='Train a new model from scratch (includes full training, CV, and evaluation). By default, uses pretrained model.'
+        )
+        training_group.add_argument(
             '--pretrained_model',
             type=Path,
             default=None,
-            help='Path to pretrained model file (.model.pkl). Skips training and uses saved model for classification'
-        )
-        training_group.add_argument(
-            '--use_default_pretrained',
-            action='store_true',
-            help='Use default pretrained model from data directory (skips training). Trained on human Chr19 data.'
+            help='Path to custom pretrained model file (.model.pkl). If not specified, uses default pretrained model unless --train is set.'
         )
 
         # Scoring region coordinates
