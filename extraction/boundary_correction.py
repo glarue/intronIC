@@ -159,10 +159,16 @@ def apply_u12_correction(
 
     # Update metadata with correction info
     # Port from: intronIC.py:2345, 2347
+    # Add [c:N] tag to dynamic_tags for output formatting
+    new_dynamic_tags = intron.metadata.dynamic_tags.copy()
+    new_dynamic_tags.add(f"c:{shift}")  # e.g., "c:-2" for 2bp upstream shift
+
     updated_metadata = replace(
         intron.metadata,
-        corrected=shift,  # Store shift amount
-        phase=new_phase
+        corrected=True,  # Boolean flag
+        correction_distance=shift,  # Store shift amount
+        phase=new_phase,
+        dynamic_tags=new_dynamic_tags
     )
 
     # Create corrected intron
