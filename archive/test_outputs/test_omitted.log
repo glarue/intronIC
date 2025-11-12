@@ -1,0 +1,99 @@
+
+====================================================================================================
+STEP 1: LOAD INPUT DATA
+====================================================================================================
+[2025-11-11 11:01:50] INFO     Loading genome: test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz
+[2025-11-11 11:01:50] INFO     Loaded 1 sequences into memory
+[2025-11-11 11:01:50] INFO     Parsing annotation: test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz
+[2025-11-11 11:01:54] INFO     Built hierarchy with 2953 genes
+[2025-11-11 11:01:55] INFO     Generated 58933 introns
+[2025-11-11 11:01:58] INFO     Extracted sequences for 58933 introns
+[2025-11-11 11:01:58] INFO     Applied U12 boundary corrections to 1 non-canonical introns
+[2025-11-11 11:01:58] INFO     Minimum intron length: 30bp (user: 30bp, scoring regions: 26bp)
+[2025-11-11 11:01:58] INFO     Extracted 58,933 introns (length filtering during scoring filter phase)
+
+====================================================================================================
+STEP 2: EXTRACT INTRONS
+====================================================================================================
+[2025-11-11 11:01:58] INFO     Applying pre-scoring filters (duplicates, omissions, longest isoform)
+[2025-11-11 11:01:59] INFO     Filtering results: 12,074/58,933 introns kept for scoring
+[2025-11-11 11:01:59] INFO     Omitted: 70 short, 0 ambiguous, 0 non-canonical, 46290 non-longest isoform, 0 overlapping
+[2025-11-11 11:01:59] INFO     Duplicates marked: 38680
+
+====================================================================================================
+STEP 3: SCORE INTRONS
+====================================================================================================
+[2025-11-11 11:01:59] INFO     Loading PWM matrices
+[2025-11-11 11:01:59] INFO     Loaded PWM matrices for 3 regions
+[2025-11-11 11:01:59] INFO     Loaded conserved U2 BP matrix
+[2025-11-11 11:01:59] INFO     Starting PWM scoring
+[2025-11-11 11:02:01] INFO     Scored 12074 introns successfully
+[2025-11-11 11:02:01] INFO     Loading pretrained model from homo_sapiens.model.pkl
+[2025-11-11 11:02:01] INFO     Loaded model bundle (dict format)
+[2025-11-11 11:02:01] INFO     Loaded ensemble with 1 models
+[2025-11-11 11:02:01] INFO     Using threshold: 90.0
+[2025-11-11 11:02:01] INFO     Fitting normalizer on 12074 experimental introns
+[2025-11-11 11:02:01] INFO     Normalized 12074 experimental introns
+[2025-11-11 11:02:01] INFO     Classifying introns with loaded ensemble
+[2025-11-11 11:02:02] INFO     Classified 12074 introns
+[2025-11-11 11:02:02] INFO     Classification results:
+[2025-11-11 11:02:02] INFO       10 putative AT-AC U12-type introns found
+[2025-11-11 11:02:02] INFO       30 putative U12-type introns found with scores > 90.0%
+[2025-11-11 11:02:02] INFO       12044 introns classified as U2-type
+[2025-11-11 11:02:02] INFO     
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 11:02:02] INFO     Top 20 splice site boundaries (U12-type introns)
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 11:02:02] INFO        1. GT-AG        24 (70.59%)
+[2025-11-11 11:02:02] INFO        2. AT-AC        10 (29.41%)
+[2025-11-11 11:02:02] INFO     
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 11:02:02] INFO     Top 20 splice site boundaries (U2-type introns)
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 11:02:02] INFO        1. GT-AG    11,681 (97.02%)
+[2025-11-11 11:02:02] INFO        2. GC-AG       158 ( 1.31%)
+[2025-11-11 11:02:02] INFO        3. AT-AG        10 ( 0.08%)
+[2025-11-11 11:02:02] INFO        4. GT-TG         8 ( 0.07%)
+[2025-11-11 11:02:02] INFO        5. GT-CC         5 ( 0.04%)
+[2025-11-11 11:02:02] INFO        6. GT-AC         5 ( 0.04%)
+[2025-11-11 11:02:02] INFO        7. CT-AG         4 ( 0.03%)
+[2025-11-11 11:02:02] INFO        8. GA-AG         4 ( 0.03%)
+[2025-11-11 11:02:02] INFO        9. GT-TT         4 ( 0.03%)
+[2025-11-11 11:02:02] INFO       10. GG-AG         4 ( 0.03%)
+[2025-11-11 11:02:02] INFO       11. TC-AG         4 ( 0.03%)
+[2025-11-11 11:02:02] INFO       12. GG-AA         4 ( 0.03%)
+[2025-11-11 11:02:02] INFO       13. GT-CA         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       14. AT-AT         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       15. AG-AG         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       16. GA-TG         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       17. GT-AA         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       18. TT-AG         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       19. TT-TA         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO       20. CA-AA         3 ( 0.02%)
+[2025-11-11 11:02:02] INFO     Saving classification metrics to /home/glarue/code/intronIC/intronIC_refactored/test_omitted.metrics.json
+[2025-11-11 11:02:02] INFO     Generating visualization plots
+[2025-11-11 11:02:03] INFO     Successfully generated classification plots
+
+====================================================================================================
+STEP 6: WRITE OUTPUTS
+====================================================================================================
+[2025-11-11 11:02:03] INFO     Merging output: 12,074 scored + 8,179 omitted = 20,253 total introns for meta file
+[2025-11-11 11:02:03] INFO     Writing output files
+[2025-11-11 11:02:03] INFO     Writing BED file: /home/glarue/code/intronIC/intronIC_refactored/test_omitted.bed.iic
+[2025-11-11 11:02:03] INFO     Wrote 20253 introns to BED file
+[2025-11-11 11:02:03] INFO     Writing metadata file: /home/glarue/code/intronIC/intronIC_refactored/test_omitted.meta.iic
+[2025-11-11 11:02:03] INFO     Wrote metadata for 20253 introns
+[2025-11-11 11:02:03] INFO     Writing sequences file: /home/glarue/code/intronIC/intronIC_refactored/test_omitted.introns.iic
+[2025-11-11 11:02:03] INFO     Wrote sequences for 20253 introns
+[2025-11-11 11:02:03] INFO     Writing score info file: /home/glarue/code/intronIC/intronIC_refactored/test_omitted.score_info.iic
+[2025-11-11 11:02:03] INFO     Wrote score info for 20253 introns
+[2025-11-11 11:02:03] INFO     All output files written successfully
+[2025-11-11 11:02:03] INFO     Run finished in 13s

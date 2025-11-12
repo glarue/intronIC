@@ -1,0 +1,92 @@
+
+====================================================================================================
+STEP 1: LOAD INPUT DATA
+====================================================================================================
+[2025-11-11 21:13:47] INFO     Loading genome: drosophila/Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz
+[2025-11-11 21:13:49] INFO     Loaded 1870 sequences into memory
+[2025-11-11 21:13:49] INFO     Parsing annotation: drosophila/Drosophila_melanogaster.BDGP6.54.115.gtf.gz
+[2025-11-11 21:14:08] INFO     Built hierarchy with 24254 genes
+[2025-11-11 21:14:09] INFO     Generated 132420 introns
+[2025-11-11 21:14:14] INFO     Extracted sequences for 132420 introns
+[2025-11-11 21:14:14] INFO     Minimum intron length: 30bp (user: 30bp, scoring regions: 26bp)
+[2025-11-11 21:14:14] INFO     Extracted 132,420 introns (length filtering during scoring filter phase)
+
+====================================================================================================
+STEP 2: EXTRACT INTRONS
+====================================================================================================
+[2025-11-11 21:14:14] INFO     Applying pre-scoring filters (duplicates, omissions, longest isoform)
+[2025-11-11 21:14:15] INFO     Filtering results: 41,312/132,420 introns kept for scoring
+[2025-11-11 21:14:15] INFO     Omitted: 1 short, 11 ambiguous, 0 non-canonical, 91086 non-longest isoform, 0 overlapping
+[2025-11-11 21:14:15] INFO     Duplicates marked: 84559
+
+====================================================================================================
+STEP 3: SCORE INTRONS
+====================================================================================================
+[2025-11-11 21:14:15] INFO     Loading PWM matrices
+[2025-11-11 21:14:15] INFO     Loaded PWM matrices for 3 regions
+[2025-11-11 21:14:15] INFO     Loaded conserved U2 BP matrix
+[2025-11-11 21:14:15] INFO     Starting PWM scoring
+[2025-11-11 21:14:24] INFO     Scored 41312 introns successfully
+[2025-11-11 21:14:24] INFO     Loading pretrained model from homo_sapiens.model.pkl
+[2025-11-11 21:14:24] INFO     Loaded model bundle (dict format)
+[2025-11-11 21:14:24] INFO     Loaded ensemble with 1 models
+[2025-11-11 21:14:24] INFO     Using threshold: 90.0
+[2025-11-11 21:14:24] INFO     Fitting normalizer on 41312 experimental introns
+[2025-11-11 21:14:24] INFO     Normalized 41312 experimental introns
+[2025-11-11 21:14:24] INFO     Classifying introns with loaded ensemble
+[2025-11-11 21:14:24] INFO     Classified 41312 introns
+[2025-11-11 21:14:24] INFO     Classification results:
+[2025-11-11 21:14:24] INFO       9 putative AT-AC U12-type introns found
+[2025-11-11 21:14:24] INFO       18 putative U12-type introns found with scores > 90.0%
+[2025-11-11 21:14:24] INFO       41294 introns classified as U2-type
+[2025-11-11 21:14:24] INFO     
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 21:14:24] INFO     Top 20 splice site boundaries (U12-type introns)
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 21:14:24] INFO        1. AT-AC         9 (50.00%)
+[2025-11-11 21:14:24] INFO        2. GT-AG         9 (50.00%)
+[2025-11-11 21:14:24] INFO     
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 21:14:24] INFO     Top 20 splice site boundaries (U2-type introns)
+
+
+----------------------------------------------------------------------------------------------------
+[2025-11-11 21:14:24] INFO        1. GT-AG    40,949 (99.16%)
+[2025-11-11 21:14:24] INFO        2. GC-AG       313 ( 0.76%)
+[2025-11-11 21:14:24] INFO        3. GA-AG         8 ( 0.02%)
+[2025-11-11 21:14:24] INFO        4. GT-AT         5 ( 0.01%)
+[2025-11-11 21:14:24] INFO        5. GT-CG         4 ( 0.01%)
+[2025-11-11 21:14:24] INFO        6. GT-TG         4 ( 0.01%)
+[2025-11-11 21:14:24] INFO        7. AT-AC         3 ( 0.01%)
+[2025-11-11 21:14:24] INFO        8. GG-AG         2 ( 0.00%)
+[2025-11-11 21:14:24] INFO        9. TT-AG         1 ( 0.00%)
+[2025-11-11 21:14:24] INFO       10. GT-TT         1 ( 0.00%)
+[2025-11-11 21:14:24] INFO       11. TA-AG         1 ( 0.00%)
+[2025-11-11 21:14:24] INFO       12. GT-AA         1 ( 0.00%)
+[2025-11-11 21:14:24] INFO       13. GT-CT         1 ( 0.00%)
+[2025-11-11 21:14:24] INFO       14. AT-AG         1 ( 0.00%)
+[2025-11-11 21:14:24] INFO     Saving classification metrics to /home/glarue/code/intronIC/intronIC_refactored/drosophila_melanogaster.metrics.json
+[2025-11-11 21:14:24] INFO     Generating visualization plots
+[2025-11-11 21:14:27] INFO     Successfully generated classification plots
+
+====================================================================================================
+STEP 6: WRITE OUTPUTS
+====================================================================================================
+[2025-11-11 21:14:27] INFO     Merging output: 41,312 scored + 6,549 omitted = 47,861 total introns for meta file
+[2025-11-11 21:14:27] INFO     Writing output files
+[2025-11-11 21:14:27] INFO     Writing BED file: /home/glarue/code/intronIC/intronIC_refactored/drosophila_melanogaster.bed.iic
+[2025-11-11 21:14:27] INFO     Wrote 47861 introns to BED file
+[2025-11-11 21:14:27] INFO     Writing metadata file: /home/glarue/code/intronIC/intronIC_refactored/drosophila_melanogaster.meta.iic
+[2025-11-11 21:14:27] INFO     Wrote metadata for 47861 introns
+[2025-11-11 21:14:27] INFO     Writing sequences file: /home/glarue/code/intronIC/intronIC_refactored/drosophila_melanogaster.introns.iic
+[2025-11-11 21:14:28] INFO     Wrote sequences for 47861 introns
+[2025-11-11 21:14:28] INFO     Writing score info file: /home/glarue/code/intronIC/intronIC_refactored/drosophila_melanogaster.score_info.iic
+[2025-11-11 21:14:28] INFO     Wrote score info for 47861 introns
+[2025-11-11 21:14:28] INFO     All output files written successfully
+[2025-11-11 21:14:28] INFO     Run finished in 40s

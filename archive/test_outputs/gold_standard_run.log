@@ -1,0 +1,61 @@
+✨ Pixi task (test-gold in default): python -m intronIC.intronIC -g test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz -a test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens_gold
+/home/glarue/code/intronIC/intronIC_refactored/intronIC/intronIC.py:1236: SyntaxWarning: invalid escape sequence '\.'
+  matrix_version = re.findall('[^A-Za-z]v\.?([^_\s]+)', matrix_name)
+/home/glarue/code/intronIC/intronIC_refactored/intronIC/intronIC.py:47: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+[#] Starting intronIC [] run on [homo_sapiens_gold (HomSap)]
+[#] Run command: [/home/glarue/code/intronIC/intronIC_refactored/intronIC/intronIC.py -g /home/glarue/code/intronIC/intronIC_refactored/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz -a /home/glarue/code/intronIC/intronIC_refactored/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz -n homo_sapiens_gold]
+[#] Using [cds,exon] features to define introns
+[#] [58933] introns found in [test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz]
+[#] [38681] introns with redundant coordinates excluded
+[#] [8178] introns omitted from scoring based on the following criteria:
+[#] * short (<30 nt): 66
+[#] * ambiguous nucleotides in scoring regions: 0
+[#] * non-canonical boundaries: 0
+[#] * overlapping coordinates: 0
+[#] * not in longest isoform: 8112
+[#] Most common non-canonical splice sites:
+[#] * AT-AG (16/328, 4.88%)
+[#] * GT-TG (12/328, 3.66%)
+[#] * GG-AG (12/328, 3.66%)
+[#] * GA-AG (11/328, 3.35%)
+[#] * AG-AG (10/328, 3.05%)
+[#] [12] ([3] unique, [9] redundant) putatively misannotated U12-type introns corrected in [homo_sapiens_gold.annotation.iic]
+[#] [12074] introns included in scoring analysis
+[#] Scoring introns using the following regions: [five, bp, three]
+/home/glarue/code/intronIC/intronIC_refactored/intronIC/intronIC.py:47: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+/home/glarue/code/intronIC/intronIC_refactored/intronIC/intronIC.py:47: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+[#] Raw scores calculated for [20690] U2 and [387] U12 reference introns
+[#] Raw scores calculated for [12074] annotated introns
+[#] Training set score vectors constructed: [20690] U2, [387] U12
+[#] Training SVM using reference data
+Starting optimization round 1/5
+Starting optimization round 2/5
+Starting optimization round 3/5
+Starting optimization round 4/5
+Starting optimization round 5/5
+[#] Range for 'C' after [5] rounds of optimization: [976.5411685881514]-[976.5419176464368]
+[#] Set classifier value for 'C': [976.5415431172212]
+[#] Training classifier with optimized hyperparameters
+[#] Average classifier performance on training data:
+	F1	[1.0]
+	P-R AUC	[1.0]
+[#] Classifier performance details:
+              precision    recall  f1-score   support
+
+          U2       1.00      1.00      1.00      4139
+         U12       1.00      1.00      1.00        77
+
+    accuracy                           1.00      4216
+   macro avg       1.00      1.00      1.00      4216
+weighted avg       1.00      1.00      1.00      4216
+
+/home/glarue/code/intronIC/intronIC_refactored/intronIC/intronIC.py:47: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+[#] [10] putative AT-AC U12-type introns found.
+[#] [32] putative U12-type introns found with scores > [90]%
+[#] Adding scores to intron sequences file
+[#] Generating figures
+[#] Run finished in [5.222 minutes]

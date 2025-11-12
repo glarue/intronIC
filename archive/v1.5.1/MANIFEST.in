@@ -1,0 +1,5 @@
+prune intronIC/test_data/
+include README.md
+recursive-include intronIC/data/ *
+include versioneer.py
+include intronIC/_version.py
