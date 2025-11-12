@@ -610,7 +610,7 @@ def test_with_real_pwms_if_available():
     from pathlib import Path
 
     # Try to load real PWMs
-    data_dir = Path(__file__).parent.parent.parent.parent / "intronIC" / "data"
+    data_dir = Path(__file__).parent.parent.parent.parent / "data"
     pwm_file = data_dir / "scoring_matrices.fasta.iic"
 
     if not pwm_file.exists():
