@@ -258,7 +258,13 @@ Examples:
         training_group.add_argument(
             '--pretrained_model',
             type=Path,
+            default=None,
             help='Path to pretrained model file (.model.pkl). Skips training and uses saved model for classification'
+        )
+        training_group.add_argument(
+            '--use_default_pretrained',
+            action='store_true',
+            help='Use default pretrained model from data directory (skips training). Trained on human Chr19 data.'
         )
 
         # Scoring region coordinates

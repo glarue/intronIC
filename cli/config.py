@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Optional
 
 
+def get_default_pretrained_model_path() -> Optional[Path]:
+    """Get path to default pretrained model in data directory.
+
+    Returns:
+        Path to default pretrained model if it exists, None otherwise
+    """
+    # Path relative to this file: cli/config.py -> intronIC/data/default_pretrained.model.pkl
+    default_path = Path(__file__).parent.parent / "intronIC" / "data" / "default_pretrained.model.pkl"
+    if default_path.exists():
+        return default_path
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ScoringRegions:
     """Coordinates for scoring regions."""
@@ -199,6 +212,15 @@ class IntronICConfig:
             except ValueError:
                 pass
 
+        # Determine pretrained model path
+        pretrained_model_path = args.pretrained_model
+        if args.use_default_pretrained and pretrained_model_path is None:
+            pretrained_model_path = get_default_pretrained_model_path()
+            if pretrained_model_path is None:
+                raise FileNotFoundError(
+                    "Default pretrained model not found at intronIC/data/default_pretrained.model.pkl"
+                )
+
         training_config = TrainingConfig(
             fixed_C=args.C,
             n_models=args.n_models,
@@ -209,7 +231,7 @@ class IntronICConfig:
             eval_mode=args.eval_mode,
             n_cv_folds=args.n_cv_folds,
             test_fraction=args.test_fraction,
-            pretrained_model_path=args.pretrained_model
+            pretrained_model_path=pretrained_model_path
         )
 
         # Performance configuration
