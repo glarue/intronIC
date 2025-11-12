@@ -33,31 +33,30 @@ run = "python -m intronIC"
 # Show help
 help = "intronIC --help"
 
-# Test with small reference sets (fast, ~2-5 minutes)
+# Test with default pretrained model (fast, ~2-5 minutes)
 test-small = """
 python __main__.py \
-  -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-  -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+  -g ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+  -a ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n homo_sapiens_test_small \
-  --reference_u12s ../intronIC/data/u12_reference_small.introns.iic.gz \
-  --reference_u2s ../intronIC/data/u2_reference_small.introns.iic.gz \
   -p 4
 """
 
-# Test with full reference sets (~5-15 minutes)
+# Test with training from scratch (~5-15 minutes)
 test-full = """
 python __main__.py \
-  -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-  -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+  -g ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+  -a ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n homo_sapiens_test_full \
+  --train \
   -p 4
 """
 
 # Extract sequences only (no classification, ~1-2 minutes)
 test-seqs-only = """
 python __main__.py \
-  -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-  -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+  -g ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+  -a ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
   -n homo_sapiens_seqs \
   -s
 """

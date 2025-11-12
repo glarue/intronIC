@@ -7,7 +7,7 @@ include LICENSE
 include CLAUDE.md
 
 # Include data files (PWMs, references, pretrained models, metadata)
-recursive-include intronIC/data *.iic *.iic.gz *.fasta *.pkl *.json
+recursive-include data *.iic *.iic.gz *.fasta *.pkl *.json
 
 # Include configuration files
 include pyproject.toml
@@ -22,7 +22,7 @@ global-exclude *.so
 global-exclude .DS_Store
 global-exclude *.egg-info
 
-# Exclude test outputs (but keep intronIC/data/*.pkl for pretrained models)
+# Exclude test outputs (but keep data/*.pkl for pretrained models)
 global-exclude *.log.iic
 global-exclude *.meta.iic
 global-exclude *.bed.iic

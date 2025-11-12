@@ -60,7 +60,7 @@ intronIC = "cli.main:main"
 packages = ["cli", "core", "extraction", "file_io", "scoring", "classification", "utils"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"intronIC/data" = "intronIC/data"
+"data" = "data"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

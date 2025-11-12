@@ -15,8 +15,8 @@ def get_default_pretrained_model_path() -> Optional[Path]:
     Returns:
         Path to default pretrained model if it exists, None otherwise
     """
-    # Path relative to this file: cli/config.py -> intronIC/data/default_pretrained.model.pkl
-    default_path = Path(__file__).parent.parent / "intronIC" / "data" / "default_pretrained.model.pkl"
+    # Path relative to this file: cli/config.py -> data/default_pretrained.model.pkl
+    default_path = Path(__file__).parent.parent / "data" / "default_pretrained.model.pkl"
     if default_path.exists():
         return default_path
     return None
@@ -228,7 +228,7 @@ class IntronICConfig:
             pretrained_model_path = get_default_pretrained_model_path()
             if pretrained_model_path is None:
                 raise FileNotFoundError(
-                    "Default pretrained model not found at intronIC/data/default_pretrained.model.pkl. "
+                    "Default pretrained model not found at data/default_pretrained.model.pkl. "
                     "Use --train to train a new model instead."
                 )
 
