@@ -53,21 +53,23 @@ def plot_classification_results(
     score_vector = np.array(score_vector)
 
     # 1. Density hexplot
-    hexplot_path = output_dir / f"{species_name}.plot.hex"
+    hexplot_path = output_dir / f"{species_name}.plot.hex.iic.png"
     density_hexplot(
         score_vector,
-        title=str(hexplot_path),
+        species_name=species_name,
+        output_path=hexplot_path,
         xlab="5' z-score",
         ylab="BPS z-score",
         fig_dpi=fig_dpi
     )
 
     # 2. Scatter plot with U12 classification
-    scatter_path = output_dir / f"{species_name}.plot.scatter"
+    scatter_path = output_dir / f"{species_name}.plot.scatter.iic.png"
     scatter_plot(
         introns,
         score_vector,
-        title=str(scatter_path),
+        species_name=species_name,
+        output_path=scatter_path,
         xlab="5' z-score",
         ylab="BPS z-score",
         threshold=threshold,
@@ -76,21 +78,22 @@ def plot_classification_results(
 
     # 3. Score histogram
     svm_scores = [i.scores.svm_score for i in introns if i.scores and i.scores.svm_score is not None]
-    hist_title = f"{species_name}.plot.score_histogram"
+    hist_path = output_dir / f"{species_name}.plot.score_histogram.iic.png"
     histogram(
         svm_scores,
         threshold=threshold,
-        title=hist_title,
+        species_name=species_name,
+        output_path=hist_path,
         fig_dpi=fig_dpi
     )
 
 
 def density_hexplot(
     scores: np.ndarray,
-    title: str,
+    species_name: str,
+    output_path: Path,
     xlab: Optional[str] = None,
     ylab: Optional[str] = None,
-    outfmt: str = 'png',
     fsize: int = 14,
     fig_dpi: int = 300
 ):
@@ -99,10 +102,10 @@ def density_hexplot(
 
     Args:
         scores: Nx2 array of (x, y) scores
-        title: Plot title (also base filename without extension)
+        species_name: Species name from -n argument (for title)
+        output_path: Full path where plot should be saved
         xlab: X-axis label
         ylab: Y-axis label
-        outfmt: Output format (png, pdf, etc.)
         fsize: Font size
         fig_dpi: Figure DPI
     """
@@ -117,13 +120,17 @@ def density_hexplot(
         linewidths=0
     )
 
-    title_with_n = f'{title} (n={len(scores)})'
+    # Set equal aspect ratio for hexplot
+    ax.set_aspect('equal')
+
+    # Clean title: species_name + description + count
+    plot_title = f'{species_name} - Motif Score Density (n={len(scores)})'
 
     if xlab:
         plt.xlabel(xlab, fontsize=fsize)
     if ylab:
         plt.ylabel(ylab, fontsize=fsize)
-    plt.title(title_with_n, fontsize=fsize)
+    plt.title(plot_title, fontsize=fsize)
 
     # Add colorbar
     divider = make_axes_locatable(ax)
@@ -132,21 +139,19 @@ def density_hexplot(
     cb.set_label('Bin density (log10(n))')
 
     # Save figure
-    title = '_'.join(Path(title).name.split())
-    output_path = f"{title}.iic.{outfmt}"
-    plt.savefig(output_path, format=outfmt, dpi=fig_dpi, bbox_inches='tight')
+    plt.savefig(output_path, dpi=fig_dpi, bbox_inches='tight')
     plt.close()
 
 
 def scatter_plot(
     introns: List[Intron],
     scores: np.ndarray,
-    title: str,
+    species_name: str,
+    output_path: Path,
     xlab: str,
     ylab: str,
     threshold: float,
     fsize: int = 14,
-    outfmt: str = 'png',
     fig_dpi: int = 300
 ):
     """
@@ -163,12 +168,12 @@ def scatter_plot(
     Args:
         introns: List of classified introns
         scores: Nx2 array of (x, y) scores
-        title: Plot title (also base filename)
+        species_name: Species name from -n argument (for title)
+        output_path: Full path where plot should be saved
         xlab: X-axis label
         ylab: Y-axis label
         threshold: U12 classification threshold
         fsize: Font size
-        outfmt: Output format
         fig_dpi: Figure DPI
     """
     # Create figure with GridSpec for marginal distributions
@@ -254,6 +259,9 @@ def scatter_plot(
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
+    # Set equal aspect ratio for main scatter plot
+    ax_main.set_aspect('equal')
+
     # Plot marginal distributions
     # Top: X distribution (5' z-score)
     ax_top.hist(scores[:, 0], bins=50, color='steelblue', alpha=0.7, edgecolor='none')
@@ -270,26 +278,19 @@ def scatter_plot(
     ax_right.spines['right'].set_visible(False)
 
     # Add figure-level title above marginal distributions
-    # Extract just the base name from the title (remove path and extensions)
-    from pathlib import Path
-    base_name = Path(title).stem  # Gets filename without extension
-    if base_name.endswith('.plot.scatter'):
-        base_name = base_name.replace('.plot.scatter', '')
-    elif base_name.endswith('.scatter'):
-        base_name = base_name.replace('.scatter', '')
-
-    fig.suptitle(f'{base_name} - 2D Score Distribution', fontsize=fsize+2, y=0.98, weight='bold')
+    # Clean title: species_name + description
+    fig.suptitle(f'{species_name} - U12 Classification Results', fontsize=fsize+2, y=0.98, weight='bold')
 
     # Save figure
-    output_path = f'{title}.iic.{outfmt}'
-    plt.savefig(output_path, format=outfmt, dpi=fig_dpi, bbox_inches='tight')
+    plt.savefig(output_path, dpi=fig_dpi, bbox_inches='tight')
     plt.close()
 
 
 def histogram(
     data_list: List[float],
     threshold: float,
-    title: Optional[str] = None,
+    species_name: str,
+    output_path: Path,
     grid: bool = True,
     bins: int = 100,
     log: bool = True,
@@ -301,7 +302,8 @@ def histogram(
     Args:
         data_list: List of SVM scores
         threshold: U12 classification threshold
-        title: Plot title (also base filename)
+        species_name: Species name from -n argument (for title)
+        output_path: Full path where plot should be saved
         grid: Show grid lines
         bins: Number of histogram bins
         log: Use log scale for y-axis
@@ -317,8 +319,8 @@ def histogram(
     if grid:
         plt.grid(True, which="both", ls="--", alpha=0.7)
 
-    if title is not None:
-        plt.title(title, fontsize=14)
+    # Clean title: species_name + description
+    plt.title(f'{species_name} - U12 Score Distribution', fontsize=14)
 
     plt.xlabel('U12 score', fontsize=14)
     plt.ylabel('Number of introns', fontsize=14)
@@ -335,7 +337,7 @@ def histogram(
     plt.tight_layout()
 
     # Save figure
-    plt.savefig(f'{title}.iic.png', dpi=fig_dpi)
+    plt.savefig(output_path, dpi=fig_dpi)
     plt.close()
 
 
@@ -375,11 +377,12 @@ def plot_training_results(
     )
 
     # 2. Reference hexplot
-    ref_hex_path = output_dir / f"{species_name}.ref_hex"
+    ref_hex_path = output_dir / f"{species_name}.ref_hex.iic.png"
     combined_scores = np.concatenate((u2_scores, u12_scores))
     density_hexplot(
         combined_scores,
-        title=str(ref_hex_path),
+        species_name=species_name,
+        output_path=ref_hex_path,
         xlab="5' z-score",
         ylab="BPS z-score",
         fig_dpi=fig_dpi
@@ -392,7 +395,7 @@ def plot_training_results(
         plt.plot(recall, precision)
     plt.xlabel('Recall', fontsize=14)
     plt.ylabel('Precision', fontsize=14)
-    plt.title(f'{species_name} precision-recall AUC: {pr_auc:.3f}', fontsize=14)
+    plt.title(f'{species_name} - Precision-Recall AUC: {pr_auc:.3f}', fontsize=14)
     plt.tight_layout()
 
     auc_path = output_dir / f'{species_name}.AUC.iic.png'
@@ -443,6 +446,7 @@ def ref_scatter(
 
     plt.xlabel("5' z-score", fontsize=fsize)
     plt.ylabel('BPS z-score', fontsize=fsize)
+    plt.title(f'{species_name} - Training Reference Data', fontsize=fsize)
 
     # Set equal aspect ratio to match original intronIC
     plt.axes().set_aspect('equal')
