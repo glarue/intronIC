@@ -16,7 +16,7 @@ from scoring.pwm import PWMLoader
 import math
 
 # Load the PWM matrices
-matrix_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+matrix_file = Path(__file__).parent.parent.parent.parent / "data" / "scoring_matrices.fasta.iic"
 pwm_sets = PWMLoader.load_from_file(matrix_file)
 
 # Get the U12 5' PWM

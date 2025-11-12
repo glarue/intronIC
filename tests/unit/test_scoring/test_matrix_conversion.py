@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from scoring.pwm import PWMLoader, BASE_TO_INDEX
 
 # Load matrices using refactored loader
-matrix_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+matrix_file = Path(__file__).parent.parent.parent.parent / "data" / "scoring_matrices.fasta.iic"
 pwm_sets = PWMLoader.load_from_file(matrix_file)
 
 # Also load using original-style parsing to compare

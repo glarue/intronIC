@@ -238,7 +238,7 @@ def test_five_prime_scoring_with_real_pwm():
     The sequence TCAGTATCCTTC at position -3 should produce log ratio 18.22.
     """
     # Load real PWMs
-    data_dir = Path(__file__).parent.parent.parent.parent / "intronIC" / "data"
+    data_dir = Path(__file__).parent.parent.parent.parent / "data"
     pwm_file = data_dir / "scoring_matrices.fasta.iic"
 
     if not pwm_file.exists():
