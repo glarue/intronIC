@@ -1,29 +1,22 @@
 """
-Tests for SVMPredictor - ensemble classification with F1-weighted averaging.
+Tests for SVMPredictor - ensemble classification.
 
 Tests the classification algorithm that applies trained ensemble models
-to classify introns as U2 or U12 type using F1-weighted averaging.
+to classify introns as U2 or U12 type.
 
 Port from: intronIC.py:5651-5900
-
-TODO: These tests need updating to match the refactored API:
-- SVMParameters now requires: calibration_method, dual, intercept_scaling
-- SVMEnsemble signature changed
-- Mock fixtures need updating to match new dataclass structures
 """
 
 import pytest
 import numpy as np
 from dataclasses import replace
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
 
 from classification.predictor import SVMPredictor
 from classification.trainer import SVMModel, SVMEnsemble
 from classification.optimizer import SVMParameters
 from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
-
-# Mark entire module as needing API updates
-pytestmark = pytest.mark.skip(reason="TODO: Update tests to match refactored API (SVMParameters, SVMEnsemble)")
 
 
 # Test fixtures
@@ -103,35 +96,37 @@ def trained_ensemble(sample_u12_introns, sample_u2_introns):
     X = np.vstack([u2_features, u12_features])
     y = np.array([0] * len(sample_u2_introns) + [1] * len(sample_u12_introns))
 
-    # Train 3 models
+    # Train 3 models with proper LinearSVC + calibration
     models = []
     for i in range(3):
-        svm = SVC(
+        base_svm = LinearSVC(
             C=1.0,
-            kernel='linear',
             class_weight='balanced',
-            probability=True,
-            random_state=42 + i
+            dual='auto',
+            random_state=42 + i,
+            max_iter=20000
         )
+        # Wrap in CalibratedClassifierCV for probability estimates
+        svm = CalibratedClassifierCV(base_svm, method='sigmoid', cv=3)
         svm.fit(X, y)
 
         model = SVMModel(
             model=svm,
-            f1_score=0.85 + i * 0.05,  # Different F1 scores
-            precision_recall_auc=0.90,
             train_size=len(X),
-            test_size=0,
             u12_count=len(sample_u12_introns),
             u2_count=len(sample_u2_introns),
-            parameters=SVMParameters(C=1.0, cv_score=0.85, round_found=1)
+            parameters=SVMParameters(
+                C=1.0,
+                calibration_method='sigmoid',
+                dual=False,
+                intercept_scaling=1.0,
+                cv_score=0.85,
+                round_found=1
+            )
         )
         models.append(model)
 
-    return SVMEnsemble(
-        models=models,
-        mean_f1=0.88,
-        mean_pr_auc=0.90
-    )
+    return SVMEnsemble(models=models)
 
 
 # Test SVMPredictor initialization
@@ -289,54 +284,49 @@ def test_predict_calculates_relative_score(trained_ensemble, sample_u12_introns)
         assert np.isfinite(intron.scores.relative_score)
 
 
-def test_predict_f1_weighted_averaging(sample_u12_introns, sample_u2_introns):
-    """Test that predictions use F1-weighted averaging."""
-    # Create ensemble with very different F1 scores
-    # Model 1: high F1, Model 2: low F1
-    X = np.array([[2.0, 2.0, 2.0]])  # Single test sample
-    y = np.array([1])
-
-    # Train two models
-    svm1 = SVC(C=1.0, kernel='linear', probability=True, random_state=42)
-    svm2 = SVC(C=1.0, kernel='linear', probability=True, random_state=43)
-
-    # Prepare training data
+def test_predict_ensemble_averaging(sample_u12_introns, sample_u2_introns):
+    """Test that predictions use ensemble averaging."""
+    # Train two models with enough data for calibration
     train_X = np.array([
         [2.0, 2.5, 2.0],  # U12
-        [-1.0, -1.5, -1.0]  # U2
+        [2.1, 2.6, 2.1],  # U12
+        [2.2, 2.7, 2.2],  # U12
+        [-1.0, -1.5, -1.0],  # U2
+        [-1.1, -1.6, -1.1],  # U2
+        [-1.2, -1.7, -1.2]   # U2
     ])
-    train_y = np.array([1, 0])
+    train_y = np.array([1, 1, 1, 0, 0, 0])
 
-    svm1.fit(train_X, train_y)
-    svm2.fit(train_X, train_y)
+    # Create two different models
+    models = []
+    for seed in [42, 43]:
+        base_svm = LinearSVC(
+            C=1.0,
+            class_weight='balanced',
+            dual='auto',
+            random_state=seed,
+            max_iter=20000
+        )
+        svm = CalibratedClassifierCV(base_svm, method='sigmoid', cv=2)
+        svm.fit(train_X, train_y)
 
-    # Create ensemble with different F1 scores
-    model1 = SVMModel(
-        model=svm1,
-        f1_score=0.9,  # High F1
-        precision_recall_auc=0.9,
-        train_size=2,
-        test_size=0,
-        u12_count=1,
-        u2_count=1,
-        parameters=SVMParameters(C=1.0, cv_score=0.9, round_found=1)
-    )
-    model2 = SVMModel(
-        model=svm2,
-        f1_score=0.1,  # Low F1
-        precision_recall_auc=0.5,
-        train_size=2,
-        test_size=0,
-        u12_count=1,
-        u2_count=1,
-        parameters=SVMParameters(C=1.0, cv_score=0.5, round_found=1)
-    )
+        model = SVMModel(
+            model=svm,
+            train_size=len(train_X),
+            u12_count=3,
+            u2_count=3,
+            parameters=SVMParameters(
+                C=1.0,
+                calibration_method='sigmoid',
+                dual=False,
+                intercept_scaling=1.0,
+                cv_score=0.9,
+                round_found=1
+            )
+        )
+        models.append(model)
 
-    ensemble = SVMEnsemble(
-        models=[model1, model2],
-        mean_f1=0.5,
-        mean_pr_auc=0.7
-    )
+    ensemble = SVMEnsemble(models=models)
 
     # Test intron
     test_intron = sample_u12_introns[0]
@@ -344,14 +334,14 @@ def test_predict_f1_weighted_averaging(sample_u12_introns, sample_u2_introns):
     predictor = SVMPredictor()
     classified = predictor.predict(ensemble, [test_intron])
 
-    # Should have weighted predictions
+    # Should have predictions
     assert len(classified) == 1
     assert classified[0].scores.svm_score is not None
 
 
 def test_predict_empty_ensemble():
     """Test prediction with empty ensemble."""
-    empty_ensemble = SVMEnsemble(models=[], mean_f1=0.0, mean_pr_auc=0.0)
+    empty_ensemble = SVMEnsemble(models=[])
 
     predictor = SVMPredictor()
     intron = Intron(
@@ -394,7 +384,7 @@ def test_predict_batch(trained_ensemble, sample_u12_introns, sample_u2_introns):
     # Check scores match
     for r, b in zip(regular, batch):
         assert abs(r.scores.svm_score - b.scores.svm_score) < 1e-6
-        assert r.type_id == b.type_id
+        assert r.metadata.type_id == b.metadata.type_id
 
 
 def test_predict_batch_single_batch(trained_ensemble, sample_u12_introns):
