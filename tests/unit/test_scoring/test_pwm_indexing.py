@@ -230,7 +230,7 @@ def test_subsequence_consistency(simple_pwm):
 # ============================================================================
 
 @pytest.mark.slow
-def test_five_prime_scoring_with_real_pwm():
+def test_five_prime_scoring_with_real_pwm(matrix_file):
     """
     Test 5' scoring with real PWM against known correct value.
 
@@ -238,14 +238,11 @@ def test_five_prime_scoring_with_real_pwm():
     The sequence TCAGTATCCTTC at position -3 should produce log ratio 18.22.
     """
     # Load real PWMs
-    data_dir = Path(__file__).parent.parent.parent.parent / "data"
-    pwm_file = data_dir / "scoring_matrices.fasta.iic"
-
-    if not pwm_file.exists():
+    if not matrix_file.exists():
         pytest.skip("Real PWM file not available")
 
     loader = PWMLoader()
-    pwm_sets = loader.load_from_file(pwm_file)
+    pwm_sets = loader.load_from_file(matrix_file)
 
     # Get U12 GT-AG 5' PWM (most U12 introns are GT-AG)
     u12_pwm = pwm_sets['five'].select_best('u12', 'gtag')

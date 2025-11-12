@@ -23,9 +23,7 @@ from file_io.parsers import (
 )
 
 
-# Test data paths
-TEST_DATA_DIR = Path(__file__).parent.parent.parent.parent / "intronIC" / "test_data"
-CHR19_ANNOTATION = TEST_DATA_DIR / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
+# Test data paths - use fixtures in tests
 
 
 # ============================================================================
@@ -186,11 +184,14 @@ class TestBioGLAnnotationParser:
         assert len(results) == 1
         assert results[0].feat_type == "gene"
 
-    @pytest.mark.skipif(not CHR19_ANNOTATION.exists(), reason="Chr19 test data not available")
-    def test_parse_real_chr19_annotation(self):
+    def test_parse_real_chr19_annotation(self, test_data_dir):
         """Test parsing real chr19 GFF3 data."""
+        chr19_annotation = test_data_dir / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
+        if not chr19_annotation.exists():
+            pytest.skip("Chr19 test data not available")
+
         parser = BioGLAnnotationParser()
-        results = list(parser.parse_file(CHR19_ANNOTATION))
+        results = list(parser.parse_file(chr19_annotation))
 
         # Should have many features
         assert len(results) > 1000
@@ -200,11 +201,14 @@ class TestBioGLAnnotationParser:
         assert "gene" in feature_types
         assert "exon" in feature_types or "cds" in feature_types
 
-    @pytest.mark.skipif(not CHR19_ANNOTATION.exists(), reason="Chr19 test data not available")
-    def test_parse_chr19_gene_structure(self):
+    def test_parse_chr19_gene_structure(self, test_data_dir):
         """Test that chr19 parsing captures gene structure correctly."""
+        chr19_annotation = test_data_dir / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
+        if not chr19_annotation.exists():
+            pytest.skip("Chr19 test data not available")
+
         parser = BioGLAnnotationParser()
-        results = list(parser.parse_file(CHR19_ANNOTATION))
+        results = list(parser.parse_file(chr19_annotation))
 
         # Find a gene and its children
         genes = [r for r in results if r.feat_type == "gene"]
