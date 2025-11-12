@@ -554,7 +554,11 @@ class BEDWriter:
             if not intron.metadata.longest_isoform:
                 tags.append("[i]")
             if intron.metadata.corrected:
-                tags.append("[c]")  # Could add distance if available
+                # Include correction distance if available (e.g., [c:-2] for 2bp upstream shift)
+                if intron.metadata.correction_distance is not None:
+                    tags.append(f"[c:{intron.metadata.correction_distance}]")
+                else:
+                    tags.append("[c]")
             if intron.metadata.duplicate:
                 tags.append("[d]")
             if intron.metadata.omitted:
