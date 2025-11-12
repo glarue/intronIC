@@ -16,6 +16,7 @@ networkx = ">=2.5.1"
 rich = ">=10.0"
 tqdm = "*"
 pip = "*"
+smart-open = ">=5.0.0"
 
 [pypi-dependencies]
 biogl = "*"
