@@ -49,11 +49,17 @@ Examples:
 """
         )
 
-        # Version
+        # Version (read from package metadata)
+        try:
+            from importlib.metadata import version
+            __version__ = version("intronIC")
+        except:
+            __version__ = "2.0.0"  # Fallback if not installed
+
         parser.add_argument(
             '--version',
             action='version',
-            version='intronIC 1.5.1'
+            version=f'intronIC {__version__}'
         )
 
         # Required arguments
