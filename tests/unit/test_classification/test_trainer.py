@@ -2,11 +2,6 @@
 Tests for classification.trainer module.
 
 Tests the SVMTrainer class which implements ensemble training with U2 subsampling.
-
-TODO: These tests need updating to match the refactored API:
-- SVMTrainer no longer has `test_size` parameter (removed during refactoring)
-- SVMParameters now requires: calibration_method, dual, intercept_scaling
-- Mock fixtures need updating to match new initialization signatures
 """
 
 import pytest
@@ -20,9 +15,6 @@ from classification.trainer import (
 )
 from classification.optimizer import SVMParameters
 from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
-
-# Mark entire module as needing API updates
-pytestmark = pytest.mark.skip(reason="TODO: Update tests to match refactored API (SVMTrainer parameters)")
 
 
 # =============================================================================
@@ -97,6 +89,9 @@ def mock_parameters():
     """Create mock SVM parameters."""
     return SVMParameters(
         C=1.0,
+        calibration_method='sigmoid',
+        dual=False,
+        intercept_scaling=1.0,
         cv_score=0.95,
         round_found=-1
     )
@@ -115,23 +110,23 @@ class TestSVMTrainer:
         trainer = SVMTrainer()
 
         assert trainer.n_models == 3
-        assert trainer.test_size == 0.2
         assert trainer.random_state == 42
         assert trainer.kernel == 'linear'
+        assert trainer.max_iter == 20000
 
     def test_initialization_custom_params(self):
         """Test trainer initialization with custom parameters."""
         trainer = SVMTrainer(
             n_models=5,
-            test_size=0.3,
             random_state=123,
-            kernel='rbf'
+            kernel='linear',
+            max_iter=10000
         )
 
         assert trainer.n_models == 5
-        assert trainer.test_size == 0.3
         assert trainer.random_state == 123
-        assert trainer.kernel == 'rbf'
+        assert trainer.kernel == 'linear'
+        assert trainer.max_iter == 10000
 
     def test_prepare_training_data_structure(self, mock_u12_introns, mock_u2_introns):
         """Test feature extraction produces correct structure."""
@@ -222,7 +217,7 @@ class TestSVMTrainer:
 
     def test_train_single_model(self, mock_u12_introns, mock_u2_introns, mock_parameters):
         """Test training a single SVM model."""
-        trainer = SVMTrainer(test_size=0.2)
+        trainer = SVMTrainer()
 
         model = trainer._train_single_model(
             mock_u12_introns,
@@ -234,24 +229,22 @@ class TestSVMTrainer:
         # Check model structure
         assert isinstance(model, SVMModel)
         assert model.model is not None
-        assert 0 <= model.f1_score <= 1
-        assert 0 <= model.precision_recall_auc <= 1
         assert model.train_size > 0
-        assert model.test_size > 0
         assert model.u12_count == len(mock_u12_introns)
         assert model.u2_count == len(mock_u2_introns)
         assert model.parameters == mock_parameters
 
-        # Check model can predict
+        # Check model can predict probabilities
         X, y = trainer._prepare_training_data(mock_u12_introns, mock_u2_introns)
-        predictions = model.model.predict(X)
-        assert len(predictions) == len(y)
+        # Model is calibrated, so it should have predict_proba
+        probas = model.model.predict_proba(X)
+        assert probas.shape == (len(y), 2)
 
-    def test_train_single_model_performance(
+    def test_train_single_model_predictions(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
     ):
-        """Test that trained model has reasonable performance."""
-        trainer = SVMTrainer(test_size=0.2)
+        """Test that trained model can make predictions."""
+        trainer = SVMTrainer()
 
         model = trainer._train_single_model(
             mock_u12_introns,
@@ -260,9 +253,13 @@ class TestSVMTrainer:
             seed=42
         )
 
-        # With well-separated data, should get good scores
-        assert model.f1_score > 0.7
-        assert model.precision_recall_auc > 0.7
+        # Check model can predict
+        X, y = trainer._prepare_training_data(mock_u12_introns, mock_u2_introns)
+        predictions = model.model.predict(X)
+        assert len(predictions) == len(y)
+        # With well-separated data, should get reasonable accuracy
+        accuracy = np.mean(predictions == y)
+        assert accuracy > 0.6
 
     def test_train_ensemble_structure(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
@@ -281,13 +278,13 @@ class TestSVMTrainer:
         assert isinstance(ensemble, SVMEnsemble)
         assert len(ensemble.models) == 3
         assert len(ensemble) == 3  # Test __len__
-        assert 0 <= ensemble.mean_f1 <= 1
-        assert 0 <= ensemble.mean_pr_auc <= 1
 
-        # Check all models are present
+        # Check all models are present and can predict
         for model in ensemble.models:
             assert isinstance(model, SVMModel)
             assert model.model is not None
+            # Verify model has predict_proba (is calibrated)
+            assert hasattr(model.model, 'predict_proba')
 
     def test_train_ensemble_no_subsampling(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
@@ -325,10 +322,10 @@ class TestSVMTrainer:
         u2_counts = [m.u2_count for m in ensemble.models]
         assert all(c == expected_u2_count for c in u2_counts)
 
-    def test_train_ensemble_metrics_consistency(
+    def test_train_ensemble_model_consistency(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
     ):
-        """Test that ensemble metrics are consistent with model metrics."""
+        """Test that ensemble models are consistent."""
         trainer = SVMTrainer(n_models=3)
 
         ensemble = trainer.train_ensemble(
@@ -337,18 +334,18 @@ class TestSVMTrainer:
             mock_parameters
         )
 
-        # Mean F1 should be average of model F1s
-        expected_mean_f1 = np.mean([m.f1_score for m in ensemble.models])
-        assert np.isclose(ensemble.mean_f1, expected_mean_f1)
+        # All models should have same parameters
+        for model in ensemble.models:
+            assert model.parameters == mock_parameters
 
-        # Mean PR-AUC should be average of model PR-AUCs
-        expected_mean_pr_auc = np.mean([m.precision_recall_auc for m in ensemble.models])
-        assert np.isclose(ensemble.mean_pr_auc, expected_mean_pr_auc)
+        # All models should have same U12 count
+        u12_counts = [m.u12_count for m in ensemble.models]
+        assert all(c == len(mock_u12_introns) for c in u12_counts)
 
     def test_train_single_model_reproducibility(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
     ):
-        """Test that training with same seed gives same results."""
+        """Test that training with same seed gives reproducible predictions."""
         trainer = SVMTrainer()
 
         model1 = trainer._train_single_model(
@@ -365,9 +362,11 @@ class TestSVMTrainer:
             seed=42
         )
 
-        # Should get same performance
-        assert np.isclose(model1.f1_score, model2.f1_score)
-        assert np.isclose(model1.precision_recall_auc, model2.precision_recall_auc)
+        # Should get same predictions
+        X, y = trainer._prepare_training_data(mock_u12_introns, mock_u2_introns)
+        pred1 = model1.model.predict(X)
+        pred2 = model2.model.predict(X)
+        assert np.array_equal(pred1, pred2)
 
     def test_train_ensemble_single_model(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
@@ -384,8 +383,8 @@ class TestSVMTrainer:
 
         # Should have exactly 1 model
         assert len(ensemble.models) == 1
-        assert ensemble.mean_f1 == ensemble.models[0].f1_score
-        assert ensemble.mean_pr_auc == ensemble.models[0].precision_recall_auc
+        assert ensemble.models[0].model is not None
+        assert ensemble.models[0].parameters == mock_parameters
 
 
 # =============================================================================
@@ -422,7 +421,14 @@ class TestSVMTrainerIntegration:
 
         # Train with realistic parameters
         trainer = SVMTrainer(n_models=3)
-        parameters = SVMParameters(C=1.0, cv_score=0.95, round_found=-1)
+        parameters = SVMParameters(
+            C=1.0,
+            calibration_method='sigmoid',
+            dual=False,
+            intercept_scaling=1.0,
+            cv_score=0.95,
+            round_found=-1
+        )
 
         ensemble = trainer.train_ensemble(
             realistic_u12s,
@@ -430,14 +436,15 @@ class TestSVMTrainerIntegration:
             parameters
         )
 
-        # Should get high performance with well-separated data
-        assert ensemble.mean_f1 > 0.9
-        assert ensemble.mean_pr_auc > 0.9
+        # Should have trained 3 models
+        assert len(ensemble.models) == 3
 
-        # All models should have reasonable performance
+        # All models should be functional and predict well on separated data
+        X, y = trainer._prepare_training_data(realistic_u12s, realistic_u2s)
         for model in ensemble.models:
-            assert model.f1_score > 0.85
-            assert model.precision_recall_auc > 0.85
+            predictions = model.model.predict(X)
+            accuracy = np.mean(predictions == y)
+            assert accuracy > 0.85  # Well-separated data should give high accuracy
 
 
 # =============================================================================
@@ -501,8 +508,15 @@ class TestSVMTrainerEdgeCases:
             )
             u2_introns.append(intron)
 
-        trainer = SVMTrainer(n_models=1, test_size=0.2)
-        parameters = SVMParameters(C=1.0, cv_score=0.95, round_found=-1)
+        trainer = SVMTrainer(n_models=1)
+        parameters = SVMParameters(
+            C=1.0,
+            calibration_method='sigmoid',
+            dual=False,
+            intercept_scaling=1.0,
+            cv_score=0.95,
+            round_found=-1
+        )
 
         # Should still run without error
         ensemble = trainer.train_ensemble(
@@ -513,8 +527,7 @@ class TestSVMTrainerEdgeCases:
         )
 
         assert len(ensemble.models) == 1
-        assert 0 <= ensemble.mean_f1 <= 1
-        assert 0 <= ensemble.mean_pr_auc <= 1
+        assert ensemble.models[0].model is not None
 
     def test_prepare_training_data_no_scores(self, mock_u12_introns):
         """Test error when intron lacks scores."""
