@@ -21,11 +21,17 @@ pip = "*"
 biogl = "*"
 
 [tasks]
-# Installation task to install in development mode
+# Installation: install intronIC in development mode
 install = "pip install -e ."
 
-# Run refactored intronIC (runs __main__.py directly, no install needed)
-intronic = "python __main__.py"
+# Run intronIC (after install)
+intronIC = "intronIC"
+
+# Alternative: run as module (no install needed)
+run = "python -m intronIC"
+
+# Show help
+help = "intronIC --help"
 
 # Test with small reference sets (fast, ~2-5 minutes)
 test-small = """

@@ -2,7 +2,10 @@
 Entry point for running intronIC as a module.
 
 Usage:
-    python -m intronIC_refactored [arguments]
+    python -m intronIC [arguments]
+
+Note: This requires the package to be installed via pip.
+For direct execution without install, use: python __main__.py [arguments]
 """
 
 # Add package directory to sys.path for relative imports
