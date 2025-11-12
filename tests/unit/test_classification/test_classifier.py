@@ -1,27 +1,26 @@
 """
-Tests for IntronClassifier - high-level classification pipeline orchestrator.
+Tests for IntronClassifier - initialization and validation tests.
 
-Tests the complete U2/U12 classification pipeline including optimization,
-training, and prediction.
+This module tests only fast initialization and validation.
+Tests that perform actual SVM training have been moved to:
+tests/integration/test_classification_pipeline.py
 
 Port from: intronIC.py:5038-5900
 """
 
 import pytest
-import numpy as np
-from dataclasses import replace
 
 from classification.classifier import IntronClassifier, ClassificationResult
-from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate, IntronMetadata
+from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
 
 
-# Test fixtures
+# Test fixtures for validation tests
 
 @pytest.fixture
 def u12_reference():
-    """Create reference U12 introns with z-scores."""
+    """Create minimal reference U12 introns with z-scores for validation tests."""
     introns = []
-    for i in range(50):  # Larger reference set for training
+    for i in range(5):  # Just a few for validation
         intron = Intron(
             intron_id=f"ref_u12_{i}",
             coordinates=GenomicCoordinate(
@@ -38,12 +37,9 @@ def u12_reference():
                 bp_seq="TCCTTAAC"
             ),
             scores=IntronScores(
-                five_raw_score=12.5,
-                bp_raw_score=10.2,
-                three_raw_score=15.3,
-                five_z_score=2.0 + np.random.randn() * 0.3,
-                bp_z_score=2.5 + np.random.randn() * 0.3,
-                three_z_score=2.0 + np.random.randn() * 0.3,
+                five_z_score=2.0,
+                bp_z_score=2.5,
+                three_z_score=2.0,
             )
         )
         introns.append(intron)
@@ -52,9 +48,9 @@ def u12_reference():
 
 @pytest.fixture
 def u2_reference():
-    """Create reference U2 introns with z-scores."""
+    """Create minimal reference U2 introns with z-scores for validation tests."""
     introns = []
-    for i in range(50):  # Larger reference set for training
+    for i in range(5):  # Just a few for validation
         intron = Intron(
             intron_id=f"ref_u2_{i}",
             coordinates=GenomicCoordinate(
@@ -71,12 +67,9 @@ def u2_reference():
                 bp_seq="CTAAC"
             ),
             scores=IntronScores(
-                five_raw_score=5.2,
-                bp_raw_score=3.8,
-                three_raw_score=6.1,
-                five_z_score=-1.0 + np.random.randn() * 0.3,
-                bp_z_score=-1.5 + np.random.randn() * 0.3,
-                three_z_score=-1.0 + np.random.randn() * 0.3,
+                five_z_score=-1.0,
+                bp_z_score=-1.5,
+                three_z_score=-1.0,
             )
         )
         introns.append(intron)
@@ -85,13 +78,11 @@ def u2_reference():
 
 @pytest.fixture
 def experimental_mixed():
-    """Create experimental introns with mixed U12/U2-like features."""
+    """Create minimal experimental introns for validation tests."""
     introns = []
-
-    # 5 U12-like introns
-    for i in range(5):
+    for i in range(2):
         intron = Intron(
-            intron_id=f"exp_u12_like_{i}",
+            intron_id=f"exp_{i}",
             coordinates=GenomicCoordinate(
                 chromosome="chr2",
                 start=1000 + i * 100,
@@ -105,37 +96,12 @@ def experimental_mixed():
                 three_seq="TCCTTAAC"
             ),
             scores=IntronScores(
-                five_z_score=2.2 + np.random.randn() * 0.2,
-                bp_z_score=2.7 + np.random.randn() * 0.2,
-                three_z_score=2.1 + np.random.randn() * 0.2,
+                five_z_score=2.0,
+                bp_z_score=2.5,
+                three_z_score=2.0,
             )
         )
         introns.append(intron)
-
-    # 15 U2-like introns
-    for i in range(15):
-        intron = Intron(
-            intron_id=f"exp_u2_like_{i}",
-            coordinates=GenomicCoordinate(
-                chromosome="chr2",
-                start=2000 + i * 100,
-                stop=2100 + i * 100,
-                strand="+",
-                system="1-based"
-            ),
-            sequences=IntronSequences(
-                seq="GTAAGT" + "N" * 50 + "TTTCAG",
-                five_seq="GTAAGT",
-                three_seq="TTTCAG"
-            ),
-            scores=IntronScores(
-                five_z_score=-0.9 + np.random.randn() * 0.2,
-                bp_z_score=-1.3 + np.random.randn() * 0.2,
-                three_z_score=-0.8 + np.random.randn() * 0.2,
-            )
-        )
-        introns.append(intron)
-
     return introns
 
 
@@ -144,7 +110,7 @@ def experimental_mixed():
 def test_classifier_initialization():
     """Test IntronClassifier initialization with default parameters."""
     classifier = IntronClassifier()
-    assert classifier.n_optimization_rounds == 5
+    assert classifier.n_optimization_rounds == 3
     assert classifier.n_ensemble_models == 3
     assert classifier.classification_threshold == 90.0
     assert classifier.subsample_u2 is True
@@ -189,233 +155,12 @@ def test_classifier_fixed_c_with_value():
     assert classifier.fixed_c == 1.0
 
 
-# Test complete classification pipeline
-
-def test_classify_complete_pipeline(u12_reference, u2_reference, experimental_mixed):
-    """Test complete classification pipeline."""
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,  # Faster for testing
-        n_ensemble_models=2,
-        classification_threshold=50.0,  # Lower for easier testing
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    # Check result structure
-    assert isinstance(result, ClassificationResult)
-    assert len(result.classified_introns) == len(experimental_mixed)
-    assert result.ensemble is not None
-    assert len(result.ensemble.models) == 2
-    assert result.parameters is not None
-    assert result.n_u12_reference == len(u12_reference)
-    assert result.n_u2_reference == len(u2_reference)
-
-    # Check that all introns have been classified
-    for intron in result.classified_introns:
-        assert intron.scores is not None
-        assert intron.scores.svm_score is not None
-        assert 0 <= intron.scores.svm_score <= 100
-        assert intron.metadata is not None
-        assert intron.metadata.type_id in ['u2', 'u12']
-
-
-def test_classify_with_fixed_c(u12_reference, u2_reference, experimental_mixed):
-    """Test classification with fixed C parameter (no optimization)."""
-    classifier = IntronClassifier(
-        optimize_c=False,
-        fixed_c=1.0,
-        n_ensemble_models=2,
-        classification_threshold=50.0,
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    assert result.parameters.C == 1.0
-    assert result.parameters.round_found == 0  # Fixed, not optimized
-    assert len(result.classified_introns) == len(experimental_mixed)
-
-
-def test_classify_assigns_u12_and_u2(u12_reference, u2_reference, experimental_mixed):
-    """Test that classification assigns both U12 and U2 types."""
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        classification_threshold=50.0,
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    # Count classifications
-    u12_count = sum(
-        1 for i in result.classified_introns
-        if i.metadata and i.metadata.type_id == 'u12'
-    )
-    u2_count = sum(
-        1 for i in result.classified_introns
-        if i.metadata and i.metadata.type_id == 'u2'
-    )
-
-    # Should have both types
-    assert u12_count > 0
-    assert u2_count > 0
-    assert u12_count + u2_count == len(experimental_mixed)
-
-
-def test_classify_preserves_z_scores(u12_reference, u2_reference, experimental_mixed):
-    """
-    CRITICAL TEST: Verify z-scores are NOT re-normalized during classification.
-    This is Issue #1 fix - prevents data leakage.
-    """
-    # Store original z-scores
-    original_z_scores = {
-        intron.intron_id: (
-            intron.scores.five_z_score,
-            intron.scores.bp_z_score,
-            intron.scores.three_z_score
-        )
-        for intron in experimental_mixed
-    }
-
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    # Check that z-scores are EXACTLY the same
-    for intron in result.classified_introns:
-        original = original_z_scores[intron.intron_id]
-        current = (
-            intron.scores.five_z_score,
-            intron.scores.bp_z_score,
-            intron.scores.three_z_score
-        )
-        assert original == current, f"Z-scores changed for {intron.intron_id}!"
-
-
-# Test batch classification
-
-def test_classify_batch(u12_reference, u2_reference, experimental_mixed):
-    """Test batch classification produces same results as regular."""
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        classification_threshold=50.0,
-        random_state=42
-    )
-
-    # Regular classification
-    result_regular = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    # Batch classification with small batch size
-    result_batch = classifier.classify_batch(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed,
-        batch_size=5
-    )
-
-    # Results should be identical
-    assert len(result_regular.classified_introns) == len(result_batch.classified_introns)
-
-    for reg, batch in zip(result_regular.classified_introns, result_batch.classified_introns):
-        assert abs(reg.scores.svm_score - batch.scores.svm_score) < 1e-6
-        assert reg.metadata.type_id == batch.metadata.type_id
-
-
-# Test ClassificationResult methods
-
-def test_classification_result_get_u12_predictions(u12_reference, u2_reference, experimental_mixed):
-    """Test ClassificationResult.get_u12_predictions()."""
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        classification_threshold=50.0,
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    u12_predictions = result.get_u12_predictions(threshold=50.0)
-
-    # All should be U12 with score >= threshold
-    for intron in u12_predictions:
-        assert intron.metadata.type_id == 'u12'
-        assert intron.scores.svm_score >= 50.0
-
-
-def test_classification_result_get_u2_predictions(u12_reference, u2_reference, experimental_mixed):
-    """Test ClassificationResult.get_u2_predictions()."""
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        classification_threshold=50.0,
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    u2_predictions = result.get_u2_predictions(threshold=50.0)
-
-    # All should be U2 with score < threshold
-    for intron in u2_predictions:
-        assert intron.metadata.type_id == 'u2'
-        assert intron.scores.svm_score < 50.0
-
-
-def test_classification_result_threshold_affects_filtering(u12_reference, u2_reference, experimental_mixed):
-    """Test that threshold parameter affects get_u12_predictions filtering."""
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        classification_threshold=50.0,
-        random_state=42
-    )
-
-    result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=experimental_mixed
-    )
-
-    # Lower threshold should give more U12 predictions
-    u12_low = result.get_u12_predictions(threshold=40.0)
-    u12_high = result.get_u12_predictions(threshold=60.0)
-
-    assert len(u12_low) >= len(u12_high)
+# =============================================================================
+# NOTE: Tests that perform actual SVM training have been moved to:
+#       tests/integration/test_classification_pipeline.py
+#
+# This unit test file now contains only fast initialization and validation tests.
+# =============================================================================
 
 
 # Test validation
@@ -501,58 +246,4 @@ def test_classify_validates_experimental_z_scores(u12_reference, u2_reference):
 
 
 # Test edge cases
-
-def test_classify_small_datasets(u12_reference, u2_reference):
-    """Test classification with minimal experimental data."""
-    # Single experimental intron
-    single_exp = [
-        Intron(
-            intron_id="single",
-            coordinates=GenomicCoordinate(
-                chromosome="chr1",
-                start=1000,
-                stop=1100,
-                strand="+",
-                system="1-based"
-            ),
-            sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-            scores=IntronScores(
-                five_z_score=2.0,
-                bp_z_score=2.5,
-                three_z_score=2.0
-            )
-        )
-    ]
-
-    classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
-    )
-
-    result = classifier.classify(u12_reference, u2_reference, single_exp)
-
-    assert len(result.classified_introns) == 1
-    assert result.classified_introns[0].scores.svm_score is not None
-
-
-def test_classify_reproducibility(u12_reference, u2_reference, experimental_mixed):
-    """Test that classification is reproducible with same random_state."""
-    classifier1 = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
-    )
-    result1 = classifier1.classify(u12_reference, u2_reference, experimental_mixed)
-
-    classifier2 = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
-    )
-    result2 = classifier2.classify(u12_reference, u2_reference, experimental_mixed)
-
-    # Scores should be identical
-    for i1, i2 in zip(result1.classified_introns, result2.classified_introns):
-        assert abs(i1.scores.svm_score - i2.scores.svm_score) < 1e-6
-        assert i1.metadata.type_id == i2.metadata.type_id
+# Note: All tests that perform actual training have been moved to integration tests

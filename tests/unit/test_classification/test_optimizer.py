@@ -97,7 +97,7 @@ class TestSVMOptimizer:
         """Test optimizer initialization with default parameters."""
         optimizer = SVMOptimizer()
 
-        assert optimizer.n_rounds == 5
+        assert optimizer.n_rounds == 3
         assert optimizer.n_points_initial == 13
         assert optimizer.n_points_refine == 100
         assert optimizer.cv_folds == 5
@@ -258,6 +258,7 @@ class TestSVMOptimizer:
         assert np.isclose(refined_high[0], 1000)
         assert np.isclose(refined_high[-1], 10000)
 
+    @pytest.mark.slow
     def test_evaluate_C(self, mock_u12_introns, mock_u2_introns):
         """Test C evaluation via cross-validation."""
         optimizer = SVMOptimizer(cv_folds=3)
@@ -271,6 +272,7 @@ class TestSVMOptimizer:
         # With our well-separated mock data, should be high
         assert score > 0.8
 
+    @pytest.mark.slow
     def test_grid_search_round(self, mock_u12_introns, mock_u2_introns):
         """Test single grid search round."""
         optimizer = SVMOptimizer(cv_folds=3)
@@ -350,6 +352,7 @@ class TestSVMOptimizer:
         assert np.isclose(params1.C, params2.C)
         assert np.isclose(params1.cv_score, params2.cv_score)
 
+    @pytest.mark.slow
     def test_optimize_reproducibility_with_seed(
         self, mock_u12_introns, mock_u2_introns
     ):
@@ -377,6 +380,7 @@ class TestSVMOptimizer:
         # Allow factor of 10 difference
         assert 0.1 < params1.C / params2.C < 10
 
+    @pytest.mark.slow
     def test_optimize_custom_initial_range(self, mock_u12_introns, mock_u2_introns):
         """Test optimization with custom initial range."""
         optimizer = SVMOptimizer(
@@ -465,6 +469,7 @@ class TestSVMOptimizerIntegration:
 class TestSVMOptimizerEdgeCases:
     """Test edge cases and error handling."""
 
+    @pytest.mark.slow
     def test_optimizer_with_minimal_data(self):
         """Test optimizer with minimal number of introns."""
         # Create minimal dataset (5 of each)

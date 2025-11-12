@@ -22,11 +22,11 @@ from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
 from scoring.pwm import PWM
 from scoring.scorer import IntronScorer
 from scoring.normalizer import ScoreNormalizer
-from classification.classifier import IntronClassifier
+from classification.classifier import IntronClassifier, ClassificationResult
 
 
-# Path to reference data
-DATA_DIR = Path(__file__).parent.parent.parent / "intronIC" / "data"
+# Path to reference data (moved to root level in v2.0.0)
+DATA_DIR = Path(__file__).parent.parent.parent / "data"
 U12_REFERENCE_FILE = DATA_DIR / "u12_reference.introns.iic.gz"
 U2_REFERENCE_FILE = DATA_DIR / "u2_reference.introns.iic.gz"
 PWM_FILE = DATA_DIR / "scoring_matrices.fasta.iic"
@@ -539,5 +539,430 @@ def test_reproducibility_with_reference_data(u12_reference, u2_reference_subset)
     # Results should be identical
     for i1, i2 in zip(result1.classified_introns, result2.classified_introns):
         assert i1.intron_id == i2.intron_id
+        assert abs(i1.scores.svm_score - i2.scores.svm_score) < 1e-6
+        assert i1.metadata.type_id == i2.metadata.type_id
+
+
+# =============================================================================
+# Additional integration tests moved from unit tests (tests that do full SVM training)
+# =============================================================================
+
+@pytest.fixture
+def u12_synthetic():
+    """Create synthetic U12 introns with z-scores for testing."""
+    introns = []
+    for i in range(50):
+        intron = Intron(
+            intron_id=f"syn_u12_{i}",
+            coordinates=GenomicCoordinate(
+                chromosome="chr1",
+                start=1000 + i * 100,
+                stop=1100 + i * 100,
+                strand="+",
+                system="1-based"
+            ),
+            sequences=IntronSequences(
+                seq="GTATGT" + "N" * 50 + "TCCTTAAC",
+                five_seq="GTATGT",
+                three_seq="TCCTTAAC",
+                bp_seq="TCCTTAAC"
+            ),
+            scores=IntronScores(
+                five_raw_score=12.5,
+                bp_raw_score=10.2,
+                three_raw_score=15.3,
+                five_z_score=2.0 + np.random.randn() * 0.3,
+                bp_z_score=2.5 + np.random.randn() * 0.3,
+                three_z_score=2.0 + np.random.randn() * 0.3,
+            )
+        )
+        introns.append(intron)
+    return introns
+
+
+@pytest.fixture
+def u2_synthetic():
+    """Create synthetic U2 introns with z-scores for testing."""
+    introns = []
+    for i in range(50):
+        intron = Intron(
+            intron_id=f"syn_u2_{i}",
+            coordinates=GenomicCoordinate(
+                chromosome="chr1",
+                start=10000 + i * 100,
+                stop=10100 + i * 100,
+                strand="+",
+                system="1-based"
+            ),
+            sequences=IntronSequences(
+                seq="GTAAGT" + "N" * 50 + "TTTCAG",
+                five_seq="GTAAGT",
+                three_seq="TTTCAG",
+                bp_seq="CTAAC"
+            ),
+            scores=IntronScores(
+                five_raw_score=5.2,
+                bp_raw_score=3.8,
+                three_raw_score=6.1,
+                five_z_score=-1.0 + np.random.randn() * 0.3,
+                bp_z_score=-1.5 + np.random.randn() * 0.3,
+                three_z_score=-1.0 + np.random.randn() * 0.3,
+            )
+        )
+        introns.append(intron)
+    return introns
+
+
+@pytest.fixture
+def experimental_synthetic():
+    """Create experimental introns with mixed U12/U2-like features."""
+    introns = []
+
+    # 5 U12-like introns
+    for i in range(5):
+        intron = Intron(
+            intron_id=f"exp_u12_like_{i}",
+            coordinates=GenomicCoordinate(
+                chromosome="chr2",
+                start=1000 + i * 100,
+                stop=1100 + i * 100,
+                strand="+",
+                system="1-based"
+            ),
+            sequences=IntronSequences(
+                seq="GTATGT" + "N" * 50 + "TCCTTAAC",
+                five_seq="GTATGT",
+                three_seq="TCCTTAAC"
+            ),
+            scores=IntronScores(
+                five_z_score=2.2 + np.random.randn() * 0.2,
+                bp_z_score=2.7 + np.random.randn() * 0.2,
+                three_z_score=2.1 + np.random.randn() * 0.2,
+            )
+        )
+        introns.append(intron)
+
+    # 15 U2-like introns
+    for i in range(15):
+        intron = Intron(
+            intron_id=f"exp_u2_like_{i}",
+            coordinates=GenomicCoordinate(
+                chromosome="chr2",
+                start=2000 + i * 100,
+                stop=2100 + i * 100,
+                strand="+",
+                system="1-based"
+            ),
+            sequences=IntronSequences(
+                seq="GTAAGT" + "N" * 50 + "TTTCAG",
+                five_seq="GTAAGT",
+                three_seq="TTTCAG"
+            ),
+            scores=IntronScores(
+                five_z_score=-0.9 + np.random.randn() * 0.2,
+                bp_z_score=-1.3 + np.random.randn() * 0.2,
+                three_z_score=-0.8 + np.random.randn() * 0.2,
+            )
+        )
+        introns.append(intron)
+
+    return introns
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_complete_pipeline(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test complete classification pipeline with synthetic data."""
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,  # Faster for testing
+        n_ensemble_models=2,
+        classification_threshold=50.0,  # Lower for easier testing
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    # Check result structure
+    assert isinstance(result, ClassificationResult)
+    assert len(result.classified_introns) == len(experimental_synthetic)
+    assert result.ensemble is not None
+    assert len(result.ensemble.models) == 2
+    assert result.parameters is not None
+    assert result.n_u12_reference == len(u12_synthetic)
+    assert result.n_u2_reference == len(u2_synthetic)
+
+    # Check that all introns have been classified
+    for intron in result.classified_introns:
+        assert intron.scores is not None
+        assert intron.scores.svm_score is not None
+        assert 0 <= intron.scores.svm_score <= 100
+        assert intron.metadata is not None
+        assert intron.metadata.type_id in ['u2', 'u12']
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_with_fixed_c(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test classification with fixed C parameter (no optimization)."""
+    classifier = IntronClassifier(
+        optimize_c=False,
+        fixed_c=1.0,
+        n_ensemble_models=2,
+        classification_threshold=50.0,
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    assert result.parameters.C == 1.0
+    assert result.parameters.round_found == 0  # Fixed, not optimized
+    assert len(result.classified_introns) == len(experimental_synthetic)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_assigns_u12_and_u2(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test that classification assigns both U12 and U2 types."""
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        classification_threshold=50.0,
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    # Count classifications
+    u12_count = sum(
+        1 for i in result.classified_introns
+        if i.metadata and i.metadata.type_id == 'u12'
+    )
+    u2_count = sum(
+        1 for i in result.classified_introns
+        if i.metadata and i.metadata.type_id == 'u2'
+    )
+
+    # Should have both types
+    assert u12_count > 0
+    assert u2_count > 0
+    assert u12_count + u2_count == len(experimental_synthetic)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_preserves_z_scores_synthetic(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """
+    CRITICAL TEST: Verify z-scores are NOT re-normalized during classification.
+    This is Issue #1 fix - prevents data leakage.
+    """
+    # Store original z-scores
+    original_z_scores = {
+        intron.intron_id: (
+            intron.scores.five_z_score,
+            intron.scores.bp_z_score,
+            intron.scores.three_z_score
+        )
+        for intron in experimental_synthetic
+    }
+
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    # Check that z-scores are EXACTLY the same
+    for intron in result.classified_introns:
+        original = original_z_scores[intron.intron_id]
+        current = (
+            intron.scores.five_z_score,
+            intron.scores.bp_z_score,
+            intron.scores.three_z_score
+        )
+        assert original == current, f"Z-scores changed for {intron.intron_id}!"
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_batch_synthetic(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test batch classification produces same results as regular."""
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        classification_threshold=50.0,
+        random_state=42
+    )
+
+    # Regular classification
+    result_regular = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    # Batch classification with small batch size
+    result_batch = classifier.classify_batch(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic,
+        batch_size=5
+    )
+
+    # Results should be identical
+    assert len(result_regular.classified_introns) == len(result_batch.classified_introns)
+
+    for reg, batch in zip(result_regular.classified_introns, result_batch.classified_introns):
+        assert abs(reg.scores.svm_score - batch.scores.svm_score) < 1e-6
+        assert reg.metadata.type_id == batch.metadata.type_id
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classification_result_get_u12_predictions(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test ClassificationResult.get_u12_predictions()."""
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        classification_threshold=50.0,
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    u12_predictions = result.get_u12_predictions(threshold=50.0)
+
+    # All should be U12 with score >= threshold
+    for intron in u12_predictions:
+        assert intron.metadata.type_id == 'u12'
+        assert intron.scores.svm_score >= 50.0
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classification_result_get_u2_predictions(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test ClassificationResult.get_u2_predictions()."""
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        classification_threshold=50.0,
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    u2_predictions = result.get_u2_predictions(threshold=50.0)
+
+    # All should be U2 with score < threshold
+    for intron in u2_predictions:
+        assert intron.metadata.type_id == 'u2'
+        assert intron.scores.svm_score < 50.0
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classification_result_threshold_affects_filtering(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test that threshold parameter affects get_u12_predictions filtering."""
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        classification_threshold=50.0,
+        random_state=42
+    )
+
+    result = classifier.classify(
+        u12_reference=u12_synthetic,
+        u2_reference=u2_synthetic,
+        experimental=experimental_synthetic
+    )
+
+    # Lower threshold should give more U12 predictions
+    u12_low = result.get_u12_predictions(threshold=40.0)
+    u12_high = result.get_u12_predictions(threshold=60.0)
+
+    assert len(u12_low) >= len(u12_high)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_small_datasets(u12_synthetic, u2_synthetic):
+    """Test classification with minimal experimental data."""
+    # Single experimental intron
+    single_exp = [
+        Intron(
+            intron_id="single",
+            coordinates=GenomicCoordinate(
+                chromosome="chr1",
+                start=1000,
+                stop=1100,
+                strand="+",
+                system="1-based"
+            ),
+            sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
+            scores=IntronScores(
+                five_z_score=2.0,
+                bp_z_score=2.5,
+                three_z_score=2.0
+            )
+        )
+    ]
+
+    classifier = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        random_state=42
+    )
+
+    result = classifier.classify(u12_synthetic, u2_synthetic, single_exp)
+
+    assert len(result.classified_introns) == 1
+    assert result.classified_introns[0].scores.svm_score is not None
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_classify_reproducibility_synthetic(u12_synthetic, u2_synthetic, experimental_synthetic):
+    """Test that classification is reproducible with same random_state."""
+    classifier1 = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        random_state=42
+    )
+    result1 = classifier1.classify(u12_synthetic, u2_synthetic, experimental_synthetic)
+
+    classifier2 = IntronClassifier(
+        n_optimization_rounds=2,
+        n_ensemble_models=2,
+        random_state=42
+    )
+    result2 = classifier2.classify(u12_synthetic, u2_synthetic, experimental_synthetic)
+
+    # Scores should be identical
+    for i1, i2 in zip(result1.classified_introns, result2.classified_introns):
         assert abs(i1.scores.svm_score - i2.scores.svm_score) < 1e-6
         assert i1.metadata.type_id == i2.metadata.type_id
