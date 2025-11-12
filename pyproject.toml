@@ -33,6 +33,7 @@ dependencies = [
     "networkx>=2.5.1",
     "rich>=10.0",
     "smart-open>=5.0.0",
+    "tomli>=1.1.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
