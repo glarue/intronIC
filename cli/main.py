@@ -32,6 +32,7 @@ from scoring.normalizer import ScoreNormalizer
 from classification.classifier import IntronClassifier
 from visualization.plots import plot_classification_results
 from smart_open import open as smart_open
+from utils.metadata import generate_training_metadata, generate_pretrained_metadata, write_metadata
 
 
 def merge_scored_and_omitted_introns(
@@ -347,7 +348,7 @@ def extract_introns_from_annotation(
                 corrected_count += 1
                 logger.debug(
                     f"Corrected {intron.intron_id}: "
-                    f"shift={corrected_intron.metadata.corrected}bp, "
+                    f"shift={corrected_intron.metadata.correction_distance}bp, "
                     f"new coords={corrected_intron.coordinates}"
                 )
 
@@ -803,6 +804,16 @@ def classify_with_pretrained_model(
         'model_path': str(model_path)
     }
 
+    # Generate metadata for pretrained model usage
+    run_metadata_path = config.output.get_output_path('.run_metadata.json')
+    logger.info(f"Recording pretrained model usage")
+    run_metadata = generate_pretrained_metadata(
+        model_path=model_path,
+        threshold=config.scoring.threshold
+    )
+    write_metadata(run_metadata, run_metadata_path)
+    logger.info(f"Run metadata saved to {run_metadata_path}")
+
     return classified_introns, metrics
 
 
@@ -963,6 +974,7 @@ def classify_introns(
     # - cv_processes (for cross-validation parallelization)
     # - classification_processes (for prediction parallelization)
     classifier = IntronClassifier(
+        n_optimization_rounds=config.training.n_optimization_rounds,
         classification_threshold=config.scoring.threshold,
         n_ensemble_models=config.training.n_models,
         fixed_c=config.training.fixed_C,
@@ -1088,6 +1100,28 @@ def classify_introns(
     }
     joblib.dump(model_bundle, model_path, compress=3)
     logger.info(f"Model saved successfully")
+
+    # Generate and save training metadata
+    metadata_path = model_path.with_suffix('.metadata.json')
+    logger.info(f"Generating training metadata")
+    metadata = generate_training_metadata(
+        model_name=model_path.stem,
+        u12_reference_path=config.scoring.reference_u12s,
+        u2_reference_path=config.scoring.reference_u2s,
+        u12_introns=u12_reference,
+        u2_introns=u2_reference,
+        optimized_C=result.parameters.C,
+        calibration_method=result.parameters.calibration_method,
+        cv_score=result.parameters.cv_score,
+        n_models=len(result.ensemble.models),
+        threshold=config.scoring.threshold,
+        eval_result=result.eval_result,
+        max_iter=config.training.max_iter,
+        kernel='linear',
+        seed=config.training.seed
+    )
+    write_metadata(metadata, metadata_path)
+    logger.info(f"Training metadata saved to {metadata_path}")
 
     return list(result.classified_introns), metrics
 
@@ -1352,9 +1386,10 @@ def run_pipeline(config: IntronICConfig):
 
         for intron in classified_introns:
             # Count all boundaries (canonical and non-canonical) by type
+            # Use threshold to match the main counts, not raw classifier type_id
             if intron.metadata and intron.sequences and intron.sequences.terminal_dinucleotides:
                 dnts = intron.sequences.terminal_dinucleotides
-                if intron.metadata.type_id == 'u12':
+                if intron.scores and intron.scores.svm_score >= config.scoring.threshold:
                     boundaries_u12[dnts] += 1
                 else:
                     boundaries_u2[dnts] += 1
@@ -1452,6 +1487,31 @@ def main(args=None):
         # Parse arguments
         parser = IntronICArgumentParser()
         parsed_args = parser.parse_args(args)
+
+        # Handle --generate-config
+        if getattr(parsed_args, 'generate_config', False):
+            from .config_loader import generate_config_file
+            generate_config_file()
+            return 0
+
+        # Load and merge configuration file (if exists)
+        from .config_loader import ConfigLoader
+
+        config_path = ConfigLoader.find_config(
+            custom_path=getattr(parsed_args, 'config', None)
+        )
+
+        if config_path:
+            try:
+                config_data = ConfigLoader.load_config(config_path)
+                ConfigLoader.merge_with_args(config_data, parsed_args)
+                print(f"Loaded configuration from: {config_path}")
+            except ImportError as e:
+                print(f"Warning: Could not load config file: {e}", file=sys.stderr)
+                print("Install tomli for config file support: pip install tomli", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Error loading config file {config_path}: {e}", file=sys.stderr)
+                print("Continuing with CLI arguments only...", file=sys.stderr)
 
         # Create configuration
         config = IntronICConfig.from_args(parsed_args)

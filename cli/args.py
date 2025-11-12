@@ -62,12 +62,11 @@ Examples:
             version=f'intronIC {__version__}'
         )
 
-        # Required arguments
+        # Required arguments (except for --generate-config)
         required = parser.add_argument_group('required arguments')
         required.add_argument(
             '-n', '--species_name',
-            required=True,
-            help='Species name (e.g., homo_sapiens)'
+            help='Species name (e.g., homo_sapiens, required unless using --generate-config)'
         )
 
         # Input selection
@@ -234,8 +233,8 @@ Examples:
         training_group.add_argument(
             '--max_iter',
             type=int,
-            default=100000,
-            help='Maximum iterations for LinearSVC convergence (default: 100000)'
+            default=50000,
+            help='Maximum iterations for LinearSVC convergence (default: 50000)'
         )
         training_group.add_argument(
             '--eval_mode',
@@ -254,6 +253,12 @@ Examples:
             type=float,
             default=0.2,
             help='Test set fraction for split evaluation mode (default: 0.2)'
+        )
+        training_group.add_argument(
+            '--n_optimization_rounds',
+            type=int,
+            default=5,
+            help='Number of grid search refinement rounds for C optimization (default: 5)'
         )
         training_group.add_argument(
             '--train',
@@ -292,6 +297,19 @@ Examples:
             default=[-6, 4],
             metavar=('START', 'END'),
             help="3' splice site scoring region (default: -6 4)"
+        )
+
+        # Configuration file options
+        config_group = parser.add_argument_group('configuration file')
+        config_group.add_argument(
+            '--config',
+            type=Path,
+            help='Path to TOML configuration file (default: search standard locations)'
+        )
+        config_group.add_argument(
+            '--generate-config',
+            action='store_true',
+            help='Generate a configuration file template and exit'
         )
 
         # Advanced options
@@ -335,6 +353,14 @@ Examples:
         Raises:
             argparse.ArgumentTypeError: If validation fails
         """
+        # Skip validation if generating config
+        if getattr(args, 'generate_config', False):
+            return
+
+        # Check species_name is provided (required for normal operation)
+        if not args.species_name:
+            self.parser.error("the following arguments are required: -n/--species_name")
+
         # Determine input mode and validate
         has_annotation = args.annotation is not None
         has_bed = args.bed is not None

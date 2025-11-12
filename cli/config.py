@@ -97,10 +97,11 @@ class TrainingConfig:
     recursive: bool = False
     recursive_subset: Optional[int] = None
     seed: int = 42
-    max_iter: int = 100000
+    max_iter: int = 50000
     eval_mode: str = 'nested_cv'
     n_cv_folds: int = 5
     test_fraction: float = 0.2
+    n_optimization_rounds: int = 5
     pretrained_model_path: Optional[Path] = None
 
 
@@ -242,6 +243,7 @@ class IntronICConfig:
             eval_mode=args.eval_mode,
             n_cv_folds=args.n_cv_folds,
             test_fraction=args.test_fraction,
+            n_optimization_rounds=args.n_optimization_rounds,
             pretrained_model_path=pretrained_model_path
         )
 
