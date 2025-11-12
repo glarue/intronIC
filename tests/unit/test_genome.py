@@ -16,9 +16,7 @@ from file_io.genome import parse_fasta, GenomeReader
 from utils.coordinates import GenomicCoordinate
 
 
-# Test data paths
-TEST_DATA_DIR = Path(__file__).parent.parent.parent.parent / "intronIC" / "test_data"
-CHR19_GENOME = TEST_DATA_DIR / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
+# Test data paths - use fixtures in tests
 
 
 class TestParseFasta:
@@ -261,28 +259,39 @@ class TestSubsequenceExtraction:
             reader.extract_subsequence(coord)
 
 
-@pytest.mark.skipif(not CHR19_GENOME.exists(), reason="chr19 test data not available")
 class TestWithRealData:
     """Test with real chr19 genome data."""
 
-    def test_load_chr19_cached(self):
+    def test_load_chr19_cached(self, test_data_dir):
         """Test loading chr19 genome in cached mode."""
-        reader = GenomeReader(CHR19_GENOME, cached=True)
+        chr19_genome = test_data_dir / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
+        if not chr19_genome.exists():
+            pytest.skip("chr19 test data not available")
+
+        reader = GenomeReader(chr19_genome, cached=True)
 
         assert reader.is_cached
         assert "19" in reader.get_chromosome_names()
 
-    def test_chr19_sequence_length(self):
+    def test_chr19_sequence_length(self, test_data_dir):
         """Test chr19 sequence length is reasonable."""
-        reader = GenomeReader(CHR19_GENOME, cached=True)
+        chr19_genome = test_data_dir / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
+        if not chr19_genome.exists():
+            pytest.skip("chr19 test data not available")
+
+        reader = GenomeReader(chr19_genome, cached=True)
 
         chr19_length = reader.get_chromosome_length("19")
         # Chr19 is ~58M bp, allow some variation
         assert 50_000_000 < chr19_length < 70_000_000
 
-    def test_extract_from_chr19(self):
+    def test_extract_from_chr19(self, test_data_dir):
         """Test extracting a subsequence from chr19."""
-        reader = GenomeReader(CHR19_GENOME, cached=True)
+        chr19_genome = test_data_dir / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
+        if not chr19_genome.exists():
+            pytest.skip("chr19 test data not available")
+
+        reader = GenomeReader(chr19_genome, cached=True)
 
         # Extract first 100bp
         coord = GenomicCoordinate("19", 1, 100, '+', '1-based')

@@ -605,20 +605,15 @@ def test_custom_three_coordinates(simple_pwms):
 # ============================================================================
 
 @pytest.mark.skip(reason="Real PWM files don't have complete U2/U12 pairs for all regions")
-def test_with_real_pwms_if_available():
+def test_with_real_pwms_if_available(matrix_file):
     """Test scoring with real PWM matrices if available."""
-    from pathlib import Path
-
     # Try to load real PWMs
-    data_dir = Path(__file__).parent.parent.parent.parent / "data"
-    pwm_file = data_dir / "scoring_matrices.fasta.iic"
-
-    if not pwm_file.exists():
+    if not matrix_file.exists():
         pytest.skip("Real PWM file not available")
 
     # Load real PWMs
     loader = PWMLoader()
-    pwm_sets = loader.load_from_file(pwm_file)  # Pass Path object directly
+    pwm_sets = loader.load_from_file(matrix_file)  # Pass Path object directly
 
     # Real PWM coordinates based on actual matrix lengths
     # u12_gtag_five: start=-3, length varies
