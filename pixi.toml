@@ -17,6 +17,7 @@ rich = ">=10.0"
 tqdm = "*"
 pip = "*"
 smart-open = ">=5.0.0"
+tomli = ">=2.3.0,<3"
 
 [pypi-dependencies]
 biogl = "*"
