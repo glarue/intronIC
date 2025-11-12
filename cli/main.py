@@ -362,7 +362,7 @@ def extract_introns_from_annotation(
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
-    pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+    pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
@@ -468,7 +468,7 @@ def extract_introns_from_bed(
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
-    pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+    pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
@@ -551,7 +551,7 @@ def score_introns(
     logger.info("Loading PWM matrices")
 
     # Load PWM matrices from data directory
-    pwm_file = Path(__file__).parent.parent / "intronIC" / "data" / "scoring_matrices.fasta.iic"
+    pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
@@ -559,7 +559,7 @@ def score_introns(
     logger.info(f"Loaded PWM matrices for {len(pwm_sets)} regions")
 
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
-    u2_bp_file = Path(__file__).parent.parent / "intronIC" / "data" / "u2.conserved_empirical_bp_pwm.iic"
+    u2_bp_file = Path(__file__).parent.parent / "data" / "u2.conserved_empirical_bp_pwm.iic"
     if u2_bp_file.exists():
         from scoring.pwm import PWMSet
         u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
@@ -639,7 +639,7 @@ def normalize_scores(
     logger.info("Loading reference sequences for normalization")
 
     # Load reference data - use custom paths if provided, otherwise use defaults
-    data_dir = Path(__file__).parent.parent / "intronIC" / "data"
+    data_dir = Path(__file__).parent.parent / "data"
 
     if config.scoring.reference_u12s:
         u12_file = config.scoring.reference_u12s
