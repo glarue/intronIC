@@ -16,9 +16,9 @@ Author: intronIC refactoring project
 Date: 2025-11-02
 """
 
-import gzip
 from pathlib import Path
 from typing import Iterator, Tuple, Dict, Optional, Union
+from smart_open import open as smart_open
 from utils.coordinates import GenomicCoordinate
 
 
@@ -49,10 +49,7 @@ def parse_fasta(file_path: Union[str, Path]) -> Iterator[Tuple[str, str]]:
     """
     file_path = Path(file_path)
 
-    # Determine if file is gzipped
-    open_func = gzip.open if file_path.suffix == '.gz' else open
-
-    with open_func(file_path, 'rt') as f:
+    with smart_open(file_path, 'rt') as f:
         name = None
         seq_lines = []
 

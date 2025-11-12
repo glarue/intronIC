@@ -31,7 +31,7 @@ from scoring.scorer import IntronScorer
 from scoring.normalizer import ScoreNormalizer
 from classification.classifier import IntronClassifier
 from visualization.plots import plot_classification_results
-import gzip
+from smart_open import open as smart_open
 
 
 def merge_scored_and_omitted_introns(
@@ -193,8 +193,7 @@ def load_reference_sequences(filepath: Path, max_count: int = None, logger: logg
     """
     introns = []
 
-    open_fn = gzip.open if str(filepath).endswith('.gz') else open
-    with open_fn(filepath, 'rt') as f:
+    with smart_open(filepath, 'rt') as f:
         for line_num, line in enumerate(f, 1):
             # Skip comments
             if line.startswith('#'):

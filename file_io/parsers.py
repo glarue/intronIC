@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, Iterator, List, Optional, Union, Tuple
 from abc import ABC, abstractmethod
+from smart_open import open as smart_open
 
 
 # ============================================================================
@@ -378,14 +379,9 @@ class BEDParser:
         Yields:
             BEDLine objects
         """
-        import gzip
-
         file_path = Path(file_path)
 
-        # Handle gzipped files
-        open_func = gzip.open if file_path.suffix == '.gz' else open
-
-        with open_func(file_path, 'rt') as f:
+        with smart_open(file_path, 'rt') as f:
             for line in f:
                 parsed = self.parse_line(line)
                 if parsed is not None:
@@ -488,14 +484,9 @@ class SequenceParser:
         Yields:
             SequenceLine objects
         """
-        import gzip
-
         file_path = Path(file_path)
 
-        # Handle gzipped files
-        open_func = gzip.open if file_path.suffix == '.gz' else open
-
-        with open_func(file_path, 'rt') as f:
+        with smart_open(file_path, 'rt') as f:
             for line in f:
                 parsed = self.parse_line(line)
                 if parsed is not None:
