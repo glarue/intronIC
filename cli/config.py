@@ -213,12 +213,23 @@ class IntronICConfig:
                 pass
 
         # Determine pretrained model path
-        pretrained_model_path = args.pretrained_model
-        if args.use_default_pretrained and pretrained_model_path is None:
+        # Priority:
+        # 1. If --train: pretrained_model_path = None (force training)
+        # 2. If --pretrained_model <path>: use that specific model
+        # 3. Default: use default pretrained model
+        if args.train:
+            # User explicitly wants to train a new model
+            pretrained_model_path = None
+        elif args.pretrained_model:
+            # User specified a custom pretrained model
+            pretrained_model_path = args.pretrained_model
+        else:
+            # Default: use pretrained model
             pretrained_model_path = get_default_pretrained_model_path()
             if pretrained_model_path is None:
                 raise FileNotFoundError(
-                    "Default pretrained model not found at intronIC/data/default_pretrained.model.pkl"
+                    "Default pretrained model not found at intronIC/data/default_pretrained.model.pkl. "
+                    "Use --train to train a new model instead."
                 )
 
         training_config = TrainingConfig(

@@ -50,10 +50,16 @@
     "threshold": 90.0
   },
   "usage": {
-    "command": "intronIC --use_default_pretrained -g <genome> -a <annotation> -n <species>",
+    "default_behavior": "This model is used automatically by default (no flags needed)",
+    "commands": {
+      "use_default": "intronIC -g <genome> -a <annotation> -n <species>",
+      "train_new": "intronIC --train -g <genome> -a <annotation> -n <species>",
+      "use_custom": "intronIC --pretrained_model <path> -g <genome> -a <annotation> -n <species>"
+    },
     "notes": [
+      "DEFAULT: This model is used automatically without any flags",
       "This model was trained on human Chr19 data and performs best on vertebrate genomes",
-      "For distantly related species, consider retraining with species-specific reference data",
+      "For distantly related species, consider retraining with --train flag",
       "The model uses Zero-Anchored Robust (ZAR) normalization which preserves semantic zero",
       "Experimental data is normalized using unsupervised domain adaptation (fit on unlabeled data)"
     ]
