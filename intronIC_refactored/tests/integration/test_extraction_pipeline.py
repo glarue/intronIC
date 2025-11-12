@@ -12,6 +12,8 @@ from extraction.intronator import IntronGenerator
 from extraction.sequences import SequenceExtractor
 from extraction.filters import IntronFilter
 
+# Mark all tests in this module
+pytestmark = [pytest.mark.integration, pytest.mark.extraction, pytest.mark.requires_chr19]
 
 # Test data paths
 TEST_DATA_DIR = Path(__file__).parent.parent.parent / "test_data"

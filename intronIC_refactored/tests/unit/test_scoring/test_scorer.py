@@ -119,24 +119,18 @@ def simple_pwms():
     )
 
     pwm_sets = {
-        'five': PWMSet(
-            u2_canonical=five_u2,
-            u2_noncanonical=None,
-            u12_canonical=five_u12,
-            u12_noncanonical=None
-        ),
-        'bp': PWMSet(
-            u2_canonical=bp_u2,
-            u2_noncanonical=None,
-            u12_canonical=bp_u12,
-            u12_noncanonical=None
-        ),
-        'three': PWMSet(
-            u2_canonical=three_u2,
-            u2_noncanonical=None,
-            u12_canonical=three_u12,
-            u12_noncanonical=None
-        )
+        'five': PWMSet(matrices={
+            ('u2', 'gtag'): five_u2,
+            ('u12', 'gtag'): five_u12
+        }),
+        'bp': PWMSet(matrices={
+            ('u2', 'gtag'): bp_u2,
+            ('u12', 'gtag'): bp_u12
+        }),
+        'three': PWMSet(matrices={
+            ('u2', 'gtag'): three_u2,
+            ('u12', 'gtag'): three_u12
+        })
     }
 
     return pwm_sets
@@ -521,12 +515,39 @@ def test_noncanonical_intron_with_ignore_dnts(simple_pwms):
 # Edge Cases
 # ============================================================================
 
-@pytest.mark.skip(reason="TODO: Need to handle short introns gracefully")
 def test_very_short_intron(simple_pwms):
     """Test handling of intron too short for branch point search."""
-    # TODO: Implement graceful handling of short introns
-    # Options: skip scoring, use reduced search window, or clear error
-    pass
+    # Create very short intron (20bp) - too short for BP search window
+    seq = "GTAA" + "N" * 12 + "TTAG"  # Only 20bp total
+    intron = Intron(
+        intron_id="short",
+        coordinates=GenomicCoordinate("chr1", 1000, 1020, '+', '1-based'),
+        sequences=IntronSequences(
+            seq=seq,
+            upstream_flank="NNN",
+            downstream_flank="NNN",
+            five_prime_dnt="GT",
+            three_prime_dnt="AG"
+        ),
+        scores=IntronScores(),
+        metadata=IntronMetadata("t1", "g1")
+    )
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-55, -5),  # This requires 50bp search window
+        three_coords=(-6, 2)
+    )
+
+    # Should handle gracefully - either skip BP scoring or use what's available
+    scored = scorer.score_intron(intron)
+
+    # Five and three sites should still score
+    assert scored.scores.five_raw_score is not None
+    assert scored.scores.three_raw_score is not None
+    # BP score might be None or 0 for very short introns
+    # The implementation should handle this gracefully
 
 
 def test_intron_without_sequences(simple_pwms):
@@ -583,9 +604,57 @@ def test_custom_three_coordinates(simple_pwms):
 # Real PWM Integration Tests
 # ============================================================================
 
-@pytest.mark.skip(reason="TODO: Need correct coordinates for real PWM lengths")
+@pytest.mark.skip(reason="Real PWM files don't have complete U2/U12 pairs for all regions")
 def test_with_real_pwms_if_available():
     """Test scoring with real PWM matrices if available."""
-    # TODO: Real PWMs have different lengths than default coords
-    # Need to determine correct coordinate ranges for real matrices
-    pass
+    from pathlib import Path
+
+    # Try to load real PWMs
+    data_dir = Path(__file__).parent.parent.parent.parent / "intronIC" / "data"
+    pwm_file = data_dir / "scoring_matrices.fasta.iic"
+
+    if not pwm_file.exists():
+        pytest.skip("Real PWM file not available")
+
+    # Load real PWMs
+    loader = PWMLoader()
+    pwm_sets = loader.load_from_file(pwm_file)  # Pass Path object directly
+
+    # Real PWM coordinates based on actual matrix lengths
+    # u12_gtag_five: start=-3, length varies
+    # u12_gtag_bp: canonical U12 BP motif
+    # u12_gtag_three: start=-20
+
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=(-3, 9),   # Default from original
+        bp_coords=(-55, -5),   # Default BP search window
+        three_coords=(-20, 3)  # Adjusted for real PWM start position
+    )
+
+    # Create test intron with canonical U12-like sequences
+    seq = "GTAAGTAT" + "N" * 60 + "TACTAAC" + "N" * 15 + "TTTTTTTTTTTTTTTTTTTCAG"
+    intron = Intron(
+        intron_id="real_pwm_test",
+        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), '+', '1-based'),
+        sequences=IntronSequences(
+            seq=seq,
+            upstream_flank="NNNNN",
+            downstream_flank="NNNNN",
+            five_prime_dnt="GT",
+            three_prime_dnt="AG"
+        ),
+        scores=IntronScores(),
+        metadata=IntronMetadata("t1", "g1", noncanonical=False)
+    )
+
+    # Score with real PWMs
+    scored = scorer.score_intron(intron)
+
+    # Should have all scores populated
+    assert scored.scores.five_raw_score is not None
+    assert scored.scores.bp_raw_score is not None
+    assert scored.scores.three_raw_score is not None
+    assert math.isfinite(scored.scores.five_raw_score)
+    assert math.isfinite(scored.scores.bp_raw_score)
+    assert math.isfinite(scored.scores.three_raw_score)
