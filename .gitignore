@@ -60,3 +60,5 @@ original_*.log
 *_test.log
 *_fix.log 
 comparison_test/
+test_verification/
+*.log
