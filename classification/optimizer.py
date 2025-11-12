@@ -494,10 +494,12 @@ class SVMOptimizer:
         )
 
         # Calculate total tasks for progress bar
+        # Note: Progress tracks GridSearchCV tasks, not internal CalibratedClassifierCV fits
         n_candidates = len(list(ParameterGrid(param_grid)))
         n_outer_cv = cv_splitter.get_n_splits(y)  # GridSearchCV outer loop
         n_inner_cv = cv_splitter.get_n_splits(y)  # CalibratedClassifierCV inner loop
-        total_tasks = n_candidates * n_outer_cv * n_inner_cv + 1  # +1 for final refit
+        total_tasks = n_candidates * n_outer_cv + 1  # +1 for final refit
+        total_fits = n_candidates * n_outer_cv * n_inner_cv + 1  # Actual model fits (for info only)
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
@@ -505,7 +507,8 @@ class SVMOptimizer:
             print(f"{'='*80}", flush=True)
             print(f"Parameter combinations: {n_candidates} (C={len(C_grid)} × dual=2 × intercept=3 × method=2)", flush=True)
             print(f"CV folds: outer={n_outer_cv}, inner={n_inner_cv} (calibration)", flush=True)
-            print(f"Total fits: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
+            print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
+            print(f"Total model fits: {total_fits:,} (including {n_inner_cv}× internal calibration per task)", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
             print(f"{'='*80}", flush=True)
 
@@ -601,6 +604,9 @@ class SVMOptimizer:
         Finds the nearest grid point to best_C, then creates a new
         geometric grid between its neighbors.
 
+        Edge case handling: If best_C is at grid boundary, expand the
+        search range to ensure exploration beyond current best.
+
         Args:
             current_grid: Current grid of C values
             best_C: Best C value from this round
@@ -615,8 +621,21 @@ class SVMOptimizer:
         low_idx = max(best_idx - 1, 0)
         high_idx = min(best_idx + 1, len(current_grid) - 1)
 
-        low_bound = current_grid[low_idx]
-        high_bound = current_grid[high_idx]
+        # Handle edge cases: if at boundary, expand range geometrically
+        if best_idx == 0:
+            # At lower edge: use [C[0], C[1]] as base, but ensure we explore below
+            span = current_grid[1] / current_grid[0]  # Geometric ratio
+            low_bound = current_grid[0] / span  # Extend below
+            high_bound = current_grid[1]
+        elif best_idx == len(current_grid) - 1:
+            # At upper edge: use [C[-2], C[-1]] as base, but ensure we explore above
+            span = current_grid[-1] / current_grid[-2]  # Geometric ratio
+            low_bound = current_grid[-2]
+            high_bound = current_grid[-1] * span  # Extend above
+        else:
+            # Interior point: use neighbors as normal
+            low_bound = current_grid[low_idx]
+            high_bound = current_grid[high_idx]
 
         # Create refined geometric grid
         refined_grid = np.geomspace(
