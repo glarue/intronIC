@@ -752,20 +752,45 @@ class Intron(GenomeFeature):
         return context
     
     def model_score(
-        self, 
-        models, 
-        scoring_regions, 
+        self,
+        models,
+        scoring_regions,
         THRESHOLD,
-        model_weights=None, 
-        add_type=True
+        model_weights=None,
+        add_type=True,
+        gamma_5_bp=2.0,
+        gamma_5_3=1.0
     ):
         """
         Assigns probability scores to self using supplied
         models; if multiple models, will assign average of all
         scores.
 
+        Uses augmented 9-feature vector - "Both Ends Strong" strategy:
+        [s5, sBP, s3, sum_5_bp, absdiff_5_bp, sum_5_3, absdiff_5_3, min_all, imbalance_all]
+
+        Note: Includes BOTH pairs (5'-BP and 5'-3') with separate gamma weights.
         """
-        score_vector = np.array([[getattr(self, r) for r in scoring_regions]])
+        # Extract base z-scores (LLRs)
+        s5 = self.five_z_score
+        sBP = self.bp_z_score
+        s3 = self.three_z_score
+
+        # Pairwise features: 5'–BP (critical pair)
+        sum_5_bp = s5 + sBP
+        absdiff_5_bp = abs(s5 - sBP) * gamma_5_bp
+
+        # Pairwise features: 5'–3' (ends)
+        sum_5_3 = s5 + s3
+        absdiff_5_3 = abs(s5 - s3) * gamma_5_3
+
+        # 3-way features
+        min_all = min(s5, sBP, s3)
+        imbalance_all = abs(s5 - sBP) + abs(s5 - s3) + abs(sBP - s3)
+
+        # Build 9-feature vector
+        score_vector = np.array([[s5, sBP, s3, sum_5_bp, absdiff_5_bp, sum_5_3,
+                                  absdiff_5_3, min_all, imbalance_all]])
         probabilities, labels, distances = svm_predict(score_vector, models)
         probabilities = list(chain.from_iterable(probabilities))
         labels = list(chain.from_iterable(labels))
@@ -3746,10 +3771,12 @@ def apply_scores(
         )
     
     # make score vectors for training data
-    ref_u12_vector = get_score_vector(
-        ref_u12s, score_names=scoring_region_labels)
-    ref_u2_vector = get_score_vector(
-        ref_u2s, score_names=scoring_region_labels)
+    # Using augmented features (9D) - "Both Ends Strong" strategy:
+    # [s5, sBP, s3, sum_5_bp, absdiff_5_bp*γ₅ᵦₚ, sum_5_3, absdiff_5_3*γ₅₃, min_all, imbalance_all]
+    # Includes BOTH pairs (5'-BP and 5'-3') with separate gamma weights (2.0, 1.0)
+    # Linear SVM can learn min(a,b) from sum and absdiff, so explicit mins removed
+    ref_u12_vector = get_augmented_score_vector(ref_u12s)
+    ref_u2_vector = get_augmented_score_vector(ref_u2s)
 
     # NOTE: in this application with a "soft-margin" (C > 0) SVM,
     # redundant data arguably should be included, if present.
@@ -5695,7 +5722,59 @@ def get_attributes(objs, attr_names):
 
 def get_score_vector(introns, score_names):
     vect = [[getattr(i, n) for n in score_names] for i in introns]
-    
+
+    return np.asarray(vect)
+
+
+def get_augmented_score_vector(introns, gamma_5_bp=2.0, gamma_5_3=1.0):
+    """
+    Extract augmented feature vector with pairwise consistency features.
+
+    Features (9D) - "Both Ends Strong" strategy from expert recommendation:
+        - s5: 5' splice site z-score (LLR, zero = U12≈U2)
+        - sBP: branch point z-score
+        - s3: 3' splice site z-score
+        - sum_5_bp: s5 + sBP - overall signal for 5'–BP pair
+        - absdiff_5_bp: |s5 - sBP| * gamma_5_bp - imbalance penalty for critical pair
+        - sum_5_3: s5 + s3 - overall signal for 5'–3' pair
+        - absdiff_5_3: |s5 - s3| * gamma_5_3 - imbalance penalty for ends
+        - min_all: min(s5, sBP, s3) - requires all three signals strong (3-way AND)
+        - imbalance_all: |s5-sBP| + |s5-s3| + |sBP-s3| - global imbalance penalty
+
+    Note: Linear SVM can learn min(a,b) from sum and absdiff via the identity
+    min(a,b) = (a+b - |a-b|)/2, so explicit min features are redundant for pairs.
+    We include BOTH pairs (5'-BP and 5'-3') with separate gamma weights.
+    gamma_5_bp is higher (default 2.0) since 5'-BP is the critical pairing.
+
+    Args:
+        introns: List of Intron objects with z-score attributes
+        gamma_5_bp: Weight for 5'-BP asymmetry penalty (default 2.0)
+        gamma_5_3: Weight for 5'-3' asymmetry penalty (default 1.0)
+
+    Returns:
+        numpy array of shape (n_introns, 9)
+    """
+    vect = []
+    for i in introns:
+        s5 = i.five_z_score
+        sBP = i.bp_z_score
+        s3 = i.three_z_score
+
+        # Pairwise features: 5'–BP (critical pair)
+        sum_5_bp = s5 + sBP
+        absdiff_5_bp = abs(s5 - sBP) * gamma_5_bp
+
+        # Pairwise features: 5'–3' (ends)
+        sum_5_3 = s5 + s3
+        absdiff_5_3 = abs(s5 - s3) * gamma_5_3
+
+        # 3-way features (optional but lightweight)
+        min_all = min(s5, sBP, s3)
+        imbalance_all = abs(s5 - sBP) + abs(s5 - s3) + abs(sBP - s3)
+
+        vect.append([s5, sBP, s3, sum_5_bp, absdiff_5_bp, sum_5_3,
+                     absdiff_5_3, min_all, imbalance_all])
+
     return np.asarray(vect)
 
 
