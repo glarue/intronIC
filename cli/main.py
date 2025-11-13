@@ -10,7 +10,7 @@ import json
 import time
 import joblib
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from .args import IntronICArgumentParser
 from .config import IntronICConfig, ScoringRegions
@@ -35,10 +35,71 @@ from smart_open import open as smart_open
 from utils.metadata import generate_training_metadata, generate_pretrained_metadata, write_metadata
 
 
+def log_data_block(logger: logging.Logger, header: str, lines: List[str], use_separator: bool = True):
+    """
+    Log a block of data with a header as a single multi-line message.
+
+    This ensures only the header gets a timestamp, while the data lines
+    appear without individual timestamps for cleaner log formatting.
+
+    Args:
+        logger: Logger instance
+        header: Header text (will get timestamp)
+        lines: List of data lines to display
+        use_separator: Whether to include separator lines (default: True)
+
+    Example:
+        log_data_block(
+            logger,
+            "Top 20 splice site boundaries (U12-type introns)",
+            ["   1. GT-AG    11,684 (97.02%)", "   2. GC-AG       158 ( 1.31%)"]
+        )
+
+        Results in:
+        [2025-11-13 00:18:48] INFO     Top 20 splice site boundaries (U12-type introns)
+        ------------------------------------...
+           1. GT-AG    11,684 (97.02%)
+           2. GC-AG       158 ( 1.31%)
+    """
+    # Build the complete message starting with header
+    parts = [header]
+
+    if use_separator:
+        parts.append("-" * 100)
+
+    parts.extend(lines)
+
+    # Log as single multi-line message (only first line gets timestamp)
+    logger.info('\n'.join(parts))
+
+
+def format_count_with_percentage(count: int, total: int) -> str:
+    """Format a count with percentage of total.
+
+    Args:
+        count: The count to format
+        total: The total to calculate percentage from
+
+    Returns:
+        Formatted string like "1,234 (5.67%)" or "0 (0.00%)"
+
+    Examples:
+        >>> format_count_with_percentage(12074, 58933)
+        '12,074 (20.49%)'
+        >>> format_count_with_percentage(31, 12074)
+        '31 (0.26%)'
+    """
+    if total == 0:
+        percentage = 0.0
+    else:
+        percentage = (count / total) * 100
+    return f"{count:,} ({percentage:.2f}%)"
+
+
 def merge_scored_and_omitted_introns(
     scored_introns: List[Intron],
     all_introns: List[Intron],
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger'
 ) -> List[Intron]:
     """
     Merge scored introns with unique omitted introns for complete meta output.
@@ -52,7 +113,7 @@ def merge_scored_and_omitted_introns(
     Args:
         scored_introns: Introns that went through scoring/classification (have scores)
         all_introns: All extracted introns (including omitted)
-        logger: Logger instance
+        messenger: Unified messenger instance
 
     Returns:
         Combined list: scored introns + unique omitted introns (no duplicates)
@@ -70,10 +131,13 @@ def merge_scored_and_omitted_introns(
         and not intron.metadata.duplicate
     ]
 
-    logger.info(
-        f"Merging output: {len(scored_introns):,} scored + "
-        f"{len(omitted_introns):,} omitted = "
-        f"{len(scored_introns) + len(omitted_introns):,} total introns for meta file"
+    total_output = len(scored_introns) + len(omitted_introns)
+    total_all = len(all_introns)
+
+    messenger.log_only(
+        f"Merging output: {format_count_with_percentage(len(scored_introns), total_all)} scored + "
+        f"{format_count_with_percentage(len(omitted_introns), total_all)} omitted = "
+        f"{format_count_with_percentage(total_output, total_all)} total introns for output files"
     )
 
     # Return scored + omitted (duplicates already excluded)
@@ -124,15 +188,18 @@ def calculate_minimum_intron_length(
     return minimum_length
 
 
-def setup_logging(config: IntronICConfig) -> logging.Logger:
-    """Setup logging configuration.
+def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
+    """Setup logging configuration with ANSI color support.
 
     Args:
         config: Pipeline configuration
 
     Returns:
-        Configured logger instance
+        Tuple of (configured logger instance, Rich console for log file)
     """
+    from rich.console import Console
+    from rich.logging import RichHandler
+
     log_file = config.output.get_output_path('.log')
 
     # Configure logging level
@@ -147,26 +214,39 @@ def setup_logging(config: IntronICConfig) -> logging.Logger:
     logger = logging.getLogger('intronIC')
     logger.setLevel(level)
 
-    # File handler with enhanced formatting
-    fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
-    fh.setLevel(logging.DEBUG)  # Always log everything to file
+    # Clear any existing handlers
+    logger.handlers.clear()
 
-    # Use enhanced formatter for better readability
-    from utils.logging_utils import EnhancedFormatter
-    fh.setFormatter(EnhancedFormatter(width=100))
-    logger.addHandler(fh)
+    # Create Rich console for log file with ANSI color support
+    # force_terminal=True ensures ANSI codes are written even to files
+    log_console = Console(
+        file=open(log_file, 'w', encoding='utf-8'),
+        force_terminal=True,
+        width=120,
+        legacy_windows=False
+    )
 
-    # Console handler (only if not quiet)
-    if not config.output.quiet:
-        ch = logging.StreamHandler()
-        ch.setLevel(level)
-        ch.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-        logger.addHandler(ch)
+    # File handler using Rich - preserves colors and formatting
+    # NOTE: We only add a file handler. Console output is handled by UnifiedMessenger
+    # to avoid duplicate messages. The logger is used ONLY for the log file.
+    file_handler = RichHandler(
+        console=log_console,
+        show_time=True,
+        show_level=True,
+        show_path=False,
+        markup=False,
+        rich_tracebacks=True,
+        tracebacks_show_locals=config.output.debug,
+        level=logging.DEBUG  # Always log everything to file
+    )
+    logger.addHandler(file_handler)
 
-    return logger
+    # NO console handler - UnifiedMessenger handles console output to avoid duplication
+
+    return logger, log_console
 
 
-def load_reference_sequences(filepath: Path, max_count: int = None, logger: logging.Logger = None) -> List[Intron]:
+def load_reference_sequences(filepath: Path, max_count: int = None, messenger: 'UnifiedMessenger' = None) -> List[Intron]:
     """
     Load reference intron sequences from .iic.gz file.
 
@@ -182,7 +262,7 @@ def load_reference_sequences(filepath: Path, max_count: int = None, logger: logg
     Args:
         filepath: Path to .iic.gz file
         max_count: Maximum number to load (None = all)
-        logger: Optional logger instance
+        messenger: Optional messenger instance
 
     Returns:
         List of Intron objects with sequences
@@ -244,68 +324,91 @@ def load_reference_sequences(filepath: Path, max_count: int = None, logger: logg
             if max_count and len(introns) >= max_count:
                 break
 
-    if logger:
-        logger.info(f"Loaded {len(introns)} reference sequences from {filepath.name}")
+    if messenger:
+        messenger.log_only(f"Loaded {len(introns)} reference sequences from {filepath.name}")
 
     return introns
 
 
-def load_genome(config: IntronICConfig, logger: logging.Logger) -> GenomeReader:
+def load_genome(config: IntronICConfig, messenger: 'UnifiedMessenger') -> GenomeReader:
     """Load genome file.
 
     Args:
         config: Pipeline configuration
-        logger: Logger instance
+        messenger: Unified messenger for output
 
     Returns:
         GenomeReader instance
     """
-    logger.info(f"Loading genome: {config.input.genome}")
+    messenger.info(f"Loading genome: {config.input.genome}")
     # Use cached mode for faster repeated access
     reader = GenomeReader(config.input.genome, cached=True)
     if reader.cache:
-        logger.info(f"Loaded {len(reader.cache)} sequences into memory")
+        messenger.info(f"Loaded {len(reader.cache)} sequences into memory")
     return reader
 
 
 def extract_introns_from_annotation(
     config: IntronICConfig,
     genome_reader: GenomeReader,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger',
+    reporter: IntronICProgressReporter
 ) -> List[Intron]:
     """Extract introns from annotation file.
 
     Args:
         config: Pipeline configuration
         genome_reader: Genome reader instance
-        reporter: Progress reporter
-        logger: Logger instance
+        messenger: Unified messenger for output
+        reporter: Progress reporter (for progress bars only)
 
     Returns:
         List of extracted introns
     """
-    reporter.print_info(f"Parsing annotation: {config.input.annotation}")
-    logger.info(f"Parsing annotation: {config.input.annotation}")
+    messenger.info(f"Parsing annotation: {config.input.annotation}")
 
     # Step 1: Build annotation hierarchy
-    feature_types = ['exon'] if config.extraction.feature_type == 'exon' else ['cds']
+    # CRITICAL: Always extract BOTH cds and exon features (order matters: CDS first!)
+    # This matches original intronIC behavior (v1.5.1 line 1859-1865):
+    # - Extract from both feature types to get consistent family_size
+    # - Filter afterward based on user's --feature preference
+    # - CDS must come first for proper prioritization in IntronGenerator
     builder = AnnotationHierarchyBuilder(
-        child_features=feature_types,
+        child_features=['cds', 'exon'],  # Always both, order matters!
         clean_names=config.output.clean_names
     )
     genes = builder.build_from_file(config.input.annotation)
-    logger.info(f"Built hierarchy with {len(genes)} genes")
+    messenger.log_only(f"Built hierarchy with {len(genes)} genes")
 
     # Step 2: Generate introns from exon pairs
-    reporter.print_info("Generating introns from exon pairs")
+    messenger.info("Generating introns from exon pairs")
     generator = IntronGenerator()
     introns_iter = generator.generate_from_genes(genes, builder.feature_index)
-    introns_list = list(introns_iter)  # Materialize iterator
-    logger.info(f"Generated {len(introns_list)} introns")
+    introns_all = list(introns_iter)  # Materialize iterator
+    messenger.log_only(f"Generated {len(introns_all)} introns from both CDS and exon features")
+
+    # Step 2b: Filter introns based on --feature flag
+    # Port from: intronIC.py:1865 - filter by defined_by after extraction
+    # This ensures family_size is consistent regardless of feature type preference
+    if config.extraction.feature_type == 'cds':
+        # User wants CDS-defined introns only
+        introns_list = [i for i in introns_all if i.metadata.defined_by == 'cds']
+        messenger.log_only(f"Filtered to {len(introns_list)} CDS-defined introns (--feature cds)")
+    elif config.extraction.feature_type == 'exon':
+        # User wants exon-defined introns only
+        introns_list = [i for i in introns_all if i.metadata.defined_by == 'exon']
+        messenger.log_only(f"Filtered to {len(introns_list)} exon-defined introns (--feature exon)")
+    else:
+        # Default 'both': keep all introns (CDS-defined + exon-only)
+        introns_list = introns_all
+        cds_count = sum(1 for i in introns_all if i.metadata.defined_by == 'cds')
+        exon_count = sum(1 for i in introns_all if i.metadata.defined_by == 'exon')
+        messenger.log_only(
+            f"Keeping all introns: {cds_count} CDS-defined + {exon_count} exon-only (--feature both)"
+        )
 
     # Step 3: Extract sequences for introns
-    reporter.print_info("Extracting intron sequences from genome")
+    messenger.info("Extracting intron sequences from genome")
     sequence_extractor = SequenceExtractor(
         genome_file=str(config.input.genome),
         use_cache=True
@@ -316,7 +419,7 @@ def extract_introns_from_annotation(
     )
     # Materialize generator to list
     introns_all = list(introns_with_seq)
-    logger.info(f"Extracted sequences for {len(introns_all)} introns")
+    messenger.log_only(f"Extracted sequences for {len(introns_all)} introns")
 
     # Step 3b: Apply U12 boundary correction to non-canonical introns (if enabled)
     # Port from: intronIC.py:2692 (u12_nc_ss_adjustment and u12_correction)
@@ -325,7 +428,7 @@ def extract_introns_from_annotation(
     if config.extraction.u12_boundary_correction:
         from extraction.boundary_correction import correct_intron_if_needed
 
-        reporter.print_info("Checking non-canonical introns for U12 boundary corrections")
+        messenger.info("Checking non-canonical introns for U12-type boundary corrections")
         corrected_count = 0
         corrected_introns = []
 
@@ -346,19 +449,24 @@ def extract_introns_from_annotation(
                 )
                 corrected_intron = list(corrected_with_seq)[0]
                 corrected_count += 1
-                logger.debug(
+                messenger.log_only(
                     f"Corrected {intron.intron_id}: "
                     f"shift={corrected_intron.metadata.correction_distance}bp, "
-                    f"new coords={corrected_intron.coordinates}"
+                    f"new coords={corrected_intron.coordinates}",
+                    level="debug"
                 )
 
             corrected_introns.append(corrected_intron)
 
         introns_all = corrected_introns
         if corrected_count > 0:
-            logger.info(f"Applied U12 boundary corrections to {corrected_count} non-canonical introns")
+            total_introns = len(introns_all)
+            messenger.log_only(
+                f"Applied U12-type boundary corrections to "
+                f"{format_count_with_percentage(corrected_count, total_introns)} non-canonical introns"
+            )
     else:
-        logger.info("U12 boundary correction disabled (--no_nc_ss_adjustment)")
+        messenger.log_only("U12-type boundary correction disabled (--no_nc_ss_adjustment)")
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
@@ -369,7 +477,7 @@ def extract_introns_from_annotation(
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     # Get any U12 BP matrix to determine length (all should be same length)
     bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
-    logger.debug(f"BP matrix length: {bp_matrix_length}bp")
+    messenger.log_only(f"BP matrix length: {bp_matrix_length}bp", level="debug")
 
     # Calculate actual minimum length needed for scoring regions
     # Port from: intronIC.py:4600-4617
@@ -379,9 +487,11 @@ def extract_introns_from_annotation(
     )
     actual_min_length = max(config.extraction.min_intron_len, calculated_min)
 
-    logger.info(f"Minimum intron length: {actual_min_length}bp "
-               f"(user: {config.extraction.min_intron_len}bp, "
-               f"scoring regions: {calculated_min}bp)")
+    messenger.log_only(
+        f"Minimum intron length: {actual_min_length}bp "
+        f"(user: {config.extraction.min_intron_len}bp, "
+        f"scoring regions: {calculated_min}bp)"
+    )
 
     # Keep ALL introns at extraction time (matching original behavior)
     # Let IntronFilter decide what to omit during the filtering phase
@@ -391,9 +501,9 @@ def extract_introns_from_annotation(
     introns = introns_all
 
     if config.scoring.sequences_only:
-        logger.info("Sequences-only mode: all introns will be output regardless of length")
+        messenger.log_only("Sequences-only mode: all introns will be output regardless of length")
     else:
-        logger.info(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
+        messenger.log_only(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
 
     return introns
 
@@ -401,30 +511,29 @@ def extract_introns_from_annotation(
 def extract_introns_from_bed(
     config: IntronICConfig,
     genome_reader: GenomeReader,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger',
+    reporter: IntronICProgressReporter
 ) -> List[Intron]:
     """Extract introns from BED file.
 
     Args:
         config: Pipeline configuration
         genome_reader: Genome reader instance
-        reporter: Progress reporter
-        logger: Logger instance
+        messenger: Unified messenger for output
+        reporter: Progress reporter (for progress bars only)
 
     Returns:
         List of extracted introns
     """
-    reporter.print_info(f"Reading BED file: {config.input.bed}")
-    logger.info(f"Reading BED file: {config.input.bed}")
+    messenger.info(f"Reading BED file: {config.input.bed}")
 
     # Parse BED file
     parser = BEDParser()
     introns_no_seq = list(parser.parse_file(config.input.bed))
-    logger.info(f"Parsed {len(introns_no_seq)} introns from BED")
+    messenger.log_only(f"Parsed {len(introns_no_seq)} introns from BED")
 
     # Extract sequences
-    reporter.print_info("Extracting sequences from genome")
+    messenger.info("Extracting sequences from genome")
     sequence_extractor = SequenceExtractor(
         genome_file=str(config.input.genome),
         use_cache=True
@@ -435,13 +544,13 @@ def extract_introns_from_bed(
     )
     # Materialize generator to list
     introns_all = list(introns_with_seq)
-    logger.info(f"Extracted sequences for {len(introns_all)} introns")
+    messenger.log_only(f"Extracted sequences for {len(introns_all)} introns")
 
     # Apply U12 boundary correction (if enabled)
     if config.extraction.u12_boundary_correction:
         from extraction.boundary_correction import correct_intron_if_needed
 
-        reporter.print_info("Checking non-canonical introns for U12 boundary corrections")
+        messenger.info("Checking non-canonical introns for U12-type boundary corrections")
         corrected_count = 0
         corrected_introns = []
 
@@ -464,7 +573,11 @@ def extract_introns_from_bed(
 
         introns_all = corrected_introns
         if corrected_count > 0:
-            logger.info(f"Applied U12 boundary corrections to {corrected_count} non-canonical introns")
+            total_introns = len(introns_all)
+            messenger.log_only(
+                f"Applied U12-type boundary corrections to "
+                f"{format_count_with_percentage(corrected_count, total_introns)} non-canonical introns"
+            )
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
@@ -475,7 +588,7 @@ def extract_introns_from_bed(
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     # Get any U12 BP matrix to determine length (all should be same length)
     bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
-    logger.debug(f"BP matrix length: {bp_matrix_length}bp")
+    messenger.log_only(f"BP matrix length: {bp_matrix_length}bp", level="debug")
 
     # Calculate actual minimum length needed for scoring regions
     # Port from: intronIC.py:4600-4617
@@ -485,9 +598,11 @@ def extract_introns_from_bed(
     )
     actual_min_length = max(config.extraction.min_intron_len, calculated_min)
 
-    logger.info(f"Minimum intron length: {actual_min_length}bp "
-               f"(user: {config.extraction.min_intron_len}bp, "
-               f"scoring regions: {calculated_min}bp)")
+    messenger.log_only(
+        f"Minimum intron length: {actual_min_length}bp "
+        f"(user: {config.extraction.min_intron_len}bp, "
+        f"scoring regions: {calculated_min}bp)"
+    )
 
     # Keep ALL introns at extraction time (matching original behavior)
     # Let IntronFilter decide what to omit during the filtering phase
@@ -497,35 +612,32 @@ def extract_introns_from_bed(
     introns = introns_all
 
     if config.scoring.sequences_only:
-        logger.info("Sequences-only mode: all introns will be output regardless of length")
+        messenger.log_only("Sequences-only mode: all introns will be output regardless of length")
     else:
-        logger.info(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
+        messenger.log_only(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
 
     return introns
 
 
 def load_introns_from_sequences(
     config: IntronICConfig,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger'
 ) -> List[Intron]:
     """Load introns from pre-extracted sequences.
 
     Args:
         config: Pipeline configuration
-        reporter: Progress reporter
-        logger: Logger instance
+        messenger: Unified messenger for output
 
     Returns:
         List of introns with sequences
     """
-    reporter.print_info(f"Loading sequences: {config.input.sequence_file}")
-    logger.info(f"Loading sequences: {config.input.sequence_file}")
+    messenger.info(f"Loading sequences: {config.input.sequence_file}")
 
     # Parse sequence file
     parser = SequenceParser()
     introns = list(parser.parse_file(config.input.sequence_file))
-    logger.info(f"Loaded {len(introns)} introns from sequence file")
+    messenger.log_only(f"Loaded {len(introns)} introns from sequence file")
 
     return introns
 
@@ -533,22 +645,21 @@ def load_introns_from_sequences(
 def score_introns(
     introns: List[Intron],
     config: IntronICConfig,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger',
+    reporter: IntronICProgressReporter
 ) -> List[Intron]:
     """Score introns with PWM matrices.
 
     Args:
         introns: List of introns to score
         config: Pipeline configuration
-        reporter: Progress reporter
-        logger: Logger instance
+        messenger: Unified messenger for output
+        reporter: Progress reporter (for progress bars only)
 
     Returns:
         List of introns with raw scores
     """
-    reporter.print_info("Loading PWM matrices")
-    logger.info("Loading PWM matrices")
+    messenger.info("Loading PWM matrices")
 
     # Load PWM matrices from data directory
     pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
@@ -556,7 +667,7 @@ def score_introns(
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
-    logger.info(f"Loaded PWM matrices for {len(pwm_sets)} regions")
+    messenger.log_only(f"Loaded PWM matrices for {len(pwm_sets)} regions")
 
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
     u2_bp_file = Path(__file__).parent.parent / "data" / "u2.conserved_empirical_bp_pwm.iic"
@@ -568,15 +679,14 @@ def score_introns(
             updated_matrices = dict(pwm_sets['bp'].matrices)
             updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
             pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
-            logger.info("Loaded conserved U2 BP matrix")
+            messenger.log_only("Loaded conserved U2-type BP matrix")
         else:
-            logger.warning("U2 BP matrix file found but couldn't extract U2 GTAG PWM")
+            messenger.warning("U2 BP matrix file found but couldn't extract U2 GTAG PWM")
     else:
-        logger.warning(f"U2 BP matrix file not found: {u2_bp_file}")
+        messenger.warning(f"U2 BP matrix file not found: {u2_bp_file}")
 
     # Create scorer
-    reporter.print_info("Calculating PWM scores")
-    logger.info("Starting PWM scoring")
+    messenger.info("Calculating PWM scores")
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
@@ -603,17 +713,22 @@ def score_introns(
                 scored_introns.append(scored)
             except Exception as e:
                 # Log but continue - don't let one bad intron crash the pipeline
-                logger.warning(
+                messenger.warning(
                     f"Failed to score intron {intron.intron_id}: {str(e)}. Skipping."
                 )
                 failed_count += 1
 
             progress.update(task, advance=1)
 
-    logger.info(f"Scored {len(scored_introns)} introns successfully")
+    total_attempted = len(introns)
+    messenger.log_only(
+        f"Scored {format_count_with_percentage(len(scored_introns), total_attempted)} introns successfully"
+    )
     if failed_count > 0:
-        logger.warning(f"Failed to score {failed_count} introns (see warnings above)")
-        reporter.print_warning(f"Skipped {failed_count} introns due to scoring errors")
+        messenger.warning(
+            f"Failed to score {format_count_with_percentage(failed_count, total_attempted)} introns "
+            f"(see warnings above)"
+        )
 
     return scored_introns
 
@@ -621,22 +736,21 @@ def score_introns(
 def normalize_scores(
     introns: List[Intron],
     config: IntronICConfig,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger',
+    reporter: IntronICProgressReporter
 ) -> Tuple[List[Intron], List[Intron], List[Intron], 'ScoreNormalizer']:
     """Normalize intron scores using z-score transformation.
 
     Args:
         introns: List of introns with raw scores
         config: Pipeline configuration
+        messenger: Unified messenger for console and log output
         reporter: Progress reporter
-        logger: Logger instance
 
     Returns:
         Tuple of (normalized experimental introns, u12 reference, u2 reference, normalizer)
     """
-    reporter.print_info("Loading reference sequences")
-    logger.info("Loading reference sequences for normalization")
+    messenger.info("Loading reference sequences")
 
     # Load reference data - use custom paths if provided, otherwise use defaults
     data_dir = Path(__file__).parent.parent / "data"
@@ -656,14 +770,13 @@ def normalize_scores(
             f"Reference data not found. U12: {u12_file}, U2: {u2_file}"
         )
 
-    u12_reference = load_reference_sequences(u12_file, logger=logger)
-    u2_reference = load_reference_sequences(u2_file, logger=logger)
+    u12_reference = load_reference_sequences(u12_file, messenger=messenger)
+    u2_reference = load_reference_sequences(u2_file, messenger=messenger)
 
-    logger.info(f"Loaded {len(u12_reference)} U12 and {len(u2_reference)} U2 reference introns")
+    messenger.log_only(f"Loaded {len(u12_reference)} U12-type and {len(u2_reference)} U2-type reference introns")
 
     # Score reference introns
-    reporter.print_info("Scoring reference sequences")
-    logger.info("Scoring reference sequences with PWMs")
+    messenger.info("Scoring reference sequences")
 
     # Load PWM matrices
     pwm_file = data_dir / "scoring_matrices.fasta.iic"
@@ -679,7 +792,7 @@ def normalize_scores(
             updated_matrices = dict(pwm_sets['bp'].matrices)
             updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
             pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
-            logger.info("Loaded conserved U2 BP matrix for reference scoring")
+            messenger.log_only("Loaded conserved U2-type BP matrix for reference scoring")
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
@@ -695,8 +808,8 @@ def normalize_scores(
     reference_introns = u12_scored + u2_scored
 
     # Normalize scores
-    reporter.print_info("Normalizing scores with z-score transformation")
-    logger.info("Fitting normalizer on reference data")
+    messenger.info("Normalizing scores with z-score transformation")
+    messenger.log_only("Fitting normalizer on reference data")
 
     normalizer = ScoreNormalizer()
     normalizer.fit(reference_introns, dataset_type='reference')
@@ -709,8 +822,8 @@ def normalize_scores(
     # Transform experimental introns
     normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
 
-    logger.info(f"Normalized {len(normalized_introns)} experimental introns")
-    logger.info(f"Normalized {len(u12_normalized)} U12 and {len(u2_normalized)} U2 reference introns")
+    messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
+    messenger.log_only(f"Normalized {len(u12_normalized)} U12-type and {len(u2_normalized)} U2-type reference introns")
     return normalized_introns, u12_normalized, u2_normalized, normalizer
 
 
@@ -718,8 +831,8 @@ def classify_with_pretrained_model(
     introns: List[Intron],
     model_path: Path,
     config: IntronICConfig,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger',
+    reporter: IntronICProgressReporter
 ) -> Tuple[List[Intron], dict]:
     """Classify introns using a pretrained model with cross-species domain adaptation.
 
@@ -734,8 +847,8 @@ def classify_with_pretrained_model(
         introns: Experimental introns (scored, not normalized)
         model_path: Path to pretrained model file (.model.pkl)
         config: Pipeline configuration
+        messenger: Unified messenger for console and log output
         reporter: Progress reporter
-        logger: Logger instance
 
     Returns:
         Tuple of (classified introns, classification metrics)
@@ -744,8 +857,7 @@ def classify_with_pretrained_model(
         The saved normalizer from training is NOT used. Instead, we fit a new normalizer
         on the experimental data to correct for species-specific score distributions.
     """
-    reporter.print_info(f"Loading pretrained model from {model_path}")
-    logger.info(f"Loading pretrained model from {model_path}")
+    messenger.info(f"Loading pretrained model from {model_path}")
 
     # Load model bundle
     if not model_path.exists():
@@ -758,33 +870,32 @@ def classify_with_pretrained_model(
         # New format: {'ensemble': ..., 'threshold': ...}
         ensemble = model_data['ensemble']
         saved_threshold = model_data.get('threshold', config.scoring.threshold)
-        logger.info("Loaded model bundle (dict format)")
+        messenger.log_only("Loaded model bundle (dict format)")
     else:
         # Old format: SVMEnsemble directly (backward compatibility)
         ensemble = model_data
         saved_threshold = config.scoring.threshold
-        logger.info("Loaded model ensemble (legacy format - backward compatibility)")
+        messenger.log_only("Loaded model ensemble (legacy format - backward compatibility)")
 
-    logger.info(f"Loaded ensemble with {len(ensemble.models)} models")
-    logger.info(f"Using threshold: {config.scoring.threshold}")
+    messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
+    messenger.log_only(f"Using threshold: {config.scoring.threshold}")
 
     # Fit normalizer on experimental data (cross-species domain adaptation)
     # This is statistically valid for pretrained models:
     # - Corrects covariate shift from species-specific score distributions
     # - No label leakage (labels not used, only marginal feature distribution)
     # - RobustScaler minimally affected by rare U12s (~0.5% of data)
-    reporter.print_info("Fitting normalizer on experimental data (domain adaptation)")
-    logger.info(f"Fitting normalizer on {len(introns)} experimental introns")
+    messenger.info("Fitting normalizer on experimental data (domain adaptation)")
+    messenger.log_only(f"Fitting normalizer on {len(introns)} experimental introns")
 
     normalizer = ScoreNormalizer()
     normalizer.fit(introns, dataset_type='unlabeled')
 
     normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
-    logger.info(f"Normalized {len(normalized_introns)} experimental introns")
+    messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
 
     # Classify using loaded ensemble
-    reporter.print_info("Classifying with pretrained model")
-    logger.info("Classifying introns with loaded ensemble")
+    messenger.info("Classifying with pretrained model")
 
     from classification.predictor import SVMPredictor
     predictor = SVMPredictor(
@@ -793,7 +904,7 @@ def classify_with_pretrained_model(
     )
 
     classified_introns = list(predictor.predict(ensemble, normalized_introns))
-    logger.info(f"Classified {len(classified_introns)} introns")
+    messenger.log_only(f"Classified {len(classified_introns)} introns")
 
     # Create metrics (limited since we skipped training)
     metrics = {
@@ -806,13 +917,13 @@ def classify_with_pretrained_model(
 
     # Generate metadata for pretrained model usage
     run_metadata_path = config.output.get_output_path('.run_metadata.json')
-    logger.info(f"Recording pretrained model usage")
+    messenger.log_only(f"Recording pretrained model usage")
     run_metadata = generate_pretrained_metadata(
         model_path=model_path,
         threshold=config.scoring.threshold
     )
     write_metadata(run_metadata, run_metadata_path)
-    logger.info(f"Run metadata saved to {run_metadata_path}")
+    messenger.log_only(f"Run metadata saved to {run_metadata_path}")
 
     return classified_introns, metrics
 
@@ -939,8 +1050,8 @@ def classify_introns(
     u2_reference: List[Intron],
     normalizer: 'ScoreNormalizer',
     config: IntronICConfig,
-    reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    messenger: 'UnifiedMessenger',
+    reporter: IntronICProgressReporter
 ) -> Tuple[List[Intron], dict]:
     """Classify introns as U2 or U12 type.
 
@@ -950,20 +1061,19 @@ def classify_introns(
         u2_reference: U2 reference introns (scored and normalized)
         normalizer: Fitted normalizer used for score transformation
         config: Pipeline configuration
+        messenger: Unified messenger for console and log output
         reporter: Progress reporter
-        logger: Logger instance
 
     Returns:
         Tuple of (classified introns, classification metrics)
     """
-    reporter.print_info("Training SVM classifier")
-    logger.info("Starting SVM classification")
+    messenger.info("Training SVM classifier")
 
     # Create training log if we're actually training (not using pretrained model or fixed C)
     training_log_path = None
     if config.training.pretrained_model_path is None and config.training.eval_mode != 'none':
         training_log_path = config.output.get_output_path('.training.log')
-        logger.info(f"Detailed training log will be written to: {training_log_path}")
+        messenger.log_only(f"Detailed training log will be written to: {training_log_path}")
 
     # Create classifier with correct parameter names
     # IntronClassifier API uses:
@@ -989,8 +1099,8 @@ def classify_introns(
     )
 
     # Run complete classification pipeline (optimize + train + classify)
-    logger.info(f"Running classification on {len(introns)} experimental introns")
-    logger.info(f"Reference data: {len(u12_reference)} U12, {len(u2_reference)} U2")
+    messenger.log_only(f"Running classification on {len(introns)} experimental introns")
+    messenger.log_only(f"Reference data: {len(u12_reference)} U12-type, {len(u2_reference)} U2-type")
 
     result = classifier.classify(
         u12_reference=u12_reference,
@@ -1020,19 +1130,19 @@ def classify_introns(
             metrics['f1'] = result.eval_result.f1_score
             metrics['pr_auc'] = result.eval_result.pr_auc
 
-    logger.info(f"Classification complete")
-    logger.info(f"  Optimized C: {metrics['optimized_C']:.6e}")
-    logger.info(f"  Models trained: {metrics['n_models']}")
+    messenger.log_only(f"Classification complete")
+    messenger.log_only(f"  Optimized C: {metrics['optimized_C']:.6e}")
+    messenger.log_only(f"  Models trained: {metrics['n_models']}")
 
     # Log evaluation metrics if available
     if 'mean_f1' in metrics:
-        logger.info(f"  Nested CV results ({metrics['n_cv_folds']} folds):")
-        logger.info(f"    Mean F1: {metrics['mean_f1']:.4f} ± {metrics['std_f1']:.4f}")
-        logger.info(f"    Mean PR-AUC: {metrics['mean_pr_auc']:.4f} ± {metrics['std_pr_auc']:.4f}")
+        messenger.log_only(f"  Nested CV results ({metrics['n_cv_folds']} folds):")
+        messenger.log_only(f"    Mean F1: {metrics['mean_f1']:.4f} ± {metrics['std_f1']:.4f}")
+        messenger.log_only(f"    Mean PR-AUC: {metrics['mean_pr_auc']:.4f} ± {metrics['std_pr_auc']:.4f}")
     elif 'f1' in metrics:
-        logger.info(f"  Test set evaluation:")
-        logger.info(f"    F1: {metrics['f1']:.4f}")
-        logger.info(f"    PR-AUC: {metrics['pr_auc']:.4f}")
+        messenger.log_only(f"  Test set evaluation:")
+        messenger.log_only(f"    F1: {metrics['f1']:.4f}")
+        messenger.log_only(f"    PR-AUC: {metrics['pr_auc']:.4f}")
 
     # Write detailed training log if evaluation was performed
     if training_log_path and result.eval_result is not None:
@@ -1045,13 +1155,13 @@ def classify_introns(
                 u2_reference,
                 config
             )
-            logger.info(f"Detailed training log written to: {training_log_path}")
+            messenger.log_only(f"Detailed training log written to: {training_log_path}")
         except Exception as e:
-            logger.warning(f"Failed to write training log: {e}")
+            messenger.warning(f"Failed to write training log: {e}")
 
     # Generate training reference plots if evaluation was performed
     if result.eval_result is not None:
-        logger.info("Generating training reference plots")
+        messenger.log_only("Generating training reference plots")
         try:
             from visualization.plots import plot_training_results
 
@@ -1086,24 +1196,24 @@ def classify_introns(
                 species_name=config.output.base_filename,
                 fig_dpi=300
             )
-            logger.info("Successfully generated training reference plots")
+            messenger.log_only("Successfully generated training reference plots")
         except Exception as plot_error:
-            logger.warning(f"Failed to generate training plots: {plot_error}")
+            messenger.warning(f"Failed to generate training plots: {plot_error}")
             # Continue even if plotting fails
 
     # Save trained model (ensemble only - normalizer fitted per-species during inference)
     model_path = config.output.get_output_path('.model.pkl')
-    logger.info(f"Saving trained model to {model_path}")
+    messenger.log_only(f"Saving trained model to {model_path}")
     model_bundle = {
         'ensemble': result.ensemble,
         'threshold': config.scoring.threshold
     }
     joblib.dump(model_bundle, model_path, compress=3)
-    logger.info(f"Model saved successfully")
+    messenger.log_only(f"Model saved successfully")
 
     # Generate and save training metadata
     metadata_path = model_path.with_suffix('.metadata.json')
-    logger.info(f"Generating training metadata")
+    messenger.log_only(f"Generating training metadata")
     metadata = generate_training_metadata(
         model_name=model_path.stem,
         u12_reference_path=config.scoring.reference_u12s,
@@ -1121,7 +1231,7 @@ def classify_introns(
         seed=config.training.seed
     )
     write_metadata(metadata, metadata_path)
-    logger.info(f"Training metadata saved to {metadata_path}")
+    messenger.log_only(f"Training metadata saved to {metadata_path}")
 
     return list(result.classified_introns), metrics
 
@@ -1129,68 +1239,92 @@ def classify_introns(
 def write_outputs(
     introns: List[Intron],
     config: IntronICConfig,
+    messenger: 'UnifiedMessenger',
     reporter: IntronICProgressReporter,
-    logger: logging.Logger
+    scored_only: Optional[List[Intron]] = None
 ):
     """Write output files.
 
+    Port from: intronIC.py:4820-4912 (filter_introns_write_files) and 5232-5267 (main)
+
     Args:
-        introns: Classified introns
+        introns: All introns for .bed.iic, .meta.iic, .introns.iic (scored + omitted)
         config: Pipeline configuration
+        messenger: Unified messenger for console and log output
         reporter: Progress reporter
-        logger: Logger instance
+        scored_only: Introns for .score_info.iic (scored only, no omitted). If None, uses introns.
+
+    Notes:
+        Original intronIC writes different intron sets to different files:
+        - .introns.iic/.seqs.iic: ALL introns except duplicates (unless -d)
+        - .bed.iic, .meta.iic: Scored + omitted non-duplicates
+        - .score_info.iic: ONLY scored introns (no omitted)
+
+        This is achieved by:
+        1. Two-phase writing for .bed/.meta (omitted in filter function, scored in main)
+        2. Single write for .seqs (in filter function)
+        3. Single write for .score_info (in main, only finalized_introns)
     """
-    reporter.print_info("Writing output files")
-    logger.info("Writing output files")
+    messenger.info("Writing output files")
 
     # Filter duplicates if not including them
-    # Port from: intronIC.py uses -d/--include_duplicates flag
+    # Port from: intronIC.py:4806-4807
+    # Note: For normal mode, duplicates are already excluded by merge_scored_and_omitted_introns()
+    # This is only needed for sequences_only mode where we don't call that merge function
     if not config.extraction.include_duplicates:
         original_count = len(introns)
         introns = [i for i in introns if not (i.metadata and i.metadata.duplicate)]
         filtered_count = original_count - len(introns)
         if filtered_count > 0:
-            logger.info(f"Filtered out {filtered_count} duplicate introns (use -d to include)")
+            messenger.log_only(f"Filtered out {filtered_count} duplicate introns (use -d to include)")
 
     output_dir = config.output.output_dir
     base_name = config.output.base_filename
     species_name = config.output.species_name
+    simple_name = config.output.uninformative_naming
+    no_abbreviate = config.output.no_abbreviate
 
-    # Write BED file
+    # Write BED file (scored + omitted non-duplicates)
+    # Port from: intronIC.py:4823-4835 (omitted) + 5232-5237 (scored)
     bed_path = output_dir / f"{base_name}.bed.iic"
-    logger.info(f"Writing BED file: {bed_path}")
+    messenger.log_only(f"Writing BED file: {bed_path}")
     bed_writer = BEDWriter(bed_path)
     with bed_writer:
         for intron in introns:
-            bed_writer.write_intron(intron, species_name=species_name)
-    logger.info(f"Wrote {len(introns)} introns to BED file")
+            bed_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+    messenger.log_only(f"Wrote {len(introns)} introns to BED file")
 
-    # Write metadata file
+    # Write metadata file (scored + omitted non-duplicates)
+    # Port from: intronIC.py:4823-4835 (omitted) + 5240, 5262-5264 (scored)
     meta_path = output_dir / f"{base_name}.meta.iic"
-    logger.info(f"Writing metadata file: {meta_path}")
+    messenger.log_only(f"Writing metadata file: {meta_path}")
     meta_writer = MetaWriter(meta_path)
     with meta_writer:
         for intron in introns:
-            meta_writer.write_intron(intron, species_name=species_name)
-    logger.info(f"Wrote metadata for {len(introns)} introns")
+            meta_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+    messenger.log_only(f"Wrote metadata for {len(introns)} introns")
 
-    # Write sequences file
+    # Write sequences file (all introns except duplicates, unless -d)
+    # Port from: intronIC.py:4842-4845
     seq_path = output_dir / f"{base_name}.introns.iic"
-    logger.info(f"Writing sequences file: {seq_path}")
+    messenger.log_only(f"Writing sequences file: {seq_path}")
     seq_writer = SequenceWriter(seq_path)
     with seq_writer:
         for intron in introns:
-            seq_writer.write_intron(intron, species_name=species_name)
-    logger.info(f"Wrote sequences for {len(introns)} introns")
+            seq_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+    messenger.log_only(f"Wrote sequences for {len(introns)} introns")
 
-    # Write score info file
+    # Write score info file (ONLY scored introns, no omitted)
+    # Port from: intronIC.py:5239-5261
+    # CRITICAL: Only write scored introns, not omitted ones
+    score_introns = scored_only if scored_only is not None else introns
     score_path = output_dir / f"{base_name}.score_info.iic"
-    logger.info(f"Writing score info file: {score_path}")
+    messenger.log_only(f"Writing score info file: {score_path}")
     score_writer = ScoreWriter(score_path)
     with score_writer:
-        for intron in introns:
-            score_writer.write_intron(intron, species_name=species_name)
-    logger.info(f"Wrote score info for {len(introns)} introns")
+        for intron in score_introns:
+            score_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+    messenger.log_only(f"Wrote score info for {len(score_introns)} introns")
 
     output_files = {
         "Metadata": meta_path,
@@ -1201,7 +1335,7 @@ def write_outputs(
     }
 
     reporter.print_file_tree(output_files)
-    logger.info("All output files written successfully")
+    messenger.success("All output files written successfully")
 
 
 def run_pipeline(config: IntronICConfig):
@@ -1213,9 +1347,19 @@ def run_pipeline(config: IntronICConfig):
     # Track start time for runtime reporting
     start_time = time.time()
 
-    # Setup logging and reporting
-    logger = setup_logging(config)
+    # Setup logging and reporting with ANSI color support in log files
+    logger, log_console = setup_logging(config)
     reporter = IntronICProgressReporter(quiet=config.output.quiet)
+
+    # Create unified messenger for synchronized console + log output
+    # Both destinations get Rich formatting with ANSI colors
+    from .messenger import UnifiedMessenger
+    messenger = UnifiedMessenger(
+        console=reporter.console,
+        log_console=log_console,
+        logger=logger,
+        quiet=config.output.quiet
+    )
 
     # Print header
     reporter.print_header(
@@ -1233,49 +1377,49 @@ def run_pipeline(config: IntronICConfig):
         "Write output files"
     ]
 
+    # Show initial pipeline overview (console only, not in log)
+    messenger.console_only("")  # Blank line
     reporter.print_pipeline_steps(pipeline_steps)
 
     try:
         # Step 1: Load input data
-        reporter.print_section("Step 1: Load Input Data", "bold blue")
-        reporter.print_pipeline_steps(pipeline_steps, current_step=1)
-        logger.info("== STEP 1: LOAD INPUT DATA ==")
+        messenger.step(1, "Load Input Data", pipeline_steps)
 
         if config.input.mode == 'annotation':
-            genome_reader = load_genome(config, logger)
+            genome_reader = load_genome(config, messenger)
             introns = extract_introns_from_annotation(
-                config, genome_reader, reporter, logger
+                config, genome_reader, messenger, reporter
             )
         elif config.input.mode == 'bed':
-            genome_reader = load_genome(config, logger)
+            genome_reader = load_genome(config, messenger)
             introns = extract_introns_from_bed(
-                config, genome_reader, reporter, logger
+                config, genome_reader, messenger, reporter
             )
         elif config.input.mode == 'sequences':
-            introns = load_introns_from_sequences(config, reporter, logger)
+            introns = load_introns_from_sequences(config, messenger)
         else:
             raise ValueError(f"Unknown input mode: {config.input.mode}")
 
-        reporter.print_success(f"Loaded {len(introns):,} introns")
+        messenger.success(f"Loaded {len(introns):,} introns")
 
         # If sequences only, skip to output
         if config.scoring.sequences_only:
-            reporter.print_warning("Sequences-only mode: Skipping classification")
-            write_outputs(introns, config, reporter, logger)
-            reporter.print_success("Pipeline complete!")
+            messenger.warning("Sequences-only mode: Skipping classification")
+            # In sequences-only mode, no introns are scored, so scored_only=None
+            # This means .score_info.iic will be empty or contain all introns (but they have no scores)
+            # Original behavior: writes all to .bed/.meta/.seqs, exits before .score_info is created
+            write_outputs(introns, config, messenger, reporter, scored_only=[])
+            messenger.success("Pipeline complete!")
             return
 
         # Step 2: Extract introns (already done above)
-        reporter.print_section("Step 2: Extract Introns", "bold blue")
-        reporter.print_pipeline_steps(pipeline_steps, current_step=2)
-        logger.info("== STEP 2: EXTRACT INTRONS ==")
-        reporter.print_success(f"Extracted {len(introns):,} introns")
+        messenger.step(2, "Extract Introns", pipeline_steps)
+        messenger.success(f"Extracted {len(introns):,} introns")
 
         # Filter introns before scoring (duplicates, short introns, longest isoform)
         # This matches original intronIC behavior where filtering happens BEFORE scoring
         # to avoid scoring 5x more introns than necessary (which causes O(n²) slowdown)
-        reporter.print_info("Filtering introns before scoring")
-        logger.info("Applying pre-scoring filters (duplicates, omissions, longest isoform)")
+        messenger.info("Filtering introns before scoring")
 
         # Create filter with scoring-appropriate settings:
         # - longest_only=True: Only score longest isoform per gene (filters ~8k introns)
@@ -1297,18 +1441,22 @@ def run_pipeline(config: IntronICConfig):
 
         # Report filtering statistics
         stats = intron_filter.stats
-        logger.info(
-            f"Filtering results: {stats.kept_introns:,}/{stats.total_introns:,} introns "
-            f"kept for scoring"
-        )
-        logger.info(
-            f"Omitted: {stats.omitted_short} short, {stats.omitted_ambiguous} ambiguous, "
-            f"{stats.omitted_noncanonical} non-canonical, {stats.omitted_isoform} non-longest isoform, "
-            f"{stats.omitted_overlap} overlapping"
-        )
-        logger.info(f"Duplicates marked: {stats.duplicates}")
+        total = stats.total_introns
 
-        reporter.print_success(
+        messenger.log_only(
+            f"Filtering results: {format_count_with_percentage(stats.kept_introns, total)} "
+            f"introns kept for scoring"
+        )
+        messenger.log_only(
+            f"Omitted: {format_count_with_percentage(stats.omitted_short, total)} short, "
+            f"{format_count_with_percentage(stats.omitted_ambiguous, total)} ambiguous, "
+            f"{format_count_with_percentage(stats.omitted_noncanonical, total)} non-canonical, "
+            f"{format_count_with_percentage(stats.omitted_isoform, total)} non-longest isoform, "
+            f"{format_count_with_percentage(stats.omitted_overlap, total)} overlapping"
+        )
+        messenger.log_only(f"Duplicates marked: {format_count_with_percentage(stats.duplicates, total)}")
+
+        messenger.success(
             f"Filtered to {len(filtered_introns):,} introns for scoring "
             f"(removed {len(introns) - len(filtered_introns):,})"
         )
@@ -1318,37 +1466,30 @@ def run_pipeline(config: IntronICConfig):
         introns_for_scoring = filtered_introns
 
         # Step 3: Score introns
-        reporter.print_section("Step 3: Score Introns", "bold blue")
-        reporter.print_pipeline_steps(pipeline_steps, current_step=3)
-        logger.info("== STEP 3: SCORE INTRONS ==")
-        scored_introns = score_introns(introns_for_scoring, config, reporter, logger)
-        reporter.print_success(f"Scored {len(scored_introns):,} introns")
+        messenger.step(3, "Score Introns", pipeline_steps)
+        scored_introns = score_introns(introns_for_scoring, config, messenger, reporter)
+        messenger.success(f"Scored {len(scored_introns):,} introns")
 
         # Check if using pretrained model
         if config.training.pretrained_model_path:
             # Skip normalization/training - use pretrained model
-            reporter.print_section("Step 4-5: Classify with Pretrained Model", "bold blue")
-            reporter.print_pipeline_steps(pipeline_steps, current_step=4)
+            messenger.step(4, "Classify with Pretrained Model", pipeline_steps)
             classified_introns, metrics = classify_with_pretrained_model(
-                scored_introns, config.training.pretrained_model_path, config, reporter, logger
+                scored_introns, config.training.pretrained_model_path, config, messenger, reporter
             )
         else:
             # Normal flow: normalize + train + classify
             # Step 4: Normalize scores
-            reporter.print_section("Step 4: Normalize Scores", "bold blue")
-            reporter.print_pipeline_steps(pipeline_steps, current_step=4)
-            logger.info("== STEP 4: NORMALIZE SCORES ==")
+            messenger.step(4, "Normalize Scores", pipeline_steps)
             normalized_introns, u12_reference, u2_reference, normalizer = normalize_scores(
-                scored_introns, config, reporter, logger
+                scored_introns, config, messenger, reporter
             )
-            reporter.print_success("Scores normalized")
+            messenger.success("Scores normalized")
 
             # Step 5: Classify
-            reporter.print_section("Step 5: Classify Introns", "bold blue")
-            reporter.print_pipeline_steps(pipeline_steps, current_step=5)
-            logger.info("== STEP 5: CLASSIFY INTRONS ==")
+            messenger.step(5, "Classify Introns", pipeline_steps)
             classified_introns, metrics = classify_introns(
-                normalized_introns, u12_reference, u2_reference, normalizer, config, reporter, logger
+                normalized_introns, u12_reference, u2_reference, normalizer, config, messenger, reporter
             )
 
         # Count classifications based on threshold (for reporting "high confidence" U12s)
@@ -1374,10 +1515,11 @@ def run_pipeline(config: IntronICConfig):
         )
 
         # Log classification summary to log file
-        logger.info(f"Classification results:")
-        logger.info(f"  {atac_count} putative AT-AC U12-type introns found")
-        logger.info(f"  {u12_count} putative U12-type introns found with scores > {config.scoring.threshold}%")
-        logger.info(f"  {u2_count} introns classified as U2-type")
+        total_classified = len(classified_introns)
+        messenger.log_only(f"Classification results:")
+        messenger.log_only(f"  {format_count_with_percentage(atac_count, total_classified)} putative AT-AC U12-type introns found")
+        messenger.log_only(f"  {format_count_with_percentage(u12_count, total_classified)} putative U12-type introns found with scores > {config.scoring.threshold}%")
+        messenger.log_only(f"  {format_count_with_percentage(u2_count, total_classified)} introns classified as U2-type")
 
         # Collect and log splice site boundary statistics (separate by U12/U2)
         from collections import Counter
@@ -1396,35 +1538,43 @@ def run_pipeline(config: IntronICConfig):
 
         # Log U12 boundary statistics
         if boundaries_u12:
-            logger.info("")
-            logger.info("--" + "-" * 78)
-            logger.info("Top 20 splice site boundaries (U12-type introns)")
-            logger.info("--" + "-" * 78)
             total_u12 = sum(boundaries_u12.values())
-            for i, (dnts, count) in enumerate(boundaries_u12.most_common(20), 1):
-                percentage = (count / total_u12) * 100
-                logger.info(f"  {i:2d}. {dnts:8s} {count:6,} ({percentage:5.2f}%)")
+            # Sort by count (descending), then alphabetically by dinucleotide
+            sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))[:20]
+            lines = [
+                f"  {i:2d}. {dnts:8s} {count:6,} ({(count / total_u12) * 100:5.2f}%)"
+                for i, (dnts, count) in enumerate(sorted_boundaries, 1)
+            ]
+            log_data_block(
+                logger,
+                "Top 20 splice site boundaries (U12-type introns)",
+                lines
+            )
 
         # Log U2 boundary statistics
         if boundaries_u2:
-            logger.info("")
-            logger.info("--" + "-" * 78)
-            logger.info("Top 20 splice site boundaries (U2-type introns)")
-            logger.info("--" + "-" * 78)
             total_u2 = sum(boundaries_u2.values())
-            for i, (dnts, count) in enumerate(boundaries_u2.most_common(20), 1):
-                percentage = (count / total_u2) * 100
-                logger.info(f"  {i:2d}. {dnts:8s} {count:6,} ({percentage:5.2f}%)")
+            # Sort by count (descending), then alphabetically by dinucleotide
+            sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))[:20]
+            lines = [
+                f"  {i:2d}. {dnts:8s} {count:6,} ({(count / total_u2) * 100:5.2f}%)"
+                for i, (dnts, count) in enumerate(sorted_boundaries, 1)
+            ]
+            log_data_block(
+                logger,
+                "Top 20 splice site boundaries (U2-type introns)",
+                lines
+            )
 
         # Save classification metrics to JSON file
         if metrics:
             metrics_path = config.output.get_output_path('.metrics.json')
-            logger.info(f"Saving classification metrics to {metrics_path}")
+            messenger.log_only(f"Saving classification metrics to {metrics_path}")
             with open(metrics_path, 'w') as f:
                 json.dump(metrics, f, indent=2)
 
         # Generate visualization plots
-        logger.info("Generating visualization plots")
+        messenger.log_only("Generating visualization plots")
         try:
             plot_classification_results(
                 introns=classified_introns,
@@ -1433,24 +1583,32 @@ def run_pipeline(config: IntronICConfig):
                 threshold=config.scoring.threshold,
                 fig_dpi=300
             )
-            logger.info("Successfully generated classification plots")
+            messenger.log_only("Successfully generated classification plots")
         except Exception as plot_error:
-            logger.warning(f"Failed to generate plots: {plot_error}")
+            messenger.warning(f"Failed to generate plots: {plot_error}")
             # Continue even if plotting fails
 
         # Step 6: Write outputs
-        reporter.print_section("Step 6: Write Outputs", "bold blue")
-        reporter.print_pipeline_steps(pipeline_steps, current_step=6)
-        logger.info("== STEP 6: WRITE OUTPUTS ==")
+        messenger.step(6, "Write Outputs", pipeline_steps)
 
         # Merge classified introns with omitted introns for complete meta output
         # This matches original intronIC behavior where .meta.iic includes all introns
         # (scored + omitted), not just the ones that went through classification
         all_introns_for_output = merge_scored_and_omitted_introns(
-            classified_introns, introns, logger
+            classified_introns, introns, messenger
         )
 
-        write_outputs(all_introns_for_output, config, reporter, logger)
+        # Write outputs with different intron sets for different files:
+        # - all_introns_for_output: for .bed.iic, .meta.iic, .introns.iic (scored + omitted)
+        # - classified_introns: for .score_info.iic (scored only, no omitted)
+        # Port from: intronIC.py writes finalized_introns to .score_info (line 5239-5261)
+        write_outputs(
+            all_introns_for_output,
+            config,
+            messenger,
+            reporter,
+            scored_only=classified_introns
+        )
 
         # Calculate and log total runtime
         elapsed_seconds = time.time() - start_time
@@ -1464,13 +1622,11 @@ def run_pipeline(config: IntronICConfig):
         else:
             runtime_str = f"{seconds}s"
 
-        logger.info(f"Run finished in {runtime_str}")
-
-        reporter.print_success("Pipeline complete!")
+        messenger.success(f"Pipeline complete! (Runtime: {runtime_str})")
 
     except Exception as e:
         logger.exception("Pipeline failed with error")
-        reporter.print_error(f"Pipeline failed: {str(e)}")
+        messenger.error(f"Pipeline failed: {str(e)}")
         raise
 
 

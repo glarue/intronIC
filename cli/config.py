@@ -120,14 +120,21 @@ class OutputConfig:
     clean_names: bool = True
     quiet: bool = False
     debug: bool = False
+    uninformative_naming: bool = False  # Use simple naming (species-i_ID)
+    no_abbreviate: bool = False  # Use full species name in output (not abbreviated)
+    abbreviate_filenames: bool = False  # Use abbreviated species name in filenames
 
     @property
     def base_filename(self) -> str:
         """Generate base filename for outputs.
 
         Returns:
-            Base filename (e.g., 'homo_sapiens')
+            Base filename (e.g., 'homo_sapiens' or 'HomSap' if abbreviated)
         """
+        if self.abbreviate_filenames:
+            # Abbreviate for filenames (3+3 format)
+            from file_io.writers import generate_species_abbreviation
+            return generate_species_abbreviation(self.species_name)
         return self.species_name
 
     def get_output_path(self, suffix: str) -> Path:
@@ -259,7 +266,10 @@ class IntronICConfig:
             species_name=args.species_name,
             clean_names=args.clean_names,
             quiet=args.quiet,
-            debug=args.debug
+            debug=args.debug,
+            uninformative_naming=args.uninformative_naming,
+            no_abbreviate=args.no_abbreviate,
+            abbreviate_filenames=args.abbreviate_filenames
         )
 
         return cls(

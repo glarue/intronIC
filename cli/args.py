@@ -65,7 +65,7 @@ Examples:
         # Required arguments (except for --generate-config)
         required = parser.add_argument_group('required arguments')
         required.add_argument(
-            '-n', '--species_name',
+            '-n', '--species_name', '--species-name',
             help='Species name (e.g., homo_sapiens, required unless using --generate-config)'
         )
 
@@ -91,7 +91,7 @@ Examples:
             help='Path to BED file with intron coordinates (requires -g)'
         )
         input_group.add_argument(
-            '-q', '--sequence_file',
+            '-q', '--sequence_file', '--sequence-file',
             type=Path,
             help='Path to pre-extracted intron sequences (.iic format, standalone)'
         )
@@ -99,28 +99,45 @@ Examples:
         # Output options
         output_group = parser.add_argument_group('output options')
         output_group.add_argument(
-            '-o', '--output_dir',
+            '-o', '--output_dir', '--output-dir',
             type=Path,
             default=Path.cwd(),
             help='Output directory (default: current directory)'
         )
         output_group.add_argument(
-            '--clean_names',
+            '--clean_names', '--clean-names',
             action='store_true',
             default=True,
             help='Remove "transcript:" and "gene:" prefixes from IDs (default: True)'
         )
         output_group.add_argument(
-            '--no_clean_names',
+            '--no_clean_names', '--no-clean-names',
             dest='clean_names',
             action='store_false',
             help='Keep "transcript:" and "gene:" prefixes in IDs'
+        )
+        output_group.add_argument(
+            '-u', '--uninformative_naming', '--uninformative-naming',
+            action='store_true',
+            help='Use simple naming scheme for introns instead of verbose metadata format'
+        )
+        output_group.add_argument(
+            '--no_abbreviate', '--no-abbreviate',
+            '--na',
+            action='store_true',
+            help='Use full species name in output files (default: abbreviate to 6 chars)'
+        )
+        output_group.add_argument(
+            '--abbreviate_filenames', '--abbreviate-filenames',
+            '--afn',
+            action='store_true',
+            help='Use abbreviated species name in output filenames (default: use full name)'
         )
 
         # Scoring options
         scoring_group = parser.add_argument_group('scoring options')
         scoring_group.add_argument(
-            '-s', '--sequences_only',
+            '-s', '--sequences_only', '--sequences-only',
             action='store_true',
             help='Extract sequences only, skip classification'
         )
@@ -137,7 +154,7 @@ Examples:
             help='Feature type to extract introns from (default: both)'
         )
         scoring_group.add_argument(
-            '--no_nc',
+            '--no_nc', '--no-nc',
             action='store_true',
             help='Exclude non-canonical introns from scoring'
         )
@@ -148,12 +165,12 @@ Examples:
             help='Pseudocount value for PWM scoring to avoid division by zero (default: 0.0001)'
         )
         scoring_group.add_argument(
-            '--no_ignore_nc_dnts',
+            '--no_ignore_nc_dnts', '--no-ignore-nc-dnts',
             action='store_true',
             help='Include terminal dinucleotides when scoring non-canonical introns (default: ignore them)'
         )
         scoring_group.add_argument(
-            '--no_nc_ss_adjustment',
+            '--no_nc_ss_adjustment', '--no-nc-ss-adjustment',
             action='store_true',
             help='Disable U12 boundary correction for non-canonical introns (default: enabled)'
         )
@@ -167,7 +184,7 @@ Examples:
             help='Number of parallel processes (default: 1)'
         )
         perf_group.add_argument(
-            '--min_intron_len',
+            '--min_intron_len', '--min-intron-len',
             type=int,
             default=30,
             help='Minimum intron length in bp (default: 30)'
@@ -176,17 +193,17 @@ Examples:
         # Isoform selection
         isoform_group = parser.add_argument_group('isoform selection')
         isoform_group.add_argument(
-            '-i', '--allow_multiple_isoforms',
+            '-i', '--allow_multiple_isoforms', '--allow-multiple-isoforms',
             action='store_true',
             help='Include non-longest isoforms'
         )
         isoform_group.add_argument(
-            '-v', '--no_intron_overlap',
+            '-v', '--no_intron_overlap', '--no-intron-overlap',
             action='store_true',
             help='Exclude overlapping introns'
         )
         isoform_group.add_argument(
-            '-d', '--include_duplicates',
+            '-d', '--include_duplicates', '--include-duplicates',
             action='store_true',
             help='Include introns with duplicate coordinates in output (default: exclude)'
         )
@@ -199,17 +216,17 @@ Examples:
             help='Custom PWM matrix file'
         )
         training_group.add_argument(
-            '--reference_u12s',
+            '--reference_u12s', '--reference-u12s',
             type=Path,
             help='Custom U12 reference sequences'
         )
         training_group.add_argument(
-            '--reference_u2s',
+            '--reference_u2s', '--reference-u2s',
             type=Path,
             help='Custom U2 reference sequences'
         )
         training_group.add_argument(
-            '--generate_u2_bps_pwm',
+            '--generate_u2_bps_pwm', '--generate-u2-bps-pwm',
             action='store_true',
             help='Generate U2 branch point PWM from data'
         )
@@ -225,37 +242,37 @@ Examples:
             help='Fixed SVM C parameter (skips optimization)'
         )
         training_group.add_argument(
-            '--n_models',
+            '--n_models', '--n-models',
             type=int,
             default=1,
             help='Number of ensemble models to train (default: 1)'
         )
         training_group.add_argument(
-            '--max_iter',
+            '--max_iter', '--max-iter',
             type=int,
             default=50000,
             help='Maximum iterations for LinearSVC convergence (default: 50000)'
         )
         training_group.add_argument(
-            '--eval_mode',
+            '--eval_mode', '--eval-mode',
             choices=['nested_cv', 'split', 'none'],
             default='nested_cv',
             help='Model evaluation mode: nested_cv (default), split, or none'
         )
         training_group.add_argument(
-            '--n_cv_folds',
+            '--n_cv_folds', '--n-cv-folds',
             type=int,
             default=5,
             help='Number of folds for nested cross-validation (default: 5)'
         )
         training_group.add_argument(
-            '--test_fraction',
+            '--test_fraction', '--test-fraction',
             type=float,
             default=0.2,
             help='Test set fraction for split evaluation mode (default: 0.2)'
         )
         training_group.add_argument(
-            '--n_optimization_rounds',
+            '--n_optimization_rounds', '--n-optimization-rounds',
             type=int,
             default=5,
             help='Number of grid search refinement rounds for C optimization (default: 5)'
@@ -267,6 +284,7 @@ Examples:
         )
         training_group.add_argument(
             '--pretrained_model',
+            '--pretrained-model',
             type=Path,
             default=None,
             help='Path to custom pretrained model file (.model.pkl). If not specified, uses default pretrained model unless --train is set.'
@@ -275,7 +293,7 @@ Examples:
         # Scoring region coordinates
         coords_group = parser.add_argument_group('scoring region coordinates')
         coords_group.add_argument(
-            '--five_score_coords',
+            '--five_score_coords', '--five-score-coords',
             nargs=2,
             type=int,
             default=[-3, 9],
@@ -283,7 +301,7 @@ Examples:
             help="5' splice site scoring region (default: -3 9)"
         )
         coords_group.add_argument(
-            '--bp_region_coords',
+            '--bp_region_coords', '--bp-region-coords',
             nargs=2,
             type=int,
             default=[-55, -5],
@@ -291,7 +309,7 @@ Examples:
             help='Branch point region coordinates (default: -55 -5)'
         )
         coords_group.add_argument(
-            '--three_score_coords',
+            '--three_score_coords', '--three-score-coords',
             nargs=2,
             type=int,
             default=[-6, 4],
@@ -315,13 +333,13 @@ Examples:
         # Advanced options
         advanced_group = parser.add_argument_group('advanced options')
         advanced_group.add_argument(
-            '--flank_len',
+            '--flank_len', '--flank-len',
             type=int,
             default=50,
             help='Length of exonic flanks to extract (default: 50)'
         )
         advanced_group.add_argument(
-            '--cv_processes',
+            '--cv_processes', '--cv-processes',
             type=int,
             help='Number of processes for cross-validation (default: same as -p)'
         )

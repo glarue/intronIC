@@ -227,8 +227,8 @@ class ConfigLoader:
 [scoring]
 # Classification threshold (0-100)
 # Introns with SVM probability >= threshold are classified as U12-type.
-# Lower values = more sensitive (more U12s found, more false positives)
-# Higher values = more specific (fewer U12s, fewer false positives)
+# Lower values = more sensitive (more U12-type introns found, more false positives)
+# Higher values = more specific (fewer U12-type introns, fewer false positives)
 # Recommended: 90 for standard analysis, 95 for high-confidence set
 # Default: 90
 threshold = 90.0
@@ -243,7 +243,7 @@ feature_type = "both"
 # Exclude non-canonical introns from scoring
 # When true, only GT-AG, GC-AG, and AT-AC introns are scored.
 # When false, all intron types are scored (including rare boundaries).
-# Note: Most U12s are AT-AC, so excluding NC introns may miss some U12s
+# Note: Most U12-type introns are AT-AC, so excluding NC introns may miss some U12-type introns
 # Default: false (include all, recommended for comprehensive analysis)
 exclude_noncanonical = false
 
