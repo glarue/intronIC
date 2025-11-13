@@ -117,7 +117,7 @@ def compute_weight_aware_C_bounds(
         y: Binary labels (0/1 for U2/U12)
         sample_weight: Optional per-sample weights
         class_weight: 'balanced' or None
-        eff_C_pos_range: Target range for positive-class effective penalty (default: 1e-2 to 1e2)
+        eff_C_pos_range: Target range for positive-class effective penalty (default: 1e-3 to 1e3)
         eff_C_neg_max: Optional cap on negative-class effective penalty
 
     Returns:
@@ -130,10 +130,10 @@ def compute_weight_aware_C_bounds(
     Example:
         With ~540 U12s and ~102K U2s:
         - w_pos ≈ 95, w_neg ≈ 0.5 (from 'balanced')
-        - eff_C_pos_range = (1e-2, 1e2)
-        - C_min ≈ 1e-4, C_max ≈ 1.0
+        - eff_C_pos_range = (1e-3, 1e3)
+        - C_min ≈ 1e-5, C_max ≈ 10.5
         - Instead of C ∈ [1e-6, 1e6] → eff_C_pos ∈ [9.5e-5, 9.5e7]  (BAD)
-        - We get    C ∈ [1e-4, 1.0]  → eff_C_pos ∈ [1e-2, 1e2]       (GOOD)
+        - We get    C ∈ [1e-5, 10.5] → eff_C_pos ∈ [1e-3, 1e3]       (GOOD)
     """
     y = np.asarray(y)
     classes = np.unique(y)
@@ -271,7 +271,7 @@ class SVMOptimizer:
         self,
         u12_introns: Sequence[Intron],
         u2_introns: Sequence[Intron],
-        eff_C_pos_range: Tuple[float, float] = (1e-2, 1e2),
+        eff_C_pos_range: Tuple[float, float] = (1e-3, 1e3),
         eff_C_neg_max: Optional[float] = None
     ) -> SVMParameters:
         """
@@ -283,7 +283,7 @@ class SVMOptimizer:
         Args:
             u12_introns: Training U12-type introns (with z-scores)
             u2_introns: Training U2-type introns (with z-scores)
-            eff_C_pos_range: Target effective penalty range for positive class (default: 1e-2 to 1e2)
+            eff_C_pos_range: Target effective penalty range for positive class (default: 1e-3 to 1e3)
             eff_C_neg_max: Optional cap on negative class effective penalty
 
         Returns:
