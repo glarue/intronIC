@@ -637,6 +637,23 @@ class SVMOptimizer:
             low_bound = current_grid[low_idx]
             high_bound = current_grid[high_idx]
 
+        # Enforce minimum refinement span to prevent over-convergence
+        # The range should span at least 5× geometrically to explore meaningfully
+        min_ratio = 5.0
+        current_ratio = high_bound / low_bound
+
+        if current_ratio < min_ratio:
+            # Expand range symmetrically around best_C to reach minimum ratio
+            # Use geometric mean: best_C = sqrt(low * high)
+            # To get ratio R: high/low = R, with best_C as geometric center
+            # We get: low = best_C / sqrt(R), high = best_C * sqrt(R)
+            expansion_factor = np.sqrt(min_ratio)
+            low_bound = best_C / expansion_factor
+            high_bound = best_C * expansion_factor
+
+            if self.verbose:
+                print(f"  Range too narrow ({current_ratio:.2f}×), expanding to {min_ratio:.0f}× around best_C", flush=True)
+
         # Create refined geometric grid
         refined_grid = np.geomspace(
             low_bound,
