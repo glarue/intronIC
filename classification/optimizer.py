@@ -317,6 +317,9 @@ class SVMOptimizer:
         initial_range = (bounds_info['C_min'], bounds_info['C_max'])
         current_grid = self._create_initial_grid(initial_range)
 
+        # Track ranges to detect oscillation/convergence
+        previous_ranges = []
+
         # Run geometric refinement
         for round_idx in range(self.n_rounds):
             print(f"Optimization round {round_idx + 1}/{self.n_rounds}...", flush=True)
@@ -328,7 +331,26 @@ class SVMOptimizer:
 
             # Prepare next round's grid (refine around best)
             if round_idx < self.n_rounds - 1:
-                current_grid = self._refine_grid(current_grid, round_result.best_C)
+                next_grid = self._refine_grid(current_grid, round_result.best_C)
+
+                # Check for range oscillation/revisit (indicates convergence)
+                next_range = (next_grid.min(), next_grid.max())
+                for prev_min, prev_max in previous_ranges:
+                    # If ranges overlap significantly (>80%), we're oscillating
+                    overlap_low = max(next_range[0], prev_min)
+                    overlap_high = min(next_range[1], prev_max)
+                    if overlap_low < overlap_high:
+                        overlap_span = overlap_high / overlap_low
+                        total_span = max(next_range[1] / next_range[0], prev_max / prev_min)
+                        overlap_ratio = overlap_span / total_span
+                        if overlap_ratio > 0.8:
+                            if self.verbose:
+                                print(f"  Convergence detected: range overlaps previous by {overlap_ratio*100:.0f}%", flush=True)
+                                print(f"  Stopping early at round {round_idx + 1}/{self.n_rounds}", flush=True)
+                            break
+
+                previous_ranges.append(next_range)
+                current_grid = next_grid
 
         # Final parameters from best round
         final_C = gmean(self.rounds_[-1].rank_one_Cs)
@@ -638,8 +660,9 @@ class SVMOptimizer:
             high_bound = current_grid[high_idx]
 
         # Enforce minimum refinement span to prevent over-convergence
-        # The range should span at least 5× geometrically to explore meaningfully
-        min_ratio = 5.0
+        # The range should span at least 2× geometrically to explore meaningfully
+        # (reduced from 5× to avoid oscillation between edges)
+        min_ratio = 2.0
         current_ratio = high_bound / low_bound
 
         if current_ratio < min_ratio:
