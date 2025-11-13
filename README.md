@@ -202,7 +202,7 @@ For any classification run, you need a species name **and** one of the following
 |----------|-------------|---------|
 | `-s` | Extract sequences only (skip classification) | False |
 | `-p N` | Use N parallel processes for scoring | 1 |
-| `-t N` | Probability threshold for calling U12s (0-100) | 90 |
+| `-t N` | Probability threshold for calling U12-type introns (0-100) | 90 |
 | `-i` | Include multiple isoforms per gene | False (longest only) |
 | `-v` | Exclude overlapping introns | False |
 | `--no_nc` | Exclude non-canonical introns | False (include) |
@@ -456,7 +456,7 @@ intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name --recursive
 ```
 
 This performs two passes:
-1. Initial classification to identify high-confidence U12s
+1. Initial classification to identify high-confidence U12-type introns
 2. Build species-specific PWMs and retrain models
 3. Re-classify all introns with the updated models
 
@@ -635,7 +635,7 @@ intronIC's approach combines sequence motif analysis with machine learning:
 
 1. **Position-Weight Matrices (PWMs)**: Capture sequence preferences at three key regions
    - 5' splice site (donor): Recognizes GT/AT at intron start
-   - Branch point: Identifies TCCTTAAC-like motifs in U12s
+   - Branch point: Identifies TCCTTAAC-like motifs in U12-type introns
    - 3' splice site (acceptor): Recognizes AG/AC at intron end
 
 2. **Z-Score Normalization**: Converts raw PWM scores to standardized features
@@ -643,8 +643,8 @@ intronIC's approach combines sequence motif analysis with machine learning:
    - Accounts for different score ranges across regions
 
 3. **Linear SVM Classifier**: Learns decision boundary in 3D feature space
-   - Trained on curated U12 and U2 reference sets
-   - Balanced class weights handle imbalanced data (~500 U12s vs ~100,000 U2s)
+   - Trained on curated U12-type and U2-type reference sets
+   - Balanced class weights handle imbalanced data (~0.5% expected U12-type)
    - Probability calibration provides confidence estimates
 
 4. **Ensemble Averaging**: Reduces variance through multiple models

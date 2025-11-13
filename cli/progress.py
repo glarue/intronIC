@@ -6,6 +6,13 @@ Provides colored console output and progress tracking using the rich library.
 
 from typing import Optional, Dict, Any
 from rich.console import Console
+
+# Import version from package
+try:
+    from importlib.metadata import version
+    __version__ = version("intronIC")
+except Exception:
+    __version__ = "2.0.0"  # Fallback
 from rich.progress import (
     Progress,
     SpinnerColumn,
@@ -47,7 +54,7 @@ class IntronICProgressReporter:
 
         header = Text()
         header.append("intronIC ", style="bold cyan")
-        header.append("v2.0", style="dim")
+        header.append(f"v{__version__}", style="dim")
         header.append(" - Intron Classification Pipeline\n", style="bold cyan")
         header.append(f"Species: ", style="white")
         header.append(f"{species_name}\n", style="yellow")

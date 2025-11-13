@@ -120,8 +120,8 @@ def density_hexplot(
         linewidths=0
     )
 
-    # Set equal aspect ratio for hexplot
-    ax.set_aspect('equal')
+    # Note: Don't set aspect='equal' - let matplotlib auto-scale based on data ranges
+    # Original v1.5.1 used auto aspect for hexplot
 
     # Clean title: species_name + description + count
     plot_title = f'{species_name} - Motif Score Density (n={len(scores)})'
@@ -259,8 +259,9 @@ def scatter_plot(
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
-    # Set equal aspect ratio for main scatter plot
-    ax_main.set_aspect('equal')
+    # Note: Don't set aspect='equal' here - z-scores can have different ranges
+    # (BP variance is often 3× higher than 5' variance in training data)
+    # Original v1.5.1 used auto aspect for classification plots
 
     # Plot marginal distributions
     # Top: X distribution (5' z-score)
@@ -449,7 +450,7 @@ def ref_scatter(
     plt.title(f'{species_name} - Training Reference Data', fontsize=fsize)
 
     # Set equal aspect ratio to match original intronIC
-    plt.axes().set_aspect('equal')
+    plt.gca().set_aspect('equal', adjustable='box')
     plt.tight_layout()
 
     output_path = output_dir / f'{species_name}.plot.training_scatter.iic.png'

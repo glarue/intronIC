@@ -213,6 +213,158 @@ def format_dynamic_tags(tags: set[str]) -> str:
     return ';' + ';'.join(formatted_tags)
 
 
+def generate_intron_name(
+    intron: Intron,
+    species_name: Optional[str] = None,
+    simple_name: bool = False,
+    no_abbreviate: bool = False
+) -> str:
+    """
+    Generate standardized intron name for all output formats.
+
+    Port from: intronIC.py:622-646 (get_name)
+
+    Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
+
+    Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
+
+    Args:
+        intron: Intron object
+        species_name: Full species name (e.g., "homo_sapiens")
+        simple_name: Use simplified format (species-i_{intron_id})
+        no_abbreviate: Use full species name instead of abbreviation
+
+    Returns:
+        Formatted intron name string
+
+    Examples:
+        >>> generate_intron_name(intron, "homo_sapiens", False)
+        'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104)'
+        >>> generate_intron_name(intron, "homo_sapiens", False, True)
+        'homo_sapiens-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104)'
+        >>> generate_intron_name(omitted_intron, "homo_sapiens", False)
+        'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i]'
+    """
+    if simple_name:
+        # Simple format: species-i_{intron_id}{tags}
+        if no_abbreviate:
+            species_prefix = species_name if species_name else "unknown"
+        else:
+            species_prefix = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+        omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
+        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
+        return f"{species_prefix}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
+
+    # Full format
+    if not intron.metadata:
+        # Fallback if no metadata - return intron_id
+        return intron.intron_id
+
+    # Species prefix (abbreviated or full depending on flag)
+    if no_abbreviate:
+        species_prefix = species_name if species_name else "unknown"
+    else:
+        species_prefix = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
+
+    # Gene ID (grandparent) - preserve "gene:" prefix if present
+    grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
+
+    # Transcript ID (parent) - preserve "transcript:" prefix if present
+    parent = intron.metadata.parent if intron.metadata.parent else "?"
+
+    # Index and family size
+    index = intron.metadata.index if intron.metadata.index is not None else "?"
+    family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
+
+    # Format tags
+    omit_tag = format_omission_tag(intron.metadata.omitted)
+    dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
+
+    # Build name: species-grandparent@parent-intron_index(family_size)tags
+    name = f"{species_prefix}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
+
+    return name
+
+
+def generate_intron_label(
+    intron: Intron,
+    species_name: Optional[str] = None,
+    simple_name: bool = False,
+    no_abbreviate: bool = False
+) -> str:
+    """
+    Generate intron label for BED output (name + score).
+
+    Port from: intronIC.py:649-659 (get_label)
+
+    Format: {species-}parent_index(family_size);svm_score[;tags]
+
+    Args:
+        intron: Intron object
+        species_name: Species name (optional)
+        simple_name: Exclude species prefix
+        no_abbreviate: Use full species name instead of abbreviation
+
+    Returns:
+        Intron label string
+
+    Examples:
+        >>> generate_intron_label(intron, "homo_sapiens", False)
+        'HomSap-ENST00000397910_1(83);0.00'
+        >>> generate_intron_label(intron, "homo_sapiens", False, True)
+        'homo_sapiens-ENST00000397910_1(83);0.00'
+        >>> generate_intron_label(intron_with_tag, "homo_sapiens", False)
+        'HomSap-ENST00000397910_1(83);0.00;[n]'
+    """
+    parts = []
+
+    # Add species prefix if requested
+    if species_name and not simple_name:
+        if no_abbreviate:
+            parts.append(species_name)
+        else:
+            species_abbrev = generate_species_abbreviation(species_name)
+            parts.append(species_abbrev)
+
+    # Add parent_index(family_size) - matching original format
+    if intron.metadata and intron.metadata.parent:
+        parent = intron.metadata.parent
+        index = intron.metadata.index if intron.metadata.index else 1
+        family_size = intron.metadata.family_size if intron.metadata.family_size else 1
+        parts.append(f"{parent}_{index}({family_size})")
+    else:
+        parts.append(intron.intron_id)
+
+    # Join with dash, not underscore (matches original format)
+    name = '-'.join(parts) if parts else intron.intron_id
+
+    # Add SVM score if available
+    if intron.svm_score is not None:
+        name += f";{intron.svm_score:.2f}"
+
+    # Add tags with semicolon separator
+    tags = []
+    if intron.metadata:
+        if intron.metadata.noncanonical:
+            tags.append("[n]")
+        if not intron.metadata.longest_isoform:
+            tags.append("[i]")
+        if intron.metadata.corrected:
+            if intron.metadata.correction_distance is not None:
+                tags.append(f"[c:{intron.metadata.correction_distance}]")
+            else:
+                tags.append("[c]")
+        if intron.metadata.duplicate:
+            tags.append("[d]")
+        if intron.metadata.omitted:
+            tags.append(f"[o:{intron.metadata.omitted}]")
+
+    if tags:
+        name += ';' + ';'.join(tags)
+
+    return name
+
+
 def generate_motif_schematic(intron: Intron, exonic: int = 3) -> str:
     """
     Generate motif schematic string for .meta.iic output.
@@ -412,7 +564,8 @@ class BEDWriter:
         self,
         intron: Intron,
         species_name: Optional[str] = None,
-        simple_name: bool = False
+        simple_name: bool = False,
+        no_abbreviate: bool = False
     ) -> None:
         """
         Write a single intron in BED format.
@@ -421,6 +574,7 @@ class BEDWriter:
             intron: Intron object to write
             species_name: Species name for intron label (optional)
             simple_name: Use simple naming (no species prefix)
+            no_abbreviate: Use full species name instead of abbreviation
 
         Format:
             chrom  start(0-based)  stop  label  svm_score  strand  attributes
@@ -434,8 +588,8 @@ class BEDWriter:
         # Get SVM score or '.' if unavailable
         score = '.' if intron.svm_score is None else str(intron.svm_score)
 
-        # Generate intron label
-        label = self._generate_label(intron, species_name, simple_name)
+        # Generate intron label using shared function
+        label = generate_intron_label(intron, species_name, simple_name, no_abbreviate)
 
         # Generate verbose attributes
         attributes = generate_attributes(intron)
@@ -457,7 +611,8 @@ class BEDWriter:
         self,
         introns: Iterable[Intron],
         species_name: Optional[str] = None,
-        simple_name: bool = False
+        simple_name: bool = False,
+        no_abbreviate: bool = False
     ) -> int:
         """
         Write multiple introns.
@@ -466,106 +621,16 @@ class BEDWriter:
             introns: Iterable of Intron objects
             species_name: Species name for labels
             simple_name: Use simple naming
+            no_abbreviate: Use full species name instead of abbreviation
 
         Returns:
             Number of introns written
         """
         count = 0
         for intron in introns:
-            self.write_intron(intron, species_name, simple_name)
+            self.write_intron(intron, species_name, simple_name, no_abbreviate)
             count += 1
         return count
-
-    def _generate_label(
-        self,
-        intron: Intron,
-        species_name: Optional[str],
-        simple_name: bool
-    ) -> str:
-        """
-        Generate intron label for BED name field.
-
-        Format: [species_]parent_index;svm_score[tags]
-
-        Args:
-            intron: Intron object
-            species_name: Species name (optional)
-            simple_name: Exclude species prefix
-
-        Returns:
-            Intron label string
-        """
-        parts = []
-
-        # Add species prefix if requested
-        if species_name and not simple_name:
-            parts.append(species_name)
-
-        # Add parent_index(family_size) - matching original format
-        if intron.metadata and intron.metadata.parent:
-            parent = intron.metadata.parent
-            index = intron.metadata.index if intron.metadata.index else 1
-            family_size = intron.metadata.family_size if intron.metadata.family_size else 1
-            parts.append(f"{parent}_{index}({family_size})")
-        else:
-            parts.append(intron.intron_id)
-
-        name = '_'.join(parts) if parts else intron.intron_id
-
-        # Add SVM score if available
-        if intron.svm_score is not None:
-            name += f";{intron.svm_score:.2f}"
-
-        # Add tags
-        tags = self._generate_tags(intron)
-        if tags:
-            name += tags
-
-        return name
-
-    def _generate_tags(self, intron: Intron) -> str:
-        """
-        Generate tag string for intron.
-
-        Tags indicate special properties:
-        - [n] = non-canonical
-        - [i] = not longest isoform
-        - [c] = corrected (or [c:N] if distance available)
-        - [d] = duplicate
-
-        Omission tags (independent, can appear with property tags):
-        - [o:s] = omitted:short
-        - [o:a] = omitted:ambiguous
-        - [o:n] = omitted:noncanonical
-        - [o:v] = omitted:overlap
-        - [o:i] = omitted:not_longest_isoform
-
-        Args:
-            intron: Intron object
-
-        Returns:
-            Tag string (e.g., "[n][i]" or "[o:s]" or "[n][o:s]")
-        """
-        tags = []
-
-        if intron.metadata:
-            if intron.metadata.noncanonical:
-                tags.append("[n]")
-            if not intron.metadata.longest_isoform:
-                tags.append("[i]")
-            if intron.metadata.corrected:
-                # Include correction distance if available (e.g., [c:-2] for 2bp upstream shift)
-                if intron.metadata.correction_distance is not None:
-                    tags.append(f"[c:{intron.metadata.correction_distance}]")
-                else:
-                    tags.append("[c]")
-            if intron.metadata.duplicate:
-                tags.append("[d]")
-            if intron.metadata.omitted:
-                # Omission tags use o: prefix (e.g., [o:s] for omitted:short)
-                tags.append(f"[o:{intron.metadata.omitted}]")
-
-        return ''.join(tags)
 
 
 # ============================================================================
@@ -636,6 +701,7 @@ class MetaWriter:
         intron: Intron,
         species_name: Optional[str] = None,
         simple_name: bool = False,
+        no_abbreviate: bool = False,
         null: str = '.'
     ) -> None:
         """
@@ -645,6 +711,7 @@ class MetaWriter:
             intron: Intron object to write
             species_name: Species name for intron name
             simple_name: Use simple naming
+            no_abbreviate: Use full species name instead of abbreviation
             null: Placeholder for missing values
 
         Format:
@@ -654,8 +721,8 @@ class MetaWriter:
         if not self.file:
             raise ValueError("File not open. Call open() first or use context manager.")
 
-        # Generate intron name
-        name = self._generate_name(intron, species_name, simple_name)
+        # Generate intron name using shared function
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
 
         # Relative score (rounded to 4 decimal places)
         rel_score = null
@@ -735,70 +802,6 @@ class MetaWriter:
             count += 1
         return count
 
-    def _generate_name(
-        self,
-        intron: Intron,
-        species_name: Optional[str],
-        simple_name: bool
-    ) -> str:
-        """
-        Generate intron name matching original intronIC format.
-
-        Port from: intronIC.py:622-646 (get_name)
-
-        Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
-
-        Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
-
-        Args:
-            intron: Intron object
-            species_name: Full species name (e.g., "homo_sapiens")
-            simple_name: Use simplified format (species-i_{intron_id})
-
-        Returns:
-            Formatted intron name string
-
-        Examples:
-            >>> _generate_name(intron, "homo_sapiens", False)
-            'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104)'
-            >>> _generate_name(omitted_intron, "homo_sapiens", False)
-            'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i]'
-        """
-        if simple_name:
-            # Simple format: species-i_{intron_id}{tags}
-            # Original uses unique_num which we don't track, so use intron_id
-            species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
-            omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
-            dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
-            return f"{species_abbrev}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
-
-        # Full format
-        if not intron.metadata:
-            # Fallback if no metadata - return intron_id
-            return intron.intron_id
-
-        # Species abbreviation (3+3 format)
-        species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
-
-        # Gene ID (grandparent) - preserve "gene:" prefix if present
-        grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
-
-        # Transcript ID (parent) - preserve "transcript:" prefix if present
-        parent = intron.metadata.parent if intron.metadata.parent else "?"
-
-        # Index and family size
-        index = intron.metadata.index if intron.metadata.index is not None else "?"
-        family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
-
-        # Format tags
-        omit_tag = format_omission_tag(intron.metadata.omitted)
-        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
-
-        # Build name: species-grandparent@parent-intron_index(family_size)tags
-        name = f"{species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
-
-        return name
-
 
 # ============================================================================
 # Sequence Format Writer
@@ -855,6 +858,7 @@ class SequenceWriter:
         intron: Intron,
         species_name: Optional[str] = None,
         simple_name: bool = False,
+        no_abbreviate: bool = False,
         include_score: bool = True
     ) -> None:
         """
@@ -864,6 +868,7 @@ class SequenceWriter:
             intron: Intron object to write
             species_name: Species name for intron name
             simple_name: Use simple naming
+            no_abbreviate: Use full species name instead of abbreviation
             include_score: Include SVM score in output
 
         Format:
@@ -875,8 +880,8 @@ class SequenceWriter:
         if not intron.sequences or not intron.sequences.seq:
             raise ValueError(f"Intron {intron.intron_id} has no sequence data")
 
-        # Generate intron name
-        name = self._generate_name(intron, species_name, simple_name)
+        # Generate intron name using shared function
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
 
         # Get sequences (with defaults)
         upstream = intron.sequences.upstream_flank or ""
@@ -900,6 +905,7 @@ class SequenceWriter:
         introns: Iterable[Intron],
         species_name: Optional[str] = None,
         simple_name: bool = False,
+        no_abbreviate: bool = False,
         include_score: bool = True
     ) -> int:
         """
@@ -909,6 +915,7 @@ class SequenceWriter:
             introns: Iterable of Intron objects
             species_name: Species name
             simple_name: Use simple naming
+            no_abbreviate: Use full species name instead of abbreviation
             include_score: Include SVM score
 
         Returns:
@@ -916,66 +923,9 @@ class SequenceWriter:
         """
         count = 0
         for intron in introns:
-            self.write_intron(intron, species_name, simple_name, include_score)
+            self.write_intron(intron, species_name, simple_name, no_abbreviate, include_score)
             count += 1
         return count
-
-    def _generate_name(
-        self,
-        intron: Intron,
-        species_name: Optional[str],
-        simple_name: bool
-    ) -> str:
-        """
-        Generate intron name matching original intronIC format.
-
-        Port from: intronIC.py:622-646 (get_name)
-
-        Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
-
-        Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
-
-        Args:
-            intron: Intron object
-            species_name: Full species name (e.g., "homo_sapiens")
-            simple_name: Use simplified format (species-i_{intron_id})
-
-        Returns:
-            Formatted intron name string
-        """
-        if simple_name:
-            # Simple format: species-i_{intron_id}{tags}
-            species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
-            omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
-            dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
-            return f"{species_abbrev}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
-
-        # Full format
-        if not intron.metadata:
-            # Fallback if no metadata - return intron_id
-            return intron.intron_id
-
-        # Species abbreviation (3+3 format)
-        species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
-
-        # Gene ID (grandparent) - preserve "gene:" prefix if present
-        grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
-
-        # Transcript ID (parent) - preserve "transcript:" prefix if present
-        parent = intron.metadata.parent if intron.metadata.parent else "?"
-
-        # Index and family size
-        index = intron.metadata.index if intron.metadata.index is not None else "?"
-        family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
-
-        # Format tags
-        omit_tag = format_omission_tag(intron.metadata.omitted)
-        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
-
-        # Build name: species-grandparent@parent-intron_index(family_size)tags
-        name = f"{species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
-
-        return name
 
 
 # ============================================================================
@@ -1048,6 +998,7 @@ class ScoreWriter:
         intron: Intron,
         species_name: Optional[str] = None,
         simple_name: bool = False,
+        no_abbreviate: bool = False,
         null: str = '.'
     ) -> None:
         """
@@ -1057,13 +1008,14 @@ class ScoreWriter:
             intron: Intron object to write
             species_name: Species name for intron name
             simple_name: Use simple naming
+            no_abbreviate: Use full species name instead of abbreviation
             null: Placeholder for missing values
         """
         if not self.file:
             raise ValueError("File not open. Call open() first or use context manager.")
 
-        # Generate intron name
-        name = self._generate_name(intron, species_name, simple_name)
+        # Generate intron name using shared function
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
 
         # Default all values to null
         rel_score = null
@@ -1150,63 +1102,6 @@ class ScoreWriter:
             self.write_intron(intron, species_name, simple_name)
             count += 1
         return count
-
-    def _generate_name(
-        self,
-        intron: Intron,
-        species_name: Optional[str],
-        simple_name: bool
-    ) -> str:
-        """
-        Generate intron name matching original intronIC format.
-
-        Port from: intronIC.py:622-646 (get_name)
-
-        Format: {species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dynamic_tags}
-
-        Example: HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i];[i]
-
-        Args:
-            intron: Intron object
-            species_name: Full species name (e.g., "homo_sapiens")
-            simple_name: Use simplified format (species-i_{intron_id})
-
-        Returns:
-            Formatted intron name string
-        """
-        if simple_name:
-            # Simple format: species-i_{intron_id}{tags}
-            species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
-            omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
-            dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
-            return f"{species_abbrev}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
-
-        # Full format
-        if not intron.metadata:
-            # Fallback if no metadata - return intron_id
-            return intron.intron_id
-
-        # Species abbreviation (3+3 format)
-        species_abbrev = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
-
-        # Gene ID (grandparent) - preserve "gene:" prefix if present
-        grandparent = intron.metadata.grandparent if intron.metadata.grandparent else "?"
-
-        # Transcript ID (parent) - preserve "transcript:" prefix if present
-        parent = intron.metadata.parent if intron.metadata.parent else "?"
-
-        # Index and family size
-        index = intron.metadata.index if intron.metadata.index is not None else "?"
-        family_size = intron.metadata.family_size if intron.metadata.family_size is not None else "?"
-
-        # Format tags
-        omit_tag = format_omission_tag(intron.metadata.omitted)
-        dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
-
-        # Build name: species-grandparent@parent-intron_index(family_size)tags
-        name = f"{species_abbrev}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
-
-        return name
 
 
 # ============================================================================
