@@ -39,6 +39,7 @@ from scipy.stats import gmean
 from tqdm.auto import tqdm
 
 from core.intron import Intron
+from classification.transformers import BothEndsStrongTransformer
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -194,10 +195,12 @@ def compute_weight_aware_C_bounds(
 
 @dataclass(frozen=True, slots=True)
 class SVMParameters:
-    """Optimized SVM hyperparameters for LinearSVC."""
+    """Optimized SVM hyperparameters for LinearSVC with BothEndsStrong features."""
 
     C: float  # Soft-margin penalty
     calibration_method: str  # 'sigmoid' or 'isotonic'
+    gamma_5_bp: float  # Feature scaling for 5'SS-BPS imbalance penalty
+    gamma_5_3: float  # Feature scaling for 5'SS-3'SS imbalance penalty
     dual: bool  # Primal (False) or dual (True) formulation
     intercept_scaling: float  # Scaling for intercept (when dual=False)
     cv_score: float  # Cross-validation neg_log_loss
@@ -212,6 +215,8 @@ class OptimizationRound:
     scores: np.ndarray  # CV scores for each parameter combination
     best_C: float
     best_method: str  # 'sigmoid' or 'isotonic'
+    best_gamma_5_bp: float  # Best γ for 5'SS-BPS imbalance penalty
+    best_gamma_5_3: float  # Best γ for 5'SS-3'SS imbalance penalty
     best_dual: bool  # Primal (False) or dual (True) formulation
     best_intercept_scaling: float  # Intercept scaling parameter
     best_score: float
@@ -357,15 +362,22 @@ class SVMOptimizer:
         final_method = self.rounds_[-1].best_method
         final_dual = self.rounds_[-1].best_dual
         final_intercept_scaling = self.rounds_[-1].best_intercept_scaling
+        final_gamma_5_bp = self.rounds_[-1].best_gamma_5_bp
+        final_gamma_5_3 = self.rounds_[-1].best_gamma_5_3
 
         # Evaluate final parameters
-        final_score = self._evaluate_params(X, y, final_C, final_method, final_dual, final_intercept_scaling)
+        final_score = self._evaluate_params(
+            X, y, final_C, final_method, final_dual, final_intercept_scaling,
+            final_gamma_5_bp, final_gamma_5_3
+        )
 
-        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, intercept_scaling={final_intercept_scaling}, CV score={final_score:.4f}", flush=True)
+        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, intercept_scaling={final_intercept_scaling}, gamma_5_bp={final_gamma_5_bp}, gamma_5_3={final_gamma_5_3}, CV score={final_score:.4f}", flush=True)
 
         return SVMParameters(
             C=final_C,
             calibration_method=final_method,
+            gamma_5_bp=final_gamma_5_bp,
+            gamma_5_3=final_gamma_5_3,
             dual=final_dual,
             intercept_scaling=final_intercept_scaling,
             cv_score=final_score,
@@ -473,12 +485,15 @@ class SVMOptimizer:
         # LinearSVC with external calibration (best practice)
         # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
         #   (s=0 means "U12≈U2", centering would destroy this meaning)
+        # - BothEndsStrongTransformer: Augments 3D → 7D with both-ends-strong features
+        #   γ parameters (tuned via GridSearchCV) control imbalance penalty strength
         # - LinearSVC: Optimized for linear case, faster than SVC(kernel='linear')
         # - CalibratedClassifierCV: External calibration (method grid-searched)
         cv_splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state + round_idx)
 
         base_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
+            ('augment', BothEndsStrongTransformer()),  # γ parameters will be grid-searched
             ('svc', LinearSVC(
                 loss='squared_hinge',  # Default loss for LinearSVC
                 penalty='l2',  # L2 regularization
@@ -496,11 +511,13 @@ class SVMOptimizer:
             ensemble='auto'  # Per-fold fit + averaging
         )
 
-        # Optimize C, dual, intercept_scaling, and calibration method
+        # Optimize C, γ parameters, dual, intercept_scaling, and calibration method
         # Use neg_log_loss to optimize for probability quality (best practice)
         # This is critical when deploying at custom thresholds (e.g., 0.90)
         param_grid = {
             'estimator__svc__C': C_grid,  # C parameter through pipeline
+            'estimator__augment__gamma_5_bp': [1, 2, 4, 8],  # 5'SS-BPS imbalance penalty weight
+            'estimator__augment__gamma_5_3': [1, 2, 4],  # 5'SS-3'SS imbalance penalty weight
             'estimator__svc__dual': [False, True],  # Primal vs dual formulation
             'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
             'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
@@ -528,7 +545,7 @@ class SVMOptimizer:
             print(f"\n{'='*80}", flush=True)
             print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Parameter combinations: {n_candidates} (C={len(C_grid)} × dual=2 × intercept=3 × method=2)", flush=True)
+            print(f"Parameter combinations: {n_candidates} (C={len(C_grid)} × γ_5bp=4 × γ_5_3=3 × dual=2 × intercept=3 × method=2)", flush=True)
             print(f"CV folds: outer={n_outer_cv}, inner={n_inner_cv} (calibration)", flush=True)
             print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
             print(f"Total model fits: {total_fits:,} (including {n_inner_cv}× internal calibration per task)", flush=True)
@@ -590,6 +607,8 @@ class SVMOptimizer:
         best_method = grid_search.best_params_['method']
         best_dual = grid_search.best_params_['estimator__svc__dual']
         best_intercept_scaling = grid_search.best_params_['estimator__svc__intercept_scaling']
+        best_gamma_5_bp = grid_search.best_params_['estimator__augment__gamma_5_bp']
+        best_gamma_5_3 = grid_search.best_params_['estimator__augment__gamma_5_3']
         best_score = grid_search.best_score_
 
         if self.verbose:
@@ -600,6 +619,8 @@ class SVMOptimizer:
             print(f"Best calibration method: {best_method}", flush=True)
             print(f"Best dual formulation: {best_dual}", flush=True)
             print(f"Best intercept_scaling: {best_intercept_scaling}", flush=True)
+            print(f"Best gamma_5_bp: {best_gamma_5_bp}", flush=True)
+            print(f"Best gamma_5_3: {best_gamma_5_3}", flush=True)
             print(f"Best CV score (neg_log_loss): {best_score:.4f}", flush=True)
             print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
             print(f"{'='*80}\n", flush=True)
@@ -609,6 +630,8 @@ class SVMOptimizer:
             scores=scores,
             best_C=best_C,
             best_method=best_method,
+            best_gamma_5_bp=best_gamma_5_bp,
+            best_gamma_5_3=best_gamma_5_3,
             best_dual=best_dual,
             best_intercept_scaling=best_intercept_scaling,
             best_score=best_score,
@@ -704,7 +727,9 @@ class SVMOptimizer:
         C: float,
         method: str,
         dual: bool,
-        intercept_scaling: float
+        intercept_scaling: float,
+        gamma_5_bp: float,
+        gamma_5_3: float
     ) -> float:
         """
         Evaluate specific hyperparameters via cross-validation.
@@ -716,6 +741,8 @@ class SVMOptimizer:
             method: Calibration method ('sigmoid' or 'isotonic')
             dual: Primal (False) or dual (True) formulation
             intercept_scaling: Intercept scaling parameter
+            gamma_5_bp: γ for 5'SS-BPS imbalance penalty
+            gamma_5_3: γ for 5'SS-3'SS imbalance penalty
 
         Returns:
             Cross-validation neg_log_loss score
@@ -723,10 +750,15 @@ class SVMOptimizer:
         # LinearSVC with external calibration (matches training approach)
         # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
         #   (s=0 means "U12≈U2", centering would destroy this meaning)
+        # - BothEndsStrongTransformer: Augments 3D → 7D with both-ends-strong features
         # - LinearSVC: Optimized for linear case
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
+            ('augment', BothEndsStrongTransformer(
+                gamma_5_bp=gamma_5_bp,
+                gamma_5_3=gamma_5_3
+            )),
             ('svc', LinearSVC(
                 C=C,
                 dual=dual,

@@ -28,6 +28,7 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.exceptions import ConvergenceWarning
 
 from core.intron import Intron
+from classification.transformers import BothEndsStrongTransformer
 from classification.optimizer import SVMParameters
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
@@ -179,8 +180,11 @@ class SVMTrainer:
         # Following sklearn best practices for rare-class classification:
         # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
         #   (s=0 means "U12≈U2", centering would destroy this meaning)
+        # - BothEndsStrongTransformer: Augments 3D → 7D with both-ends-strong features
+        #   Adds sum and γ-weighted abs-diff features for 5'SS-BPS and 5'SS-3'SS pairs
+        #   γ parameters control penalty strength for one-end-strong patterns
         # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
-        #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 3)
+        #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 7)
         #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
         #   - max_iter: Configurable iteration limit (default: 100000)
         #   - tol=1e-4: Tight convergence tolerance
@@ -189,6 +193,10 @@ class SVMTrainer:
         #   Calibration method chosen by optimizer via grid search
         base_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
+            ('augment', BothEndsStrongTransformer(
+                gamma_5_bp=parameters.gamma_5_bp,
+                gamma_5_3=parameters.gamma_5_3
+            )),
             ('svc', LinearSVC(
                 C=parameters.C,
                 dual=parameters.dual,  # From optimizer (typically False for our data)
