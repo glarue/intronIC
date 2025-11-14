@@ -12,14 +12,16 @@ optimizer:
   n_rounds: 1
 
   # Initial grid points for round 1 (7-13 typical)
-  n_points_initial: 7
+  # REDUCED TO 3 for ultra-fast testing (was 7)
+  n_points_initial: 3
 
   # Refinement grid points for rounds 2+ (20-100 typical)
   n_points_refine: 20
 
   # Cross-validation folds (3-5 typical)
-  # Fewer = faster but less reliable estimates
-  cv_folds: 3
+  # REDUCED TO 2 for ultra-fast testing (was 3)
+  # Note: CalibratedClassifierCV adds another 3-fold internal CV
+  cv_folds: 2
 
   # Number of parallel jobs (-1 = use all cores)
   n_jobs: -1
@@ -28,8 +30,8 @@ optimizer:
   verbose: true
 
   # Maximum iterations for LinearSVC convergence
-  # Lower values may produce convergence warnings but run faster
-  max_iter: 10000
+  # REDUCED TO 3000 for ultra-fast testing (was 10000)
+  max_iter: 3000
 
 # Parameter grid for GridSearchCV
 # Note: 'estimator__svc__C' is automatically generated from C bounds
