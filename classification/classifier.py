@@ -285,30 +285,29 @@ class IntronClassifier:
             print("="*80)
 
         # Stage 1: Optimize hyperparameters
-        if self.optimize_c:
-            print("\n=== Stage 1: Hyperparameter Optimization ===")
-            optimizer = SVMOptimizer(
-                n_rounds=self.n_optimization_rounds,
-                n_points_initial=self.n_points_initial,
-                cv_folds=self.n_cv_folds,
-                random_state=self.random_state,
-                n_jobs=self.cv_processes,
-                max_iter=self.max_iter,
-                param_grid_override=self.param_grid_override
-            )
-            parameters = optimizer.optimize(u12_reference, u2_reference)
-            print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
+        # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+        print("\n=== Stage 1: Hyperparameter Optimization ===")
+
+        # If C is fixed, constrain the grid to that single value
+        param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+        if not self.optimize_c:
+            # Force C to the fixed value, but still search other parameters
+            param_grid['estimator__svc__C'] = [self.fixed_c]
+            print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
         else:
-            print("\n=== Stage 1: Using Fixed C Parameter ===")
-            parameters = SVMParameters(
-                C=self.fixed_c,
-                calibration_method='sigmoid',  # Default calibration method
-                dual=False,  # Primal formulation (n_samples >> n_features: 21k >> 3)
-                intercept_scaling=1000.0,  # High value to avoid over-regularizing intercept
-                cv_score=0.0,  # Not computed
-                round_found=0   # Fixed, not optimized
-            )
-            print(f"Using fixed C={parameters.C:.6e}, dual={parameters.dual}, intercept_scaling={parameters.intercept_scaling}")
+            print("Optimizing C, gamma, dual, intercept_scaling, and calibration_method")
+
+        optimizer = SVMOptimizer(
+            n_rounds=self.n_optimization_rounds,
+            n_points_initial=self.n_points_initial,
+            cv_folds=self.n_cv_folds,
+            random_state=self.random_state,
+            n_jobs=self.cv_processes,
+            max_iter=self.max_iter,
+            param_grid_override=param_grid if param_grid else None
+        )
+        parameters = optimizer.optimize(u12_reference, u2_reference)
+        print(f"Best parameters: C={parameters.C:.6e}, gamma_5_bp={parameters.gamma_5_bp}, gamma_5_3={parameters.gamma_5_3}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -450,30 +449,29 @@ class IntronClassifier:
             print("="*80)
 
         # Stage 1: Optimize hyperparameters
-        if self.optimize_c:
-            print("\n=== Stage 1: Hyperparameter Optimization ===")
-            optimizer = SVMOptimizer(
-                n_rounds=self.n_optimization_rounds,
-                n_points_initial=self.n_points_initial,
-                cv_folds=self.n_cv_folds,
-                random_state=self.random_state,
-                n_jobs=self.cv_processes,
-                max_iter=self.max_iter,
-                param_grid_override=self.param_grid_override
-            )
-            parameters = optimizer.optimize(u12_reference, u2_reference)
-            print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
+        # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+        print("\n=== Stage 1: Hyperparameter Optimization ===")
+
+        # If C is fixed, constrain the grid to that single value
+        param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+        if not self.optimize_c:
+            # Force C to the fixed value, but still search other parameters
+            param_grid['estimator__svc__C'] = [self.fixed_c]
+            print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
         else:
-            print("\n=== Stage 1: Using Fixed C Parameter ===")
-            parameters = SVMParameters(
-                C=self.fixed_c,
-                calibration_method='sigmoid',  # Default calibration method
-                dual=False,  # Primal formulation (n_samples >> n_features: 21k >> 3)
-                intercept_scaling=1000.0,  # High value to avoid over-regularizing intercept
-                cv_score=0.0,  # Not computed
-                round_found=0   # Fixed, not optimized
-            )
-            print(f"Using fixed C={parameters.C:.6e}, dual={parameters.dual}, intercept_scaling={parameters.intercept_scaling}")
+            print("Optimizing C, gamma, dual, intercept_scaling, and calibration_method")
+
+        optimizer = SVMOptimizer(
+            n_rounds=self.n_optimization_rounds,
+            n_points_initial=self.n_points_initial,
+            cv_folds=self.n_cv_folds,
+            random_state=self.random_state,
+            n_jobs=self.cv_processes,
+            max_iter=self.max_iter,
+            param_grid_override=param_grid if param_grid else None
+        )
+        parameters = optimizer.optimize(u12_reference, u2_reference)
+        print(f"Best parameters: C={parameters.C:.6e}, gamma_5_bp={parameters.gamma_5_bp}, gamma_5_3={parameters.gamma_5_3}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
