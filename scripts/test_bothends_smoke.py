@@ -2,7 +2,7 @@
 """
 Smoke test for BothEndsStrongTransformer implementation.
 
-Quick validation that the feature augmentation is working correctly
+Quick validation that the min/max feature augmentation is working correctly
 without requiring full dataset training.
 
 Usage:
@@ -20,27 +20,35 @@ from classification.transformers import BothEndsStrongTransformer
 
 
 def test_basic_transformation():
-    """Test that 3D → 7D transformation works."""
+    """Test that 3D → 5D/7D transformation works."""
     print("=" * 80)
     print("TEST 1: Basic Transformation")
     print("=" * 80)
 
-    transformer = BothEndsStrongTransformer(gamma_5_bp=4, gamma_5_3=2)
+    # Default: min features only (5D)
+    transformer = BothEndsStrongTransformer(include_max=False)
 
     # Single sample
     X = np.array([[2.0, 1.5, -0.5]])
     X_aug = transformer.fit_transform(X)
 
     print(f"Input shape: {X.shape} (expected: (1, 3))")
-    print(f"Output shape: {X_aug.shape} (expected: (1, 7))")
+    print(f"Output shape (min only): {X_aug.shape} (expected: (1, 5))")
 
-    assert X_aug.shape == (1, 7), f"Expected (1, 7), got {X_aug.shape}"
-    print("✓ Shape transformation correct: 3D → 7D")
+    assert X_aug.shape == (1, 5), f"Expected (1, 5), got {X_aug.shape}"
+    print("✓ Shape transformation correct: 3D → 5D (min features)")
+
+    # With max features (7D)
+    transformer_max = BothEndsStrongTransformer(include_max=True)
+    X_aug_max = transformer_max.transform(X)
+    print(f"Output shape (min+max): {X_aug_max.shape} (expected: (1, 7))")
+    assert X_aug_max.shape == (1, 7), f"Expected (1, 7), got {X_aug_max.shape}"
+    print("✓ Shape transformation correct: 3D → 7D (min+max features)")
 
     # Multiple samples
     X_multi = np.random.randn(100, 3)
     X_multi_aug = transformer.transform(X_multi)
-    assert X_multi_aug.shape == (100, 7), f"Expected (100, 7), got {X_multi_aug.shape}"
+    assert X_multi_aug.shape == (100, 5), f"Expected (100, 5), got {X_multi_aug.shape}"
     print("✓ Batch transformation works")
     print()
 
@@ -50,10 +58,10 @@ def test_basic_transformation():
 def test_feature_values():
     """Test that feature calculations are correct."""
     print("=" * 80)
-    print("TEST 2: Feature Value Calculations")
+    print("TEST 2: Feature Value Calculations (Min/Max)")
     print("=" * 80)
 
-    transformer = BothEndsStrongTransformer(gamma_5_bp=4, gamma_5_3=2)
+    transformer = BothEndsStrongTransformer(include_max=True)
 
     # Test case: s5=2.0, sBP=1.5, s3=-0.5
     X = np.array([[2.0, 1.5, -0.5]])
@@ -64,10 +72,18 @@ def test_feature_values():
     print(f"  [0] s5 (pass-through):        {X[0,0]:.3f}")
     print(f"  [1] sBP (pass-through):       {X[0,1]:.3f}")
     print(f"  [2] s3 (pass-through):        {X[0,2]:.3f}")
-    print(f"  [3] sum_5_bp (s5 + sBP):      {2.0 + 1.5:.3f}")
-    print(f"  [4] absdiff_5_bp (|s5-sBP|×4): {abs(2.0 - 1.5) * 4:.3f}")
-    print(f"  [5] sum_5_3 (s5 + s3):        {2.0 + (-0.5):.3f}")
-    print(f"  [6] absdiff_5_3 (|s5-s3|×2):  {abs(2.0 - (-0.5)) * 2:.3f}")
+
+    # min(a, b) = 0.5 * ((a + b) - |a - b|)
+    # max(a, b) = 0.5 * ((a + b) + |a - b|)
+    min_5_bp = 0.5 * ((2.0 + 1.5) - abs(2.0 - 1.5))
+    min_5_3 = 0.5 * ((2.0 + (-0.5)) - abs(2.0 - (-0.5)))
+    max_5_bp = 0.5 * ((2.0 + 1.5) + abs(2.0 - 1.5))
+    max_5_3 = 0.5 * ((2.0 + (-0.5)) + abs(2.0 - (-0.5)))
+
+    print(f"  [3] min(s5,sBP):              {min_5_bp:.3f}")
+    print(f"  [4] min(s5,s3):               {min_5_3:.3f}")
+    print(f"  [5] max(s5,sBP):              {max_5_bp:.3f}")
+    print(f"  [6] max(s5,s3):               {max_5_3:.3f}")
 
     print(f"\nActual output features:")
     for i, val in enumerate(X_aug[0]):
@@ -78,10 +94,10 @@ def test_feature_values():
         2.0,                           # s5
         1.5,                           # sBP
         -0.5,                          # s3
-        2.0 + 1.5,                     # sum_5_bp
-        abs(2.0 - 1.5) * 4,            # absdiff_5_bp × gamma_5_bp
-        2.0 + (-0.5),                  # sum_5_3
-        abs(2.0 - (-0.5)) * 2          # absdiff_5_3 × gamma_5_3
+        min_5_bp,                      # min(s5, sBP)
+        min_5_3,                       # min(s5, s3)
+        max_5_bp,                      # max(s5, sBP)
+        max_5_3                        # max(s5, s3)
     ])
 
     assert np.allclose(X_aug[0], expected), f"Feature mismatch!\nExpected: {expected}\nGot: {X_aug[0]}"
@@ -91,51 +107,51 @@ def test_feature_values():
     return True
 
 
-def test_gamma_scaling():
-    """Test that gamma parameters correctly scale the penalty features."""
+def test_min_max_properties():
+    """Test that min/max features have correct mathematical properties."""
     print("=" * 80)
-    print("TEST 3: Gamma Scaling")
+    print("TEST 3: Min/Max Properties")
     print("=" * 80)
 
-    # Same input, different gamma values
-    X = np.array([[2.0, 1.0, -0.5]])
+    transformer = BothEndsStrongTransformer(include_max=True)
 
-    # Low gamma
-    transformer_low = BothEndsStrongTransformer(gamma_5_bp=1, gamma_5_3=1)
-    X_low = transformer_low.transform(X)
+    # Test various inputs
+    test_cases = [
+        ([2.0, 1.5], "Close values"),
+        ([3.0, 3.0], "Equal values"),
+        ([5.0, -1.0], "Large difference"),
+    ]
 
-    # High gamma
-    transformer_high = BothEndsStrongTransformer(gamma_5_bp=8, gamma_5_3=4)
-    X_high = transformer_high.transform(X)
+    for (a, b), description in test_cases:
+        X = np.array([[a, b, 0.0]])  # s3 doesn't matter for this test
+        X_aug = transformer.transform(X)
 
-    print(f"Input: s5={X[0,0]}, sBP={X[0,1]}, s3={X[0,2]}")
-    print(f"\nWith gamma_5_bp=1, gamma_5_3=1:")
-    print(f"  absdiff_5_bp = {X_low[0, 4]:.3f} (expected: {abs(2.0-1.0)*1:.3f})")
-    print(f"  absdiff_5_3 = {X_low[0, 6]:.3f} (expected: {abs(2.0-(-0.5))*1:.3f})")
+        min_val = X_aug[0, 3]  # min(s5, sBP)
+        max_val = X_aug[0, 5]  # max(s5, sBP)
 
-    print(f"\nWith gamma_5_bp=8, gamma_5_3=4:")
-    print(f"  absdiff_5_bp = {X_high[0, 4]:.3f} (expected: {abs(2.0-1.0)*8:.3f})")
-    print(f"  absdiff_5_3 = {X_high[0, 6]:.3f} (expected: {abs(2.0-(-0.5))*4:.3f})")
+        print(f"\n{description}: s5={a}, sBP={b}")
+        print(f"  min(s5,sBP) = {min_val:.3f}")
+        print(f"  max(s5,sBP) = {max_val:.3f}")
 
-    # Verify scaling
-    assert np.isclose(X_low[0, 4], abs(2.0-1.0)*1), "gamma_5_bp=1 scaling failed"
-    assert np.isclose(X_low[0, 6], abs(2.0-(-0.5))*1), "gamma_5_3=1 scaling failed"
-    assert np.isclose(X_high[0, 4], abs(2.0-1.0)*8), "gamma_5_bp=8 scaling failed"
-    assert np.isclose(X_high[0, 6], abs(2.0-(-0.5))*4), "gamma_5_3=4 scaling failed"
+        # Verify mathematical properties
+        assert min_val <= min(a, b) + 1e-10, "min should be ≤ minimum input"
+        assert max_val >= max(a, b) - 1e-10, "max should be ≥ maximum input"
+        assert np.isclose(min_val, min(a, b)), f"min formula incorrect: {min_val} vs {min(a, b)}"
+        assert np.isclose(max_val, max(a, b)), f"max formula incorrect: {max_val} vs {max(a, b)}"
 
-    print("\n✓ Gamma scaling works correctly")
+    print("\n✓ Min/max formulas are mathematically correct")
     print()
 
     return True
 
 
 def test_one_end_strong_detection():
-    """Test that the features can detect one-end-strong patterns."""
+    """Test that min features can detect one-end-strong patterns."""
     print("=" * 80)
     print("TEST 4: One-End-Strong Pattern Detection")
     print("=" * 80)
 
-    transformer = BothEndsStrongTransformer(gamma_5_bp=4, gamma_5_3=2)
+    transformer = BothEndsStrongTransformer(include_max=False)
 
     # Balanced strong pattern (genuine U12)
     X_balanced = np.array([[3.0, 2.5, 2.0]])  # All positive, close values
@@ -147,23 +163,21 @@ def test_one_end_strong_detection():
     X_imbalanced_aug = transformer.transform(X_imbalanced)
 
     print("Balanced pattern (genuine U12): s5=3.0, sBP=2.5, s3=2.0")
-    print(f"  sum_5_bp = {X_balanced_aug[0, 3]:.3f}")
-    print(f"  absdiff_5_bp × γ = {X_balanced_aug[0, 4]:.3f}")
-    print(f"  → Small imbalance penalty (good!)")
+    print(f"  min(s5,sBP) = {X_balanced_aug[0, 3]:.3f}")
+    print(f"  → High min value (both strong!)")
 
     print("\nOne-end-strong pattern (FP): s5=5.0, sBP=-1.0, s3=-2.0")
-    print(f"  sum_5_bp = {X_imbalanced_aug[0, 3]:.3f}")
-    print(f"  absdiff_5_bp × γ = {X_imbalanced_aug[0, 4]:.3f}")
-    print(f"  → Large imbalance penalty (should reject!)")
+    print(f"  min(s5,sBP) = {X_imbalanced_aug[0, 3]:.3f}")
+    print(f"  → Low/negative min value (one weak!)")
 
-    # Verify that imbalanced pattern gets larger penalty
-    balanced_penalty = X_balanced_aug[0, 4]
-    imbalanced_penalty = X_imbalanced_aug[0, 4]
+    # Verify that imbalanced pattern has much lower min
+    balanced_min = X_balanced_aug[0, 3]
+    imbalanced_min = X_imbalanced_aug[0, 3]
 
-    assert imbalanced_penalty > balanced_penalty * 5, \
-        f"Imbalanced penalty ({imbalanced_penalty:.2f}) should be much larger than balanced ({balanced_penalty:.2f})"
+    assert balanced_min > 2.0, f"Balanced min should be high (both strong)"
+    assert imbalanced_min < 0, f"Imbalanced min should be negative (one weak)"
 
-    print(f"\n✓ One-end-strong patterns get {imbalanced_penalty/balanced_penalty:.1f}× larger penalty")
+    print(f"\n✓ Min features correctly distinguish balanced vs one-end-strong")
     print()
 
     return True
@@ -182,7 +196,7 @@ def test_sklearn_compatibility():
     # Create pipeline matching our training setup
     pipeline = Pipeline([
         ('scale', RobustScaler(with_centering=False, with_scaling=True)),
-        ('augment', BothEndsStrongTransformer(gamma_5_bp=4, gamma_5_3=2)),
+        ('augment', BothEndsStrongTransformer(include_max=False)),
         ('svc', LinearSVC(class_weight='balanced', random_state=42, max_iter=1000))
     ])
 
@@ -205,38 +219,27 @@ def test_sklearn_compatibility():
         return False
 
 
-def test_optional_features():
-    """Test optional min and total_imbalance features."""
+def test_feature_names():
+    """Test get_feature_names_out() method."""
     print("=" * 80)
-    print("TEST 6: Optional Features")
+    print("TEST 6: Feature Names")
     print("=" * 80)
 
-    # Default: 7 features
-    transformer_default = BothEndsStrongTransformer()
-    X = np.array([[2.0, 1.5, -0.5]])
-    X_default = transformer_default.transform(X)
-    print(f"Default features: {X_default.shape[1]} (expected: 7)")
-    assert X_default.shape[1] == 7
+    # Min only
+    transformer_min = BothEndsStrongTransformer(include_max=False)
+    names_min = transformer_min.get_feature_names_out()
+    print(f"Features (min only): {list(names_min)}")
+    assert len(names_min) == 5
+    assert list(names_min) == ['s5', 'sBP', 's3', 'min_5_bp', 'min_5_3']
+    print("✓ Min-only feature names correct")
 
-    # With min: 8 features
-    transformer_min = BothEndsStrongTransformer(include_min=True)
-    X_min = transformer_min.transform(X)
-    print(f"With include_min: {X_min.shape[1]} (expected: 8)")
-    assert X_min.shape[1] == 8
-
-    # With total imbalance: 8 features
-    transformer_imb = BothEndsStrongTransformer(include_total_imbalance=True)
-    X_imb = transformer_imb.transform(X)
-    print(f"With include_total_imbalance: {X_imb.shape[1]} (expected: 8)")
-    assert X_imb.shape[1] == 8
-
-    # With both: 9 features
-    transformer_both = BothEndsStrongTransformer(include_min=True, include_total_imbalance=True)
-    X_both = transformer_both.transform(X)
-    print(f"With both optional features: {X_both.shape[1]} (expected: 9)")
-    assert X_both.shape[1] == 9
-
-    print("✓ All optional feature configurations work")
+    # Min + max
+    transformer_max = BothEndsStrongTransformer(include_max=True)
+    names_max = transformer_max.get_feature_names_out()
+    print(f"Features (min+max): {list(names_max)}")
+    assert len(names_max) == 7
+    assert list(names_max) == ['s5', 'sBP', 's3', 'min_5_bp', 'min_5_3', 'max_5_bp', 'max_5_3']
+    print("✓ Min+max feature names correct")
     print()
 
     return True
@@ -245,17 +248,17 @@ def test_optional_features():
 def main():
     """Run all smoke tests."""
     print("\n" + "=" * 80)
-    print("BOTHENDSSTRONGTRANSFORMER SMOKE TESTS")
+    print("BOTHENDSSTRONGTRANSFORMER SMOKE TESTS (Min/Max Approach)")
     print("=" * 80)
     print()
 
     tests = [
         ("Basic Transformation", test_basic_transformation),
         ("Feature Values", test_feature_values),
-        ("Gamma Scaling", test_gamma_scaling),
+        ("Min/Max Properties", test_min_max_properties),
         ("One-End-Strong Detection", test_one_end_strong_detection),
         ("Sklearn Compatibility", test_sklearn_compatibility),
-        ("Optional Features", test_optional_features),
+        ("Feature Names", test_feature_names),
     ]
 
     results = []
