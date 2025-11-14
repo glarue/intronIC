@@ -471,13 +471,14 @@ class SVMOptimizer:
             Results from this round
         """
         # LinearSVC with external calibration (best practice)
-        # - RobustScaler: Median/IQR scaling gives better differentiation for tail values
+        # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
+        #   (s=0 means "U12≈U2", centering would destroy this meaning)
         # - LinearSVC: Optimized for linear case, faster than SVC(kernel='linear')
         # - CalibratedClassifierCV: External calibration (method grid-searched)
         cv_splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state + round_idx)
 
         base_pipeline = Pipeline([
-            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
+            ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('svc', LinearSVC(
                 loss='squared_hinge',  # Default loss for LinearSVC
                 penalty='l2',  # L2 regularization
@@ -720,11 +721,12 @@ class SVMOptimizer:
             Cross-validation neg_log_loss score
         """
         # LinearSVC with external calibration (matches training approach)
-        # - RobustScaler: Median/IQR scaling gives better differentiation for tail values
+        # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
+        #   (s=0 means "U12≈U2", centering would destroy this meaning)
         # - LinearSVC: Optimized for linear case
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
-            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
+            ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('svc', LinearSVC(
                 C=C,
                 dual=dual,

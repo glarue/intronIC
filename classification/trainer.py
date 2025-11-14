@@ -177,7 +177,8 @@ class SVMTrainer:
 
         # Train LinearSVC with external calibration
         # Following sklearn best practices for rare-class classification:
-        # - RobustScaler: Median/IQR scaling gives better differentiation for tail values
+        # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
+        #   (s=0 means "U12≈U2", centering would destroy this meaning)
         # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
         #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 3)
         #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
@@ -187,7 +188,7 @@ class SVMTrainer:
         # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
         #   Calibration method chosen by optimizer via grid search
         base_pipeline = Pipeline([
-            ('scale', RobustScaler(with_centering=True, with_scaling=True)),
+            ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('svc', LinearSVC(
                 C=parameters.C,
                 dual=parameters.dual,  # From optimizer (typically False for our data)
