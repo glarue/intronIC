@@ -12,14 +12,10 @@ from sklearn.base import BaseEstimator, TransformerMixin
 class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
     """
     Augment 3D features (5'SS, BPS, 3'SS z-scores) with pairwise
-    both-ends-strong features.
+    min/max features to capture "both ends strong" patterns.
 
-    This transformer builds composite features that reward joint strength
-    (sum) and penalize imbalance (abs difference) for correlated regions.
-
-    The γ (gamma) parameters control how strongly to weight the imbalance
-    penalties. Higher γ makes the model more sensitive to one-end-strong
-    patterns by changing the effective L2 regularization for that feature.
+    This transformer builds composite features using min and max operations
+    to directly express "both must be strong" (min) and "at least one is strong" (max).
 
     Port from: Expert recommendations for reducing false positives
                See: BOTHENDS_IMPLEMENTATION_PLAN.md
@@ -29,83 +25,64 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         False positives often show "one-end-strong" patterns: one very high
         score compensating for weak/negative scores elsewhere.
 
-        By explicitly adding asymmetry penalties as features (rather than
-        relying on the linear model to learn this implicitly), we make the
-        classification problem more linearly separable.
+        By explicitly computing min/max features, we make it easy for the
+        linear model to express "both 5' AND BP must be strong" by simply
+        weighting min_5_bp positively.
 
-    How γ works:
-        γ is NOT a loss weight - it's a feature-scaling hyperparameter.
+    Mathematical insight:
+        min(a, b) = 0.5 * ((a + b) - |a - b|)
+        max(a, b) = 0.5 * ((a + b) + |a - b|)
 
-        - Larger γ makes the imbalance feature larger
-        - L2 regularization makes it "cheaper" to use larger features
-        - Model learns to heavily penalize imbalance
-        - Tuned via GridSearchCV to find optimal balance
+        The linear model will primarily weight min features (expert guidance),
+        since min directly captures "both must be strong for U12".
 
     Attributes:
-        gamma_5_bp: Weight for 5'SS-BPS imbalance penalty (default: 1.0)
-                   Suggested range for tuning: [1, 2, 4, 8]
-                   Higher values emphasize 5'SS-BPS correlation
-        gamma_5_3: Weight for 5'SS-3'SS imbalance penalty (default: 1.0)
-                  Suggested range for tuning: [1, 2, 4]
-        include_min: Whether to include min(s5, sBP, s3) feature (default: False)
-        include_total_imbalance: Whether to include total imbalance (default: False)
+        include_max: Whether to include max features (default: False)
+                    If True, adds max_5_bp and max_5_3 features
+                    Expert notes: "model will mostly weight min"
 
     Input features (3D):
         - s5:  5' splice site z-score (LLR, zero-anchored)
         - sBP: Branch point z-score (LLR, zero-anchored)
         - s3:  3' splice site z-score (LLR, zero-anchored)
 
-    Output features (7D by default, or 9D with optional features):
+    Output features (7D default, 9D with include_max=True):
         1. s5 (original, passed through)
         2. sBP (original, passed through)
         3. s3 (original, passed through)
-        4. sum_5_bp = s5 + sBP
-        5. absdiff_5_bp = |s5 - sBP| × gamma_5_bp  ← Scaled penalty
-        6. sum_5_3 = s5 + s3
-        7. absdiff_5_3 = |s5 - s3| × gamma_5_3    ← Scaled penalty
-        [8. min_all = min(s5, sBP, s3)]            ← Optional
-        [9. imbalance_all = |s5-sBP| + |s5-s3| + |sBP-s3|]  ← Optional
-
-    Mathematical insight:
-        A linear model on (sum, absdiff) can emulate an AND gate:
-            min(a, b) = ((a + b) - |a - b|) / 2
-
-        So features (sum_5_bp, absdiff_5_bp) let the model learn:
-            "Both 5'SS AND BPS must be strong for U12"
+        4. min_5_bp = 0.5 * ((s5 + sBP) - |s5 - sBP|)  ← Both must be strong
+        5. min_5_3 = 0.5 * ((s5 + s3) - |s5 - s3|)     ← Both must be strong
+        [6. max_5_bp = 0.5 * ((s5 + sBP) + |s5 - sBP|)]  ← At least one strong (optional)
+        [7. max_5_3 = 0.5 * ((s5 + s3) + |s5 - s3|)]     ← At least one strong (optional)
 
     Example:
-        >>> transformer = BothEndsStrongTransformer(gamma_5_bp=4, gamma_5_3=2)
+        >>> transformer = BothEndsStrongTransformer(include_max=False)
         >>> X = np.array([[2.0, 1.5, -0.5]])  # s5=2, sBP=1.5, s3=-0.5
         >>> X_aug = transformer.transform(X)
-        >>> # X_aug = [2.0, 1.5, -0.5, 3.5, 2.0, 1.5, 5.0]
-        >>> #          [s5,  sBP, s3,  sum, |diff|×4, sum, |diff|×2]
+        >>> # X_aug = [2.0, 1.5, -0.5, 1.75, -1.25]
+        >>> #          [s5,  sBP, s3,  min_5_bp, min_5_3]
+        >>> # min_5_bp = 0.5 * ((2.0 + 1.5) - |2.0 - 1.5|) = 0.5 * 3.25 = 1.625
+        >>> # min_5_3 = 0.5 * ((2.0 + (-0.5)) - |2.0 - (-0.5)|) = 0.5 * (-1.0) = -0.5
 
-        One-end-strong example (should be penalized):
+        One-end-strong example (should have low min):
         >>> X_bad = np.array([[-1.0, -0.5, 10.0]])  # Only 3'SS strong
         >>> X_bad_aug = transformer.transform(X_bad)
-        >>> # absdiff_5_3 = |-1.0 - 10.0| × 2 = 22.0  ← Large penalty!
+        >>> # min_5_3 = 0.5 * ((-1.0 + 10.0) - |-1.0 - 10.0|) = 0.5 * (9.0 - 11.0) = -1.0
+        >>> # Low min indicates one-end-strong pattern!
     """
 
     def __init__(
         self,
-        gamma_5_bp: float = 1.0,
-        gamma_5_3: float = 1.0,
-        include_min: bool = False,
-        include_total_imbalance: bool = False
+        include_max: bool = False
     ):
         """
         Initialize BothEndsStrongTransformer.
 
         Args:
-            gamma_5_bp: Weight for 5'SS-BPS imbalance penalty
-            gamma_5_3: Weight for 5'SS-3'SS imbalance penalty
-            include_min: Whether to add min(s5, sBP, s3) feature
-            include_total_imbalance: Whether to add total imbalance feature
+            include_max: Whether to include max features (default: False)
+                        Expert guidance: "model will mostly weight min"
         """
-        self.gamma_5_bp = gamma_5_bp
-        self.gamma_5_3 = gamma_5_3
-        self.include_min = include_min
-        self.include_total_imbalance = include_total_imbalance
+        self.include_max = include_max
 
     def fit(self, X, y=None):
         """
@@ -122,13 +99,13 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         """
-        Augment 3D features to 7+D.
+        Augment 3D features to 5D (or 7D with include_max=True).
 
         Args:
             X: Array of shape (n_samples, 3) with [s5, sBP, s3]
 
         Returns:
-            Array of shape (n_samples, 7+) with augmented features
+            Array of shape (n_samples, 5) or (n_samples, 7) with augmented features
 
         Raises:
             ValueError: If input doesn't have exactly 3 features
@@ -148,39 +125,34 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         sBP = X[:, 1]
         s3 = X[:, 2]
 
-        # Build pairwise both-ends-strong features
+        # Build pairwise min/max features
         # For 5'SS-BPS (strongest correlation)
+        # min(a, b) = 0.5 * ((a + b) - |a - b|)
+        # max(a, b) = 0.5 * ((a + b) + |a - b|)
         sum_5_bp = s5 + sBP
-        absdiff_5_bp = np.abs(s5 - sBP) * self.gamma_5_bp
+        absdiff_5_bp = np.abs(s5 - sBP)
+        min_5_bp = 0.5 * (sum_5_bp - absdiff_5_bp)
 
         # For 5'SS-3'SS (secondary correlation)
         sum_5_3 = s5 + s3
-        absdiff_5_3 = np.abs(s5 - s3) * self.gamma_5_3
+        absdiff_5_3 = np.abs(s5 - s3)
+        min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
 
-        # Stack base + pairwise features
+        # Stack base + min features
         features = [
             s5[:, np.newaxis],
             sBP[:, np.newaxis],
             s3[:, np.newaxis],
-            sum_5_bp[:, np.newaxis],
-            absdiff_5_bp[:, np.newaxis],
-            sum_5_3[:, np.newaxis],
-            absdiff_5_3[:, np.newaxis]
+            min_5_bp[:, np.newaxis],
+            min_5_3[:, np.newaxis]
         ]
 
-        # Optional: min of all three (all-three-strong feature)
-        if self.include_min:
-            min_all = np.minimum(np.minimum(s5, sBP), s3)
-            features.append(min_all[:, np.newaxis])
-
-        # Optional: total imbalance (sum of all pairwise differences)
-        if self.include_total_imbalance:
-            imbalance_all = (
-                np.abs(s5 - sBP) +
-                np.abs(s5 - s3) +
-                np.abs(sBP - s3)
-            )
-            features.append(imbalance_all[:, np.newaxis])
+        # Optional: max features (expert notes: "model will mostly weight min")
+        if self.include_max:
+            max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
+            max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
+            features.append(max_5_bp[:, np.newaxis])
+            features.append(max_5_3[:, np.newaxis])
 
         return np.hstack(features)
 
@@ -198,16 +170,12 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             's5',
             'sBP',
             's3',
-            'sum_5_bp',
-            'absdiff_5_bp',
-            'sum_5_3',
-            'absdiff_5_3'
+            'min_5_bp',
+            'min_5_3'
         ]
 
-        if self.include_min:
-            names.append('min_all')
-
-        if self.include_total_imbalance:
-            names.append('imbalance_all')
+        if self.include_max:
+            names.append('max_5_bp')
+            names.append('max_5_3')
 
         return np.array(names)

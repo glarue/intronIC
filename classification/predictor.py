@@ -100,9 +100,8 @@ def _predict_chunk_worker(
     clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
     log_odds = np.log(clipped_probas / (1 - clipped_probas))
 
-    # Get gamma parameters from first model (all models use same pipeline parameters)
-    gamma_5_bp = ensemble.models[0].parameters.gamma_5_bp
-    gamma_5_3 = ensemble.models[0].parameters.gamma_5_3
+    # Get include_max parameter from first model (all models use same pipeline parameters)
+    include_max = ensemble.models[0].parameters.include_max
 
     # Update introns with classification results
     classified_introns = []
@@ -122,10 +121,21 @@ def _predict_chunk_worker(
         bp_z = intron.scores.bp_z_score
         three_z = intron.scores.three_z_score
 
-        five_bp_sum = five_z + bp_z
-        five_bp_diff = abs(five_z - bp_z) * gamma_5_bp
-        five_three_sum = five_z + three_z
-        five_three_diff = abs(five_z - three_z) * gamma_5_3
+        # min(a, b) = 0.5 * ((a + b) - |a - b|)
+        # max(a, b) = 0.5 * ((a + b) + |a - b|)
+        sum_5_bp = five_z + bp_z
+        absdiff_5_bp = abs(five_z - bp_z)
+        min_5_bp = 0.5 * (sum_5_bp - absdiff_5_bp)
+
+        sum_5_3 = five_z + three_z
+        absdiff_5_3 = abs(five_z - three_z)
+        min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
+
+        max_5_bp = None
+        max_5_3 = None
+        if include_max:
+            max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
+            max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
 
         # Update scores
         new_scores = replace(
@@ -133,10 +143,10 @@ def _predict_chunk_worker(
             svm_score=svm_score,
             relative_score=relative_score,
             decision_distance=decision_distance,
-            five_bp_sum=five_bp_sum,
-            five_bp_diff=five_bp_diff,
-            five_three_sum=five_three_sum,
-            five_three_diff=five_three_diff
+            min_5_bp=min_5_bp,
+            min_5_3=min_5_3,
+            max_5_bp=max_5_bp,
+            max_5_3=max_5_3
         )
 
         # Update metadata with type_id
@@ -315,9 +325,8 @@ class SVMPredictor:
         clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
         log_odds = np.log(clipped_probas / (1 - clipped_probas))
 
-        # Get gamma parameters from first model (all models use same pipeline parameters)
-        gamma_5_bp = ensemble.models[0].parameters.gamma_5_bp
-        gamma_5_3 = ensemble.models[0].parameters.gamma_5_3
+        # Get include_max parameter from first model (all models use same pipeline parameters)
+        include_max = ensemble.models[0].parameters.include_max
 
         # Update introns with classification results
         classified_introns = []
@@ -337,10 +346,21 @@ class SVMPredictor:
             bp_z = intron.scores.bp_z_score
             three_z = intron.scores.three_z_score
 
-            five_bp_sum = five_z + bp_z
-            five_bp_diff = abs(five_z - bp_z) * gamma_5_bp
-            five_three_sum = five_z + three_z
-            five_three_diff = abs(five_z - three_z) * gamma_5_3
+            # min(a, b) = 0.5 * ((a + b) - |a - b|)
+            # max(a, b) = 0.5 * ((a + b) + |a - b|)
+            sum_5_bp = five_z + bp_z
+            absdiff_5_bp = abs(five_z - bp_z)
+            min_5_bp = 0.5 * (sum_5_bp - absdiff_5_bp)
+
+            sum_5_3 = five_z + three_z
+            absdiff_5_3 = abs(five_z - three_z)
+            min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
+
+            max_5_bp = None
+            max_5_3 = None
+            if include_max:
+                max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
+                max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
 
             # Update scores (create new IntronScores with added fields)
             new_scores = replace(
@@ -348,10 +368,10 @@ class SVMPredictor:
                 svm_score=svm_score,
                 relative_score=relative_score,
                 decision_distance=decision_distance,
-                five_bp_sum=five_bp_sum,
-                five_bp_diff=five_bp_diff,
-                five_three_sum=five_three_sum,
-                five_three_diff=five_three_diff
+                min_5_bp=min_5_bp,
+                min_5_3=min_5_3,
+                max_5_bp=max_5_bp,
+                max_5_3=max_5_3
             )
 
             # Update metadata with type_id

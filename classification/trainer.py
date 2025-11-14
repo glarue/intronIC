@@ -180,11 +180,11 @@ class SVMTrainer:
         # Following sklearn best practices for rare-class classification:
         # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
         #   (s=0 means "U12≈U2", centering would destroy this meaning)
-        # - BothEndsStrongTransformer: Augments 3D → 7D with both-ends-strong features
-        #   Adds sum and γ-weighted abs-diff features for 5'SS-BPS and 5'SS-3'SS pairs
-        #   γ parameters control penalty strength for one-end-strong patterns
+        # - BothEndsStrongTransformer: Augments 3D → 5D (or 7D) with both-ends-strong features
+        #   Adds min/max features for 5'SS-BPS and 5'SS-3'SS pairs
+        #   Min features capture "both must be strong" (expert: "model will mostly weight min")
         # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
-        #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 7)
+        #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 5-7)
         #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
         #   - max_iter: Configurable iteration limit (default: 100000)
         #   - tol=1e-4: Tight convergence tolerance
@@ -194,8 +194,7 @@ class SVMTrainer:
         base_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('augment', BothEndsStrongTransformer(
-                gamma_5_bp=parameters.gamma_5_bp,
-                gamma_5_3=parameters.gamma_5_3
+                include_max=parameters.include_max
             )),
             ('svc', LinearSVC(
                 C=parameters.C,

@@ -990,7 +990,7 @@ class ScoreWriter:
             "5'_seq", "5'_raw", "5'_z",
             "bp_seq", "bp_seq_u2", "bp_raw", "bp_z",
             "3'_seq", "3'_raw", "3'_z",
-            "5+bp", "γ|5-bp|", "5+3", "γ|5-3|",
+            "min(5,bp)", "min(5,3)", "max(5,bp)", "max(5,3)",
             "decision_dist"
         ]
         self.file.write('\t'.join(header_fields) + '\n')
@@ -1033,10 +1033,10 @@ class ScoreWriter:
         three_seq = null
         three_raw = null
         three_z = null
-        five_bp_sum = null
-        five_bp_diff = null
-        five_three_sum = null
-        five_three_diff = null
+        min_5_bp = null
+        min_5_3 = null
+        max_5_bp = null
+        max_5_3 = null
 
         # Fill in scores if available
         if intron.scores:
@@ -1066,14 +1066,14 @@ class ScoreWriter:
                 three_z = str(round(intron.scores.three_z_score, 4))
 
             # BothEndsStrong augmented features
-            if intron.scores.five_bp_sum is not None:
-                five_bp_sum = str(round(intron.scores.five_bp_sum, 4))
-            if intron.scores.five_bp_diff is not None:
-                five_bp_diff = str(round(intron.scores.five_bp_diff, 4))
-            if intron.scores.five_three_sum is not None:
-                five_three_sum = str(round(intron.scores.five_three_sum, 4))
-            if intron.scores.five_three_diff is not None:
-                five_three_diff = str(round(intron.scores.five_three_diff, 4))
+            if intron.scores.min_5_bp is not None:
+                min_5_bp = str(round(intron.scores.min_5_bp, 4))
+            if intron.scores.min_5_3 is not None:
+                min_5_3 = str(round(intron.scores.min_5_3, 4))
+            if intron.scores.max_5_bp is not None:
+                max_5_bp = str(round(intron.scores.max_5_bp, 4))
+            if intron.scores.max_5_3 is not None:
+                max_5_3 = str(round(intron.scores.max_5_3, 4))
 
         # Fill in sequences if available
         if intron.sequences:
@@ -1091,7 +1091,7 @@ class ScoreWriter:
             five_seq, five_raw, five_z,
             bp_seq, bp_seq_u2, bp_raw, bp_z,
             three_seq, three_raw, three_z,
-            five_bp_sum, five_bp_diff, five_three_sum, five_three_diff,
+            min_5_bp, min_5_3, max_5_bp, max_5_3,
             decision_dist
         ]
 
