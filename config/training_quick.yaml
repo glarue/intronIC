@@ -1,5 +1,5 @@
 # Quick validation configuration (~10-20 minutes on Chr19)
-# Tests core gamma parameter variation with minimal other parameters
+# Tests min vs min+max features with minimal other parameters
 
 optimizer:
   n_rounds: 2
@@ -11,9 +11,9 @@ optimizer:
   max_iter: 20000
 
 param_grid:
-  # Test 2×2=4 gamma combinations
-  estimator__augment__gamma_5_bp: [2, 4]
-  estimator__augment__gamma_5_3: [2, 4]
+  # Test both min-only and min+max features
+  # Expert guidance: "model will mostly weight min"
+  estimator__augment__include_max: [false, true]
 
   # Fix other parameters to typical good values
   estimator__svc__dual: [false]

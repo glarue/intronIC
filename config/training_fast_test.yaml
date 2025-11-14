@@ -36,21 +36,15 @@ optimizer:
 # Parameter grid for GridSearchCV
 # Note: 'estimator__svc__C' is automatically generated from C bounds
 # Total combinations = product of all list lengths
-# Example below: 1 × 1 × 1 × 1 × 1 = 1 combination per C value
+# Example below: 1 × 1 × 1 × 1 = 1 combination per C value
 param_grid:
-  # BothEndsStrong γ parameters
-  # Controls feature scaling for imbalance penalties
-  # Higher γ → stronger penalty for one-end-strong patterns
-
-  # 5'SS-BPS correlation (strongest signal)
-  # Full range: [1, 2, 4, 8]
-  # Test values: [2, 4] for quick, [4] for smoke
-  estimator__augment__gamma_5_bp: [4]
-
-  # 5'SS-3'SS correlation (secondary signal)
-  # Full range: [1, 2, 4]
-  # Test values: [2, 4] for quick, [2] for smoke
-  estimator__augment__gamma_5_3: [2]
+  # BothEndsStrong min/max features
+  # False = only min features (5D: s5, sBP, s3, min_5_bp, min_5_3)
+  # True = min + max features (7D: adds max_5_bp, max_5_3)
+  # Expert guidance: "model will mostly weight min"
+  # Full range: [false, true]
+  # Test value: [false] for smoke test
+  estimator__augment__include_max: [false]
 
   # Primal vs dual formulation
   # False = primal (typical best for n_samples >> n_features)
