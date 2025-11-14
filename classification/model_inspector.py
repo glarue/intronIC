@@ -37,13 +37,6 @@ def inspect_ensemble_weights(
     Returns:
         List of warning messages (empty if all checks pass)
     """
-    feature_names = [
-        's5', 'sBP', 's3',
-        'min_5_bp', 'min_5_3'
-        # Note: May also include max_5_bp and max_5_3 if include_max=True
-        # We'll check actual pipeline to get correct feature count
-    ]
-
     warnings = []
 
     if verbose:
@@ -68,12 +61,13 @@ def inspect_ensemble_weights(
         intercept = svc.intercept_[0]
 
         if verbose:
+            # Get feature names from the BothEndsStrong transformer
+            transformer = pipeline.named_steps['augment']
+            feature_names = transformer.get_feature_names_out()
+
             print(f"\n  Learned coefficients:")
-            # Get actual number of features from pipeline
-            n_features = len(coefs)
-            for idx in range(min(n_features, len(feature_names))):
-                name = feature_names[idx] if idx < len(feature_names) else f"feature_{idx}"
-                coef = coefs[idx]
+            # Print all features
+            for idx, (name, coef) in enumerate(zip(feature_names, coefs)):
                 # Highlight min/max features
                 if 'min' in name or 'max' in name:
                     print(f"    {name:15s}: {coef:+.6f}  ← BothEndsStrong feature")
@@ -107,12 +101,11 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     Returns:
         Dictionary with mean, std, min, max for each feature coefficient
     """
-    feature_names = [
-        's5', 'sBP', 's3',
-        'min_5_bp', 'min_5_3'
-        # Note: May also include max_5_bp and max_5_3 if include_max=True
-        # We'll check actual pipeline to get correct feature count
-    ]
+    # Get feature names from the first model's transformer
+    first_model = ensemble.models[0]
+    pipeline = first_model.model.calibrated_classifiers_[0].estimator
+    transformer = pipeline.named_steps['augment']
+    feature_names = transformer.get_feature_names_out()
 
     # Collect coefficients from all models
     all_coefs = []
