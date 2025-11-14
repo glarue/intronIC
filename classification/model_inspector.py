@@ -1,9 +1,8 @@
 """
-Utility to inspect learned SVM weights and verify BothEndsStrong penalties.
+Utility to inspect learned SVM weights for BothEndsStrong features.
 
-This module provides tools to examine trained models and verify that the
-imbalance penalty features (absdiff_5_bp, absdiff_5_3) have negative weights
-as intended.
+This module provides tools to examine trained models and view the
+learned coefficients for min/max features.
 
 Usage:
     from classification.model_inspector import inspect_ensemble_weights
@@ -25,12 +24,11 @@ def inspect_ensemble_weights(
     verbose: bool = True
 ) -> List[str]:
     """
-    Inspect learned SVM coefficients and verify penalties work as intended.
+    Inspect learned SVM coefficients for BothEndsStrong features.
 
-    According to expert guidance:
-    - absdiff_5_bp and absdiff_5_3 should have NEGATIVE coefficients
-    - If not, the imbalance penalty is not working correctly
-    - Solution: increase gamma or add min_* features
+    With min/max features:
+    - min features capture "both must be strong" (expect POSITIVE weights)
+    - max features capture "at least one strong" (various weights expected)
 
     Args:
         ensemble: Trained SVM ensemble to inspect
@@ -41,8 +39,9 @@ def inspect_ensemble_weights(
     """
     feature_names = [
         's5', 'sBP', 's3',
-        'sum_5_bp', 'absdiff_5_bp',
-        'sum_5_3', 'absdiff_5_3'
+        'min_5_bp', 'min_5_3'
+        # Note: May also include max_5_bp and max_5_3 if include_max=True
+        # We'll check actual pipeline to get correct feature count
     ]
 
     warnings = []
@@ -71,49 +70,22 @@ def inspect_ensemble_weights(
 
         if verbose:
             print(f"\n  Learned coefficients:")
-            for name, coef in zip(feature_names, coefs):
-                # Highlight the penalty features
-                if 'absdiff' in name:
-                    status = "✓ NEGATIVE (penalty)" if coef < 0 else "⚠️  POSITIVE (NOT penalizing!)"
-                    print(f"    {name:15s}: {coef:+.6f}  {status}")
+            # Get actual number of features from pipeline
+            n_features = len(coefs)
+            for idx in range(min(n_features, len(feature_names))):
+                name = feature_names[idx] if idx < len(feature_names) else f"feature_{idx}"
+                coef = coefs[idx]
+                # Highlight min/max features
+                if 'min' in name or 'max' in name:
+                    print(f"    {name:15s}: {coef:+.6f}  ← BothEndsStrong feature")
                 else:
                     print(f"    {name:15s}: {coef:+.6f}")
 
             print(f"\n  Intercept: {intercept:+.6f}")
 
-        # Sanity checks (per expert guidance)
-        absdiff_5_bp_coef = coefs[4]  # Index 4 is absdiff_5_bp
-        absdiff_5_3_coef = coefs[6]   # Index 6 is absdiff_5_3
-
-        if absdiff_5_bp_coef > 0:
-            warning = (
-                f"Model {i+1}: absdiff_5_bp has POSITIVE coefficient ({absdiff_5_bp_coef:+.6f}). "
-                f"This means imbalanced 5'-BP introns are MORE likely to be classified as U12! "
-                f"Increase gamma_5_bp or add min_* features."
-            )
-            warnings.append(warning)
-            if verbose:
-                print(f"\n  ⚠️  WARNING: {warning}")
-
-        if absdiff_5_3_coef > 0:
-            warning = (
-                f"Model {i+1}: absdiff_5_3 has POSITIVE coefficient ({absdiff_5_3_coef:+.6f}). "
-                f"This means imbalanced 5'-3' introns are MORE likely to be classified as U12! "
-                f"Increase gamma_5_3 or add min_* features."
-            )
-            warnings.append(warning)
-            if verbose:
-                print(f"\n  ⚠️  WARNING: {warning}")
-
-        # Additional insight: check if penalties are "strong enough"
-        # A very small negative coefficient means the penalty is weak
-        if verbose and absdiff_5_bp_coef < 0 and abs(absdiff_5_bp_coef) < 0.01:
-            print(f"  ℹ️  Note: absdiff_5_bp coefficient is very small ({absdiff_5_bp_coef:.6f}). "
-                  f"Penalty may be weak. Consider increasing gamma_5_bp.")
-
-        if verbose and absdiff_5_3_coef < 0 and abs(absdiff_5_3_coef) < 0.01:
-            print(f"  ℹ️  Note: absdiff_5_3 coefficient is very small ({absdiff_5_3_coef:.6f}). "
-                  f"Penalty may be weak. Consider increasing gamma_5_3.")
+        # With min/max features, we expect positive weights on min features
+        # (higher min = both strong = more likely U12)
+        # No specific sanity checks needed - expert approach is cleaner
 
     if verbose:
         print("\n" + "=" * 70)
@@ -138,8 +110,9 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     """
     feature_names = [
         's5', 'sBP', 's3',
-        'sum_5_bp', 'absdiff_5_bp',
-        'sum_5_3', 'absdiff_5_3'
+        'min_5_bp', 'min_5_3'
+        # Note: May also include max_5_bp and max_5_3 if include_max=True
+        # We'll check actual pipeline to get correct feature count
     ]
 
     # Collect coefficients from all models
@@ -179,10 +152,10 @@ def print_coefficient_summary(ensemble: SVMEnsemble) -> None:
     print("-" * 70)
 
     for name, stats in summary.items():
-        # Highlight penalty features
-        marker = "  *" if 'absdiff' in name else "   "
+        # Highlight BothEndsStrong features
+        marker = "  *" if 'min' in name or 'max' in name else "   "
         print(f"{name:<15}{marker} {stats['mean']:+12.6f} {stats['std']:12.6f} "
               f"{stats['min']:+12.6f} {stats['max']:+12.6f}")
 
     print("=" * 70)
-    print("* = Imbalance penalty features (should be negative)\n")
+    print("* = BothEndsStrong augmented features (min/max)\n")

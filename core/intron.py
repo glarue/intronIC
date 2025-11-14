@@ -44,10 +44,10 @@ class IntronScores:
         five_z_score: Normalized z-score for 5' splice site
         bp_z_score: Normalized z-score for branch point
         three_z_score: Normalized z-score for 3' splice site
-        five_bp_sum: BothEndsStrong feature: 5' + BP (cooperative signal)
-        five_bp_diff: BothEndsStrong feature: |5' - BP| × γ (imbalance penalty)
-        five_three_sum: BothEndsStrong feature: 5' + 3' (cooperative signal)
-        five_three_diff: BothEndsStrong feature: |5' - 3'| × γ (imbalance penalty)
+        min_5_bp: BothEndsStrong feature: min(5', BP) = "both must be strong"
+        min_5_3: BothEndsStrong feature: min(5', 3') = "both must be strong"
+        max_5_bp: BothEndsStrong feature: max(5', BP) = "at least one strong" (optional)
+        max_5_3: BothEndsStrong feature: max(5', 3') = "at least one strong" (optional)
         svm_score: SVM probability score (0-100%)
         relative_score: Score relative to threshold
         decision_distance: Distance from SVM decision boundary
@@ -70,10 +70,10 @@ class IntronScores:
     five_z_score: Optional[float] = None
     bp_z_score: Optional[float] = None
     three_z_score: Optional[float] = None
-    five_bp_sum: Optional[float] = None
-    five_bp_diff: Optional[float] = None
-    five_three_sum: Optional[float] = None
-    five_three_diff: Optional[float] = None
+    min_5_bp: Optional[float] = None
+    min_5_3: Optional[float] = None
+    max_5_bp: Optional[float] = None
+    max_5_3: Optional[float] = None
     svm_score: Optional[float] = None
     relative_score: Optional[float] = None
     decision_distance: Optional[float] = None

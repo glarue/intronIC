@@ -199,8 +199,7 @@ class SVMParameters:
 
     C: float  # Soft-margin penalty
     calibration_method: str  # 'sigmoid' or 'isotonic'
-    gamma_5_bp: float  # Feature scaling for 5'SS-BPS imbalance penalty
-    gamma_5_3: float  # Feature scaling for 5'SS-3'SS imbalance penalty
+    include_max: bool  # Whether to include max features in BothEndsStrong transformer
     dual: bool  # Primal (False) or dual (True) formulation
     intercept_scaling: float  # Scaling for intercept (when dual=False)
     cv_score: float  # Cross-validation neg_log_loss
@@ -215,8 +214,7 @@ class OptimizationRound:
     scores: np.ndarray  # CV scores for each parameter combination
     best_C: float
     best_method: str  # 'sigmoid' or 'isotonic'
-    best_gamma_5_bp: float  # Best γ for 5'SS-BPS imbalance penalty
-    best_gamma_5_3: float  # Best γ for 5'SS-3'SS imbalance penalty
+    best_include_max: bool  # Whether to include max features
     best_dual: bool  # Primal (False) or dual (True) formulation
     best_intercept_scaling: float  # Intercept scaling parameter
     best_score: float
@@ -264,9 +262,8 @@ class SVMOptimizer:
             max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
             param_grid_override: Optional custom parameter grid for testing
                                (if None, uses default full grid). Keys: C is auto-inserted,
-                               but can specify: 'estimator__augment__gamma_5_bp',
-                               'estimator__augment__gamma_5_3', 'estimator__svc__dual',
-                               'estimator__svc__intercept_scaling', 'method'
+                               but can specify: 'estimator__augment__include_max',
+                               'estimator__svc__dual', 'estimator__svc__intercept_scaling', 'method'
         """
         self.n_rounds = n_rounds
         self.n_points_initial = n_points_initial
@@ -369,22 +366,20 @@ class SVMOptimizer:
         final_method = self.rounds_[-1].best_method
         final_dual = self.rounds_[-1].best_dual
         final_intercept_scaling = self.rounds_[-1].best_intercept_scaling
-        final_gamma_5_bp = self.rounds_[-1].best_gamma_5_bp
-        final_gamma_5_3 = self.rounds_[-1].best_gamma_5_3
+        final_include_max = self.rounds_[-1].best_include_max
 
         # Evaluate final parameters
         final_score = self._evaluate_params(
             X, y, final_C, final_method, final_dual, final_intercept_scaling,
-            final_gamma_5_bp, final_gamma_5_3
+            final_include_max
         )
 
-        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, intercept_scaling={final_intercept_scaling}, gamma_5_bp={final_gamma_5_bp}, gamma_5_3={final_gamma_5_3}, CV score={final_score:.4f}", flush=True)
+        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, intercept_scaling={final_intercept_scaling}, include_max={final_include_max}, CV score={final_score:.4f}", flush=True)
 
         return SVMParameters(
             C=final_C,
             calibration_method=final_method,
-            gamma_5_bp=final_gamma_5_bp,
-            gamma_5_3=final_gamma_5_3,
+            include_max=final_include_max,
             dual=final_dual,
             intercept_scaling=final_intercept_scaling,
             cv_score=final_score,
@@ -529,8 +524,7 @@ class SVMOptimizer:
             # Full parameter grid for production
             param_grid = {
                 'estimator__svc__C': C_grid,  # C parameter through pipeline
-                'estimator__augment__gamma_5_bp': [1, 2, 4, 8],  # 5'SS-BPS imbalance penalty weight
-                'estimator__augment__gamma_5_3': [1, 2, 4],  # 5'SS-3'SS imbalance penalty weight
+                'estimator__augment__include_max': [False, True],  # Whether to include max features (expert: "model will mostly weight min")
                 'estimator__svc__dual': [False, True],  # Primal vs dual formulation
                 'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
                 'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
@@ -620,8 +614,7 @@ class SVMOptimizer:
         best_method = grid_search.best_params_['method']
         best_dual = grid_search.best_params_['estimator__svc__dual']
         best_intercept_scaling = grid_search.best_params_['estimator__svc__intercept_scaling']
-        best_gamma_5_bp = grid_search.best_params_['estimator__augment__gamma_5_bp']
-        best_gamma_5_3 = grid_search.best_params_['estimator__augment__gamma_5_3']
+        best_include_max = grid_search.best_params_['estimator__augment__include_max']
         best_score = grid_search.best_score_
 
         if self.verbose:
@@ -632,8 +625,7 @@ class SVMOptimizer:
             print(f"Best calibration method: {best_method}", flush=True)
             print(f"Best dual formulation: {best_dual}", flush=True)
             print(f"Best intercept_scaling: {best_intercept_scaling}", flush=True)
-            print(f"Best gamma_5_bp: {best_gamma_5_bp}", flush=True)
-            print(f"Best gamma_5_3: {best_gamma_5_3}", flush=True)
+            print(f"Best include_max: {best_include_max}", flush=True)
             print(f"Best CV score (neg_log_loss): {best_score:.4f}", flush=True)
             print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
             print(f"{'='*80}\n", flush=True)
@@ -643,8 +635,7 @@ class SVMOptimizer:
             scores=scores,
             best_C=best_C,
             best_method=best_method,
-            best_gamma_5_bp=best_gamma_5_bp,
-            best_gamma_5_3=best_gamma_5_3,
+            best_include_max=best_include_max,
             best_dual=best_dual,
             best_intercept_scaling=best_intercept_scaling,
             best_score=best_score,
@@ -741,8 +732,7 @@ class SVMOptimizer:
         method: str,
         dual: bool,
         intercept_scaling: float,
-        gamma_5_bp: float,
-        gamma_5_3: float
+        include_max: bool
     ) -> float:
         """
         Evaluate specific hyperparameters via cross-validation.
@@ -754,8 +744,7 @@ class SVMOptimizer:
             method: Calibration method ('sigmoid' or 'isotonic')
             dual: Primal (False) or dual (True) formulation
             intercept_scaling: Intercept scaling parameter
-            gamma_5_bp: γ for 5'SS-BPS imbalance penalty
-            gamma_5_3: γ for 5'SS-3'SS imbalance penalty
+            include_max: Whether to include max features in BothEndsStrong transformer
 
         Returns:
             Cross-validation neg_log_loss score
@@ -763,14 +752,13 @@ class SVMOptimizer:
         # LinearSVC with external calibration (matches training approach)
         # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
         #   (s=0 means "U12≈U2", centering would destroy this meaning)
-        # - BothEndsStrongTransformer: Augments 3D → 7D with both-ends-strong features
+        # - BothEndsStrongTransformer: Augments 3D → 5D (or 7D with max) with both-ends-strong features
         # - LinearSVC: Optimized for linear case
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('augment', BothEndsStrongTransformer(
-                gamma_5_bp=gamma_5_bp,
-                gamma_5_3=gamma_5_3
+                include_max=include_max
             )),
             ('svc', LinearSVC(
                 C=C,
