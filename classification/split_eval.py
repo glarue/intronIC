@@ -212,37 +212,31 @@ class SplitEvaluator:
             print(f"Val:   {n_u2_val} U2, {n_u12_val} U12 ({self.val_fraction*100:.0f}%)")
             print(f"Test:  {n_u2_test} U2, {n_u12_test} U12 ({self.test_fraction*100:.0f}%)")
 
-        # Stage 1: Optimize hyperparameters or use fixed C
+        # Stage 1: Optimize hyperparameters
         # Note: We could use train+val here, but using only train gives
         # a more conservative estimate
-        if self.optimize_c:
-            if self.verbose:
-                print("\nStage 1: Hyperparameter Optimization (training set)")
+        # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+        if self.verbose:
+            print("\nStage 1: Hyperparameter Optimization (training set)")
 
-            optimizer = SVMOptimizer(
-                n_rounds=self.n_optimization_rounds,
-                n_points_initial=self.n_points_initial,
-                cv_folds=self.cv_folds,
-                random_state=self.random_state,
-                n_jobs=self.n_jobs,
-                max_iter=self.max_iter,
-                param_grid_override=self.param_grid_override,
-                verbose=self.verbose
-            )
-            parameters = optimizer.optimize(train_u12, train_u2)
-        else:
+        # If C is fixed, constrain the grid to that single value
+        param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+        if not self.optimize_c:
+            param_grid['estimator__svc__C'] = [self.fixed_c]
             if self.verbose:
-                print(f"\nStage 1: Using Fixed C={self.fixed_c:.6e}")
+                print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
 
-            from classification.optimizer import SVMParameters
-            parameters = SVMParameters(
-                C=self.fixed_c,
-                calibration_method='sigmoid',
-                dual=False,
-                intercept_scaling=1000.0,
-                cv_score=0.0,  # Not computed when using fixed C
-                round_found=0   # Fixed, not optimized
-            )
+        optimizer = SVMOptimizer(
+            n_rounds=self.n_optimization_rounds,
+            n_points_initial=self.n_points_initial,
+            cv_folds=self.cv_folds,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs,
+            max_iter=self.max_iter,
+            param_grid_override=param_grid if param_grid else None,
+            verbose=self.verbose
+        )
+        parameters = optimizer.optimize(train_u12, train_u2)
 
         # Stage 2: Train ensemble on training data
         if self.verbose:
