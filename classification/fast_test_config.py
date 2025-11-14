@@ -29,49 +29,45 @@ PARAM_GRIDS = {
     # Phase 1: Ultra-fast smoke test
     # Tests basic functionality with minimal grid
     # Expected time: 2-5 minutes on Chr19
-    # Combinations: 1 gamma_5_bp × 1 gamma_5_3 × 1 dual × 1 intercept × 1 method = 1
+    # Combinations: 1 include_max × 1 dual × 1 intercept × 1 method = 1
     'smoke': {
-        'estimator__augment__gamma_5_bp': [4],      # Middle value only
-        'estimator__augment__gamma_5_3': [2],       # Middle value only
-        'estimator__svc__dual': [False],            # Primal formulation (typical best)
+        'estimator__augment__include_max': [False],     # Min features only
+        'estimator__svc__dual': [False],                # Primal formulation (typical best)
         'estimator__svc__intercept_scaling': [1000.0],  # Typical good value
-        'method': ['sigmoid']                       # Faster than isotonic
+        'method': ['sigmoid']                           # Faster than isotonic
     },
 
     # Phase 2: Quick validation
-    # Tests core gamma parameter variation
+    # Tests min-only vs min+max features
     # Expected time: 10-20 minutes on Chr19
-    # Combinations: 2 gamma_5_bp × 2 gamma_5_3 × 1 dual × 1 intercept × 1 method = 4
+    # Combinations: 2 include_max × 1 dual × 1 intercept × 1 method = 2
     'quick': {
-        'estimator__augment__gamma_5_bp': [2, 4],   # Reduced from [1, 2, 4, 8]
-        'estimator__augment__gamma_5_3': [2, 4],    # Reduced from [1, 2, 4]
-        'estimator__svc__dual': [False],            # Fixed
-        'estimator__svc__intercept_scaling': [1000.0],  # Fixed
-        'method': ['sigmoid']                       # Fixed
+        'estimator__augment__include_max': [False, True],  # Test both
+        'estimator__svc__dual': [False],                   # Fixed
+        'estimator__svc__intercept_scaling': [1000.0],     # Fixed
+        'method': ['sigmoid']                              # Fixed
     },
 
     # Phase 3: Moderate testing
-    # Tests wider gamma range + calibration method
+    # Tests min+max features with calibration methods
     # Expected time: 30-60 minutes on Chr19
-    # Combinations: 3 gamma_5_bp × 2 gamma_5_3 × 1 dual × 1 intercept × 2 method = 12
+    # Combinations: 2 include_max × 1 dual × 1 intercept × 2 method = 4
     'moderate': {
-        'estimator__augment__gamma_5_bp': [2, 4, 8],    # High end emphasized
-        'estimator__augment__gamma_5_3': [2, 4],        # Core values
-        'estimator__svc__dual': [False],                # Fixed
-        'estimator__svc__intercept_scaling': [1000.0],  # Fixed
-        'method': ['sigmoid', 'isotonic']               # Test both
+        'estimator__augment__include_max': [False, True],  # Test both
+        'estimator__svc__dual': [False],                   # Fixed
+        'estimator__svc__intercept_scaling': [1000.0],     # Fixed
+        'method': ['sigmoid', 'isotonic']                  # Test both
     },
 
     # Phase 4: Near-full testing
-    # Tests all gamma values + dual formulation
+    # Tests all parameter combinations
     # Expected time: 1-2 hours on Chr19
-    # Combinations: 4 gamma_5_bp × 3 gamma_5_3 × 2 dual × 1 intercept × 2 method = 48
+    # Combinations: 2 include_max × 2 dual × 3 intercept × 2 method = 24
     'near_full': {
-        'estimator__augment__gamma_5_bp': [1, 2, 4, 8],     # Full range
-        'estimator__augment__gamma_5_3': [1, 2, 4],         # Full range
-        'estimator__svc__dual': [False, True],              # Test both
-        'estimator__svc__intercept_scaling': [1000.0],      # Fixed
-        'method': ['sigmoid', 'isotonic']                   # Both methods
+        'estimator__augment__include_max': [False, True],          # Test both
+        'estimator__svc__dual': [False, True],                     # Test both
+        'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # Full range
+        'method': ['sigmoid', 'isotonic']                          # Both methods
     },
 }
 

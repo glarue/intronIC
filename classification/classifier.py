@@ -307,7 +307,7 @@ class IntronClassifier:
             param_grid_override=param_grid if param_grid else None
         )
         parameters = optimizer.optimize(u12_reference, u2_reference)
-        print(f"Best parameters: C={parameters.C:.6e}, gamma_5_bp={parameters.gamma_5_bp}, gamma_5_3={parameters.gamma_5_3}, CV score={parameters.cv_score:.4f}")
+        print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -329,8 +329,8 @@ class IntronClassifier:
         from classification.model_inspector import inspect_ensemble_weights
         warnings = inspect_ensemble_weights(ensemble, verbose=True)
         if warnings:
-            print("\n⚠️  WARNING: Imbalance penalty weights may not be working correctly!")
-            print("Consider increasing gamma_5_bp and/or gamma_5_3 in optimizer config.")
+            print("\n⚠️  WARNING: Model coefficients may not be working as expected!")
+            print("Review the coefficient analysis above for details.")
 
         # Stage 3: Classify experimental introns
         print("\n=== Stage 3: Classification ===")
@@ -471,7 +471,7 @@ class IntronClassifier:
             param_grid_override=param_grid if param_grid else None
         )
         parameters = optimizer.optimize(u12_reference, u2_reference)
-        print(f"Best parameters: C={parameters.C:.6e}, gamma_5_bp={parameters.gamma_5_bp}, gamma_5_3={parameters.gamma_5_3}, CV score={parameters.cv_score:.4f}")
+        print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -493,8 +493,8 @@ class IntronClassifier:
         from classification.model_inspector import inspect_ensemble_weights
         warnings = inspect_ensemble_weights(ensemble, verbose=True)
         if warnings:
-            print("\n⚠️  WARNING: Imbalance penalty weights may not be working correctly!")
-            print("Consider increasing gamma_5_bp and/or gamma_5_3 in optimizer config.")
+            print("\n⚠️  WARNING: Model coefficients may not be working as expected!")
+            print("Review the coefficient analysis above for details.")
 
         # Stage 3: Classify in batches
         print("\n=== Stage 3: Classification (Batch Mode) ===")
