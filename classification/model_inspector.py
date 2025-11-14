@@ -61,8 +61,11 @@ def inspect_ensemble_weights(
             print(f"    C:          {model.parameters.C}")
 
         # Extract SVC from calibrated classifier
-        # Pipeline: RobustScaler -> BothEndsStrong -> LinearSVC -> CalibratedClassifierCV
-        svc = model.model.calibrated_classifiers_[0].estimator
+        # model.model is CalibratedClassifierCV
+        # calibrated_classifiers_[0].estimator is Pipeline(RobustScaler -> BothEndsStrong -> LinearSVC)
+        # We need to get the LinearSVC from the end of the pipeline
+        pipeline = model.model.calibrated_classifiers_[0].estimator
+        svc = pipeline.named_steps['svc']  # Get the LinearSVC from pipeline
         coefs = svc.coef_[0]
         intercept = svc.intercept_[0]
 
@@ -142,7 +145,8 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     # Collect coefficients from all models
     all_coefs = []
     for model in ensemble.models:
-        svc = model.model.calibrated_classifiers_[0].estimator
+        pipeline = model.model.calibrated_classifiers_[0].estimator
+        svc = pipeline.named_steps['svc']  # Get LinearSVC from pipeline
         all_coefs.append(svc.coef_[0])
 
     all_coefs = np.array(all_coefs)  # Shape: (n_models, n_features)
