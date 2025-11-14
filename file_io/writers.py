@@ -989,7 +989,9 @@ class ScoreWriter:
             "name", "rel_score", "svm_score",
             "5'_seq", "5'_raw", "5'_z",
             "bp_seq", "bp_seq_u2", "bp_raw", "bp_z",
-            "3'_seq", "3'_raw", "3'_z", "decision_dist"
+            "3'_seq", "3'_raw", "3'_z",
+            "5+bp", "γ|5-bp|", "5+3", "γ|5-3|",
+            "decision_dist"
         ]
         self.file.write('\t'.join(header_fields) + '\n')
 
@@ -1031,6 +1033,10 @@ class ScoreWriter:
         three_seq = null
         three_raw = null
         three_z = null
+        five_bp_sum = null
+        five_bp_diff = null
+        five_three_sum = null
+        five_three_diff = null
 
         # Fill in scores if available
         if intron.scores:
@@ -1059,6 +1065,16 @@ class ScoreWriter:
             if intron.scores.three_z_score is not None:
                 three_z = str(round(intron.scores.three_z_score, 4))
 
+            # BothEndsStrong augmented features
+            if intron.scores.five_bp_sum is not None:
+                five_bp_sum = str(round(intron.scores.five_bp_sum, 4))
+            if intron.scores.five_bp_diff is not None:
+                five_bp_diff = str(round(intron.scores.five_bp_diff, 4))
+            if intron.scores.five_three_sum is not None:
+                five_three_sum = str(round(intron.scores.five_three_sum, 4))
+            if intron.scores.five_three_diff is not None:
+                five_three_diff = str(round(intron.scores.five_three_diff, 4))
+
         # Fill in sequences if available
         if intron.sequences:
             if intron.sequences.five_seq:
@@ -1074,7 +1090,9 @@ class ScoreWriter:
             name, rel_score, svm_score,
             five_seq, five_raw, five_z,
             bp_seq, bp_seq_u2, bp_raw, bp_z,
-            three_seq, three_raw, three_z, decision_dist
+            three_seq, three_raw, three_z,
+            five_bp_sum, five_bp_diff, five_three_sum, five_three_diff,
+            decision_dist
         ]
 
         self.file.write('\t'.join(fields) + '\n')
