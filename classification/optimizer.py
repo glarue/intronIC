@@ -549,10 +549,21 @@ class SVMOptimizer:
         total_fits = n_candidates * n_outer_cv * n_inner_cv + 1  # Actual model fits (for info only)
 
         if self.verbose:
+            # Build parameter breakdown string dynamically
+            param_counts = []
+            param_counts.append(f"C={len(C_grid)}")
+            for key, values in param_grid.items():
+                if key == 'estimator__svc__C':
+                    continue  # Already added C
+                # Simplify parameter names for display
+                display_name = key.replace('estimator__augment__', '').replace('estimator__svc__', '')
+                param_counts.append(f"{display_name}={len(values)}")
+            param_breakdown = " × ".join(param_counts)
+
             print(f"\n{'='*80}", flush=True)
             print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Parameter combinations: {n_candidates} (C={len(C_grid)} × γ_5bp=4 × γ_5_3=3 × dual=2 × intercept=3 × method=2)", flush=True)
+            print(f"Parameter combinations: {n_candidates} ({param_breakdown})", flush=True)
             print(f"CV folds: outer={n_outer_cv}, inner={n_inner_cv} (calibration)", flush=True)
             print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
             print(f"Total model fits: {total_fits:,} (including {n_inner_cv}× internal calibration per task)", flush=True)
