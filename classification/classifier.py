@@ -130,7 +130,8 @@ class IntronClassifier:
         max_iter: int = 20000,
         eval_mode: str = 'nested_cv',
         n_cv_folds: int = 5,
-        test_fraction: float = 0.2
+        test_fraction: float = 0.2,
+        param_grid_override: Optional[dict] = None
     ):
         """
         Initialize classifier.
@@ -150,6 +151,7 @@ class IntronClassifier:
             eval_mode: Evaluation mode: 'nested_cv', 'split', or 'none' (default: 'nested_cv')
             n_cv_folds: Number of CV folds for nested CV (default: 5)
             test_fraction: Test set fraction for split mode (default: 0.2)
+            param_grid_override: Optional custom parameter grid for optimizer (default: None)
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -164,6 +166,7 @@ class IntronClassifier:
         self.max_iter = max_iter
         self.n_cv_folds = n_cv_folds
         self.test_fraction = test_fraction
+        self.param_grid_override = param_grid_override
 
         # Auto-skip evaluation when using fixed C
         # Rationale: When C is pre-specified, evaluation metrics aren't useful
@@ -279,7 +282,8 @@ class IntronClassifier:
                 n_rounds=self.n_optimization_rounds,
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
-                max_iter=self.max_iter
+                max_iter=self.max_iter,
+                param_grid_override=self.param_grid_override
             )
             parameters = optimizer.optimize(u12_reference, u2_reference)
             print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
@@ -428,7 +432,8 @@ class IntronClassifier:
                 n_rounds=self.n_optimization_rounds,
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
-                max_iter=self.max_iter
+                max_iter=self.max_iter,
+                param_grid_override=self.param_grid_override
             )
             parameters = optimizer.optimize(u12_reference, u2_reference)
             print(f"Optimized C={parameters.C:.6e}, CV score={parameters.cv_score:.4f}")
