@@ -204,7 +204,9 @@ class SVMPredictor:
         os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
         # Parallel processing: split introns into chunks
-        n_workers = min(self.n_jobs, cpu_count(), len(introns))
+        # Handle n_jobs=-1 (use all cores) like scikit-learn
+        n_jobs_actual = cpu_count() if self.n_jobs == -1 else self.n_jobs
+        n_workers = min(n_jobs_actual, cpu_count(), len(introns))
         chunk_size = max(1, len(introns) // n_workers)
 
         # Create chunks
