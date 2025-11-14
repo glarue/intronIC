@@ -55,9 +55,8 @@ def inspect_ensemble_weights(
         if verbose:
             print(f"\nModel {i+1}/{len(ensemble.models)}:")
             print(f"  Hyperparameters:")
-            print(f"    gamma_5_bp: {model.parameters.gamma_5_bp}")
-            print(f"    gamma_5_3:  {model.parameters.gamma_5_3}")
-            print(f"    C:          {model.parameters.C}")
+            print(f"    include_max: {model.parameters.include_max}")
+            print(f"    C:           {model.parameters.C}")
 
         # Extract SVC from calibrated classifier
         # model.model is CalibratedClassifierCV
@@ -90,7 +89,7 @@ def inspect_ensemble_weights(
     if verbose:
         print("\n" + "=" * 70)
         if not warnings:
-            print("✓ All sanity checks passed! Imbalance penalties are negative.")
+            print("✓ All sanity checks passed!")
         else:
             print(f"⚠️  {len(warnings)} warning(s) found. Model may not work as intended.")
         print("=" * 70 + "\n")
