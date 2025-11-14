@@ -1,0 +1,21 @@
+# Quick validation configuration (~10-20 minutes on Chr19)
+# Tests core gamma parameter variation with minimal other parameters
+
+optimizer:
+  n_rounds: 2
+  n_points_initial: 9
+  n_points_refine: 30
+  cv_folds: 3
+  n_jobs: -1
+  verbose: true
+  max_iter: 20000
+
+param_grid:
+  # Test 2×2=4 gamma combinations
+  estimator__augment__gamma_5_bp: [2, 4]
+  estimator__augment__gamma_5_3: [2, 4]
+
+  # Fix other parameters to typical good values
+  estimator__svc__dual: [false]
+  estimator__svc__intercept_scaling: [1000.0]
+  method: ['sigmoid']

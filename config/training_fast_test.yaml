@@ -1,0 +1,80 @@
+# Fast testing configuration for BothEndsStrong feature development
+# This config reduces grid search complexity for quick validation
+#
+# Usage:
+#   from classification.config_loader import load_optimizer_config
+#   optimizer = load_optimizer_config('config/training_fast_test.yaml')
+
+# Optimizer settings
+optimizer:
+  # Number of geometric refinement rounds (1-5)
+  # 1 = ultra-fast, 3 = production default, 5 = thorough
+  n_rounds: 1
+
+  # Initial grid points for round 1 (7-13 typical)
+  n_points_initial: 7
+
+  # Refinement grid points for rounds 2+ (20-100 typical)
+  n_points_refine: 20
+
+  # Cross-validation folds (3-5 typical)
+  # Fewer = faster but less reliable estimates
+  cv_folds: 3
+
+  # Number of parallel jobs (-1 = use all cores)
+  n_jobs: -1
+
+  # Print detailed progress
+  verbose: true
+
+  # Maximum iterations for LinearSVC convergence
+  # Lower values may produce convergence warnings but run faster
+  max_iter: 10000
+
+# Parameter grid for GridSearchCV
+# Note: 'estimator__svc__C' is automatically generated from C bounds
+# Total combinations = product of all list lengths
+# Example below: 1 × 1 × 1 × 1 × 1 = 1 combination per C value
+param_grid:
+  # BothEndsStrong γ parameters
+  # Controls feature scaling for imbalance penalties
+  # Higher γ → stronger penalty for one-end-strong patterns
+
+  # 5'SS-BPS correlation (strongest signal)
+  # Full range: [1, 2, 4, 8]
+  # Test values: [2, 4] for quick, [4] for smoke
+  estimator__augment__gamma_5_bp: [4]
+
+  # 5'SS-3'SS correlation (secondary signal)
+  # Full range: [1, 2, 4]
+  # Test values: [2, 4] for quick, [2] for smoke
+  estimator__augment__gamma_5_3: [2]
+
+  # Primal vs dual formulation
+  # False = primal (typical best for n_samples >> n_features)
+  # True = dual
+  # Full range: [false, true]
+  estimator__svc__dual: [false]
+
+  # Intercept scaling (when dual=False)
+  # Higher values avoid over-regularizing intercept
+  # Full range: [10.0, 100.0, 1000.0]
+  estimator__svc__intercept_scaling: [1000.0]
+
+  # Calibration method
+  # sigmoid = faster, isotonic = more flexible
+  # Full range: ['sigmoid', 'isotonic']
+  method: ['sigmoid']
+
+# C parameter bounds (computed from class weights)
+# These are only used if you want to override auto-computed bounds
+# Normally you should leave these commented out
+# c_bounds:
+#   eff_C_pos_range: [0.001, 1000.0]  # Target effective penalty for positive class
+#   eff_C_neg_max: null  # Optional cap on negative class penalty
+
+# Reference data subsampling (for even faster testing)
+# Set to null or remove to use full reference data
+# reference_subsample:
+#   u12_fraction: 0.2  # Use 20% of U12 references
+#   u2_fraction: 0.2   # Use 20% of U2 references
