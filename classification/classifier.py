@@ -326,6 +326,13 @@ class IntronClassifier:
         )
         print(f"Ensemble trained: {len(ensemble.models)} models")
 
+        # Sanity check: Verify imbalance penalty weights are negative
+        from classification.model_inspector import inspect_ensemble_weights
+        warnings = inspect_ensemble_weights(ensemble, verbose=True)
+        if warnings:
+            print("\n⚠️  WARNING: Imbalance penalty weights may not be working correctly!")
+            print("Consider increasing gamma_5_bp and/or gamma_5_3 in optimizer config.")
+
         # Stage 3: Classify experimental introns
         print("\n=== Stage 3: Classification ===")
         predictor = SVMPredictor(
@@ -483,6 +490,13 @@ class IntronClassifier:
             subsample_ratio=self.subsample_ratio
         )
         print(f"Ensemble trained: {len(ensemble.models)} models")
+
+        # Sanity check: Verify imbalance penalty weights are negative
+        from classification.model_inspector import inspect_ensemble_weights
+        warnings = inspect_ensemble_weights(ensemble, verbose=True)
+        if warnings:
+            print("\n⚠️  WARNING: Imbalance penalty weights may not be working correctly!")
+            print("Consider increasing gamma_5_bp and/or gamma_5_3 in optimizer config.")
 
         # Stage 3: Classify in batches
         print("\n=== Stage 3: Classification (Batch Mode) ===")
