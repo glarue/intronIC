@@ -18,6 +18,7 @@ from typing import Optional, Set, Dict, Tuple
 from pathlib import Path
 from collections import defaultdict
 import numpy as np
+import re
 
 
 # Base ordering for matrix indexing: ACGT
@@ -183,14 +184,18 @@ class PWMSet:
     Most U12 introns have GT-AG boundaries but U12-specific motifs throughout.
 
     Attributes:
-        matrices: Dictionary mapping (subtype, boundary) to PWM
-                 e.g., {('u12', 'gtag'): PWM, ('u12', 'atac'): PWM, ...}
+        matrices: Dictionary mapping (subtype, boundary[, version]) to PWM
+                 e.g., {('u12', 'gtag'): PWM, ('u12', 'gtag', 'A10'): PWM, ...}
+                 Keys may have 2 or 3 elements depending on whether version exists
     """
-    matrices: Dict[Tuple[str, str], PWM]
+    matrices: Dict[Tuple[str, ...], PWM]
 
     def select_best(self, intron_type: str, dinucleotides: str) -> PWM:
         """
         Select the best PWM for an intron based on type and dinucleotides.
+
+        If multiple versions exist (e.g., vA9, vA10), returns the first match.
+        For scoring with all versions, use get_all_versions() instead.
 
         Args:
             intron_type: 'u12' or 'u2'
@@ -204,24 +209,39 @@ class PWMSet:
             >>> pwm_set.select_best('u12', 'atac')  # Returns U12 AT-AC matrix
             >>> pwm_set.select_best('u2', 'gtag')   # Returns U2 GT-AG matrix
         """
-        # First try exact match
+        # First try exact match without version
         key = (intron_type, dinucleotides)
         if key in self.matrices:
             return self.matrices[key]
+
+        # Try finding any version of this type+dinucleotide combination
+        for matrix_key, pwm in self.matrices.items():
+            if len(matrix_key) >= 2 and matrix_key[0] == intron_type and matrix_key[1] == dinucleotides:
+                return pwm
 
         # Fall back to most common type for this subtype
         if intron_type == 'u12':
             # Try GT-AG first (most common U12), then AT-AC
             for fallback in ['gtag', 'atac']:
+                # Try without version first
                 key = ('u12', fallback)
                 if key in self.matrices:
                     return self.matrices[key]
+                # Try with any version
+                for matrix_key, pwm in self.matrices.items():
+                    if len(matrix_key) >= 2 and matrix_key[0] == 'u12' and matrix_key[1] == fallback:
+                        return pwm
         else:  # u2
             # Try GT-AG first (most common U2), then GC-AG
             for fallback in ['gtag', 'gcag']:
+                # Try without version first
                 key = ('u2', fallback)
                 if key in self.matrices:
                     return self.matrices[key]
+                # Try with any version
+                for matrix_key, pwm in self.matrices.items():
+                    if len(matrix_key) >= 2 and matrix_key[0] == 'u2' and matrix_key[1] == fallback:
+                        return pwm
 
         # Last resort: return any matrix of the right type
         for key, pwm in self.matrices.items():
@@ -229,6 +249,60 @@ class PWMSet:
                 return pwm
 
         raise ValueError(f"No PWM found for {intron_type}")
+
+    def get_all_versions(self, intron_type: str, dinucleotides: str) -> list[PWM]:
+        """
+        Get all PWM versions for an intron type and dinucleotides.
+
+        This returns all matrices (including different versions like vA9, vA10)
+        that match the given type and dinucleotides. The scorer can then try
+        each version and select the highest-scoring one.
+
+        Port from: intronIC.py:2915-2942 (multi_matrix_score loops through all matrices)
+
+        Args:
+            intron_type: 'u12' or 'u2'
+            dinucleotides: e.g., 'gtag', 'atac', 'gcag'
+
+        Returns:
+            List of all matching PWMs (may include multiple versions)
+
+        Example:
+            >>> pwm_set.get_all_versions('u12', 'gtag')
+            [PWM(name='u12_gtag_bp_vA10'), PWM(name='u12_gtag_bp_vA9')]
+        """
+        matching_pwms = []
+
+        # Find all matrices matching (intron_type, dinucleotides)
+        # Keys may be (type, dnt) or (type, dnt, version)
+        for key, pwm in self.matrices.items():
+            if len(key) >= 2 and key[0] == intron_type and key[1] == dinucleotides:
+                matching_pwms.append(pwm)
+
+        # If no exact matches, try fallback dinucleotides
+        if not matching_pwms:
+            if intron_type == 'u12':
+                fallbacks = ['gtag', 'atac']
+            else:  # u2
+                fallbacks = ['gtag', 'gcag']
+
+            for fallback in fallbacks:
+                for key, pwm in self.matrices.items():
+                    if len(key) >= 2 and key[0] == intron_type and key[1] == fallback:
+                        matching_pwms.append(pwm)
+                if matching_pwms:
+                    break
+
+        # Last resort: return any matrix of the right type
+        if not matching_pwms:
+            for key, pwm in self.matrices.items():
+                if key[0] == intron_type:
+                    matching_pwms.append(pwm)
+
+        if not matching_pwms:
+            raise ValueError(f"No PWM found for {intron_type}")
+
+        return matching_pwms
 
     @property
     def u2_gtag(self) -> Optional[PWM]:
@@ -431,6 +505,13 @@ class PWMLoader:
                     name_bits.append(key)
                     break
 
+        # Extract version tag if present (e.g., 'vA9', 'vA10')
+        # Port from: intronIC.py:1236-1238
+        # Pattern: non-letter + 'v' + optional '.' + version string
+        matrix_version = re.findall(r'[^A-Za-z]v\.?([^_\s]+)', matrix_name)
+        if matrix_version:
+            name_bits.append(matrix_version[0])
+
         return tuple(name_bits)
 
     @staticmethod
@@ -472,9 +553,17 @@ class PWMLoader:
                 pseudocount=pseudocount
             )
 
-            # Store by (intron_type, boundary) key
-            # e.g., ('u12', 'gtag'), ('u12', 'atac'), ('u2', 'gtag'), ('u2', 'gcag')
-            key = (intron_type, boundary)
+            # Store by (intron_type, boundary, version?) key
+            # If version tag exists (e.g., 'A9', 'A10'), include it in key
+            # Otherwise use (intron_type, boundary) only
+            # Port from: intronIC.py:2916-2917 (preserves full matrix_key tuple)
+            version = name_tuple[3] if len(name_tuple) > 3 else None
+            if version:
+                # e.g., ('u12', 'gtag', 'A10'), ('u12', 'gtag', 'A9')
+                key = (intron_type, boundary, version)
+            else:
+                # e.g., ('u12', 'gtag'), ('u12', 'atac')
+                key = (intron_type, boundary)
             by_region[region][key] = pwm
 
         # Build PWMSets

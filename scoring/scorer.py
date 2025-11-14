@@ -229,6 +229,7 @@ class IntronScorer:
         Score 5' splice site with U12 and U2 PWMs.
 
         Selects appropriate matrices based on intron dinucleotides.
+        Tries all available PWM versions and selects the highest-scoring ones.
 
         Port from: intronIC.py:2862-2944 (multi_matrix_score for 'five' region)
 
@@ -237,7 +238,7 @@ class IntronScorer:
             ignore_positions: Positions to ignore in scoring
 
         Returns:
-            Tuple of (u12_score, u2_score)
+            Tuple of (best_u12_score, best_u2_score)
         """
         # Extract 5' region
         five_region = self._extract_five_region(intron)
@@ -249,17 +250,29 @@ class IntronScorer:
         else:
             dnts = 'gtag'  # Default to GT-AG
 
-        # Select best matrices for this intron
-        u12_pwm = self.pwm_sets['five'].select_best('u12', dnts)
-        u2_pwm = self.pwm_sets['five'].select_best('u2', dnts)
+        # Get all available PWM versions
+        # Port from: intronIC.py:2915-2942 (multi_matrix_score tries all versions)
+        u12_pwms = self.pwm_sets['five'].get_all_versions('u12', dnts)
+        u2_pwms = self.pwm_sets['five'].get_all_versions('u2', dnts)
 
-        # Score with both PWMs
         # Pass the starting position of the 5' region (first coordinate)
         seq_start_pos = self.five_coords[0]  # e.g., -3
-        u12_score = u12_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
-        u2_score = u2_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
 
-        return u12_score, u2_score
+        # Try all U12 PWM versions and keep the best score
+        best_u12_score = 0.0
+        for u12_pwm in u12_pwms:
+            score = u12_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            if score > best_u12_score:
+                best_u12_score = score
+
+        # Try all U2 PWM versions and keep the best score
+        best_u2_score = 0.0
+        for u2_pwm in u2_pwms:
+            score = u2_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            if score > best_u2_score:
+                best_u2_score = score
+
+        return best_u12_score, best_u2_score
 
     def _score_three_site(
         self,
@@ -270,6 +283,7 @@ class IntronScorer:
         Score 3' splice site with U12 and U2 PWMs.
 
         Selects appropriate matrices based on intron dinucleotides.
+        Tries all available PWM versions and selects the highest-scoring ones.
 
         Port from: intronIC.py:2862-2944 (multi_matrix_score for 'three' region)
 
@@ -278,7 +292,7 @@ class IntronScorer:
             ignore_positions: Positions to ignore in scoring
 
         Returns:
-            Tuple of (u12_score, u2_score)
+            Tuple of (best_u12_score, best_u2_score)
         """
         # Extract 3' region
         three_region = self._extract_three_region(intron)
@@ -290,25 +304,39 @@ class IntronScorer:
         else:
             dnts = 'gtag'  # Default to GT-AG
 
-        # Select best matrices for this intron
-        u12_pwm = self.pwm_sets['three'].select_best('u12', dnts)
-        u2_pwm = self.pwm_sets['three'].select_best('u2', dnts)
+        # Get all available PWM versions
+        # Port from: intronIC.py:2915-2942 (multi_matrix_score tries all versions)
+        u12_pwms = self.pwm_sets['three'].get_all_versions('u12', dnts)
+        u2_pwms = self.pwm_sets['three'].get_all_versions('u2', dnts)
 
-        # Score with both PWMs
         # Pass the starting position of the 3' region (first coordinate)
         seq_start_pos = self.three_coords[0]  # e.g., -6
-        u12_score = u12_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
-        u2_score = u2_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
 
-        return u12_score, u2_score
+        # Try all U12 PWM versions and keep the best score
+        best_u12_score = 0.0
+        for u12_pwm in u12_pwms:
+            score = u12_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            if score > best_u12_score:
+                best_u12_score = score
+
+        # Try all U2 PWM versions and keep the best score
+        best_u2_score = 0.0
+        for u2_pwm in u2_pwms:
+            score = u2_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            if score > best_u2_score:
+                best_u2_score = score
+
+        return best_u12_score, best_u2_score
 
     def _score_branch_point(self, intron: Intron) -> Tuple[BranchPointMatch | None, float]:
         """
         Find and score branch point with both U12 and U2 PWMs.
 
         Selects appropriate matrices based on intron dinucleotides.
+        Tries all available PWM versions (e.g., vA9, vA10) and selects
+        the highest-scoring U12 version.
 
-        Port from: intronIC.py:2920-2930, 2944 (pseudocount), 3078-3084
+        Port from: intronIC.py:2920-2944, 3078-3084
 
         The U12 PWM is used to find the best position, then both U12 and U2
         PWMs score that sequence for the log ratio.
@@ -330,31 +358,47 @@ class IntronScorer:
         else:
             dnts = 'gtag'  # Default to GT-AG
 
-        # Select best matrices for this intron
-        u12_pwm = self.pwm_sets['bp'].select_best('u12', dnts)
-        u2_pwm = self.pwm_sets['bp'].select_best('u2', dnts)
+        # Get all available PWM versions for U12 and U2
+        # Port from: intronIC.py:2915-2942 (multi_matrix_score tries all versions)
+        u12_pwms = self.pwm_sets['bp'].get_all_versions('u12', dnts)
+        u2_pwms = self.pwm_sets['bp'].get_all_versions('u2', dnts)
 
-        # Create a branch point scorer with both U12 and U2 PWMs
-        # The scorer will find best matches for both and return combined result
-        bp_scorer = BranchPointScorer(u12_pwm=u12_pwm, u2_pwm=u2_pwm)
+        # Try all U12 PWM versions and select the highest-scoring one
+        # Port from: intronIC.py:2934-2942 (keeps best score per matrix_category)
+        best_match = None
+        best_u12_score = 0.0
 
-        # Find best matches for both U12 and U2 PWMs
-        # Port from: intronIC.py:2943-2944, 3078-3084
-        match = bp_scorer.find_best_match(intron, search_window=self.bp_coords)
+        for u12_pwm in u12_pwms:
+            # U2 typically has only one version, but use all just in case
+            for u2_pwm in u2_pwms:
+                # Create a branch point scorer with both U12 and U2 PWMs
+                bp_scorer = BranchPointScorer(u12_pwm=u12_pwm, u2_pwm=u2_pwm)
 
-        # If match is None (window too small), use pseudocount for both scores
-        # Port from: intronIC.py:2944
-        if match is None:
-            # Use pseudocount * matrix_length for both U12 and U2
-            # This gives a low but non-zero score for short introns
-            pseudocount_score = u2_pwm.pseudocount * u2_pwm.length
+                # Find best matches for both U12 and U2 PWMs
+                match = bp_scorer.find_best_match(intron, search_window=self.bp_coords)
+
+                # If match is None (window too small), use pseudocount
+                if match is None:
+                    if best_match is None:
+                        # Only set pseudocount if we haven't found any match yet
+                        pseudocount_score = u2_pwm.pseudocount * u2_pwm.length
+                        return None, pseudocount_score
+                    continue
+
+                # Compare raw product scores (higher is better)
+                # Port from: intronIC.py:2937 (if target.get('score', 0) > s)
+                if match.score > best_u12_score:
+                    best_u12_score = match.score
+                    best_match = match
+
+        # If no match found (all windows too small), use pseudocount
+        if best_match is None:
+            # Use the first U2 PWM for pseudocount calculation
+            pseudocount_score = u2_pwms[0].pseudocount * u2_pwms[0].length
             return None, pseudocount_score
 
-        # Match contains both U12 and U2 results
-        # Port from: intronIC.py:3083-3084 (separate U2 BP sequence)
-        u2_score = match.score_u2
-
-        return match, u2_score
+        # Return the best match found across all versions
+        return best_match, best_match.score_u2
 
     def _extract_five_region(self, intron: Intron) -> str:
         """
