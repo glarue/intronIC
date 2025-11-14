@@ -83,8 +83,7 @@ def run_fast_test(mode='quick', config_file=None):
 
     print(f"\\nOptimized Parameters:")
     print(f"  C: {parameters.C:.6e}")
-    print(f"  gamma_5_bp: {parameters.gamma_5_bp}")
-    print(f"  gamma_5_3: {parameters.gamma_5_3}")
+    print(f"  include_max: {parameters.include_max}")
     print(f"  dual: {parameters.dual}")
     print(f"  intercept_scaling: {parameters.intercept_scaling}")
     print(f"  calibration_method: {parameters.calibration_method}")
