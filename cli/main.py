@@ -1077,17 +1077,33 @@ def classify_introns(
 
     # Load optimizer configuration if specified
     param_grid_override = None
+    optimizer_n_rounds = config.training.n_optimization_rounds
+    optimizer_cv_folds = config.training.n_cv_folds
+    optimizer_cv_processes = config.performance.cv_processes
+    optimizer_max_iter = config.training.max_iter
+
     if config.training.optimizer_config_path:
         messenger.log_only(f"Loading optimizer configuration from: {config.training.optimizer_config_path}")
         try:
             from classification.config_loader import load_optimizer_config
             optimizer_from_yaml = load_optimizer_config(config.training.optimizer_config_path)
-            # Extract just the param_grid_override from the loaded optimizer
+
+            # Extract ALL settings from YAML optimizer (not just param_grid!)
             param_grid_override = optimizer_from_yaml.param_grid_override
-            messenger.log_only(f"Using custom parameter grid with {len(param_grid_override)} parameter sets")
+            optimizer_n_rounds = optimizer_from_yaml.n_rounds
+            optimizer_cv_folds = optimizer_from_yaml.cv_folds
+            optimizer_cv_processes = optimizer_from_yaml.n_jobs  # n_jobs → cv_processes
+            optimizer_max_iter = optimizer_from_yaml.max_iter
+
+            messenger.log_only(f"Loaded custom optimizer configuration:")
+            messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
+            messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
+            messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
+            messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
+            messenger.log_only(f"  Parameter grid: {len(param_grid_override)} hyperparameter sets")
         except Exception as e:
             messenger.warning(f"Failed to load optimizer config: {e}")
-            messenger.warning("Continuing with default parameter grid...")
+            messenger.warning("Continuing with default optimizer settings...")
 
     # Create classifier with correct parameter names
     # IntronClassifier API uses:
@@ -1099,17 +1115,17 @@ def classify_introns(
     # - classification_processes (for prediction parallelization)
     # - param_grid_override (optional custom parameter grid)
     classifier = IntronClassifier(
-        n_optimization_rounds=config.training.n_optimization_rounds,
+        n_optimization_rounds=optimizer_n_rounds,
         classification_threshold=config.scoring.threshold,
         n_ensemble_models=config.training.n_models,
         fixed_c=config.training.fixed_C,
         optimize_c=(config.training.fixed_C is None),
         random_state=config.training.seed,
-        cv_processes=config.performance.cv_processes,
+        cv_processes=optimizer_cv_processes,
         classification_processes=config.performance.processes,
-        max_iter=config.training.max_iter,
+        max_iter=optimizer_max_iter,
         eval_mode=config.training.eval_mode,
-        n_cv_folds=config.training.n_cv_folds,
+        n_cv_folds=optimizer_cv_folds,
         test_fraction=config.training.test_fraction,
         param_grid_override=param_grid_override
     )
