@@ -1081,6 +1081,7 @@ def classify_introns(
     optimizer_cv_folds = config.training.n_cv_folds
     optimizer_cv_processes = config.performance.cv_processes
     optimizer_max_iter = config.training.max_iter
+    optimizer_n_points_initial = 13  # Default value
 
     if config.training.optimizer_config_path:
         messenger.log_only(f"Loading optimizer configuration from: {config.training.optimizer_config_path}")
@@ -1094,9 +1095,11 @@ def classify_introns(
             optimizer_cv_folds = optimizer_from_yaml.cv_folds
             optimizer_cv_processes = optimizer_from_yaml.n_jobs  # n_jobs → cv_processes
             optimizer_max_iter = optimizer_from_yaml.max_iter
+            optimizer_n_points_initial = optimizer_from_yaml.n_points_initial
 
             messenger.log_only(f"Loaded custom optimizer configuration:")
             messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
+            messenger.log_only(f"  Initial grid points: {optimizer_n_points_initial}")
             messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
             messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
             messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
@@ -1114,6 +1117,7 @@ def classify_introns(
     # - cv_processes (for cross-validation parallelization)
     # - classification_processes (for prediction parallelization)
     # - param_grid_override (optional custom parameter grid)
+    # - n_points_initial (initial grid points for optimization)
     classifier = IntronClassifier(
         n_optimization_rounds=optimizer_n_rounds,
         classification_threshold=config.scoring.threshold,
@@ -1127,7 +1131,8 @@ def classify_introns(
         eval_mode=config.training.eval_mode,
         n_cv_folds=optimizer_cv_folds,
         test_fraction=config.training.test_fraction,
-        param_grid_override=param_grid_override
+        param_grid_override=param_grid_override,
+        n_points_initial=optimizer_n_points_initial
     )
 
     # Run complete classification pipeline (optimize + train + classify)

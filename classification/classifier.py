@@ -131,7 +131,8 @@ class IntronClassifier:
         eval_mode: str = 'nested_cv',
         n_cv_folds: int = 5,
         test_fraction: float = 0.2,
-        param_grid_override: Optional[dict] = None
+        param_grid_override: Optional[dict] = None,
+        n_points_initial: int = 13
     ):
         """
         Initialize classifier.
@@ -152,6 +153,7 @@ class IntronClassifier:
             n_cv_folds: Number of CV folds for nested CV (default: 5)
             test_fraction: Test set fraction for split mode (default: 0.2)
             param_grid_override: Optional custom parameter grid for optimizer (default: None)
+            n_points_initial: Initial grid points for round 1 optimization (default: 13)
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -167,6 +169,7 @@ class IntronClassifier:
         self.n_cv_folds = n_cv_folds
         self.test_fraction = test_fraction
         self.param_grid_override = param_grid_override
+        self.n_points_initial = n_points_initial
 
         # Auto-skip evaluation when using fixed C
         # Rationale: When C is pre-specified, evaluation metrics aren't useful
@@ -280,6 +283,8 @@ class IntronClassifier:
             print("\n=== Stage 1: Hyperparameter Optimization ===")
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
+                n_points_initial=self.n_points_initial,
+                cv_folds=self.n_cv_folds,
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
@@ -430,6 +435,8 @@ class IntronClassifier:
             print("\n=== Stage 1: Hyperparameter Optimization ===")
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
+                n_points_initial=self.n_points_initial,
+                cv_folds=self.n_cv_folds,
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
