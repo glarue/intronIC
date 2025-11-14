@@ -247,7 +247,8 @@ class SVMOptimizer:
         random_state: int = 42,
         n_jobs: int = 1,
         verbose: bool = True,
-        max_iter: int = 100000
+        max_iter: int = 100000,
+        param_grid_override: Optional[Dict[str, list]] = None
     ):
         """
         Initialize optimizer.
@@ -261,6 +262,11 @@ class SVMOptimizer:
             n_jobs: Number of parallel jobs for GridSearchCV (default: 1)
             verbose: Whether to print detailed progress (default: True)
             max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
+            param_grid_override: Optional custom parameter grid for testing
+                               (if None, uses default full grid). Keys: C is auto-inserted,
+                               but can specify: 'estimator__augment__gamma_5_bp',
+                               'estimator__augment__gamma_5_3', 'estimator__svc__dual',
+                               'estimator__svc__intercept_scaling', 'method'
         """
         self.n_rounds = n_rounds
         self.n_points_initial = n_points_initial
@@ -270,6 +276,7 @@ class SVMOptimizer:
         self.n_jobs = n_jobs
         self.verbose = verbose
         self.max_iter = max_iter
+        self.param_grid_override = param_grid_override
         self.rounds_: list[OptimizationRound] = []
 
     def optimize(
@@ -514,14 +521,20 @@ class SVMOptimizer:
         # Optimize C, γ parameters, dual, intercept_scaling, and calibration method
         # Use neg_log_loss to optimize for probability quality (best practice)
         # This is critical when deploying at custom thresholds (e.g., 0.90)
-        param_grid = {
-            'estimator__svc__C': C_grid,  # C parameter through pipeline
-            'estimator__augment__gamma_5_bp': [1, 2, 4, 8],  # 5'SS-BPS imbalance penalty weight
-            'estimator__augment__gamma_5_3': [1, 2, 4],  # 5'SS-3'SS imbalance penalty weight
-            'estimator__svc__dual': [False, True],  # Primal vs dual formulation
-            'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
-            'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
-        }
+        if self.param_grid_override is not None:
+            # Use custom parameter grid for fast testing
+            param_grid = {'estimator__svc__C': C_grid}  # Always include C
+            param_grid.update(self.param_grid_override)
+        else:
+            # Full parameter grid for production
+            param_grid = {
+                'estimator__svc__C': C_grid,  # C parameter through pipeline
+                'estimator__augment__gamma_5_bp': [1, 2, 4, 8],  # 5'SS-BPS imbalance penalty weight
+                'estimator__augment__gamma_5_3': [1, 2, 4],  # 5'SS-3'SS imbalance penalty weight
+                'estimator__svc__dual': [False, True],  # Primal vs dual formulation
+                'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
+                'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
+            }
 
         grid_search = GridSearchCV(
             model,
