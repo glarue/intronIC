@@ -9,6 +9,7 @@ import logging
 import json
 import time
 import joblib
+import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional
 
