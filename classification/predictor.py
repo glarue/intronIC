@@ -100,6 +100,10 @@ def _predict_chunk_worker(
     clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
     log_odds = np.log(clipped_probas / (1 - clipped_probas))
 
+    # Get gamma parameters from first model (all models use same pipeline parameters)
+    gamma_5_bp = ensemble.models[0].parameters.gamma_5_bp
+    gamma_5_3 = ensemble.models[0].parameters.gamma_5_3
+
     # Update introns with classification results
     classified_introns = []
     for i, intron in enumerate(introns):
@@ -113,12 +117,26 @@ def _predict_chunk_worker(
         # decision_distance > 0 is equivalent to probability > 50% (the raw classifier decision)
         type_id = 'u12' if decision_distance > 0 else 'u2'
 
+        # Compute BothEndsStrong augmented features for output
+        five_z = intron.scores.five_z_score
+        bp_z = intron.scores.bp_z_score
+        three_z = intron.scores.three_z_score
+
+        five_bp_sum = five_z + bp_z
+        five_bp_diff = abs(five_z - bp_z) * gamma_5_bp
+        five_three_sum = five_z + three_z
+        five_three_diff = abs(five_z - three_z) * gamma_5_3
+
         # Update scores
         new_scores = replace(
             intron.scores,
             svm_score=svm_score,
             relative_score=relative_score,
-            decision_distance=decision_distance
+            decision_distance=decision_distance,
+            five_bp_sum=five_bp_sum,
+            five_bp_diff=five_bp_diff,
+            five_three_sum=five_three_sum,
+            five_three_diff=five_three_diff
         )
 
         # Update metadata with type_id
@@ -297,6 +315,10 @@ class SVMPredictor:
         clipped_probas = np.clip(avg_probas, epsilon, 1 - epsilon)
         log_odds = np.log(clipped_probas / (1 - clipped_probas))
 
+        # Get gamma parameters from first model (all models use same pipeline parameters)
+        gamma_5_bp = ensemble.models[0].parameters.gamma_5_bp
+        gamma_5_3 = ensemble.models[0].parameters.gamma_5_3
+
         # Update introns with classification results
         classified_introns = []
         for i, intron in enumerate(introns):
@@ -310,12 +332,26 @@ class SVMPredictor:
             # decision_distance > 0 is equivalent to probability > 50% (the raw classifier decision)
             type_id = 'u12' if decision_distance > 0 else 'u2'
 
+            # Compute BothEndsStrong augmented features for output
+            five_z = intron.scores.five_z_score
+            bp_z = intron.scores.bp_z_score
+            three_z = intron.scores.three_z_score
+
+            five_bp_sum = five_z + bp_z
+            five_bp_diff = abs(five_z - bp_z) * gamma_5_bp
+            five_three_sum = five_z + three_z
+            five_three_diff = abs(five_z - three_z) * gamma_5_3
+
             # Update scores (create new IntronScores with added fields)
             new_scores = replace(
                 intron.scores,
                 svm_score=svm_score,
                 relative_score=relative_score,
-                decision_distance=decision_distance
+                decision_distance=decision_distance,
+                five_bp_sum=five_bp_sum,
+                five_bp_diff=five_bp_diff,
+                five_three_sum=five_three_sum,
+                five_three_diff=five_three_diff
             )
 
             # Update metadata with type_id
