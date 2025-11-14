@@ -103,6 +103,7 @@ class TrainingConfig:
     test_fraction: float = 0.2
     n_optimization_rounds: int = 5
     pretrained_model_path: Optional[Path] = None
+    optimizer_config_path: Optional[Path] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +252,8 @@ class IntronICConfig:
             n_cv_folds=args.n_cv_folds,
             test_fraction=args.test_fraction,
             n_optimization_rounds=args.n_optimization_rounds,
-            pretrained_model_path=pretrained_model_path
+            pretrained_model_path=pretrained_model_path,
+            optimizer_config_path=getattr(args, 'optimizer_config', None)
         )
 
         # Performance configuration

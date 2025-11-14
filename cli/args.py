@@ -290,16 +290,11 @@ Examples:
             help='Path to custom pretrained model file (.model.pkl). If not specified, uses default pretrained model unless --train is set.'
         )
         training_group.add_argument(
-            '--fast-test',
-            choices=['smoke', 'quick', 'moderate', 'near_full'],
-            help='Fast testing mode with reduced parameter grid (smoke=2-5min, quick=10-20min, moderate=30-60min on Chr19). '
-                 'Useful for quick validation during development. Mutually exclusive with --optimizer-config.'
-        )
-        training_group.add_argument(
             '--optimizer-config',
             type=Path,
-            help='Path to YAML configuration file for optimizer parameters (parameter grid, CV folds, etc.). '
-                 'Allows fine-grained control over hyperparameter search. Mutually exclusive with --fast-test.'
+            help='Path to YAML configuration file for optimizer parameters. '
+                 'Allows customization of parameter grid, CV folds, n_rounds, etc. '
+                 'See config/training_quick.yaml for example format.'
         )
 
         # Scoring region coordinates

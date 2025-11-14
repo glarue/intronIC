@@ -1075,6 +1075,20 @@ def classify_introns(
         training_log_path = config.output.get_output_path('.training.log')
         messenger.log_only(f"Detailed training log will be written to: {training_log_path}")
 
+    # Load optimizer configuration if specified
+    param_grid_override = None
+    if config.training.optimizer_config_path:
+        messenger.log_only(f"Loading optimizer configuration from: {config.training.optimizer_config_path}")
+        try:
+            from classification.config_loader import load_optimizer_config
+            optimizer_from_yaml = load_optimizer_config(config.training.optimizer_config_path)
+            # Extract just the param_grid_override from the loaded optimizer
+            param_grid_override = optimizer_from_yaml.param_grid_override
+            messenger.log_only(f"Using custom parameter grid with {len(param_grid_override)} parameter sets")
+        except Exception as e:
+            messenger.warning(f"Failed to load optimizer config: {e}")
+            messenger.warning("Continuing with default parameter grid...")
+
     # Create classifier with correct parameter names
     # IntronClassifier API uses:
     # - classification_threshold (not threshold)
@@ -1083,6 +1097,7 @@ def classify_introns(
     # - random_state (not seed)
     # - cv_processes (for cross-validation parallelization)
     # - classification_processes (for prediction parallelization)
+    # - param_grid_override (optional custom parameter grid)
     classifier = IntronClassifier(
         n_optimization_rounds=config.training.n_optimization_rounds,
         classification_threshold=config.scoring.threshold,
@@ -1095,7 +1110,8 @@ def classify_introns(
         max_iter=config.training.max_iter,
         eval_mode=config.training.eval_mode,
         n_cv_folds=config.training.n_cv_folds,
-        test_fraction=config.training.test_fraction
+        test_fraction=config.training.test_fraction,
+        param_grid_override=param_grid_override
     )
 
     # Run complete classification pipeline (optimize + train + classify)
