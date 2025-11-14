@@ -95,7 +95,10 @@ class SplitEvaluator:
         max_iter: int = 100000,
         verbose: bool = True,
         optimize_c: bool = True,
-        fixed_c: float | None = None
+        fixed_c: float | None = None,
+        cv_folds: int = 5,
+        n_points_initial: int = 13,
+        param_grid_override: dict | None = None
     ):
         """
         Initialize split evaluator.
@@ -114,6 +117,9 @@ class SplitEvaluator:
             verbose: Print progress
             optimize_c: Whether to optimize C parameter (default: True)
             fixed_c: Fixed C value if not optimizing (default: None)
+            cv_folds: Cross-validation folds for GridSearchCV (default: 5)
+            n_points_initial: Initial grid points for optimization (default: 13)
+            param_grid_override: Optional custom parameter grid (default: None)
         """
         self.test_fraction = test_fraction
         self.val_fraction = val_fraction
@@ -136,6 +142,9 @@ class SplitEvaluator:
         self.verbose = verbose
         self.optimize_c = optimize_c
         self.fixed_c = fixed_c
+        self.cv_folds = cv_folds
+        self.n_points_initial = n_points_initial
+        self.param_grid_override = param_grid_override
 
     def evaluate(
         self,
@@ -212,9 +221,12 @@ class SplitEvaluator:
 
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
+                n_points_initial=self.n_points_initial,
+                cv_folds=self.cv_folds,
                 random_state=self.random_state,
                 n_jobs=self.n_jobs,
                 max_iter=self.max_iter,
+                param_grid_override=self.param_grid_override,
                 verbose=self.verbose
             )
             parameters = optimizer.optimize(train_u12, train_u2)
