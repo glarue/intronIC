@@ -69,14 +69,29 @@ def load_optimizer_config(
     # Extract parameter grid
     param_grid = config.get('param_grid', None)
 
+    # Extract C bounds (for passing to optimize() method later)
+    c_bounds = config.get('c_bounds', {})
+
     # Apply overrides
     optimizer_config.update(override_kwargs)
 
     # Create optimizer
-    return SVMOptimizer(
+    optimizer = SVMOptimizer(
         param_grid_override=param_grid,
         **optimizer_config
     )
+
+    # Attach c_bounds as attributes for later use
+    # These are passed to optimize(), not to the constructor
+    if c_bounds:
+        eff_C_pos_range = c_bounds.get('eff_C_pos_range')
+        if eff_C_pos_range:
+            optimizer.eff_C_pos_range = tuple(eff_C_pos_range)  # Convert list to tuple
+        eff_C_neg_max = c_bounds.get('eff_C_neg_max')
+        if eff_C_neg_max is not None:
+            optimizer.eff_C_neg_max = eff_C_neg_max
+
+    return optimizer
 
 
 def _parse_simple_config(config_path: Path) -> Dict[str, Any]:
