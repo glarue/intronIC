@@ -285,7 +285,7 @@ class IntronClassifier:
             print("="*80)
 
         # Stage 1: Optimize hyperparameters
-        # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+        # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
         print("\n=== Stage 1: Hyperparameter Optimization ===")
 
         # If C is fixed, constrain the grid to that single value
@@ -293,9 +293,9 @@ class IntronClassifier:
         if not self.optimize_c:
             # Force C to the fixed value, but still search other parameters
             param_grid['estimator__svc__C'] = [self.fixed_c]
-            print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
+            print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
         else:
-            print("Optimizing C, gamma, dual, intercept_scaling, and calibration_method")
+            print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
 
         optimizer = SVMOptimizer(
             n_rounds=self.n_optimization_rounds,
@@ -449,7 +449,7 @@ class IntronClassifier:
             print("="*80)
 
         # Stage 1: Optimize hyperparameters
-        # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+        # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
         print("\n=== Stage 1: Hyperparameter Optimization ===")
 
         # If C is fixed, constrain the grid to that single value
@@ -457,9 +457,9 @@ class IntronClassifier:
         if not self.optimize_c:
             # Force C to the fixed value, but still search other parameters
             param_grid['estimator__svc__C'] = [self.fixed_c]
-            print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
+            print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
         else:
-            print("Optimizing C, gamma, dual, intercept_scaling, and calibration_method")
+            print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
 
         optimizer = SVMOptimizer(
             n_rounds=self.n_optimization_rounds,

@@ -215,7 +215,7 @@ class SplitEvaluator:
         # Stage 1: Optimize hyperparameters
         # Note: We could use train+val here, but using only train gives
         # a more conservative estimate
-        # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+        # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
         if self.verbose:
             print("\nStage 1: Hyperparameter Optimization (training set)")
 
@@ -224,7 +224,7 @@ class SplitEvaluator:
         if not self.optimize_c:
             param_grid['estimator__svc__C'] = [self.fixed_c]
             if self.verbose:
-                print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
+                print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
 
         optimizer = SVMOptimizer(
             n_rounds=self.n_optimization_rounds,
