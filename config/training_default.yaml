@@ -74,32 +74,51 @@ optimizer:
 # ============================================================================
 # Defines the hyperparameter space to search
 # Total combinations = product of all list lengths
-# Current grid: 2 × 2 × 3 × 2 = 24 combinations per C value
+# Current grid: 2 × 2 × 2 × 3 × 2 = 48 combinations per C value
 param_grid:
   # BothEndsStrong feature set selection
-  # - false = Min features only (5D: s5, sBP, s3, min_5_bp, min_5_3)
-  #           Directly encodes "both ends must be strong"
-  # - true = Min + Max features (7D: adds max_5_bp, max_5_3)
-  #          Adds "at least one end strong" signal
-  # Expert guidance: "model will mostly weight min"
-  # Recommendation: Test both, CV will pick best
+  # - false = Min features only (9D: s5, sBP, s3, min_5_bp, min_5_3, min_all,
+  #           neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3)
+  #           Directly encodes "both ends must be strong" + imbalance penalties
+  # - true = Min + Max features (11D: adds max_5_bp, max_5_3)
+  #          Adds "at least one end strong" signal (usually not needed)
+  # Expert guidance: "model will mostly weight min" and "you can drop max_* entirely"
+  # Recommendation: Test both, but false (min only) expected to win
   estimator__augment__include_max: [false, true]
 
   # SVM formulation (primal vs dual)
-  # - false = Primal formulation (typical best for n_samples >> n_features)
-  #           Scales better with large datasets
-  #           Required for intercept_scaling to have effect
-  # - true = Dual formulation (better for n_features >> n_samples)
-  #          Always uses squared hinge loss
-  # For intronIC: n_samples (thousands) >> n_features (5-7), so primal is typical
-  # Recommendation: Test both, dual sometimes wins despite theory
-  estimator__svc__dual: [false, true]
+  # - false = Primal formulation **REQUIRED FOR L1**
+  #           Scales better with large datasets (n_samples >> n_features)
+  #           Allows intercept_scaling to have effect
+  #           Required for L1 penalty to work
+  # - true = Dual formulation (not compatible with L1)
+  # Note: We only search false now to enable L1 penalty option
+  # For intronIC: n_samples (thousands) >> n_features (9-11), primal is best
+  estimator__svc__dual: [false]
+
+  # Regularization penalty type (NEW - Tier 1 FP reduction)
+  # - 'l1' = L1 penalty (Lasso) - Promotes sparsity, prunes redundant features
+  #          Expert: "L1 often zeros the features that re-introduce one-end behavior"
+  #          Requires dual=false and loss='squared_hinge'
+  #          May zero out max features if they don't help
+  # - 'l2' = L2 penalty (Ridge) - Standard regularization, keeps all features
+  #          Default choice, well-tested
+  # Recommendation: Let CV choose, L1 expected to win for FP reduction
+  estimator__svc__penalty: ['l1', 'l2']
+
+  # Loss function (NEW - Tier 1 FP reduction)
+  # - 'squared_hinge' = Squared hinge loss
+  #                     Required for L1 penalty compatibility
+  #                     Works well for both L1 and L2
+  #                     Differentiable everywhere (smoother optimization)
+  # Note: Only option now because we need L1 compatibility
+  estimator__svc__loss: ['squared_hinge']
 
   # Intercept scaling (only affects dual=false)
   # - Controls regularization of intercept term
   # - Higher values = less regularization of intercept
   # - Typical range: [10.0, 100.0, 1000.0]
-  # - If dual=true, this parameter is ignored
+  # - Since dual=false always now, this always has an effect
   # Recommendation: Test multiple values, 1000.0 often works well
   estimator__svc__intercept_scaling: [10.0, 100.0, 1000.0]
 
@@ -126,14 +145,21 @@ param_grid:
 # By default, C bounds are computed automatically from class weights to ensure
 # balanced effective penalties. Uncomment to override.
 #
+# NEW DEFAULT (Tier 1 FP reduction): Tighter bounds to reduce FPR
+# - Previous default: [1e-3, 1e3]
+# - New default: [3e-4, 1e+2]
+# - Expert: "larger C tends to raise FPR" → tighter upper bound
+#
 # Example: Uncomment the section below to use custom C bounds
 # c_bounds:
 #   # Effective C for positive class (U12)
 #   # - Auto-computed based on class imbalance and desired penalty range
-#   # - Default: [1e-3, 1e3] after accounting for class weight
+#   # - NEW DEFAULT: [3e-4, 1e+2] after accounting for class weight
+#   #   (tightened from [1e-3, 1e3] to reduce false positive rate)
 #   # - Lower bound: more regularization, simpler decision boundary
 #   # - Upper bound: less regularization, more complex boundary
-#   eff_C_pos_range: [0.001, 1000.0]
+#   # Expert guidance: "prefer smaller C when models tie"
+#   eff_C_pos_range: [0.0003, 100.0]
 #
 #   # Optional maximum effective C for negative class (U2)
 #   # - null = no limit (allow effective C_neg to grow with class weight)
