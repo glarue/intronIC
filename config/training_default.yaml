@@ -1,67 +1,210 @@
-# Default training configuration for intronIC v2.0
-# Full hyperparameter search for production use
+# ============================================================================
+# intronIC v2.0 - Default Training Configuration
+# ============================================================================
+# Comprehensive configuration for production training runs
+#
+# This config includes all available parameters with production-ready defaults.
+# For faster testing, see training_quick.yaml or training_fast_test.yaml
 #
 # Usage:
-#   python -m cli.classify --train --config config/training_default.yaml -g <genome> -a <annotation> -n <species>
+#   python -m cli.classify --train --config config/training_default.yaml \
+#       -g <genome> -a <annotation> -n <species>
+#
+# ============================================================================
 
-# Optimizer settings
+# ============================================================================
+# HYPERPARAMETER OPTIMIZATION
+# ============================================================================
+# Controls the grid search for optimal SVM and feature parameters
 optimizer:
   # Number of geometric refinement rounds (1-5)
-  # 3 = production default, balances thoroughness vs runtime
+  # - Round 1: Coarse grid over full C range
+  # - Rounds 2+: Refine around best C from previous round
+  # - Production: 3-5 rounds (3 is good balance of thoroughness vs speed)
+  # - Fast testing: 1-2 rounds
   n_rounds: 3
 
   # Initial grid points for round 1 (7-13 typical)
-  # 13 = thorough initial search
+  # - Number of C values to test in first round
+  # - More points = better coverage but slower
+  # - Production: 11-13 points
+  # - Fast testing: 3-7 points
   n_points_initial: 13
 
   # Refinement grid points for rounds 2+ (20-100 typical)
-  # 100 = fine-grained refinement around optimal region
+  # - Number of C values to test in refinement rounds
+  # - Higher = finer granularity around optimal region
+  # - Production: 50-100 points
+  # - Fast testing: 20-30 points
   n_points_refine: 100
 
   # Cross-validation folds (3-5 typical)
-  # 5 = standard, provides robust parameter estimates
-  # Note: CalibratedClassifierCV adds another 3-fold internal CV
+  # - Number of folds for parameter validation
+  # - 5 = standard, provides robust estimates
+  # - 3 = faster, still reasonable
+  # Note: CalibratedClassifierCV adds another 3-fold internal CV,
+  #       so total model fits per parameter set = cv_folds × 3
   cv_folds: 5
 
-  # Number of parallel jobs (-1 = use all cores)
+  # Random seed for reproducibility
+  # - Ensures same train/test splits across runs
+  # - Change to get different random splits
+  random_state: 42
+
+  # Number of parallel jobs for GridSearchCV
+  # - -1 = use all available CPU cores
+  # - 1 = sequential (easier to debug)
+  # - N = use N cores
   n_jobs: -1
 
-  # Print detailed progress
+  # Print detailed progress messages
+  # - true = show optimization progress, CV results, timings
+  # - false = quiet mode (only warnings/errors)
   verbose: true
 
   # Maximum iterations for LinearSVC convergence
-  # 100000 = high limit to ensure convergence on large datasets
+  # - Higher = allows convergence on difficult datasets
+  # - Lower = faster but may not converge (warns if hit)
+  # - Production: 50000-100000
+  # - Fast testing: 3000-10000
   max_iter: 100000
 
-# Parameter grid for GridSearchCV
-# Note: 'estimator__svc__C' is automatically generated from C bounds
-# Total combinations = product of all list lengths below
-# Default: 2 × 2 × 3 × 2 = 24 combinations per C value
+# ============================================================================
+# PARAMETER GRID
+# ============================================================================
+# Defines the hyperparameter space to search
+# Total combinations = product of all list lengths
+# Current grid: 2 × 2 × 3 × 2 = 24 combinations per C value
 param_grid:
-  # BothEndsStrong min/max features
-  # False = only min features (5D: s5, sBP, s3, min_5_bp, min_5_3)
-  # True = min + max features (7D: adds max_5_bp, max_5_3)
+  # BothEndsStrong feature set selection
+  # - false = Min features only (5D: s5, sBP, s3, min_5_bp, min_5_3)
+  #           Directly encodes "both ends must be strong"
+  # - true = Min + Max features (7D: adds max_5_bp, max_5_3)
+  #          Adds "at least one end strong" signal
   # Expert guidance: "model will mostly weight min"
+  # Recommendation: Test both, CV will pick best
   estimator__augment__include_max: [false, true]
 
-  # Primal vs dual formulation
-  # False = primal (typical best for n_samples >> n_features)
-  # True = dual (better for n_features >> n_samples)
+  # SVM formulation (primal vs dual)
+  # - false = Primal formulation (typical best for n_samples >> n_features)
+  #           Scales better with large datasets
+  #           Required for intercept_scaling to have effect
+  # - true = Dual formulation (better for n_features >> n_samples)
+  #          Always uses squared hinge loss
+  # For intronIC: n_samples (thousands) >> n_features (5-7), so primal is typical
+  # Recommendation: Test both, dual sometimes wins despite theory
   estimator__svc__dual: [false, true]
 
-  # Intercept scaling (when dual=False)
-  # Higher values avoid over-regularizing intercept
-  # Range: [10.0, 100.0, 1000.0] explores low/medium/high scaling
+  # Intercept scaling (only affects dual=false)
+  # - Controls regularization of intercept term
+  # - Higher values = less regularization of intercept
+  # - Typical range: [10.0, 100.0, 1000.0]
+  # - If dual=true, this parameter is ignored
+  # Recommendation: Test multiple values, 1000.0 often works well
   estimator__svc__intercept_scaling: [10.0, 100.0, 1000.0]
 
-  # Calibration method
-  # sigmoid = faster, parametric (Platt scaling)
-  # isotonic = more flexible, non-parametric (requires more data)
+  # Probability calibration method
+  # - 'sigmoid' = Platt scaling (parametric, fast)
+  #               Fits sigmoid to decision function
+  #               Works well when calibration data is limited
+  # - 'isotonic' = Isotonic regression (non-parametric, flexible)
+  #                More flexible, requires more calibration data
+  #                Can overfit if calibration set is small
+  # Recommendation: Test both, sigmoid often wins for small datasets
   method: ['sigmoid', 'isotonic']
 
-# C parameter bounds (optional override)
-# Normally computed automatically from class weights
-# Uncomment to override auto-computed bounds
+# ============================================================================
+# C PARAMETER BOUNDS
+# ============================================================================
+# Controls the range of C (soft-margin penalty) values to search
+# By default, C bounds are computed automatically from class weights to ensure
+# balanced effective penalties. Uncomment to override.
+#
 # c_bounds:
-#   eff_C_pos_range: [0.001, 1000.0]  # Target effective penalty for positive class
-#   eff_C_neg_max: null  # Optional cap on negative class penalty
+#   # Effective C for positive class (U12)
+#   # - Auto-computed based on class imbalance and desired penalty range
+#   # - Default: typically [1e-3, 1e3] after accounting for class weight
+#   # - Lower bound: more regularization, simpler decision boundary
+#   # - Upper bound: less regularization, more complex boundary
+#   eff_C_pos_range: [0.001, 1000.0]
+#
+#   # Optional maximum effective C for negative class (U2)
+#   # - null = no limit (allow effective C_neg to grow with class weight)
+#   # - float = cap effective C_neg at this value
+#   # - Useful if U2 class becomes over-penalized
+#   eff_C_neg_max: null
+
+# ============================================================================
+# ENSEMBLE TRAINING
+# ============================================================================
+# Controls training of multiple models with different random subsamples
+# Models are averaged for final predictions (reduces variance)
+training:
+  # Number of models in ensemble
+  # - 1 = single model (faster, less robust)
+  # - 3-5 = typical ensemble (good balance)
+  # - 10+ = very robust but slower
+  # Recommendation: 3 for production, 1 for fast testing
+  n_models: 3
+
+  # Whether to subsample U2 set for each model
+  # - true = Each model sees different random U2 subset (more diversity)
+  # - false = All models see same U2 set (faster, less diverse)
+  # Only applies when n_models > 1
+  # Recommendation: true for ensemble diversity
+  subsample_u2: true
+
+  # Fraction of U2 introns to use per model (if subsample_u2=true)
+  # - 0.8 = use 80% of U2s for each model
+  # - 1.0 = use all U2s (no subsampling, same as subsample_u2=false)
+  # Only applies when subsample_u2=true
+  # Recommendation: 0.7-0.9 for good diversity without losing too much data
+  subsample_ratio: 0.8
+
+  # Maximum iterations for LinearSVC convergence
+  # - Separate from optimizer.max_iter (which is for parameter search)
+  # - Used during final ensemble training
+  # - Production: 20000-50000
+  # - Fast testing: 3000-10000
+  max_iter: 20000
+
+  # Random seed for ensemble training
+  # - Controls U2 subsampling randomness
+  # - Set to same value as optimizer.random_state for full reproducibility
+  random_state: 42
+
+# ============================================================================
+# NOTES & RECOMMENDATIONS
+# ============================================================================
+#
+# ESTIMATED RUNTIME (on typical workstation):
+# - Chr19 only (~20k introns): 1-2 hours with this config
+# - Full human genome (~200k introns): 10-20 hours with this config
+# - Use training_quick.yaml for faster validation (~20 minutes on Chr19)
+#
+# PARALLELIZATION:
+# - Controlled by optimizer.n_jobs (for hyperparameter search)
+# - GridSearchCV parallelizes across parameter combinations
+# - Each job fits cv_folds × 3 (calibration) models
+# - Memory usage scales with n_jobs (more cores = more memory)
+#
+# MEMORY USAGE:
+# - Typical: 2-5 GB for Chr19
+# - Full genome: 10-20 GB
+# - Scales with: number of introns, n_jobs, ensemble size
+#
+# HYPERPARAMETER TUNING TIPS:
+# - include_max: Usually doesn't improve much (min features suffice)
+# - dual: Often false (primal) is best for our n_samples >> n_features
+# - intercept_scaling: 1000.0 often optimal (avoid over-regularizing intercept)
+# - method: sigmoid vs isotonic is dataset-dependent, test both
+#
+# FAST TESTING DURING DEVELOPMENT:
+# - Reduce n_rounds: 3 → 1
+# - Reduce n_points_initial: 13 → 3-7
+# - Reduce cv_folds: 5 → 3
+# - Reduce param_grid: Pick single values instead of lists
+# - Reduce n_models: 3 → 1
+# - Or use pre-configured training_quick.yaml or training_fast_test.yaml
+#
+# ============================================================================
