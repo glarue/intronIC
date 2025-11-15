@@ -73,7 +73,9 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
 
     def __init__(
         self,
-        include_max: bool = False
+        include_max: bool = False,
+        gamma_5_bp=None,  # Deprecated - kept for backward compatibility
+        gamma_5_3=None    # Deprecated - kept for backward compatibility
     ):
         """
         Initialize BothEndsStrongTransformer.
@@ -81,8 +83,26 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         Args:
             include_max: Whether to include max features (default: False)
                         Expert guidance: "model will mostly weight min"
+            gamma_5_bp: DEPRECATED - Ignored, kept for backward compatibility with old models
+            gamma_5_3: DEPRECATED - Ignored, kept for backward compatibility with old models
         """
         self.include_max = include_max
+
+        # Backward compatibility: Store gamma parameters as attributes even though they're unused
+        # This allows old pickled models to load without errors
+        # Old models used gamma-weighted sum+absdiff, new models use min/max
+        self.gamma_5_bp = gamma_5_bp
+        self.gamma_5_3 = gamma_5_3
+
+        if gamma_5_bp is not None or gamma_5_3 is not None:
+            import warnings
+            warnings.warn(
+                "gamma_5_bp and gamma_5_3 are deprecated. "
+                "The transformer now uses min/max features instead of gamma-weighted features. "
+                "Old models will work but should be retrained with the new approach.",
+                DeprecationWarning,
+                stacklevel=2
+            )
 
     def fit(self, X, y=None):
         """
