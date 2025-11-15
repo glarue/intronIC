@@ -495,7 +495,7 @@ class SVMOptimizer:
 
         base_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
-            ('augment', BothEndsStrongTransformer()),  # γ parameters will be grid-searched
+            ('augment', BothEndsStrongTransformer()),  # include_max parameter will be grid-searched
             ('svc', LinearSVC(
                 loss='squared_hinge',  # Default loss for LinearSVC
                 penalty='l2',  # L2 regularization
@@ -513,7 +513,7 @@ class SVMOptimizer:
             ensemble='auto'  # Per-fold fit + averaging
         )
 
-        # Optimize C, γ parameters, dual, intercept_scaling, and calibration method
+        # Optimize C, include_max, dual, intercept_scaling, and calibration method
         # Use neg_log_loss to optimize for probability quality (best practice)
         # This is critical when deploying at custom thresholds (e.g., 0.90)
         if self.param_grid_override is not None:
