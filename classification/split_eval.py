@@ -98,7 +98,9 @@ class SplitEvaluator:
         fixed_c: float | None = None,
         cv_folds: int = 5,
         n_points_initial: int = 13,
-        param_grid_override: dict | None = None
+        param_grid_override: dict | None = None,
+        eff_C_pos_range: tuple = (1e-3, 1e3),
+        eff_C_neg_max: float | None = None
     ):
         """
         Initialize split evaluator.
@@ -120,6 +122,8 @@ class SplitEvaluator:
             cv_folds: Cross-validation folds for GridSearchCV (default: 5)
             n_points_initial: Initial grid points for optimization (default: 13)
             param_grid_override: Optional custom parameter grid (default: None)
+            eff_C_pos_range: Target effective penalty range for positive class (default: 1e-3 to 1e3)
+            eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
         """
         self.test_fraction = test_fraction
         self.val_fraction = val_fraction
@@ -145,6 +149,8 @@ class SplitEvaluator:
         self.cv_folds = cv_folds
         self.n_points_initial = n_points_initial
         self.param_grid_override = param_grid_override
+        self.eff_C_pos_range = eff_C_pos_range
+        self.eff_C_neg_max = eff_C_neg_max
 
     def evaluate(
         self,
@@ -236,7 +242,12 @@ class SplitEvaluator:
             param_grid_override=param_grid if param_grid else None,
             verbose=self.verbose
         )
-        parameters = optimizer.optimize(train_u12, train_u2)
+        parameters = optimizer.optimize(
+            train_u12,
+            train_u2,
+            eff_C_pos_range=self.eff_C_pos_range,
+            eff_C_neg_max=self.eff_C_neg_max
+        )
 
         # Stage 2: Train ensemble on training data
         if self.verbose:
