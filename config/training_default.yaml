@@ -114,16 +114,17 @@ param_grid:
   method: ['sigmoid', 'isotonic']
 
 # ============================================================================
-# C PARAMETER BOUNDS
+# C PARAMETER BOUNDS (OPTIONAL)
 # ============================================================================
 # Controls the range of C (soft-margin penalty) values to search
 # By default, C bounds are computed automatically from class weights to ensure
 # balanced effective penalties. Uncomment to override.
 #
+# Example: Uncomment the section below to use custom C bounds
 # c_bounds:
 #   # Effective C for positive class (U12)
 #   # - Auto-computed based on class imbalance and desired penalty range
-#   # - Default: typically [1e-3, 1e3] after accounting for class weight
+#   # - Default: [1e-3, 1e3] after accounting for class weight
 #   # - Lower bound: more regularization, simpler decision boundary
 #   # - Upper bound: less regularization, more complex boundary
 #   eff_C_pos_range: [0.001, 1000.0]
