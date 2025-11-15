@@ -207,7 +207,7 @@ class NestedCVEvaluator:
                 print(f"Test:  {n_u2_test} U2, {n_u12_test} U12")
 
             # Stage 1: Optimize hyperparameters
-            # Even with fixed C, we optimize gamma/dual/intercept_scaling/calibration_method
+            # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
             if self.verbose:
                 print(f"\nStage 1: Hyperparameter Optimization (fold {fold_idx + 1})")
 
@@ -216,7 +216,7 @@ class NestedCVEvaluator:
             if not self.optimize_c:
                 param_grid['estimator__svc__C'] = [self.fixed_c]
                 if self.verbose:
-                    print(f"C fixed at {self.fixed_c:.6e}, optimizing gamma/dual/intercept_scaling/calibration_method")
+                    print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
 
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
