@@ -200,7 +200,9 @@ class SVMParameters:
     C: float  # Soft-margin penalty
     calibration_method: str  # 'sigmoid' or 'isotonic'
     include_max: bool  # Whether to include max features in BothEndsStrong transformer
-    dual: bool  # Primal (False) or dual (True) formulation
+    dual: bool  # Primal (False) or dual (True) formulation - kept False for L1 compatibility
+    penalty: str  # 'l1' or 'l2' - L1 prunes correlated features
+    loss: str  # 'squared_hinge' - required for L1 penalty
     intercept_scaling: float  # Scaling for intercept (when dual=False)
     cv_score: float  # Cross-validation neg_log_loss
     round_found: int  # Which optimization round found these params (-1 = averaged)
@@ -216,6 +218,8 @@ class OptimizationRound:
     best_method: str  # 'sigmoid' or 'isotonic'
     best_include_max: bool  # Whether to include max features
     best_dual: bool  # Primal (False) or dual (True) formulation
+    best_penalty: str  # 'l1' or 'l2'
+    best_loss: str  # 'squared_hinge'
     best_intercept_scaling: float  # Intercept scaling parameter
     best_score: float
     rank_one_Cs: list[float]  # All rank-1 C values
@@ -365,22 +369,26 @@ class SVMOptimizer:
         final_C = gmean(self.rounds_[-1].rank_one_Cs)
         final_method = self.rounds_[-1].best_method
         final_dual = self.rounds_[-1].best_dual
+        final_penalty = self.rounds_[-1].best_penalty  # NEW: L1 or L2
+        final_loss = self.rounds_[-1].best_loss  # NEW: squared_hinge
         final_intercept_scaling = self.rounds_[-1].best_intercept_scaling
         final_include_max = self.rounds_[-1].best_include_max
 
         # Evaluate final parameters
         final_score = self._evaluate_params(
-            X, y, final_C, final_method, final_dual, final_intercept_scaling,
-            final_include_max
+            X, y, final_C, final_method, final_dual, final_penalty, final_loss,
+            final_intercept_scaling, final_include_max
         )
 
-        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, intercept_scaling={final_intercept_scaling}, include_max={final_include_max}, CV score={final_score:.4f}", flush=True)
+        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, penalty={final_penalty}, loss={final_loss}, intercept_scaling={final_intercept_scaling}, include_max={final_include_max}, CV score={final_score:.4f}", flush=True)
 
         return SVMParameters(
             C=final_C,
             calibration_method=final_method,
             include_max=final_include_max,
             dual=final_dual,
+            penalty=final_penalty,  # NEW
+            loss=final_loss,  # NEW
             intercept_scaling=final_intercept_scaling,
             cv_score=final_score,
             round_found=-1  # -1 indicates averaged result
@@ -522,10 +530,13 @@ class SVMOptimizer:
             param_grid.update(self.param_grid_override)
         else:
             # Full parameter grid for production
+            # Expert guidance: L1 penalty prunes correlated features that re-introduce one-end behavior
             param_grid = {
                 'estimator__svc__C': C_grid,  # C parameter through pipeline
                 'estimator__augment__include_max': [False, True],  # Whether to include max features (expert: "model will mostly weight min")
-                'estimator__svc__dual': [False, True],  # Primal vs dual formulation
+                'estimator__svc__dual': [False],  # Must be False for L1 penalty compatibility
+                'estimator__svc__penalty': ['l1', 'l2'],  # L1 prunes redundant features, L2 standard
+                'estimator__svc__loss': ['squared_hinge'],  # Required for L1, works for both penalties
                 'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
                 'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
             }
@@ -624,6 +635,8 @@ class SVMOptimizer:
         best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['estimator__svc__C']
         best_method = grid_search.best_params_['method']
         best_dual = grid_search.best_params_['estimator__svc__dual']
+        best_penalty = grid_search.best_params_['estimator__svc__penalty']  # NEW: L1 or L2
+        best_loss = grid_search.best_params_['estimator__svc__loss']  # NEW: squared_hinge
         best_intercept_scaling = grid_search.best_params_['estimator__svc__intercept_scaling']
         best_include_max = grid_search.best_params_['estimator__augment__include_max']
         best_score = grid_search.best_score_
@@ -635,6 +648,8 @@ class SVMOptimizer:
             print(f"Best C (geometric mean of rank-1): {best_C:.6e}", flush=True)
             print(f"Best calibration method: {best_method}", flush=True)
             print(f"Best dual formulation: {best_dual}", flush=True)
+            print(f"Best penalty: {best_penalty}", flush=True)  # NEW
+            print(f"Best loss: {best_loss}", flush=True)  # NEW
             print(f"Best intercept_scaling: {best_intercept_scaling}", flush=True)
             print(f"Best include_max: {best_include_max}", flush=True)
             print(f"Best CV score (neg_log_loss): {best_score:.4f}", flush=True)
@@ -648,6 +663,8 @@ class SVMOptimizer:
             best_method=best_method,
             best_include_max=best_include_max,
             best_dual=best_dual,
+            best_penalty=best_penalty,  # NEW
+            best_loss=best_loss,  # NEW
             best_intercept_scaling=best_intercept_scaling,
             best_score=best_score,
             rank_one_Cs=rank_one_Cs
@@ -742,6 +759,8 @@ class SVMOptimizer:
         C: float,
         method: str,
         dual: bool,
+        penalty: str,  # NEW: 'l1' or 'l2'
+        loss: str,  # NEW: 'squared_hinge'
         intercept_scaling: float,
         include_max: bool
     ) -> float:
@@ -754,6 +773,8 @@ class SVMOptimizer:
             C: C value to evaluate
             method: Calibration method ('sigmoid' or 'isotonic')
             dual: Primal (False) or dual (True) formulation
+            penalty: Penalty type ('l1' or 'l2')
+            loss: Loss function ('squared_hinge')
             intercept_scaling: Intercept scaling parameter
             include_max: Whether to include max features in BothEndsStrong transformer
 
@@ -763,8 +784,8 @@ class SVMOptimizer:
         # LinearSVC with external calibration (matches training approach)
         # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
         #   (s=0 means "U12≈U2", centering would destroy this meaning)
-        # - BothEndsStrongTransformer: Augments 3D → 5D (or 7D with max) with both-ends-strong features
-        # - LinearSVC: Optimized for linear case
+        # - BothEndsStrongTransformer: Augments 3D → 9D (or 11D with max) with both-ends-strong features
+        # - LinearSVC: Optimized for linear case, L1 prunes redundant features
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
@@ -774,8 +795,8 @@ class SVMOptimizer:
             ('svc', LinearSVC(
                 C=C,
                 dual=dual,
-                loss='squared_hinge',
-                penalty='l2',
+                penalty=penalty,  # L1 or L2
+                loss=loss,  # squared_hinge
                 intercept_scaling=intercept_scaling,
                 class_weight='balanced',
                 max_iter=self.max_iter,
@@ -787,7 +808,8 @@ class SVMOptimizer:
         model = CalibratedClassifierCV(
             base_svm_pipeline,
             method=method,  # Use same method as found in grid search
-            cv=5
+            cv=5,
+            ensemble=True  # FIXED: Average calibrators across folds
         )
 
         # Calculate total tasks for progress bar

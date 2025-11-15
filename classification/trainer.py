@@ -199,8 +199,8 @@ class SVMTrainer:
             ('svc', LinearSVC(
                 C=parameters.C,
                 dual=parameters.dual,  # From optimizer (typically False for our data)
-                loss='squared_hinge',  # Default loss for LinearSVC
-                penalty='l2',  # L2 regularization
+                penalty=parameters.penalty,  # From optimizer: 'l1' or 'l2' (L1 prunes redundant features)
+                loss=parameters.loss,  # From optimizer: 'squared_hinge' (required for L1)
                 intercept_scaling=parameters.intercept_scaling,  # High value when dual=False
                 class_weight='balanced',  # Critical for imbalanced data
                 max_iter=self.max_iter,  # Maximum iterations for convergence

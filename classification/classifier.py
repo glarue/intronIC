@@ -133,7 +133,7 @@ class IntronClassifier:
         test_fraction: float = 0.2,
         param_grid_override: Optional[dict] = None,
         n_points_initial: int = 13,
-        eff_C_pos_range: tuple = (1e-3, 1e3),
+        eff_C_pos_range: tuple = (3e-4, 1e+2),  # Tightened to reduce FPR
         eff_C_neg_max: Optional[float] = None
     ):
         """
@@ -156,7 +156,9 @@ class IntronClassifier:
             test_fraction: Test set fraction for split mode (default: 0.2)
             param_grid_override: Optional custom parameter grid for optimizer (default: None)
             n_points_initial: Initial grid points for round 1 optimization (default: 13)
-            eff_C_pos_range: Target effective penalty range for positive class (default: 1e-3 to 1e3)
+            eff_C_pos_range: Target effective penalty range for positive class
+                           (default: 3e-4 to 1e+2, tightened to reduce FPR)
+                           Expert: "larger C tends to raise FPR"
             eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
         """
         self.n_optimization_rounds = n_optimization_rounds
