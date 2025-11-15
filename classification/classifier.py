@@ -254,7 +254,9 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
-                param_grid_override=self.param_grid_override
+                param_grid_override=self.param_grid_override,
+                eff_C_pos_range=self.eff_C_pos_range,
+                eff_C_neg_max=self.eff_C_neg_max
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -276,7 +278,9 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
-                param_grid_override=self.param_grid_override
+                param_grid_override=self.param_grid_override,
+                eff_C_pos_range=self.eff_C_pos_range,
+                eff_C_neg_max=self.eff_C_neg_max
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -423,7 +427,9 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
-                param_grid_override=self.param_grid_override
+                param_grid_override=self.param_grid_override,
+                eff_C_pos_range=self.eff_C_pos_range,
+                eff_C_neg_max=self.eff_C_neg_max
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -445,7 +451,9 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
-                param_grid_override=self.param_grid_override
+                param_grid_override=self.param_grid_override,
+                eff_C_pos_range=self.eff_C_pos_range,
+                eff_C_neg_max=self.eff_C_neg_max
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
