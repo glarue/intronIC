@@ -11,64 +11,71 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
     """
-    Augment 3D features (5'SS, BPS, 3'SS z-scores) with pairwise
-    min/max features to capture "both ends strong" patterns.
+    Augment 3D features (5'SS, BPS, 3'SS z-scores) with composite features
+    to capture "both ends strong" patterns and penalize imbalance.
 
-    This transformer builds composite features using min and max operations
-    to directly express "both must be strong" (min) and "at least one is strong" (max).
+    This transformer builds composite features using min operations and negated
+    absolute differences to help the linear SVM identify and reject false positives
+    that show "one-end-strong" patterns.
 
     Port from: Expert recommendations for reducing false positives
-               See: BOTHENDS_IMPLEMENTATION_PLAN.md
+               See: FP_REDUCTION_IMPLEMENTATION.md
 
     Background:
         U12-type introns have strong correlation between 5'SS and BPS motifs.
         False positives often show "one-end-strong" patterns: one very high
         score compensating for weak/negative scores elsewhere.
 
-        By explicitly computing min/max features, we make it easy for the
-        linear model to express "both 5' AND BP must be strong" by simply
-        weighting min_5_bp positively.
+        By explicitly computing min features and imbalance penalties, we make
+        it easy for the linear model to:
+        1. Require all signals to be strong (via min_all)
+        2. Penalize imbalance between signals (via neg_absdiff_*)
+        3. Optionally include "at least one strong" signals (via max_*)
 
     Mathematical insight:
         min(a, b) = 0.5 * ((a + b) - |a - b|)
         max(a, b) = 0.5 * ((a + b) + |a - b|)
+        neg_absdiff(a, b) = -|a - b|  ← Penalty for imbalance
 
-        The linear model will primarily weight min features (expert guidance),
-        since min directly captures "both must be strong for U12".
+        Expert guidance: "model will mostly weight min" and "even with min_*,
+        the model may not penalize one-end-strong enough" → add neg_absdiff.
 
     Attributes:
         include_max: Whether to include max features (default: False)
                     If True, adds max_5_bp and max_5_3 features
-                    Expert notes: "model will mostly weight min"
+                    Expert: "you can drop max_* entirely"
 
     Input features (3D):
         - s5:  5' splice site z-score (LLR, zero-anchored)
         - sBP: Branch point z-score (LLR, zero-anchored)
         - s3:  3' splice site z-score (LLR, zero-anchored)
 
-    Output features (7D default, 9D with include_max=True):
+    Output features (9D default, 11D with include_max=True):
         1. s5 (original, passed through)
         2. sBP (original, passed through)
         3. s3 (original, passed through)
-        4. min_5_bp = 0.5 * ((s5 + sBP) - |s5 - sBP|)  ← Both must be strong
-        5. min_5_3 = 0.5 * ((s5 + s3) - |s5 - s3|)     ← Both must be strong
-        [6. max_5_bp = 0.5 * ((s5 + sBP) + |s5 - sBP|)]  ← At least one strong (optional)
-        [7. max_5_3 = 0.5 * ((s5 + s3) + |s5 - s3|)]     ← At least one strong (optional)
+        4. min_5_bp = min(s5, sBP)              ← Both 5' and BP must be strong
+        5. min_5_3 = min(s5, s3)                ← Both 5' and 3' must be strong
+        6. min_all = min(s5, sBP, s3)           ← ALL THREE must be strong (3-way AND)
+        7. neg_absdiff_5_bp = -|s5 - sBP|       ← Penalty for 5'/BP imbalance
+        8. neg_absdiff_5_3 = -|s5 - s3|         ← Penalty for 5'/3' imbalance
+        9. neg_absdiff_bp_3 = -|sBP - s3|       ← Penalty for BP/3' imbalance
+        [10. max_5_bp = max(s5, sBP)]           ← At least one of 5'/BP strong (optional)
+        [11. max_5_3 = max(s5, s3)]             ← At least one of 5'/3' strong (optional)
 
-    Example:
+    Example (balanced U12 intron):
         >>> transformer = BothEndsStrongTransformer(include_max=False)
-        >>> X = np.array([[2.0, 1.5, -0.5]])  # s5=2, sBP=1.5, s3=-0.5
+        >>> X = np.array([[2.0, 1.8, 1.5]])  # All strong and balanced
         >>> X_aug = transformer.transform(X)
-        >>> # X_aug = [2.0, 1.5, -0.5, 1.75, -1.25]
-        >>> #          [s5,  sBP, s3,  min_5_bp, min_5_3]
-        >>> # min_5_bp = 0.5 * ((2.0 + 1.5) - |2.0 - 1.5|) = 0.5 * 3.25 = 1.625
-        >>> # min_5_3 = 0.5 * ((2.0 + (-0.5)) - |2.0 - (-0.5)|) = 0.5 * (-1.0) = -0.5
+        >>> # min_all = 1.5 (all three strong)
+        >>> # neg_absdiff_5_bp = -0.2 (small penalty, signals consistent)
 
-        One-end-strong example (should have low min):
-        >>> X_bad = np.array([[-1.0, -0.5, 10.0]])  # Only 3'SS strong
+    Example (one-end-strong FP):
+        >>> X_bad = np.array([[5.0, -1.0, -0.5]])  # Only 5'SS strong
         >>> X_bad_aug = transformer.transform(X_bad)
-        >>> # min_5_3 = 0.5 * ((-1.0 + 10.0) - |-1.0 - 10.0|) = 0.5 * (9.0 - 11.0) = -1.0
-        >>> # Low min indicates one-end-strong pattern!
+        >>> # min_all = -1.0 (low, not all strong)
+        >>> # neg_absdiff_5_bp = -6.0 (large penalty, huge imbalance)
+        >>> # These features help SVM reject this as FP
     """
 
     def __init__(
@@ -119,13 +126,16 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         """
-        Augment 3D features to 5D (or 7D with include_max=True).
+        Augment 3D features to 9D (or 11D with include_max=True).
 
         Args:
             X: Array of shape (n_samples, 3) with [s5, sBP, s3]
 
         Returns:
-            Array of shape (n_samples, 5) or (n_samples, 7) with augmented features
+            Array of shape (n_samples, 9) or (n_samples, 11) with augmented features
+            Features: [s5, sBP, s3, min_5_bp, min_5_3, min_all,
+                      neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3,
+                      [max_5_bp, max_5_3]]
 
         Raises:
             ValueError: If input doesn't have exactly 3 features
@@ -158,16 +168,34 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         absdiff_5_3 = np.abs(s5 - s3)
         min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
 
-        # Stack base + min features
+        # 3-way AND: ALL THREE must be strong (NEW)
+        # min_all = min(s5, sBP, s3)
+        min_all = np.minimum(np.minimum(s5, sBP), s3)
+
+        # Imbalance penalties (NEW)
+        # Negative absdiff = penalty for inconsistency
+        # Model puts positive weight on these → rewards balanced signals
+        neg_absdiff_5_bp = -absdiff_5_bp
+        neg_absdiff_5_3 = -absdiff_5_3
+
+        # For BPS-3'SS imbalance
+        absdiff_bp_3 = np.abs(sBP - s3)
+        neg_absdiff_bp_3 = -absdiff_bp_3
+
+        # Stack base + min + penalty features
         features = [
             s5[:, np.newaxis],
             sBP[:, np.newaxis],
             s3[:, np.newaxis],
             min_5_bp[:, np.newaxis],
-            min_5_3[:, np.newaxis]
+            min_5_3[:, np.newaxis],
+            min_all[:, np.newaxis],           # NEW
+            neg_absdiff_5_bp[:, np.newaxis],  # NEW
+            neg_absdiff_5_3[:, np.newaxis],   # NEW
+            neg_absdiff_bp_3[:, np.newaxis]   # NEW
         ]
 
-        # Optional: max features (expert notes: "model will mostly weight min")
+        # Optional: max features (expert: "you can drop max_* entirely")
         if self.include_max:
             max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
             max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
@@ -184,14 +212,18 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             input_features: Input feature names (ignored, we know it's [s5, sBP, s3])
 
         Returns:
-            Array of output feature names
+            Array of output feature names (9 or 11 strings)
         """
         names = [
             's5',
             'sBP',
             's3',
             'min_5_bp',
-            'min_5_3'
+            'min_5_3',
+            'min_all',           # NEW
+            'neg_absdiff_5_bp',  # NEW
+            'neg_absdiff_5_3',   # NEW
+            'neg_absdiff_bp_3'   # NEW
         ]
 
         if self.include_max:
