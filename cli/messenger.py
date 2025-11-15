@@ -148,9 +148,10 @@ class UnifiedMessenger:
         # Log: Section marker with formatting preserved
         step_header = f"[bold blue]{'=' * 40}[/bold blue]"
         step_text = f"[bold cyan]STEP {step_num}: {step_name.upper()}[/bold cyan]"
-        self.log_console.print(f"\n{step_header}")
-        self.log_console.print(step_text)
-        self.log_console.print(step_header)
+        self.logger.info("")  # Blank line
+        self.logger.info(step_header)
+        self.logger.info(step_text)
+        self.logger.info(step_header)
 
     def log_only(self, message: str, level: str = "info"):
         """
