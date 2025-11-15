@@ -1,0 +1,67 @@
+# Default training configuration for intronIC v2.0
+# Full hyperparameter search for production use
+#
+# Usage:
+#   python -m cli.classify --train --config config/training_default.yaml -g <genome> -a <annotation> -n <species>
+
+# Optimizer settings
+optimizer:
+  # Number of geometric refinement rounds (1-5)
+  # 3 = production default, balances thoroughness vs runtime
+  n_rounds: 3
+
+  # Initial grid points for round 1 (7-13 typical)
+  # 13 = thorough initial search
+  n_points_initial: 13
+
+  # Refinement grid points for rounds 2+ (20-100 typical)
+  # 100 = fine-grained refinement around optimal region
+  n_points_refine: 100
+
+  # Cross-validation folds (3-5 typical)
+  # 5 = standard, provides robust parameter estimates
+  # Note: CalibratedClassifierCV adds another 3-fold internal CV
+  cv_folds: 5
+
+  # Number of parallel jobs (-1 = use all cores)
+  n_jobs: -1
+
+  # Print detailed progress
+  verbose: true
+
+  # Maximum iterations for LinearSVC convergence
+  # 100000 = high limit to ensure convergence on large datasets
+  max_iter: 100000
+
+# Parameter grid for GridSearchCV
+# Note: 'estimator__svc__C' is automatically generated from C bounds
+# Total combinations = product of all list lengths below
+# Default: 2 × 2 × 3 × 2 = 24 combinations per C value
+param_grid:
+  # BothEndsStrong min/max features
+  # False = only min features (5D: s5, sBP, s3, min_5_bp, min_5_3)
+  # True = min + max features (7D: adds max_5_bp, max_5_3)
+  # Expert guidance: "model will mostly weight min"
+  estimator__augment__include_max: [false, true]
+
+  # Primal vs dual formulation
+  # False = primal (typical best for n_samples >> n_features)
+  # True = dual (better for n_features >> n_samples)
+  estimator__svc__dual: [false, true]
+
+  # Intercept scaling (when dual=False)
+  # Higher values avoid over-regularizing intercept
+  # Range: [10.0, 100.0, 1000.0] explores low/medium/high scaling
+  estimator__svc__intercept_scaling: [10.0, 100.0, 1000.0]
+
+  # Calibration method
+  # sigmoid = faster, parametric (Platt scaling)
+  # isotonic = more flexible, non-parametric (requires more data)
+  method: ['sigmoid', 'isotonic']
+
+# C parameter bounds (optional override)
+# Normally computed automatically from class weights
+# Uncomment to override auto-computed bounds
+# c_bounds:
+#   eff_C_pos_range: [0.001, 1000.0]  # Target effective penalty for positive class
+#   eff_C_neg_max: null  # Optional cap on negative class penalty
