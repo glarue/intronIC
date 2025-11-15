@@ -132,7 +132,9 @@ class IntronClassifier:
         n_cv_folds: int = 5,
         test_fraction: float = 0.2,
         param_grid_override: Optional[dict] = None,
-        n_points_initial: int = 13
+        n_points_initial: int = 13,
+        eff_C_pos_range: tuple = (1e-3, 1e3),
+        eff_C_neg_max: Optional[float] = None
     ):
         """
         Initialize classifier.
@@ -154,6 +156,8 @@ class IntronClassifier:
             test_fraction: Test set fraction for split mode (default: 0.2)
             param_grid_override: Optional custom parameter grid for optimizer (default: None)
             n_points_initial: Initial grid points for round 1 optimization (default: 13)
+            eff_C_pos_range: Target effective penalty range for positive class (default: 1e-3 to 1e3)
+            eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -170,6 +174,8 @@ class IntronClassifier:
         self.test_fraction = test_fraction
         self.param_grid_override = param_grid_override
         self.n_points_initial = n_points_initial
+        self.eff_C_pos_range = eff_C_pos_range
+        self.eff_C_neg_max = eff_C_neg_max
 
         # Auto-skip evaluation when using fixed C
         # Rationale: When C is pre-specified, evaluation metrics aren't useful
@@ -306,7 +312,12 @@ class IntronClassifier:
             max_iter=self.max_iter,
             param_grid_override=param_grid if param_grid else None
         )
-        parameters = optimizer.optimize(u12_reference, u2_reference)
+        parameters = optimizer.optimize(
+            u12_reference,
+            u2_reference,
+            eff_C_pos_range=self.eff_C_pos_range,
+            eff_C_neg_max=self.eff_C_neg_max
+        )
         print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
@@ -470,7 +481,12 @@ class IntronClassifier:
             max_iter=self.max_iter,
             param_grid_override=param_grid if param_grid else None
         )
-        parameters = optimizer.optimize(u12_reference, u2_reference)
+        parameters = optimizer.optimize(
+            u12_reference,
+            u2_reference,
+            eff_C_pos_range=self.eff_C_pos_range,
+            eff_C_neg_max=self.eff_C_neg_max
+        )
         print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
