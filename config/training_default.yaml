@@ -104,13 +104,19 @@ param_grid:
   estimator__svc__intercept_scaling: [10.0, 100.0, 1000.0]
 
   # Probability calibration method
-  # - 'sigmoid' = Platt scaling (parametric, fast)
+  # - 'sigmoid' = Platt scaling (parametric, fast) **RECOMMENDED**
   #               Fits sigmoid to decision function
   #               Works well when calibration data is limited
+  #               More conservative, less likely to overfit in top tail
+  #               Expert: "Default to sigmoid unless isotonic clearly wins"
+  #               With ~80 U12s per fold, sigmoid is safer choice
   # - 'isotonic' = Isotonic regression (non-parametric, flexible)
   #                More flexible, requires more calibration data
-  #                Can overfit if calibration set is small
-  # Recommendation: Test both, sigmoid often wins for small datasets
+  #                Can overfit the top tail with limited U12s
+  #                May produce more 0.90+ scores (higher FPR)
+  #                Only use if it wins by clear margin (>0.01 neg_log_loss)
+  # Recommendation: Grid search both, but sigmoid is safer default
+  # If isotonic wins by <0.01, prefer sigmoid for FP reduction
   method: ['sigmoid', 'isotonic']
 
 # ============================================================================

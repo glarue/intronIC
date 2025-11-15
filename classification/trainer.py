@@ -29,6 +29,7 @@ from sklearn.exceptions import ConvergenceWarning
 
 from core.intron import Intron
 from classification.transformers import BothEndsStrongTransformer
+from classification.clipping import OutlierClipper
 from classification.optimizer import SVMParameters
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
@@ -192,6 +193,7 @@ class SVMTrainer:
         # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
         #   Calibration method chosen by optimizer via grid search
         base_pipeline = Pipeline([
+            ('clip', OutlierClipper(quantile=0.999)),  # Clip extreme outliers before scaling
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('augment', BothEndsStrongTransformer(
                 include_max=parameters.include_max

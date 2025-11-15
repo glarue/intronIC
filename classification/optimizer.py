@@ -40,6 +40,7 @@ from tqdm.auto import tqdm
 
 from core.intron import Intron
 from classification.transformers import BothEndsStrongTransformer
+from classification.clipping import OutlierClipper
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -502,6 +503,7 @@ class SVMOptimizer:
         cv_splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state + round_idx)
 
         base_pipeline = Pipeline([
+            ('clip', OutlierClipper(quantile=0.999)),  # Clip extreme outliers before scaling
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('augment', BothEndsStrongTransformer()),  # include_max parameter will be grid-searched
             ('svc', LinearSVC(
@@ -788,6 +790,7 @@ class SVMOptimizer:
         # - LinearSVC: Optimized for linear case, L1 prunes redundant features
         # - CalibratedClassifierCV: External calibration
         base_svm_pipeline = Pipeline([
+            ('clip', OutlierClipper(quantile=0.999)),  # Clip extreme outliers before scaling
             ('scale', RobustScaler(with_centering=False, with_scaling=True)),
             ('augment', BothEndsStrongTransformer(
                 include_max=include_max
