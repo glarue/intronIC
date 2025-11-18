@@ -87,6 +87,7 @@ class ScoringConfig:
     generate_u2_bps_pwm: bool = False
     pseudocount: float = 0.0001
     ignore_nc_dnts: bool = True  # Ignore terminal dinucleotides for NC introns by default
+    normalizer_mode: str = 'auto'  # 'human', 'adaptive', or 'auto'
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +100,7 @@ class TrainingConfig:
     seed: int = 42
     max_iter: int = 50000
     eval_mode: str = 'nested_cv'
-    n_cv_folds: int = 5
+    n_cv_folds: int = 7
     test_fraction: float = 0.2
     n_optimization_rounds: int = 5
     pretrained_model_path: Optional[Path] = None
@@ -223,14 +224,27 @@ class IntronICConfig:
 
         # Determine pretrained model path
         # Priority:
-        # 1. If --train: pretrained_model_path = None (force training)
-        # 2. If --pretrained_model <path>: use that specific model
-        # 3. Default: use default pretrained model
-        if args.train:
+        # 1. If train subcommand OR --train flag: pretrained_model_path = None (force training)
+        # 2. If --model <path>: use that specific model
+        # 3. If --pretrained_model <path>: use that specific model (backward compat)
+        # 4. Default: use default pretrained model
+
+        # Check for training mode:
+        # - args.command == 'train': train subcommand (no genome needed)
+        # - args.train: classify --train flag (train on-the-fly during classification)
+        is_training = (
+            getattr(args, 'command', None) == 'train' or
+            getattr(args, 'train', False)
+        )
+
+        if is_training:
             # User explicitly wants to train a new model
             pretrained_model_path = None
+        elif args.model:
+            # User specified a custom pretrained model (new flag)
+            pretrained_model_path = args.model
         elif args.pretrained_model:
-            # User specified a custom pretrained model
+            # User specified a custom pretrained model (deprecated flag)
             pretrained_model_path = args.pretrained_model
         else:
             # Default: use pretrained model

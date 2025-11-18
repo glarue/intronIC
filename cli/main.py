@@ -8,10 +8,13 @@ import sys
 import logging
 import json
 import time
+import gc
 import joblib
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional
+from multiprocessing import Pool
+from itertools import repeat
 
 from .args import IntronICArgumentParser
 from .config import IntronICConfig, ScoringRegions
@@ -34,6 +37,81 @@ from classification.classifier import IntronClassifier
 from visualization.plots import plot_classification_results
 from smart_open import open as smart_open
 from utils.metadata import generate_training_metadata, generate_pretrained_metadata, write_metadata
+
+
+# ============================================================================
+# PHASE 3: Parallel Scoring Worker Function
+# ============================================================================
+# This function must be at module level (not nested) to be picklable for multiprocessing
+
+
+def _score_intron_worker(
+    intron: 'Intron',
+    pwm_file: Path,
+    u2_bp_file: Path,
+    five_coords: Tuple[int, int],
+    bp_coords: Tuple[int, int],
+    three_coords: Tuple[int, int],
+    ignore_nc_dnts: bool,
+    pseudocount: float
+) -> Tuple[Optional['Intron'], Optional[str]]:
+    """
+    Worker function for parallel intron scoring.
+
+    Each worker loads PWMs (OS caches file reads for efficiency) and creates
+    its own scorer instance to avoid pickling issues.
+
+    Args:
+        intron: Intron to score
+        pwm_file: Path to PWM matrices file
+        u2_bp_file: Path to U2 branch point matrix file
+        five_coords: 5' splice site scoring region coordinates
+        bp_coords: Branch point search region coordinates
+        three_coords: 3' splice site scoring region coordinates
+        ignore_nc_dnts: Whether to ignore non-canonical dinucleotides
+        pseudocount: Pseudocount for PWM scoring
+
+    Returns:
+        (scored_intron, error_message) tuple
+        If scoring succeeds: (intron, None)
+        If scoring fails: (None, error_message)
+    """
+    try:
+        # Import here to avoid issues with multiprocessing pickling
+        from scoring.scorer import IntronScorer
+        from scoring.pwm import PWMLoader, PWMSet
+        from pathlib import Path
+
+        # Load PWMs (OS file system cache makes this efficient across workers)
+        pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=pseudocount)
+
+        # Load U2 BP matrix if available
+        if u2_bp_file.exists():
+            u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=pseudocount)
+            if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
+                # Update BP PWM set with U2 GTAG matrix
+                updated_matrices = dict(pwm_sets['bp'].matrices)
+                updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
+                pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
+
+        # Create scorer for this worker
+        scorer = IntronScorer(
+            pwm_sets=pwm_sets,
+            five_coords=five_coords,
+            bp_coords=bp_coords,
+            three_coords=three_coords,
+            ignore_nc_dnts=ignore_nc_dnts
+        )
+
+        # Score intron
+        scored = scorer.score_intron(intron)
+        return (scored, None)
+
+    except Exception as e:
+        # Return error instead of crashing worker
+        # Include intron ID in error message for debugging
+        intron_id = intron.intron_id if hasattr(intron, 'intron_id') else 'unknown'
+        return (None, f"{intron_id}: {str(e)}")
 
 
 def log_data_block(logger: logging.Logger, header: str, lines: List[str], use_separator: bool = True):
@@ -72,6 +150,55 @@ def log_data_block(logger: logging.Logger, header: str, lines: List[str], use_se
 
     # Log as single multi-line message (only first line gets timestamp)
     logger.info('\n'.join(parts))
+
+
+def clear_large_sequences_for_classification(introns: List[Intron]) -> List[Intron]:
+    """
+    Clear large sequence fields before classification to reduce memory.
+
+    After scoring completes, the large sequence fields (seq, upstream_flank,
+    downstream_flank, bp_region_seq) are no longer needed for classification.
+    Only the small scored sequences (five_seq, three_seq, bp_seq, bp_seq_u2)
+    and terminal dinucleotides are needed.
+
+    This function creates new intron objects with large sequences cleared,
+    reducing memory usage by ~10-12 GB for 1M introns (from ~14 GB to ~2 GB).
+
+    Clears:
+    - seq (full intron sequence, ~500 bytes avg)
+    - upstream_flank (exonic context, ~200 bytes avg)
+    - downstream_flank (exonic context, ~200 bytes avg)
+    - bp_region_seq (branch point search region, ~50 bytes avg)
+
+    Keeps:
+    - five_seq, three_seq, bp_seq, bp_seq_u2 (scored sequences, ~40 bytes total)
+    - five_prime_dnt, three_prime_dnt (terminal dinucleotides, ~4 bytes total)
+    - bp_relative_coords (branch point position, ~16 bytes)
+    - All scores and metadata
+
+    Args:
+        introns: List of scored introns with full sequences
+
+    Returns:
+        New list of introns with large sequences cleared (functional style)
+    """
+    from dataclasses import replace
+
+    cleared = []
+    for intron in introns:
+        # Create new intron with cleared sequences
+        # Uses functional style - returns new object, original unchanged
+        new_sequences = replace(
+            intron.sequences,
+            seq=None,
+            upstream_flank=None,
+            downstream_flank=None,
+            bp_region_seq=None
+        )
+        cleared_intron = replace(intron, sequences=new_sequences)
+        cleared.append(cleared_intron)
+
+    return cleared
 
 
 def format_count_with_percentage(count: int, total: int) -> str:
@@ -235,7 +362,7 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
         show_time=True,
         show_level=True,
         show_path=False,
-        markup=False,
+        markup=True,  # Enable Rich markup interpretation for proper ANSI formatting
         rich_tracebacks=True,
         tracebacks_show_locals=config.output.debug,
         level=logging.DEBUG  # Always log everything to file
@@ -422,6 +549,10 @@ def extract_introns_from_annotation(
     introns_all = list(introns_with_seq)
     messenger.log_only(f"Extracted sequences for {len(introns_all)} introns")
 
+    # Free memory from coordinate-only list (no longer needed)
+    del introns_list
+    gc.collect()
+
     # Step 3b: Apply U12 boundary correction to non-canonical introns (if enabled)
     # Port from: intronIC.py:2692 (u12_nc_ss_adjustment and u12_correction)
     # CRITICAL: This happens AFTER initial sequence extraction but BEFORE scoring
@@ -547,6 +678,10 @@ def extract_introns_from_bed(
     introns_all = list(introns_with_seq)
     messenger.log_only(f"Extracted sequences for {len(introns_all)} introns")
 
+    # Free memory from coordinate-only list (no longer needed)
+    del introns_no_seq
+    gc.collect()
+
     # Apply U12 boundary correction (if enabled)
     if config.extraction.u12_boundary_correction:
         from extraction.boundary_correction import correct_intron_if_needed
@@ -649,7 +784,10 @@ def score_introns(
     messenger: 'UnifiedMessenger',
     reporter: IntronICProgressReporter
 ) -> List[Intron]:
-    """Score introns with PWM matrices.
+    """Score introns with PWM matrices (parallel or sequential).
+
+    PHASE 3: Restored parallel scoring from original intronIC v1.5.1
+    Uses multiprocessing.Pool when config.performance.processes > 1
 
     Args:
         introns: List of introns to score
@@ -662,65 +800,142 @@ def score_introns(
     """
     messenger.info("Loading PWM matrices")
 
-    # Load PWM matrices from data directory
+    # Determine PWM file paths
     pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
 
-    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
-    messenger.log_only(f"Loaded PWM matrices for {len(pwm_sets)} regions")
-
-    # Load U2 BP matrix from separate file (fallback/conserved matrix)
     u2_bp_file = Path(__file__).parent.parent / "data" / "u2.conserved_empirical_bp_pwm.iic"
-    if u2_bp_file.exists():
-        from scoring.pwm import PWMSet
-        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
-        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
-            # PWMSet is frozen, so create new PWMSet with updated U2 GTAG matrix
-            updated_matrices = dict(pwm_sets['bp'].matrices)
-            updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
-            pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
-            messenger.log_only("Loaded conserved U2-type BP matrix")
-        else:
-            messenger.warning("U2 BP matrix file found but couldn't extract U2 GTAG PWM")
-    else:
-        messenger.warning(f"U2 BP matrix file not found: {u2_bp_file}")
 
-    # Create scorer
-    messenger.info("Calculating PWM scores")
-
-    scorer = IntronScorer(
-        pwm_sets=pwm_sets,
-        five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
-        bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
-        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end),
-        ignore_nc_dnts=config.scoring.ignore_nc_dnts
+    # Extract scoring configuration
+    five_coords = (
+        config.scoring.scoring_regions.five_start,
+        config.scoring.scoring_regions.five_end
     )
+    bp_coords = (
+        config.scoring.scoring_regions.bp_start,
+        config.scoring.scoring_regions.bp_end
+    )
+    three_coords = (
+        config.scoring.scoring_regions.three_start,
+        config.scoring.scoring_regions.three_end
+    )
+    ignore_nc_dnts = config.scoring.ignore_nc_dnts
+    pseudocount = config.scoring.pseudocount
+    n_workers = config.performance.processes
 
-    # Score introns with error handling
-    progress = reporter.create_progress()
-    scored_introns = []
-    failed_count = 0
+    # ========================================================================
+    # PARALLEL SCORING (n_workers > 1)
+    # ========================================================================
+    if n_workers > 1:
+        messenger.info(f"Calculating PWM scores (parallel, {n_workers} workers)")
 
-    with progress:
-        task = progress.add_task(
-            "[cyan]Scoring introns...",
-            total=len(introns)
+        progress = reporter.create_progress()
+        scored_introns = []
+        failed_count = 0
+
+        with progress:
+            task = progress.add_task(
+                "[cyan]Scoring introns...",
+                total=len(introns)
+            )
+
+            with Pool(processes=n_workers) as pool:
+                try:
+                    # Use imap_unordered with chunking to avoid memory explosion
+                    # This streams results back instead of collecting all at once
+                    # Chunksize: balance between overhead and memory usage
+                    chunksize = max(1, min(1000, len(introns) // (n_workers * 4)))
+
+                    results_iter = pool.starmap(
+                        _score_intron_worker,
+                        zip(
+                            introns,
+                            repeat(pwm_file),
+                            repeat(u2_bp_file),
+                            repeat(five_coords),
+                            repeat(bp_coords),
+                            repeat(three_coords),
+                            repeat(ignore_nc_dnts),
+                            repeat(pseudocount)
+                        ),
+                        chunksize=chunksize
+                    )
+
+                    # Process results as they arrive
+                    for scored_intron, error in results_iter:
+                        if error is not None:
+                            messenger.warning(f"Failed to score intron: {error}")
+                            failed_count += 1
+                        else:
+                            scored_introns.append(scored_intron)
+
+                        progress.update(task, advance=1)
+
+                except KeyboardInterrupt:
+                    messenger.warning("User interrupt - terminating workers")
+                    pool.terminate()
+                    raise
+                finally:
+                    pool.close()
+                    pool.join()
+
+    # ========================================================================
+    # SEQUENTIAL SCORING (n_workers == 1)
+    # ========================================================================
+    else:
+        messenger.info("Calculating PWM scores (sequential)")
+
+        # Load PWMs once for sequential mode
+        pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=pseudocount)
+
+        # Load U2 BP matrix if available
+        if u2_bp_file.exists():
+            from scoring.pwm import PWMSet
+            u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=pseudocount)
+            if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
+                # PWMSet is frozen, so create new PWMSet with updated U2 GTAG matrix
+                updated_matrices = dict(pwm_sets['bp'].matrices)
+                updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
+                pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
+                messenger.log_only("Loaded conserved U2-type BP matrix")
+
+        # Create scorer
+        scorer = IntronScorer(
+            pwm_sets=pwm_sets,
+            five_coords=five_coords,
+            bp_coords=bp_coords,
+            three_coords=three_coords,
+            ignore_nc_dnts=ignore_nc_dnts
         )
 
-        for intron in introns:
-            try:
-                scored = scorer.score_intron(intron)
-                scored_introns.append(scored)
-            except Exception as e:
-                # Log but continue - don't let one bad intron crash the pipeline
-                messenger.warning(
-                    f"Failed to score intron {intron.intron_id}: {str(e)}. Skipping."
-                )
-                failed_count += 1
+        # Score introns sequentially with error handling
+        progress = reporter.create_progress()
+        scored_introns = []
+        failed_count = 0
 
-            progress.update(task, advance=1)
+        with progress:
+            task = progress.add_task(
+                "[cyan]Scoring introns...",
+                total=len(introns)
+            )
 
+            for intron in introns:
+                try:
+                    scored = scorer.score_intron(intron)
+                    scored_introns.append(scored)
+                except Exception as e:
+                    # Log but continue - don't let one bad intron crash the pipeline
+                    messenger.warning(
+                        f"Failed to score intron {intron.intron_id}: {str(e)}. Skipping."
+                    )
+                    failed_count += 1
+
+                progress.update(task, advance=1)
+
+    # ========================================================================
+    # COMPLETION (both modes)
+    # ========================================================================
     total_attempted = len(introns)
     messenger.log_only(
         f"Scored {format_count_with_percentage(len(scored_introns), total_attempted)} introns successfully"
@@ -868,29 +1083,48 @@ def classify_with_pretrained_model(
 
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
-        # New format: {'ensemble': ..., 'threshold': ...}
+        # New format: {'ensemble': ..., 'normalizer': ..., 'threshold': ...}
         ensemble = model_data['ensemble']
+        saved_normalizer = model_data.get('normalizer', None)
         saved_threshold = model_data.get('threshold', config.scoring.threshold)
         messenger.log_only("Loaded model bundle (dict format)")
     else:
         # Old format: SVMEnsemble directly (backward compatibility)
         ensemble = model_data
+        saved_normalizer = None
         saved_threshold = config.scoring.threshold
         messenger.log_only("Loaded model ensemble (legacy format - backward compatibility)")
 
     messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
     messenger.log_only(f"Using threshold: {config.scoring.threshold}")
 
-    # Fit normalizer on experimental data (cross-species domain adaptation)
-    # This is statistically valid for pretrained models:
-    # - Corrects covariate shift from species-specific score distributions
-    # - No label leakage (labels not used, only marginal feature distribution)
-    # - RobustScaler minimally affected by rare U12s (~0.5% of data)
-    messenger.info("Fitting normalizer on experimental data (domain adaptation)")
-    messenger.log_only(f"Fitting normalizer on {len(introns)} experimental introns")
+    # Determine normalizer mode
+    normalizer_mode = config.scoring.normalizer_mode
+    if normalizer_mode == 'auto':
+        # Use human scaler if available, otherwise adaptive
+        if saved_normalizer is not None:
+            normalizer_mode = 'human'
+            messenger.log_only("Auto mode: Using saved human scaler (recommended)")
+        else:
+            normalizer_mode = 'adaptive'
+            messenger.log_only("Auto mode: Falling back to adaptive (no saved scaler)")
 
-    normalizer = ScoreNormalizer()
-    normalizer.fit(introns, dataset_type='unlabeled')
+    # Apply normalizer strategy
+    if normalizer_mode == 'human':
+        if saved_normalizer is None:
+            raise ValueError(
+                "Normalizer mode 'human' requested but model has no saved scaler. "
+                "Retrain model or use '--normalizer_mode adaptive'."
+            )
+        messenger.info("Using human-trained normalizer (scaler from training species)")
+        messenger.log_only("This preserves composition bias correction across species")
+        normalizer = saved_normalizer
+    else:  # adaptive
+        messenger.info("Fitting normalizer on experimental data (domain adaptation)")
+        messenger.log_only("Note: May cause FPs in U12-absent species (e.g., C. elegans)")
+        messenger.log_only(f"Fitting normalizer on {len(introns)} experimental introns")
+        normalizer = ScoreNormalizer()
+        normalizer.fit(introns, dataset_type='unlabeled')
 
     normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
     messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
@@ -1249,15 +1483,17 @@ def classify_introns(
             messenger.warning(f"Failed to generate training plots: {plot_error}")
             # Continue even if plotting fails
 
-    # Save trained model (ensemble only - normalizer fitted per-species during inference)
+    # Save trained model with human-trained normalizer for cross-species classification
     model_path = config.output.get_output_path('.model.pkl')
     messenger.log_only(f"Saving trained model to {model_path}")
     model_bundle = {
         'ensemble': result.ensemble,
+        'normalizer': normalizer,  # Save human-trained scaler for cross-species use
         'threshold': config.scoring.threshold
     }
     joblib.dump(model_bundle, model_path, compress=3)
-    messenger.log_only(f"Model saved successfully")
+    messenger.log_only(f"Model saved successfully with human-trained normalizer")
+    messenger.log_only(f"Use '--normalizer_mode human' for cross-species classification")
 
     # Generate and save training metadata
     metadata_path = model_path.with_suffix('.metadata.json')
@@ -1289,7 +1525,8 @@ def write_outputs(
     config: IntronICConfig,
     messenger: 'UnifiedMessenger',
     reporter: IntronICProgressReporter,
-    scored_only: Optional[List[Intron]] = None
+    scored_only: Optional[List[Intron]] = None,
+    skip_sequences: bool = False
 ):
     """Write output files.
 
@@ -1301,6 +1538,7 @@ def write_outputs(
         messenger: Unified messenger for console and log output
         reporter: Progress reporter
         scored_only: Introns for .score_info.iic (scored only, no omitted). If None, uses introns.
+        skip_sequences: If True, skip writing .introns.iic (already written earlier)
 
     Notes:
         Original intronIC writes different intron sets to different files:
@@ -1355,12 +1593,15 @@ def write_outputs(
     # Write sequences file (all introns except duplicates, unless -d)
     # Port from: intronIC.py:4842-4845
     seq_path = output_dir / f"{base_name}.introns.iic"
-    messenger.log_only(f"Writing sequences file: {seq_path}")
-    seq_writer = SequenceWriter(seq_path)
-    with seq_writer:
-        for intron in introns:
-            seq_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
-    messenger.log_only(f"Wrote sequences for {len(introns)} introns")
+    if not skip_sequences:
+        messenger.log_only(f"Writing sequences file: {seq_path}")
+        seq_writer = SequenceWriter(seq_path)
+        with seq_writer:
+            for intron in introns:
+                seq_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+        messenger.log_only(f"Wrote sequences for {len(introns)} introns")
+    else:
+        messenger.log_only(f"Sequences already written during scoring phase: {seq_path}")
 
     # Write score info file (ONLY scored introns, no omitted)
     # Port from: intronIC.py:5239-5261
@@ -1386,8 +1627,147 @@ def write_outputs(
     messenger.success("All output files written successfully")
 
 
-def run_pipeline(config: IntronICConfig):
-    """Run the complete intronIC pipeline.
+def main_train(config: IntronICConfig):
+    """Train a model on reference data only (no genome/annotation needed).
+
+    This is a pure training workflow:
+    1. Load reference U12/U2 sequences
+    2. Score reference sequences with PWM matrices
+    3. Normalize scores
+    4. Train ensemble of models with cross-validation
+    5. Save model and metadata to disk
+
+    Args:
+        config: Training configuration
+
+    No genome/annotation required!
+    """
+    # Track start time
+    start_time = time.time()
+
+    # Setup logging
+    logger, log_console = setup_logging(config)
+    reporter = IntronICProgressReporter(quiet=config.output.quiet)
+
+    from .messenger import UnifiedMessenger
+    messenger = UnifiedMessenger(
+        console=reporter.console,
+        log_console=log_console,
+        logger=logger,
+        quiet=config.output.quiet
+    )
+
+    # Print header
+    reporter.console.print(
+        "\n[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]"
+    )
+    reporter.console.print(
+        "[bold cyan]                  intronIC TRAINING MODE                  [/bold cyan]"
+    )
+    reporter.console.print(
+        "[bold cyan]═══════════════════════════════════════════════════════[/bold cyan]\n"
+    )
+    messenger.info(f"Training model: {config.output.species_name}")
+    messenger.info("No genome/annotation needed - using reference sequences only")
+
+    pipeline_steps = [
+        "Load reference data",
+        "Score reference sequences",
+        "Normalize scores",
+        "Train classifier"
+    ]
+    messenger.console_only("")
+    reporter.print_pipeline_steps(pipeline_steps)
+
+    try:
+        # Steps 1-3: Load, score, and normalize reference data
+        messenger.step(1, "Load Reference Data", pipeline_steps)
+        messenger.step(2, "Score Reference Sequences", pipeline_steps)
+        messenger.step(3, "Normalize Scores", pipeline_steps)
+
+        # Load and process reference sequences
+        # This duplicates some logic from normalize_scores() but avoids issues with empty experimental introns
+        data_dir = Path(__file__).parent.parent / "data"
+
+        u12_file = config.scoring.reference_u12s or (data_dir / "u12_reference.introns.iic.gz")
+        u2_file = config.scoring.reference_u2s or (data_dir / "u2_reference.introns.iic.gz")
+
+        if not u12_file.exists() or not u2_file.exists():
+            raise FileNotFoundError(f"Reference data not found. U12: {u12_file}, U2: {u2_file}")
+
+        messenger.log_only("Loading reference sequences")
+        u12_reference = load_reference_sequences(u12_file, messenger=messenger)
+        u2_reference = load_reference_sequences(u2_file, messenger=messenger)
+        messenger.log_only(f"Loaded {len(u12_reference)} U12 and {len(u2_reference)} U2 reference introns")
+
+        # Score reference introns
+        messenger.log_only("Scoring reference sequences")
+        all_reference = u12_reference + u2_reference
+        scored_reference = score_introns(all_reference, config, messenger, reporter)
+
+        # Split back into U12 and U2
+        u12_scored = scored_reference[:len(u12_reference)]
+        u2_scored = scored_reference[len(u12_reference):]
+
+        # Normalize scores
+        messenger.log_only("Normalizing scores with z-score transformation")
+        from scoring.normalizer import ScoreNormalizer
+        normalizer = ScoreNormalizer()
+        normalizer.fit(scored_reference, dataset_type='reference')
+
+        u12_ref_norm = list(normalizer.transform(u12_scored, dataset_type='reference'))
+        u2_ref_norm = list(normalizer.transform(u2_scored, dataset_type='reference'))
+
+        messenger.success(
+            f"Loaded, scored, and normalized {len(u12_ref_norm)} U12 and {len(u2_ref_norm)} U2 reference introns"
+        )
+
+        # Step 4: Train classifier (model is saved internally by classify_introns)
+        messenger.step(4, "Train Classifier", pipeline_steps)
+        # Pass empty list for experimental introns - we're only training on references
+        # classify_introns() will train the model and save it to disk
+        classified_introns, metrics = classify_introns(
+            introns=[],  # No experimental introns in train mode
+            u12_reference=u12_ref_norm,
+            u2_reference=u2_ref_norm,
+            normalizer=normalizer,
+            config=config,
+            messenger=messenger,
+            reporter=reporter
+        )
+        messenger.success("Model trained and saved")
+
+        # Print final summary
+        elapsed = time.time() - start_time
+        hours, remainder = divmod(int(elapsed), 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        messenger.console_only("")
+        if hours > 0:
+            time_str = f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            time_str = f"{minutes}m {seconds}s"
+        else:
+            time_str = f"{seconds}s"
+
+        messenger.success(f"Training complete! (Runtime: {time_str})")
+
+    except Exception as e:
+        messenger.error(f"Training failed: {str(e)}")
+        raise
+
+
+def main_classify(config: IntronICConfig):
+    """Run the complete intronIC classification pipeline.
+
+    This is the standard workflow:
+    1. Load input data (genome/annotation/bed/sequences)
+    2. Extract introns
+    3. Filter introns
+    4. Score introns
+    5. Load or train model
+    6. Classify introns
+    7. Write outputs
 
     Args:
         config: Pipeline configuration
@@ -1517,6 +1897,37 @@ def run_pipeline(config: IntronICConfig):
         messenger.step(3, "Score Introns", pipeline_steps)
         scored_introns = score_introns(introns_for_scoring, config, messenger, reporter)
         messenger.success(f"Scored {len(scored_introns):,} introns")
+
+        # PHASE 2 OPTIMIZATION: Write sequences to file now (while in memory)
+        # Then clear large sequences before classification to save ~10-12 GB
+        messenger.info("Writing intron sequences to file")
+        seq_output_path = config.output.output_dir / f"{config.output.base_filename}.introns.iic"
+        seq_writer = SequenceWriter(seq_output_path)
+
+        # Write ALL introns (scored + omitted), matching write_outputs() behavior
+        # Duplicates will be filtered later in write_outputs() if not -d flag
+        introns_written = 0
+        with seq_writer:
+            for intron in introns:  # ALL introns, not just scored_introns
+                # Filter duplicates if not -d flag (matches write_outputs line 1536-1544)
+                if not config.extraction.include_duplicates:
+                    if intron.metadata and intron.metadata.duplicate:
+                        continue
+                seq_writer.write_intron(
+                    intron,
+                    species_name=config.output.species_name,
+                    simple_name=config.output.uninformative_naming,
+                    no_abbreviate=config.output.no_abbreviate,
+                    include_score=False  # Scores not final yet (not classified)
+                )
+                introns_written += 1
+        messenger.log_only(f"Wrote sequences for {introns_written} introns to {seq_output_path.name}")
+
+        # Clear large sequences to reduce memory before classification
+        messenger.log_only("Clearing large sequences to reduce memory (keeping scored regions)")
+        scored_introns = clear_large_sequences_for_classification(scored_introns)
+        gc.collect()
+        messenger.log_only("Memory freed from full sequences (~10-12 GB for large genomes)")
 
         # Check if using pretrained model
         if config.training.pretrained_model_path:
@@ -1655,7 +2066,8 @@ def run_pipeline(config: IntronICConfig):
             config,
             messenger,
             reporter,
-            scored_only=classified_introns
+            scored_only=classified_introns,
+            skip_sequences=True  # PHASE 2: Sequences already written after scoring
         )
 
         # Calculate and log total runtime
@@ -1720,8 +2132,17 @@ def main(args=None):
         # Create configuration
         config = IntronICConfig.from_args(parsed_args)
 
-        # Run pipeline
-        run_pipeline(config)
+        # Route to appropriate entry point based on command
+        command = getattr(parsed_args, 'command', 'classify')
+
+        if command == 'train':
+            # Train mode: No genome/annotation needed
+            main_train(config)
+        elif command == 'classify':
+            # Classify mode: Standard pipeline
+            main_classify(config)
+        else:
+            raise ValueError(f"Unknown command: {command}")
 
         return 0
 

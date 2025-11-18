@@ -33,14 +33,15 @@ from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFo
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.metrics import make_scorer, balanced_accuracy_score, log_loss
 from scipy.stats import gmean
 from tqdm.auto import tqdm
 
+from sklearn.preprocessing import RobustScaler
+
 from core.intron import Intron
 from classification.transformers import BothEndsStrongTransformer
-from classification.clipping import OutlierClipper
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -196,34 +197,43 @@ def compute_weight_aware_C_bounds(
 
 @dataclass(frozen=True, slots=True)
 class SVMParameters:
-    """Optimized SVM hyperparameters for LinearSVC with BothEndsStrong features."""
+    """Optimized SVM hyperparameters for LinearSVC with BothEndsStrong features (NEW ARCHITECTURE - NO CLIPPING)."""
 
-    C: float  # Soft-margin penalty
-    calibration_method: str  # 'sigmoid' or 'isotonic'
-    include_max: bool  # Whether to include max features in BothEndsStrong transformer
-    dual: bool  # Primal (False) or dual (True) formulation - kept False for L1 compatibility
-    penalty: str  # 'l1' or 'l2' - L1 prunes correlated features
-    loss: str  # 'squared_hinge' - required for L1 penalty
-    intercept_scaling: float  # Scaling for intercept (when dual=False)
-    cv_score: float  # Cross-validation neg_log_loss
+    C: float  # Soft-margin penalty (L2 regularization strength)
+    calibration_method: str  # 'sigmoid' or 'isotonic' (isotonic preferred)
+    saturate_enabled: bool  # SaturatingTransform enabled (optional log compression)
+    include_max: bool  # BothEndsStrong max features (always False in new arch)
+    include_pairwise_mins: bool  # BothEndsStrong pairwise mins (always False in new arch)
+
+    # Fixed parameters (not grid-searched in new architecture)
+    dual: bool  # Always False (primal formulation)
+    penalty: str  # Always 'l2' (L1 zeroed critical features)
+    loss: str  # Always 'squared_hinge'
+    intercept_scaling: float  # Fixed to 1.0 (not needed with L2 only)
+
+    cv_score: float  # Cross-validation F_0.75 score (precision-focused)
     round_found: int  # Which optimization round found these params (-1 = averaged)
 
 
 @dataclass(frozen=True, slots=True)
 class OptimizationRound:
-    """Results from one round of grid search."""
+    """Results from one round of grid search (NEW ARCHITECTURE - NO CLIPPING)."""
 
     grid_points: np.ndarray  # C values tested
     scores: np.ndarray  # CV scores for each parameter combination
     best_C: float
-    best_method: str  # 'sigmoid' or 'isotonic'
-    best_include_max: bool  # Whether to include max features
-    best_dual: bool  # Primal (False) or dual (True) formulation
-    best_penalty: str  # 'l1' or 'l2'
-    best_loss: str  # 'squared_hinge'
-    best_intercept_scaling: float  # Intercept scaling parameter
-    best_score: float
+    best_method: str  # 'isotonic' (or 'sigmoid')
+    best_saturate_enabled: bool  # SaturatingTransform enabled
+    best_include_max: bool  # BothEndsStrong max features (always False)
+    best_include_pairwise_mins: bool  # BothEndsStrong pairwise mins (always False)
+    best_score: float  # F_0.75 score (precision-focused)
     rank_one_Cs: list[float]  # All rank-1 C values
+
+    # Fixed parameters (for backward compatibility, not grid-searched)
+    best_dual: bool = False  # Always False
+    best_penalty: str = 'l2'  # Always L2
+    best_loss: str = 'squared_hinge'  # Always squared_hinge
+    best_intercept_scaling: float = 1.0  # Not used in L2-only
 
 
 class SVMOptimizer:
@@ -246,7 +256,7 @@ class SVMOptimizer:
         n_rounds: int = 3,
         n_points_initial: int = 13,
         n_points_refine: int = 100,
-        cv_folds: int = 5,
+        cv_folds: int = 7,
         random_state: int = 42,
         n_jobs: int = 1,
         verbose: bool = True,
@@ -285,7 +295,7 @@ class SVMOptimizer:
         self,
         u12_introns: Sequence[Intron],
         u2_introns: Sequence[Intron],
-        eff_C_pos_range: Tuple[float, float] = (1e-3, 1e3),
+        eff_C_pos_range: Tuple[float, float] = (1e-2, 1e4),
         eff_C_neg_max: Optional[float] = None
     ) -> SVMParameters:
         """
@@ -336,8 +346,7 @@ class SVMOptimizer:
 
         # Run geometric refinement
         for round_idx in range(self.n_rounds):
-            print(f"Optimization round {round_idx + 1}/{self.n_rounds}...", flush=True)
-
+            # Note: Round header printed by _grid_search_round() for better organization
             round_result = self._grid_search_round(
                 X, y, current_grid, round_idx
             )
@@ -366,32 +375,65 @@ class SVMOptimizer:
                 previous_ranges.append(next_range)
                 current_grid = next_grid
 
-        # Final parameters from best round
+        # STAGE 1 COMPLETE: Optimal C found
         final_C = gmean(self.rounds_[-1].rank_one_Cs)
-        final_method = self.rounds_[-1].best_method
-        final_dual = self.rounds_[-1].best_dual
-        final_penalty = self.rounds_[-1].best_penalty  # NEW: L1 or L2
-        final_loss = self.rounds_[-1].best_loss  # NEW: squared_hinge
-        final_intercept_scaling = self.rounds_[-1].best_intercept_scaling
+        final_saturate_enabled = self.rounds_[-1].best_saturate_enabled
         final_include_max = self.rounds_[-1].best_include_max
+        final_include_pairwise_mins = self.rounds_[-1].best_include_pairwise_mins
 
-        # Evaluate final parameters
-        final_score = self._evaluate_params(
-            X, y, final_C, final_method, final_dual, final_penalty, final_loss,
-            final_intercept_scaling, final_include_max
+        if self.verbose:
+            print(f"\n{'='*80}", flush=True)
+            print(f"STAGE 1 COMPLETE: Optimal C = {final_C:.6e}", flush=True)
+            print(f"{'='*80}\n", flush=True)
+
+        # STAGE 2: Compare calibration methods using log-loss
+        if self.verbose:
+            print(f"\n{'='*80}", flush=True)
+            print(f"STAGE 2: Calibration Method Selection (log-loss comparison)", flush=True)
+            print(f"{'='*80}", flush=True)
+
+        # Evaluate sigmoid calibration
+        score_sigmoid = self._evaluate_calibration_method(
+            X, y, final_C, 'sigmoid',
+            final_saturate_enabled, final_include_max, final_include_pairwise_mins
         )
 
-        print(f"Optimal C={final_C:.6e}, method={final_method}, dual={final_dual}, penalty={final_penalty}, loss={final_loss}, intercept_scaling={final_intercept_scaling}, include_max={final_include_max}, CV score={final_score:.4f}", flush=True)
+        # Evaluate isotonic calibration
+        score_isotonic = self._evaluate_calibration_method(
+            X, y, final_C, 'isotonic',
+            final_saturate_enabled, final_include_max, final_include_pairwise_mins
+        )
+
+        # Select winner (lower log-loss = better)
+        if score_sigmoid < score_isotonic:
+            final_method = 'sigmoid'
+            final_score = score_sigmoid
+            winner_margin = score_isotonic - score_sigmoid
+        else:
+            final_method = 'isotonic'
+            final_score = score_isotonic
+            winner_margin = score_sigmoid - score_isotonic
+
+        if self.verbose:
+            print(f"\nCalibration Method Comparison:", flush=True)
+            print(f"  Sigmoid:  log-loss = {score_sigmoid:.6f}", flush=True)
+            print(f"  Isotonic: log-loss = {score_isotonic:.6f}", flush=True)
+            print(f"\n✓ Winner: {final_method} (margin: {winner_margin:.6f})", flush=True)
+            print(f"{'='*80}\n", flush=True)
+
+        print(f"Optimal parameters: C={final_C:.6e}, calibration={final_method}, log-loss={final_score:.6f}", flush=True)
 
         return SVMParameters(
             C=final_C,
             calibration_method=final_method,
+            saturate_enabled=final_saturate_enabled,
             include_max=final_include_max,
-            dual=final_dual,
-            penalty=final_penalty,  # NEW
-            loss=final_loss,  # NEW
-            intercept_scaling=final_intercept_scaling,
-            cv_score=final_score,
+            include_pairwise_mins=final_include_pairwise_mins,
+            dual=False,  # Fixed in new architecture
+            penalty='l2',  # Fixed in new architecture
+            loss='squared_hinge',  # Fixed in new architecture
+            intercept_scaling=1.0,  # Fixed in new architecture
+            cv_score=final_score,  # log-loss from Stage 2
             round_found=-1  # -1 indicates averaged result
         )
 
@@ -493,94 +535,94 @@ class SVMOptimizer:
         Returns:
             Results from this round
         """
-        # LinearSVC with external calibration (best practice)
-        # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
-        #   (s=0 means "U12≈U2", centering would destroy this meaning)
-        # - BothEndsStrongTransformer: Augments 3D → 7D with both-ends-strong features
-        #   γ parameters (tuned via GridSearchCV) control imbalance penalty strength
-        # - LinearSVC: Optimized for linear case, faster than SVC(kernel='linear')
-        # - CalibratedClassifierCV: External calibration (method grid-searched)
-        cv_splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state + round_idx)
+        # TWO-STAGE OPTIMIZATION (Expert approach):
+        #
+        # STAGE 1 (this function): Optimize C on UNCALIBRATED model
+        # - Pipeline: z-scores → LinearSVC (NO scaler, NO calibration)
+        # - Input: Pre-scaled z-scores from ScoreNormalizer
+        # - Metric: balanced_accuracy (discrimination quality, handles imbalance)
+        # - Goal: Find C* that maximizes classification performance
+        #
+        # STAGE 2 (in optimize()): Choose calibration method at fixed C*
+        # - Wrap optimal model in CalibratedClassifierCV
+        # - Compare method='sigmoid' vs method='isotonic'
+        # - Metric: log-loss (probability calibration quality)
+        # - Goal: Find calibration method that gives best-calibrated probabilities
+        #
+        # This separates discrimination (C) from calibration (method).
+        #
+        # CORRECTED: Removed RobustScaler (scaling done outside pipeline)
+        # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
+        cv_splitter = StratifiedKFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state + round_idx)
 
-        base_pipeline = Pipeline([
-            ('clip', OutlierClipper(quantile=0.999)),  # Clip extreme outliers before scaling
-            ('scale', RobustScaler(with_centering=False, with_scaling=True)),
-            ('augment', BothEndsStrongTransformer()),  # include_max parameter will be grid-searched
+        # UNCALIBRATED pipeline for Stage 1
+        # Calibration will be added in Stage 2 as post-processing
+        # Pipeline: z-scores → augmented features → svc
+        model = Pipeline([
+            ('transform', BothEndsStrongTransformer(
+                include_max=False,  # 7D feature space (recommended)
+                include_pairwise_mins=False
+            )),
             ('svc', LinearSVC(
-                loss='squared_hinge',  # Default loss for LinearSVC
+                loss='squared_hinge',
                 penalty='l2',  # L2 regularization
                 class_weight='balanced',  # Critical for imbalanced data
-                max_iter=self.max_iter,  # Maximum iterations for convergence
-                tol=1e-4,  # Tighter tolerance
+                dual=False,  # Primal formulation (recommended when n_features < n_samples)
+                max_iter=self.max_iter,
+                tol=1e-4,
                 random_state=self.random_state + round_idx
             ))
         ])
 
-        model = CalibratedClassifierCV(
-            base_pipeline,
-            method='sigmoid',  # Will be grid-searched
-            cv=cv_splitter,
-            ensemble='auto'  # Per-fold fit + averaging
-        )
-
-        # Optimize C, include_max, dual, intercept_scaling, and calibration method
-        # Use neg_log_loss to optimize for probability quality (best practice)
-        # This is critical when deploying at custom thresholds (e.g., 0.90)
+        # STAGE 1 PARAMETER GRID:
+        # Only optimize C on uncalibrated model
+        # No calibration parameters (that's Stage 2)
         if self.param_grid_override is not None:
             # Use custom parameter grid for fast testing
-            param_grid = {'estimator__svc__C': C_grid}  # Always include C
+            param_grid = {'svc__C': C_grid}  # Direct access (no 'estimator__' prefix)
             param_grid.update(self.param_grid_override)
         else:
             # Full parameter grid for production
-            # Expert guidance: L1 penalty prunes correlated features that re-introduce one-end behavior
             param_grid = {
-                'estimator__svc__C': C_grid,  # C parameter through pipeline
-                'estimator__augment__include_max': [False, True],  # Whether to include max features (expert: "model will mostly weight min")
-                'estimator__svc__dual': [False],  # Must be False for L1 penalty compatibility
-                'estimator__svc__penalty': ['l1', 'l2'],  # L1 prunes redundant features, L2 standard
-                'estimator__svc__loss': ['squared_hinge'],  # Required for L1, works for both penalties
-                'estimator__svc__intercept_scaling': [10.0, 100.0, 1000.0],  # High values to avoid over-regularizing intercept
-                'method': ['sigmoid', 'isotonic']  # Let CV pick calibration method
+                # SVM parameter (only parameter to optimize in Stage 1)
+                'svc__C': C_grid  # Direct access to pipeline step
             }
+            # Grid size: len(C_grid)
+            # Example: C_grid of length 13 → 13 combinations
+
+        # balanced_accuracy scorer: (TPR + TNR) / 2
+        # Designed for imbalanced data - not biased by class prevalence
+        # Treats both classes (U12 and U2) with equal importance
+        scorer = make_scorer(balanced_accuracy_score)
 
         grid_search = GridSearchCV(
             model,
             param_grid=param_grid,
             cv=cv_splitter,  # Use same stratified splitter
-            scoring='neg_log_loss',  # Optimize for calibrated probabilities
+            scoring=scorer,  # balanced_accuracy: designed for imbalanced data
             n_jobs=self.n_jobs,
             error_score=np.nan,
             verbose=0  # Silence sklearn output, use tqdm instead
         )
 
         # Calculate total tasks for progress bar
-        # Note: Progress tracks GridSearchCV tasks, not internal CalibratedClassifierCV fits
+        # Stage 1: Uncalibrated model, direct CV evaluation
         n_candidates = len(list(ParameterGrid(param_grid)))
-        n_outer_cv = cv_splitter.get_n_splits(y)  # GridSearchCV outer loop
-        n_inner_cv = cv_splitter.get_n_splits(y)  # CalibratedClassifierCV inner loop
-        total_tasks = n_candidates * n_outer_cv + 1  # +1 for final refit
-        total_fits = n_candidates * n_outer_cv * n_inner_cv + 1  # Actual model fits (for info only)
+        n_cv_folds = cv_splitter.get_n_splits(y)  # Cross-validation folds
+        total_tasks = n_candidates * n_cv_folds + 1  # +1 for final refit
+        total_fits = total_tasks  # Each task = one model fit (no calibration wrapper)
 
         if self.verbose:
-            # Build parameter breakdown string dynamically
-            param_counts = []
-            param_counts.append(f"C={len(C_grid)}")
-            for key, values in param_grid.items():
-                if key == 'estimator__svc__C':
-                    continue  # Already added C
-                # Simplify parameter names for display
-                display_name = key.replace('estimator__augment__', '').replace('estimator__svc__', '')
-                param_counts.append(f"{display_name}={len(values)}")
-            param_breakdown = " × ".join(param_counts)
-
             print(f"\n{'='*80}", flush=True)
-            print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search", flush=True)
+            print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search (Stage 1: C Optimization)", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"Parameter combinations: {n_candidates} ({param_breakdown})", flush=True)
-            print(f"CV folds: outer={n_outer_cv}, inner={n_inner_cv} (calibration)", flush=True)
+            print(f"Parameter combinations: {n_candidates} (C={len(C_grid)})", flush=True)
+            print(f"Model: UNCALIBRATED LinearSVC (calibration in Stage 2)", flush=True)
+            print(f"CV folds: {n_cv_folds}", flush=True)
             print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
-            print(f"Total model fits: {total_fits:,} (including {n_inner_cv}× internal calibration per task)", flush=True)
+            print(f"Total model fits: {total_fits:,}", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
+            print(f"Metric: balanced_accuracy (discrimination quality)", flush=True)
             print(f"{'='*80}", flush=True)
 
         # Fit grid search with progress bar
@@ -590,7 +632,14 @@ class SVMOptimizer:
         if self.verbose:
             desc = f"Round {round_idx + 1}/{self.n_rounds}"
             with suppress_convergence_warnings(verbose=True):
-                with tqdm_joblib(tqdm(total=total_tasks, desc=desc, unit="fit", leave=False)):
+                with tqdm_joblib(tqdm(
+                    total=total_tasks,
+                    desc=desc,
+                    unit="fit",
+                    leave=True,  # Keep bar visible after completion
+                    mininterval=0.1,  # Refresh every 0.1s for smoother updates
+                    ncols=100  # Fixed width for consistent display
+                )):
                     grid_search.fit(X, y)
         else:
             with suppress_convergence_warnings(verbose=False):
@@ -608,9 +657,9 @@ class SVMOptimizer:
         # Print detailed results for all rounds (verbose mode)
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
-            print(f"ROUND {round_idx + 1} DETAILED RESULTS - CV Scores (neg_log_loss)", flush=True)
+            print(f"ROUND {round_idx + 1} DETAILED RESULTS - CV Scores (balanced_accuracy)", flush=True)
             print(f"{'='*80}", flush=True)
-            print(f"{'C Value':<15} {'Method':<10} {'Mean Score':<12} {'Std':<10} {'Rank':<8}", flush=True)
+            print(f"{'C Value':<15} {'Mean Score':<12} {'Std':<10} {'Rank':<8}", flush=True)
             print(f"{'-'*80}", flush=True)
 
             # Sort by rank for easier reading
@@ -620,54 +669,49 @@ class SVMOptimizer:
                 score = cv_results['mean_test_score'][idx]
                 std = cv_results['std_test_score'][idx]
                 rank = cv_results['rank_test_score'][idx]
-                c_val = param['estimator__svc__C']
-                method = param['method']
-                print(f"{c_val:<15.2e} {method:<10} {score:<12.4f} {std:<10.4f} {int(rank):<8}", flush=True)
+                c_val = param['svc__C']  # Direct pipeline access (no 'estimator__' prefix)
+                print(f"{c_val:<15.2e} {score:<12.4f} {std:<10.4f} {int(rank):<8}", flush=True)
 
-            if len(C_grid) * 2 > 10:
-                print(f"... ({len(C_grid) * 2 - 10} more combinations)", flush=True)
+            if len(C_grid) > 10:
+                print(f"... ({len(C_grid) - 10} more combinations)", flush=True)
             print(f"{'='*80}\n", flush=True)
 
         # Find rank-1 (best) parameter values
         ranks = cv_results['rank_test_score']
         params = cv_results['params']
-        rank_one_Cs = [p['estimator__svc__C'] for p, r in zip(params, ranks) if r == 1]
+        rank_one_Cs = [p['svc__C'] for p, r in zip(params, ranks) if r == 1]  # Direct pipeline access
 
         # Best C is geometric mean of rank-1 values
-        best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['estimator__svc__C']
-        best_method = grid_search.best_params_['method']
-        best_dual = grid_search.best_params_['estimator__svc__dual']
-        best_penalty = grid_search.best_params_['estimator__svc__penalty']  # NEW: L1 or L2
-        best_loss = grid_search.best_params_['estimator__svc__loss']  # NEW: squared_hinge
-        best_intercept_scaling = grid_search.best_params_['estimator__svc__intercept_scaling']
-        best_include_max = grid_search.best_params_['estimator__augment__include_max']
+        best_C = gmean(rank_one_Cs) if rank_one_Cs else grid_search.best_params_['svc__C']
+
+        # STAGE 1: Extract hyperparameters (C optimization only)
+        # Calibration method will be selected in Stage 2 (done in optimize())
+        best_method = None  # Will be determined in Stage 2 (not fixed to isotonic anymore)
+        # Phase 1: No augmentation/saturation (set to False for backward compatibility)
+        best_saturate_enabled = False
+        best_include_max = False
+        best_include_pairwise_mins = False
         best_score = grid_search.best_score_
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
-            print(f"ROUND {round_idx + 1} SUMMARY", flush=True)
+            print(f"ROUND {round_idx + 1} SUMMARY (Stage 1: C Optimization)", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"Best C (geometric mean of rank-1): {best_C:.6e}", flush=True)
-            print(f"Best calibration method: {best_method}", flush=True)
-            print(f"Best dual formulation: {best_dual}", flush=True)
-            print(f"Best penalty: {best_penalty}", flush=True)  # NEW
-            print(f"Best loss: {best_loss}", flush=True)  # NEW
-            print(f"Best intercept_scaling: {best_intercept_scaling}", flush=True)
-            print(f"Best include_max: {best_include_max}", flush=True)
-            print(f"Best CV score (neg_log_loss): {best_score:.4f}", flush=True)
+            print(f"Model: UNCALIBRATED LinearSVC", flush=True)
+            print(f"Best CV score (balanced_accuracy): {best_score:.4f}", flush=True)
             print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
+            print(f"Note: Stage 2 will add calibration and compare sigmoid vs isotonic using log-loss", flush=True)
             print(f"{'='*80}\n", flush=True)
 
         return OptimizationRound(
             grid_points=C_grid,
             scores=scores,
             best_C=best_C,
-            best_method=best_method,
+            best_method=best_method,  # Always 'isotonic' for Stage 1
+            best_saturate_enabled=best_saturate_enabled,
             best_include_max=best_include_max,
-            best_dual=best_dual,
-            best_penalty=best_penalty,  # NEW
-            best_loss=best_loss,  # NEW
-            best_intercept_scaling=best_intercept_scaling,
+            best_include_pairwise_mins=best_include_pairwise_mins,
             best_score=best_score,
             rank_one_Cs=rank_one_Cs
         )
@@ -733,7 +777,7 @@ class SVMOptimizer:
             high_bound = best_C * expansion_factor
 
             if self.verbose:
-                print(f"  Range too narrow ({current_ratio:.2f}×), expanding to {min_ratio:.0f}× around best_C", flush=True)
+                print(f"\n[Next round preparation] Range too narrow ({current_ratio:.2f}×), expanding to {min_ratio:.0f}× around best_C", flush=True)
 
         # Create refined geometric grid
         refined_grid = np.geomspace(
@@ -754,53 +798,119 @@ class SVMOptimizer:
         idx = (np.abs(array - value)).argmin()
         return int(idx)
 
+    def _evaluate_calibration_method(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        C: float,
+        method: str,
+        saturate_enabled: bool,
+        include_max: bool,
+        include_pairwise_mins: bool
+    ) -> float:
+        """
+        Evaluate calibration method using log-loss (STAGE 2).
+
+        Args:
+            X: Feature matrix
+            y: Labels
+            C: C value (from Stage 1)
+            method: Calibration method ('sigmoid' or 'isotonic')
+            saturate_enabled: Ignored in Phase 1
+            include_max: Ignored in Phase 1
+            include_pairwise_mins: Ignored in Phase 1
+
+        Returns:
+            Cross-validation log-loss (lower = better calibration)
+        """
+        # CORRECTED: Removed RobustScaler (scaling done outside pipeline)
+        # Pipeline: z-scores → augmented features → svc
+        base_svm_pipeline = Pipeline([
+            ('transform', BothEndsStrongTransformer(
+                include_max=False,  # 7D feature space (recommended)
+                include_pairwise_mins=False
+            )),
+            ('svc', LinearSVC(
+                C=C,
+                penalty='l2',
+                dual=False,
+                loss='squared_hinge',
+                class_weight='balanced',
+                max_iter=self.max_iter,
+                tol=1e-4,
+                random_state=self.random_state
+            ))
+        ])
+
+        model = CalibratedClassifierCV(
+            base_svm_pipeline,
+            method=method,  # The method we're evaluating
+            cv=self.cv_folds,
+            ensemble='auto'
+        )
+
+        # Use sklearn's built-in neg_log_loss scorer
+        # (automatically handles probability predictions)
+        # Returns negative log-loss, so we negate to get positive log-loss
+        with suppress_convergence_warnings(verbose=False):
+            scores = cross_val_score(
+                model,
+                X,
+                y,
+                cv=self.cv_folds,
+                scoring='neg_log_loss',  # Built-in scorer for log-loss
+                n_jobs=self.n_jobs,
+                verbose=0
+            )
+
+        # Return mean log-loss (negate the negative to get positive)
+        return float(-np.mean(scores))  # Return positive log-loss
+
     def _evaluate_params(
         self,
         X: np.ndarray,
         y: np.ndarray,
         C: float,
         method: str,
-        dual: bool,
-        penalty: str,  # NEW: 'l1' or 'l2'
-        loss: str,  # NEW: 'squared_hinge'
-        intercept_scaling: float,
-        include_max: bool
+        saturate_enabled: bool,
+        include_max: bool,
+        include_pairwise_mins: bool
     ) -> float:
         """
-        Evaluate specific hyperparameters via cross-validation.
+        Evaluate specific hyperparameters via cross-validation (PHASE 1: CENTERED SCALING).
 
         Args:
             X: Feature matrix
             y: Labels
             C: C value to evaluate
             method: Calibration method ('sigmoid' or 'isotonic')
-            dual: Primal (False) or dual (True) formulation
-            penalty: Penalty type ('l1' or 'l2')
-            loss: Loss function ('squared_hinge')
-            intercept_scaling: Intercept scaling parameter
-            include_max: Whether to include max features in BothEndsStrong transformer
+            saturate_enabled: Ignored in Phase 1 (backward compatibility)
+            include_max: Ignored in Phase 1 (backward compatibility)
+            include_pairwise_mins: Ignored in Phase 1 (backward compatibility)
 
         Returns:
-            Cross-validation neg_log_loss score
+            Cross-validation balanced_accuracy score
         """
-        # LinearSVC with external calibration (matches training approach)
-        # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
-        #   (s=0 means "U12≈U2", centering would destroy this meaning)
-        # - BothEndsStrongTransformer: Augments 3D → 9D (or 11D with max) with both-ends-strong features
-        # - LinearSVC: Optimized for linear case, L1 prunes redundant features
-        # - CalibratedClassifierCV: External calibration
+        # CORRECTED: Removed RobustScaler (scaling done outside pipeline)
+        # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
+        #
+        # Pipeline: z-scores → augmented features → svc → calibration
+        # - Data arrives as z-scores (already scaled by ScoreNormalizer)
+        # - BothEndsStrongTransformer: Augmented features from z-scores
+        # - LinearSVC: L2-regularized linear classifier
+        # - CalibratedClassifierCV: External calibration (isotonic or sigmoid)
+        #
+        # Scoring: balanced_accuracy (designed for imbalanced data)
         base_svm_pipeline = Pipeline([
-            ('clip', OutlierClipper(quantile=0.999)),  # Clip extreme outliers before scaling
-            ('scale', RobustScaler(with_centering=False, with_scaling=True)),
-            ('augment', BothEndsStrongTransformer(
-                include_max=include_max
+            ('transform', BothEndsStrongTransformer(
+                include_max=False,  # 7D feature space (recommended)
+                include_pairwise_mins=False
             )),
             ('svc', LinearSVC(
                 C=C,
-                dual=dual,
-                penalty=penalty,  # L1 or L2
-                loss=loss,  # squared_hinge
-                intercept_scaling=intercept_scaling,
+                penalty='l2',
+                dual=False,
+                loss='squared_hinge',
                 class_weight='balanced',
                 max_iter=self.max_iter,
                 tol=1e-4,
@@ -811,9 +921,13 @@ class SVMOptimizer:
         model = CalibratedClassifierCV(
             base_svm_pipeline,
             method=method,  # Use same method as found in grid search
-            cv=5,
-            ensemble=True  # FIXED: Average calibrators across folds
+            cv=self.cv_folds,
+            ensemble='auto'  # Per-fold fit + averaging
         )
+
+        # balanced_accuracy scorer: (TPR + TNR) / 2
+        # Designed for imbalanced data
+        scorer = make_scorer(balanced_accuracy_score)
 
         # Calculate total tasks for progress bar
         # cross_val_score runs cv_folds outer folds
@@ -831,7 +945,7 @@ class SVMOptimizer:
                         X,
                         y,
                         cv=self.cv_folds,
-                        scoring='neg_log_loss',
+                        scoring=scorer,  # balanced_accuracy
                         n_jobs=self.n_jobs,
                         verbose=0  # Silence sklearn, use tqdm
                     )
@@ -842,7 +956,7 @@ class SVMOptimizer:
                     X,
                     y,
                     cv=self.cv_folds,
-                    scoring='neg_log_loss',
+                    scoring=scorer,  # balanced_accuracy
                     n_jobs=self.n_jobs,
                     verbose=0
                 )
