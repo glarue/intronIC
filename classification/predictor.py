@@ -1,5 +1,5 @@
 """
-SVM ensemble prediction with F1-weighted averaging.
+SVM ensemble prediction with F1-weighted averaging (CORRECTED ARCHITECTURE).
 
 This module implements the classification algorithm from intronIC.py:5651-5900,
 which applies trained ensemble models to classify introns as U2 or U12 type.
@@ -8,10 +8,17 @@ Key features:
 - F1-weighted averaging of ensemble predictions for robust classification
 - Decision boundary distance calculation for confidence estimation
 - Type assignment based on probability threshold (default: 90%)
-- No re-normalization of z-scores (prevents data leakage)
 - Parallel processing support for large datasets
 
+CORRECTED ARCHITECTURE (Expert guidance, 2025):
+- Introns must have Z-SCORES (five_z_score, bp_z_score, three_z_score)
+  populated by ScoreNormalizer BEFORE prediction
+- Pipeline contains NO scaler (scaling done externally by ScoreNormalizer)
+- Single scaling step prevents double-scaling issues
+- Domain adaptation via ScoreNormalizer refitting (per-species)
+
 Port from: intronIC.py:5651-5687 (average_svm_score_info), 5816-5900 (parallel_svm_score)
+Redesign: SCALER_ARCHITECTURE_REVIEW.md
 """
 
 from dataclasses import replace
@@ -30,7 +37,7 @@ def _predict_chunk_worker(
     threshold: float
 ) -> Sequence[Intron]:
     """
-    Worker function for parallel classification.
+    Worker function for parallel classification (NEW ARCHITECTURE).
 
     This function is defined at module level so it can be pickled for
     multiprocessing. It processes a chunk of introns using the same logic
@@ -43,11 +50,20 @@ def _predict_chunk_worker(
 
     Returns:
         Classified introns with scores and type_id
+
+    Redesign: SCALER_ARCHITECTURE_REVIEW.md (Expert feedback, 2025)
     """
     if not introns:
         return []
 
-    # Prepare feature matrix
+    # CORRECTED: Extract z-scores from introns (already scaled by ScoreNormalizer)
+    # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
+    #
+    # Data flow:
+    # 1. ScoreNormalizer (in main.py) fits RobustScaler on reference LLRs
+    # 2. ScoreNormalizer transforms experimental LLRs → z-scores (five_z_score, bp_z_score, three_z_score)
+    # 3. Predictor extracts z-scores and passes to model
+    # 4. Pipeline has NO scaler (would cause double-scaling)
     features = []
     for intron in introns:
         if intron.scores is None:
@@ -63,12 +79,12 @@ def _predict_chunk_worker(
             intron.scores.three_z_score
         ])
 
-    X = np.array(features)
+    X_z = np.array(features)
 
-    # Get predictions from each model
+    # Get predictions from each model (pass z-scores - NO scaling in pipeline)
     probas = []
     for model in ensemble.models:
-        proba = model.model.predict_proba(X)[:, 1]
+        proba = model.model.predict_proba(X_z)[:, 1]
         probas.append(proba)
 
     probas = np.array(probas)
@@ -105,7 +121,7 @@ def _predict_chunk_worker(
 
     # Update introns with classification results
     classified_introns = []
-    for i, intron in enumerate(introns):
+    for i, intron in enumerate(introns):  # introns already have z-scores from ScoreNormalizer
         svm_score = float(svm_scores[i])
         relative_score = float(relative_scores[i])
         decision_distance = float(log_odds[i])
@@ -117,6 +133,7 @@ def _predict_chunk_worker(
         type_id = 'u12' if decision_distance > 0 else 'u2'
 
         # Compute BothEndsStrong augmented features for output
+        # These are computed from z-scores (what the model sees after scaling)
         five_z = intron.scores.five_z_score
         bp_z = intron.scores.bp_z_score
         three_z = intron.scores.three_z_score
@@ -172,12 +189,15 @@ def _predict_chunk_worker(
 
 class SVMPredictor:
     """
-    Apply trained SVM ensemble to classify introns.
+    Apply trained SVM ensemble to classify introns (NEW ARCHITECTURE).
 
     Uses F1-weighted averaging across models for robust predictions.
-    Does NOT re-normalize z-scores (fixes Issue #1 - data leakage).
+
+    NEW: Operates on RAW PWM scores; pipeline handles scaling internally.
+    This prevents double-scaling and enables cross-species deployment.
 
     Port from: intronIC.py:5651-5900
+    Redesign: SCALER_ARCHITECTURE_REVIEW.md (Expert feedback, 2025)
     """
 
     def __init__(self, threshold: float = 90.0, n_jobs: int = 1):
@@ -199,21 +219,26 @@ class SVMPredictor:
         introns: Sequence[Intron]
     ) -> Sequence[Intron]:
         """
-        Classify introns using trained ensemble.
+        Classify introns using trained ensemble (NEW ARCHITECTURE).
 
         Uses parallel processing if n_jobs > 1. For efficiency, introns are
         split into chunks (one per worker) and each chunk is processed using
         vectorized sklearn operations.
 
+        NEW: Pipeline handles scaling internally via ZeroAnchoredRobustScaler.
+        Introns must have raw PWM scores, NOT pre-computed z-scores.
+
         Args:
             ensemble: Trained ensemble of SVM models
-            introns: Introns to classify (must have z-scores)
+            introns: Introns to classify (must have raw PWM scores)
 
         Returns:
             Introns with updated classification scores
 
         Raises:
-            ValueError: If introns lack z-scores
+            ValueError: If introns lack raw scores
+
+        Redesign: SCALER_ARCHITECTURE_REVIEW.md (Expert feedback, 2025)
         """
         if not ensemble.models:
             raise ValueError("Ensemble has no models")
@@ -287,15 +312,31 @@ class SVMPredictor:
         if not introns:
             return []
 
-        # Prepare feature matrix
-        X = self._prepare_features(introns)
+        # CORRECTED: Extract z-scores from introns (already scaled by ScoreNormalizer)
+        # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
+        features = []
+        for intron in introns:
+            if intron.scores is None:
+                raise ValueError(f"Intron {intron.intron_id} has no scores")
+            if (intron.scores.five_z_score is None or
+                intron.scores.bp_z_score is None or
+                intron.scores.three_z_score is None):
+                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
 
-        # Get predictions from each model
+            features.append([
+                intron.scores.five_z_score,
+                intron.scores.bp_z_score,
+                intron.scores.three_z_score
+            ])
+
+        X_z = np.array(features)
+
+        # Get predictions from each model (pass z-scores - NO scaling in pipeline)
         probas = []
         for model in ensemble.models:
             # predict_proba returns [P(U2), P(U12)]
             # We want P(U12) which is column 1
-            proba = model.model.predict_proba(X)[:, 1]
+            proba = model.model.predict_proba(X_z)[:, 1]
             probas.append(proba)
 
         probas = np.array(probas)  # Shape: (n_models, n_introns)
@@ -330,7 +371,7 @@ class SVMPredictor:
 
         # Update introns with classification results
         classified_introns = []
-        for i, intron in enumerate(introns):
+        for i, intron in enumerate(introns):  # introns already have z-scores from ScoreNormalizer
             svm_score = float(svm_scores[i])
             relative_score = float(relative_scores[i])
             decision_distance = float(log_odds[i])
@@ -342,6 +383,7 @@ class SVMPredictor:
             type_id = 'u12' if decision_distance > 0 else 'u2'
 
             # Compute BothEndsStrong augmented features for output
+            # These are computed from z-scores (what the model sees after scaling)
             five_z = intron.scores.five_z_score
             bp_z = intron.scores.bp_z_score
             three_z = intron.scores.three_z_score
@@ -398,35 +440,38 @@ class SVMPredictor:
 
     def _prepare_features(self, introns: Sequence[Intron]) -> np.ndarray:
         """
-        Extract feature matrix from introns.
+        Extract feature matrix from introns (NEW ARCHITECTURE).
 
-        Features: [five_z_score, bp_z_score, three_z_score]
+        Features: [five_raw_score, bp_raw_score, three_raw_score]
 
-        CRITICAL: Does NOT re-normalize z-scores.
-        Uses z-scores computed from reference data only (prevents data leakage).
+        CRITICAL: Extracts RAW LLR scores, NOT z-scores.
+        The pipeline's ZeroAnchoredRobustScaler will handle scaling internally.
+        This prevents double-scaling issues and allows cross-species deployment.
 
         Args:
-            introns: Introns with z-scores
+            introns: Introns with raw PWM scores
 
         Returns:
-            Feature matrix (n_introns, 3)
+            Feature matrix (n_introns, 3) of raw LLR scores
 
         Raises:
-            ValueError: If any intron lacks z-scores
+            ValueError: If any intron lacks raw scores
+
+        Redesign: SCALER_ARCHITECTURE_REVIEW.md (Expert feedback, 2025)
         """
         features = []
         for intron in introns:
             if intron.scores is None:
                 raise ValueError(f"Intron {intron.intron_id} has no scores")
-            if (intron.scores.five_z_score is None or
-                intron.scores.bp_z_score is None or
-                intron.scores.three_z_score is None):
-                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
+            if (intron.scores.five_raw_score is None or
+                intron.scores.bp_raw_score is None or
+                intron.scores.three_raw_score is None):
+                raise ValueError(f"Intron {intron.intron_id} missing raw scores")
 
             features.append([
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score
+                intron.scores.five_raw_score,
+                intron.scores.bp_raw_score,
+                intron.scores.three_raw_score
             ])
 
         return np.array(features)

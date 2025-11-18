@@ -2,7 +2,7 @@
 
 # intronIC - (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-**Version 1.5.1** - Refactored Edition
+**Version 2.0.0** - Refactored Edition with Corrected Architecture
 
 `intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine (SVM) trained on position-weight matrix (PWM) scores. It can be used with a genome and annotation file, or with pre-extracted intron sequences. Alternatively, `intronIC` can extract all annotated intron sequences without classification (using `-s`).
 
@@ -14,6 +14,11 @@ This refactored version maintains **100% algorithmic fidelity** and **CLI compat
 
 ### Key Improvements
 
+- **Corrected ML Architecture (v2.0)**: Fixed double-scaling issue and train/test mismatch
+  - Single scaling step via RobustScaler with centering (removes composition bias)
+  - 7D augmented features (min_all + neg_absdiff) suppress one-end-strong false positives
+  - Two-stage optimization (C via balanced_accuracy, calibration via log-loss)
+  - **Result**: 98.5% reduction in false positives (130 → 2 on C. elegans)
 - **Modular Architecture**: Organized into logical packages (extraction, scoring, classification, output) instead of a single 6,093-line file
 - **Enhanced Code Quality**: Type hints throughout, immutable data structures, better error handling
 - **Bug Fixes**: Corrected data leakage in z-score normalization, fixed type_id assignment logic
@@ -57,6 +62,53 @@ intronIC uses a **three-step scoring and classification pipeline**:
 3. **SVM Classification**: Train an ensemble of linear SVMs on reference U12/U2 introns, output probability scores (0-100%)
 
 The output probability represents the classifier's confidence that an intron is U12-type. By default, introns with scores **>90%** are considered high-confidence U12-type predictions.
+
+### ML Pipeline Architecture
+
+intronIC uses a **single scaling step** architecture to prevent double-scaling and ensure train/test consistency:
+
+```
+Raw PWM Scores (LLRs)
+         ↓
+ScoreNormalizer (EXTERNAL to pipeline)
+  - RobustScaler(with_centering=True)
+  - Fitted on reference introns only
+  - Transforms: raw LLRs → z-scores
+  - Removes composition bias via centering
+         ↓
+Z-Scores [five_z_score, bp_z_score, three_z_score]
+         ↓
+ML Pipeline (NO scaler inside)
+  ├─ BothEndsStrongTransformer
+  │  └─ Augments 3D → 7D features:
+  │     • Pass-through: five_z, bp_z, three_z
+  │     • min_all = min(five_z, bp_z, three_z)
+  │     • neg_absdiff_5_bp = -|five_z - bp_z|
+  │     • neg_absdiff_5_3 = -|five_z - three_z|
+  │     • neg_absdiff_bp_3 = -|bp_z - three_z|
+  ├─ LinearSVC
+  │  └─ L2 penalty, balanced class weights
+  └─ CalibratedClassifierCV
+     └─ External calibration (sigmoid or isotonic)
+         ↓
+U12 Probability (0-100%)
+```
+
+**Key Design Principles:**
+
+1. **Single Scaling Step**: Scaling happens ONLY in ScoreNormalizer (external to pipeline). The pipeline receives pre-scaled z-scores and does NOT re-scale them. This prevents double-scaling.
+
+2. **Train/Test Consistency**: Both training and prediction extract z-scores from introns and pass them to the pipeline, ensuring identical data transformations.
+
+3. **Domain Adaptation**: ScoreNormalizer can be refitted per-species (adaptive mode) or reused from training species (human mode) for cross-species classification.
+
+4. **Feature Engineering**: BothEndsStrongTransformer adds 4 synthetic features (min_all and 3 neg_absdiff) that explicitly penalize imbalanced signals, reducing false positives from "one-end-strong" U2 introns.
+
+5. **Two-Stage Optimization**:
+   - **Stage 1**: Optimize C parameter using balanced_accuracy (discrimination quality)
+   - **Stage 2**: Select calibration method (sigmoid vs isotonic) using log-loss (probability quality)
+
+This architecture was validated on C. elegans, achieving **2 false positives** vs 130 with uncentered scaling.
 
 ---
 

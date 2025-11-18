@@ -1,87 +1,45 @@
-# Fast testing configuration for BothEndsStrong feature development
-# This config reduces grid search complexity for quick validation
+# ============================================================================
+# intronIC Fast Test Configuration
+# ============================================================================
+# Ultra-fast testing config for development (~5-10 minutes on Chr19)
+# For rapid iteration during feature development
 #
-# Usage:
-#   from classification.config_loader import load_optimizer_config
-#   optimizer = load_optimizer_config('config/training_fast_test.yaml')
+# Corrected Architecture (2025-01-17):
+# - ScoreNormalizer: RobustScaler(with_centering=True)
+# - Pipeline: BothEndsStrongTransformer → LinearSVC → CalibratedClassifierCV
+# - Two-stage optimization: C (balanced_accuracy) then method (log-loss)
+# ============================================================================
 
-# Optimizer settings
 optimizer:
-  # Number of geometric refinement rounds (1-5)
-  # 1 = ultra-fast, 3 = production default, 5 = thorough
+  # Minimal optimization for smoke testing
   n_rounds: 1
-
-  # Initial grid points for round 1 (7-13 typical)
-  # REDUCED TO 3 for ultra-fast testing (was 7)
   n_points_initial: 3
-
-  # Refinement grid points for rounds 2+ (20-100 typical)
   n_points_refine: 20
-
-  # Cross-validation folds (3-5 typical)
-  # REDUCED TO 2 for ultra-fast testing (was 3)
-  # Note: CalibratedClassifierCV adds another 3-fold internal CV
   cv_folds: 2
-
-  # Number of parallel jobs (-1 = use all cores)
   n_jobs: -1
-
-  # Print detailed progress
   verbose: true
-
-  # Maximum iterations for LinearSVC convergence
-  # REDUCED TO 3000 for ultra-fast testing (was 10000)
   max_iter: 3000
+  random_state: 42
 
-# Parameter grid for GridSearchCV
-# Note: 'estimator__svc__C' is automatically generated from C bounds
-# Total combinations = product of all list lengths
-# Example below: 1 × 1 × 1 × 1 × 1 = 1 combination per C value
+# CORRECTED ARCHITECTURE: Minimal grid for fast testing
 param_grid:
-  # BothEndsStrong min/max features
-  # False = only min features (9D: s5, sBP, s3, min_5_bp, min_5_3, min_all,
-  #                            neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3)
-  # True = min + max features (11D: adds max_5_bp, max_5_3)
-  # Expert guidance: "model will mostly weight min"
-  # Full range: [false, true]
-  # Test value: [false] for smoke test
-  estimator__augment__include_max: [false]
+  # BothEndsStrong min features only (7D total)
+  # Features: five_z, bp_z, three_z, min_all,
+  #           neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3
+  include_pairwise_mins: [false]
 
-  # Primal vs dual formulation
-  # False = primal (required for L1, typical best for n_samples >> n_features)
-  # Full range: [false] (always false now for L1 compatibility)
-  estimator__svc__dual: [false]
+  # No max features (don't reward one-end-strong FPs)
+  include_max: [false]
 
-  # Regularization penalty (NEW - Tier 1 FP reduction)
-  # l1 = prunes redundant features, l2 = standard
-  # Full range: ['l1', 'l2']
-  # Test value: ['l2'] for smoke test (faster)
-  estimator__svc__penalty: ['l2']
+# Training settings
+training:
+  n_models: 1  # Single model for smoke testing
+  subsample_u2: false
+  max_iter: 3000
+  random_state: 42
 
-  # Loss function (NEW - required for L1)
-  # Full range: ['squared_hinge']
-  estimator__svc__loss: ['squared_hinge']
-
-  # Intercept scaling (when dual=False)
-  # Higher values avoid over-regularizing intercept
-  # Full range: [10.0, 100.0, 1000.0]
-  estimator__svc__intercept_scaling: [1000.0]
-
-  # Calibration method
-  # sigmoid = faster and safer, isotonic = more flexible
-  # Full range: ['sigmoid', 'isotonic']
-  # Test value: ['sigmoid'] (recommended default)
-  method: ['sigmoid']
-
-# C parameter bounds (computed from class weights)
-# These are only used if you want to override auto-computed bounds
-# Normally you should leave these commented out
-# c_bounds:
-#   eff_C_pos_range: [0.001, 1000.0]  # Target effective penalty for positive class
-#   eff_C_neg_max: null  # Optional cap on negative class penalty
-
-# Reference data subsampling (for even faster testing)
-# Set to null or remove to use full reference data
+# Optional: Subsample reference data for ultra-fast testing
+# Uncomment to use only 20% of reference data
 # reference_subsample:
-#   u12_fraction: 0.2  # Use 20% of U12 references
-#   u2_fraction: 0.2   # Use 20% of U2 references
+#   u12_fraction: 0.2
+#   u2_fraction: 0.2

@@ -101,7 +101,7 @@ training:
   # Test set fraction for split evaluation
   # Only used when eval_mode = "split"
   # Fraction of reference data held out for testing (0.0-1.0)
-  test_fraction: 0.2
+  test_fraction: 0.15
 
   # Number of optimization rounds for C parameter search
   # Controls iterative refinement rounds during hyperparameter optimization
@@ -207,7 +207,7 @@ optimizer:
   # Higher = allows convergence on difficult datasets
   # Lower = faster but may not converge (warns if hit)
   # Production: 60000-75000, Fast testing: 3000-10000
-  max_iter: 60000
+  max_iter: 65000
 
   # C parameter bounds (optional - uses auto-computed bounds if not specified)
   # Controls range of C (soft-margin penalty) values to search

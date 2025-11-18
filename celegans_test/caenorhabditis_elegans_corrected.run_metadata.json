@@ -1,0 +1,43 @@
+{
+  "model_name": "homo_sapiens_corrected.model",
+  "model_source": "pretrained",
+  "model_path": "homo_sapiens_corrected.model.pkl",
+  "model_md5": "0cc0eb0bb6db20aba28df60fbe7de53b",
+  "threshold": 90.0,
+  "pretrained_metadata": {
+    "model_name": "homo_sapiens_corrected.model",
+    "training_date": "2025-11-17 19:55:57",
+    "reference_data": {
+      "u12": {
+        "file": "/home/glarue/code/intronIC/data/u12_reference.introns.iic.gz",
+        "md5": "3e7d4665a811abf8ab86b11682cbf551",
+        "count": 387
+      },
+      "u2": {
+        "file": "/home/glarue/code/intronIC/data/u2_reference.introns.iic.gz",
+        "md5": "b3b0804abeea9d2dbb76f0d59abbdd06",
+        "count": 20690
+      },
+      "total": 21077
+    },
+    "hyperparameters": {
+      "C": 81.06908422290006,
+      "cv_score": 0.0018921748827410566,
+      "kernel": "linear",
+      "calibration_method": "sigmoid",
+      "max_iter": 50000,
+      "n_models": 4,
+      "threshold": 90.0,
+      "random_seed": 42
+    },
+    "evaluation": {
+      "method": "nested_cv",
+      "n_folds": 5,
+      "mean_f1": 0.9974,
+      "std_f1": 0.0031,
+      "mean_pr_auc": 0.9973,
+      "std_pr_auc": 0.0053
+    }
+  },
+  "run_date": "2025-11-17 20:17:28"
+}

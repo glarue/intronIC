@@ -191,9 +191,16 @@ class IntronSequences:
         """
         Extract terminal dinucleotides (e.g., 'GT-AG', 'AT-AC').
 
+        Uses stored five_prime_dnt and three_prime_dnt fields if available
+        (memory-efficient), falls back to extracting from seq if needed.
+
         Returns:
             String like 'GT-AG' or None if sequence not available
         """
+        # Prefer stored dnts (available after memory optimization clears seq)
+        if self.five_prime_dnt and self.three_prime_dnt:
+            return f"{self.five_prime_dnt}-{self.three_prime_dnt}"
+        # Fall back to extracting from seq (for backwards compatibility)
         if self.seq is None or len(self.seq) < 4:
             return None
         return f"{self.seq[:2]}-{self.seq[-2:]}"

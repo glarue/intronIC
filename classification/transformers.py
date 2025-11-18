@@ -44,24 +44,34 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         include_max: Whether to include max features (default: False)
                     If True, adds max_5_bp and max_5_3 features
                     Expert: "you can drop max_* entirely"
+        include_pairwise_mins: Whether to include pairwise min features (default: False)
+                    If False, only min_all is included (recommended - non-redundant)
+                    If True, includes min_5_bp, min_5_3, AND min_all (backward compatible)
 
     Input features (3D):
         - s5:  5' splice site z-score (LLR, zero-anchored)
         - sBP: Branch point z-score (LLR, zero-anchored)
         - s3:  3' splice site z-score (LLR, zero-anchored)
 
-    Output features (9D default, 11D with include_max=True):
+    Output features (varies by configuration):
+        Base configuration (7D, recommended: include_pairwise_mins=False, include_max=False):
         1. s5 (original, passed through)
         2. sBP (original, passed through)
         3. s3 (original, passed through)
-        4. min_5_bp = min(s5, sBP)              ← Both 5' and BP must be strong
-        5. min_5_3 = min(s5, s3)                ← Both 5' and 3' must be strong
-        6. min_all = min(s5, sBP, s3)           ← ALL THREE must be strong (3-way AND)
-        7. neg_absdiff_5_bp = -|s5 - sBP|       ← Penalty for 5'/BP imbalance
-        8. neg_absdiff_5_3 = -|s5 - s3|         ← Penalty for 5'/3' imbalance
-        9. neg_absdiff_bp_3 = -|sBP - s3|       ← Penalty for BP/3' imbalance
-        [10. max_5_bp = max(s5, sBP)]           ← At least one of 5'/BP strong (optional)
-        [11. max_5_3 = max(s5, s3)]             ← At least one of 5'/3' strong (optional)
+        4. min_all = min(s5, sBP, s3)           ← ALL THREE must be strong (3-way AND)
+        5. neg_absdiff_5_bp = -|s5 - sBP|       ← Penalty for 5'/BP imbalance
+        6. neg_absdiff_5_3 = -|s5 - s3|         ← Penalty for 5'/3' imbalance
+        7. neg_absdiff_bp_3 = -|sBP - s3|       ← Penalty for BP/3' imbalance
+
+        With include_pairwise_mins=True (9D, adds redundant features):
+        4. min_5_bp = min(s5, sBP)              ← Both 5' and BP must be strong (redundant)
+        5. min_5_3 = min(s5, s3)                ← Both 5' and 3' must be strong (redundant)
+        6. min_all = min(s5, sBP, s3)           ← ALL THREE must be strong
+        7-9. [neg_absdiff features as above]
+
+        With include_max=True (adds 2 features):
+        - max_5_bp = max(s5, sBP)               ← At least one of 5'/BP strong (optional)
+        - max_5_3 = max(s5, s3)                 ← At least one of 5'/3' strong (optional)
 
     Example (balanced U12 intron):
         >>> transformer = BothEndsStrongTransformer(include_max=False)
@@ -81,6 +91,7 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
     def __init__(
         self,
         include_max: bool = False,
+        include_pairwise_mins: bool = False,
         gamma_5_bp=None,  # Deprecated - kept for backward compatibility
         gamma_5_3=None    # Deprecated - kept for backward compatibility
     ):
@@ -90,10 +101,14 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         Args:
             include_max: Whether to include max features (default: False)
                         Expert guidance: "model will mostly weight min"
+            include_pairwise_mins: Whether to include pairwise min features (default: False)
+                        If False, only min_all is included (recommended - simpler, non-redundant)
+                        If True, includes min_5_bp, min_5_3, AND min_all (redundant but backward compatible)
             gamma_5_bp: DEPRECATED - Ignored, kept for backward compatibility with old models
             gamma_5_3: DEPRECATED - Ignored, kept for backward compatibility with old models
         """
         self.include_max = include_max
+        self.include_pairwise_mins = include_pairwise_mins
 
         # Backward compatibility: Store gamma parameters as attributes even though they're unused
         # This allows old pickled models to load without errors
@@ -126,16 +141,21 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         """
-        Augment 3D features to 9D (or 11D with include_max=True).
+        Augment 3D features to 7D, 9D, or 11D depending on configuration.
 
         Args:
             X: Array of shape (n_samples, 3) with [s5, sBP, s3]
 
         Returns:
-            Array of shape (n_samples, 9) or (n_samples, 11) with augmented features
-            Features: [s5, sBP, s3, min_5_bp, min_5_3, min_all,
-                      neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3,
-                      [max_5_bp, max_5_3]]
+            Array of shape (n_samples, N) where N depends on configuration:
+            - 7D: include_pairwise_mins=False, include_max=False (recommended)
+                  [s5, sBP, s3, min_all, neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3]
+            - 9D: include_pairwise_mins=True, include_max=False
+                  [s5, sBP, s3, min_5_bp, min_5_3, min_all, neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3]
+            - 9D: include_pairwise_mins=False, include_max=True
+                  [s5, sBP, s3, min_all, neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3, max_5_bp, max_5_3]
+            - 11D: include_pairwise_mins=True, include_max=True
+                   [s5, sBP, s3, min_5_bp, min_5_3, min_all, neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3, max_5_bp, max_5_3]
 
         Raises:
             ValueError: If input doesn't have exactly 3 features
@@ -182,18 +202,25 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         absdiff_bp_3 = np.abs(sBP - s3)
         neg_absdiff_bp_3 = -absdiff_bp_3
 
-        # Stack base + min + penalty features
+        # Stack base features
         features = [
             s5[:, np.newaxis],
             sBP[:, np.newaxis],
-            s3[:, np.newaxis],
-            min_5_bp[:, np.newaxis],
-            min_5_3[:, np.newaxis],
-            min_all[:, np.newaxis],           # NEW
-            neg_absdiff_5_bp[:, np.newaxis],  # NEW
-            neg_absdiff_5_3[:, np.newaxis],   # NEW
-            neg_absdiff_bp_3[:, np.newaxis]   # NEW
+            s3[:, np.newaxis]
         ]
+
+        # Optional: pairwise min features (redundant with min_all, kept for backward compatibility)
+        if self.include_pairwise_mins:
+            features.append(min_5_bp[:, np.newaxis])
+            features.append(min_5_3[:, np.newaxis])
+
+        # Always include: 3-way min and imbalance penalties
+        features.extend([
+            min_all[:, np.newaxis],           # ALL THREE must be strong
+            neg_absdiff_5_bp[:, np.newaxis],  # Imbalance penalties
+            neg_absdiff_5_3[:, np.newaxis],
+            neg_absdiff_bp_3[:, np.newaxis]
+        ])
 
         # Optional: max features (expert: "you can drop max_* entirely")
         if self.include_max:
@@ -212,22 +239,28 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             input_features: Input feature names (ignored, we know it's [s5, sBP, s3])
 
         Returns:
-            Array of output feature names (9 or 11 strings)
+            Array of output feature names (7, 9, or 11 strings depending on config)
         """
         names = [
             's5',
             'sBP',
-            's3',
-            'min_5_bp',
-            'min_5_3',
-            'min_all',           # NEW
-            'neg_absdiff_5_bp',  # NEW
-            'neg_absdiff_5_3',   # NEW
-            'neg_absdiff_bp_3'   # NEW
+            's3'
         ]
 
+        # Optional: pairwise min features
+        if self.include_pairwise_mins:
+            names.extend(['min_5_bp', 'min_5_3'])
+
+        # Always include: 3-way min and imbalance penalties
+        names.extend([
+            'min_all',
+            'neg_absdiff_5_bp',
+            'neg_absdiff_5_3',
+            'neg_absdiff_bp_3'
+        ])
+
+        # Optional: max features
         if self.include_max:
-            names.append('max_5_bp')
-            names.append('max_5_3')
+            names.extend(['max_5_bp', 'max_5_3'])
 
         return np.array(names)

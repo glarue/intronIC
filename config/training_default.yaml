@@ -48,7 +48,7 @@ optimizer:
   # - 3 = faster, still reasonable
   # Note: CalibratedClassifierCV adds another 3-fold internal CV,
   #       so total model fits per parameter set = cv_folds × 3
-  cv_folds: 7
+  cv_folds: 10
 
   # Random seed for reproducibility
   # - Ensures same train/test splits across runs
@@ -71,7 +71,7 @@ optimizer:
   # - Lower = faster but may not converge (warns if hit)
   # - Production: 50000-100000
   # - Fast testing: 3000-10000
-  max_iter: 50000
+  max_iter: 75000
 
 # ============================================================================
 # PARAMETER GRID (CORRECTED ARCHITECTURE - 2025-01-17)
@@ -142,12 +142,12 @@ param_grid:
 #
 # MANUAL OVERRIDE (Advanced):
 # Uncomment the section below to specify custom C bounds
-# c_bounds:
+#c_bounds:
 #   # Effective C range for positive class (U12)
 #   # - Lower bound: more regularization, simpler decision boundary
 #   # - Upper bound: less regularization, more complex boundary
 #   # - Recommendation: Use defaults unless you have specific requirements
-#   eff_C_pos_range: [0.001, 1000.0]
+#  eff_C_pos_range: [0.0001, 100.0]
 #
 #   # Optional maximum effective C for negative class (U2)
 #   # - null = no limit (allow effective C_neg to grow with class weight)
@@ -166,7 +166,7 @@ training:
   # - 3-5 = typical ensemble (good balance)
   # - 10+ = very robust but slower
   # Recommendation: 3 for production, 1 for fast testing
-  n_models: 7
+  n_models: 12
 
   # Whether to subsample U2 set for each model
   # - true = Each model sees different random U2 subset (more diversity)
@@ -187,7 +187,7 @@ training:
   # - Used during final ensemble training
   # - Production: 20000-50000
   # - Fast testing: 3000-10000
-  max_iter: 25000
+  max_iter: 50000
 
   # Random seed for ensemble training
   # - Controls U2 subsampling randomness

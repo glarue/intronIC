@@ -124,6 +124,21 @@ with tqdm_joblib(tqdm(
 
 **Note:** With high parallelism (`-p 10`), joblib batches work such that progress updates occur in chunks rather than smoothly. This is expected behavior with parallel processing.
 
+**Additional improvements for high parallelism (2025-01-17):**
+1. Added `file=sys.stdout` to force tqdm output to stdout (prevent logging system capture)
+2. Added `miniters=1` for more granular update thresholds
+3. Reduced `mininterval` from 0.1s to 0.05s for faster refresh
+4. Added background monitoring thread that prints time-based updates every 30s for long tasks (>50 fits)
+5. Added informational note in output when using high parallelism explaining expected behavior
+
+With these changes, users get feedback even if the tqdm bar doesn't update frequently:
+```
+Note: With high parallelism (n_jobs=10), progress bar may update
+      in large increments as worker batches complete.
+[Still running... 30s elapsed]
+[Still running... 60s elapsed]
+```
+
 ---
 
 ## Summary of Changes

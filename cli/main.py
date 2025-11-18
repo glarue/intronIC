@@ -157,44 +157,44 @@ def clear_large_sequences_for_classification(introns: List[Intron]) -> List[Intr
     """
     Clear large sequence fields before classification to reduce memory.
 
-    After scoring completes, the large sequence fields (seq, upstream_flank,
-    downstream_flank, bp_region_seq) are no longer needed for classification.
-    Only the small scored sequences (five_seq, three_seq, bp_seq, bp_seq_u2)
-    and terminal dinucleotides are needed.
+    After scoring completes, the full intron sequence (seq) is no longer needed
+    for classification. Only the small scored sequences (five_seq, three_seq,
+    bp_seq, bp_seq_u2) are needed for classification.
 
-    This function creates new intron objects with large sequences cleared,
-    reducing memory usage by ~10-12 GB for 1M introns (from ~14 GB to ~2 GB).
+    However, we KEEP upstream_flank, downstream_flank, and bp_region_seq because
+    they are needed for meta.iic output (motif schematic and BP context).
+
+    This function creates new intron objects with seq cleared, reducing memory
+    usage by ~5-8 GB for 1M introns while preserving output quality.
 
     Clears:
-    - seq (full intron sequence, ~500 bytes avg)
-    - upstream_flank (exonic context, ~200 bytes avg)
-    - downstream_flank (exonic context, ~200 bytes avg)
-    - bp_region_seq (branch point search region, ~50 bytes avg)
+    - seq (full intron sequence, ~500 bytes avg) - THE BIG ONE
 
-    Keeps:
+    Keeps (for classification):
     - five_seq, three_seq, bp_seq, bp_seq_u2 (scored sequences, ~40 bytes total)
     - five_prime_dnt, three_prime_dnt (terminal dinucleotides, ~4 bytes total)
-    - bp_relative_coords (branch point position, ~16 bytes)
-    - All scores and metadata
+
+    Keeps (for meta.iic output):
+    - upstream_flank, downstream_flank (needed for motif schematic, ~400 bytes total)
+    - bp_region_seq (needed for BP context, ~50 bytes avg)
+    - five_display_seq, three_display_seq (needed for motif schematic, ~50 bytes total)
+    - bp_relative_coords (needed for BP context, ~16 bytes)
 
     Args:
         introns: List of scored introns with full sequences
 
     Returns:
-        New list of introns with large sequences cleared (functional style)
+        New list of introns with seq cleared (functional style)
     """
     from dataclasses import replace
 
     cleared = []
     for intron in introns:
-        # Create new intron with cleared sequences
+        # Create new intron with seq cleared (keep everything else for output)
         # Uses functional style - returns new object, original unchanged
         new_sequences = replace(
             intron.sequences,
-            seq=None,
-            upstream_flank=None,
-            downstream_flank=None,
-            bp_region_seq=None
+            seq=None  # Only clear the big one (~500 bytes avg)
         )
         cleared_intron = replace(intron, sequences=new_sequences)
         cleared.append(cleared_intron)
@@ -1328,71 +1328,117 @@ def classify_introns(
     yaml_training_max_iter = None
     yaml_training_random_state = None
 
-    # Auto-load default config if it exists and user didn't specify --optimizer-config
-    # Only auto-load when actually training (not using a pretrained model)
-    if not config.training.optimizer_config_path and config.training.pretrained_model_path is None:
-        from pathlib import Path
-        default_config = Path(__file__).parent.parent / "config" / "training_default.yaml"
-        if default_config.exists():
-            # Update config to use default
-            config = replace(
-                config,
-                training=replace(config.training, optimizer_config_path=default_config)
-            )
-            messenger.log_only(f"Auto-loading default configuration: {default_config}")
+    # Load unified configuration file
+    # Auto-discovers from standard paths if not explicitly specified
+    # Priority: --config arg > ./.intronIC.yaml > ~/.config/intronIC/config.yaml > built-in
+    from classification.config_loader import load_config, find_config
 
-    if config.training.optimizer_config_path:
-        messenger.log_only(f"Loading optimizer configuration from: {config.training.optimizer_config_path}")
-        try:
-            from classification.config_loader import load_optimizer_config
-            optimizer_from_yaml = load_optimizer_config(config.training.optimizer_config_path)
+    try:
+        # Load config (auto-discovers if config_path is None)
+        yaml_config = load_config(config.training.config_path)
 
-            # Extract ALL settings from YAML optimizer (not just param_grid!)
-            param_grid_override = optimizer_from_yaml.param_grid_override
-            optimizer_n_rounds = optimizer_from_yaml.n_rounds
-            optimizer_cv_folds = optimizer_from_yaml.cv_folds
-            optimizer_cv_processes = optimizer_from_yaml.n_jobs  # n_jobs → cv_processes
-            optimizer_max_iter = optimizer_from_yaml.max_iter
-            optimizer_n_points_initial = optimizer_from_yaml.n_points_initial
+        # Log which config file was loaded
+        if yaml_config:
+            config_path = find_config(config.training.config_path)
+            if config_path:
+                messenger.log_only(f"Loaded configuration from: {config_path}")
 
-            # Extract C bounds if specified in config
-            eff_C_pos_range = getattr(optimizer_from_yaml, 'eff_C_pos_range', (1e-3, 1e3))
-            eff_C_neg_max = getattr(optimizer_from_yaml, 'eff_C_neg_max', None)
+            # Extract sections from unified config
+            optimizer_cfg = yaml_config.get('optimizer', {})
+            training_cfg = yaml_config.get('training', {})
+            ensemble_cfg = training_cfg.get('ensemble', {})
+            param_grid_override = yaml_config.get('param_grid', {})
 
-            # Extract training settings if present in YAML (override CLI defaults)
-            yaml_n_models = getattr(optimizer_from_yaml, 'training_n_models', None)
-            yaml_subsample_u2 = getattr(optimizer_from_yaml, 'training_subsample_u2', None)
-            yaml_subsample_ratio = getattr(optimizer_from_yaml, 'training_subsample_ratio', None)
-            yaml_training_max_iter = getattr(optimizer_from_yaml, 'training_max_iter', None)
-            yaml_training_random_state = getattr(optimizer_from_yaml, 'training_random_state', None)
+            # Extract optimizer settings
+            optimizer_n_rounds = optimizer_cfg.get('n_rounds', 5)
+            optimizer_cv_folds = optimizer_cfg.get('cv_folds', 7)
+            optimizer_cv_processes = optimizer_cfg.get('n_jobs', -1)
+            optimizer_max_iter = optimizer_cfg.get('max_iter', 60000)
+            optimizer_n_points_initial = optimizer_cfg.get('n_points_initial', 13)
 
+            # Extract C bounds (if specified)
+            c_bounds = optimizer_cfg.get('c_bounds', {})
+            eff_C_pos_range = tuple(c_bounds.get('eff_C_pos_range', [1e-3, 1e3]))
+            eff_C_neg_max = c_bounds.get('eff_C_neg_max', None)
+
+            # Extract ensemble/training settings
+            yaml_n_models = ensemble_cfg.get('n_models')
+            yaml_subsample_u2 = ensemble_cfg.get('subsample_u2')
+            yaml_subsample_ratio = ensemble_cfg.get('subsample_ratio')
+            yaml_training_max_iter = ensemble_cfg.get('max_iter')
+            yaml_training_random_state = ensemble_cfg.get('random_state')
+
+            # Extract fold-averaged params setting
+            yaml_use_fold_averaged = training_cfg.get('use_fold_averaged_params')
+
+            # Update config if ensemble settings provided
             if yaml_n_models is not None:
                 config = replace(
                     config,
                     training=replace(config.training, n_models=yaml_n_models)
                 )
-                messenger.log_only(f"  Ensemble models: {yaml_n_models} (from YAML)")
+                messenger.log_only(f"  Ensemble models: {yaml_n_models} (from config)")
             if yaml_subsample_u2 is not None:
-                messenger.log_only(f"  Subsample U2: {yaml_subsample_u2} (from YAML)")
+                messenger.log_only(f"  Subsample U2: {yaml_subsample_u2} (from config)")
             if yaml_subsample_ratio is not None:
-                messenger.log_only(f"  Subsample ratio: {yaml_subsample_ratio} (from YAML)")
+                messenger.log_only(f"  Subsample ratio: {yaml_subsample_ratio} (from config)")
             if yaml_training_max_iter is not None:
-                messenger.log_only(f"  Training max_iter: {yaml_training_max_iter} (from YAML)")
+                messenger.log_only(f"  Training max_iter: {yaml_training_max_iter} (from config)")
             if yaml_training_random_state is not None:
-                messenger.log_only(f"  Training random_state: {yaml_training_random_state} (from YAML)")
+                messenger.log_only(f"  Training random_state: {yaml_training_random_state} (from config)")
 
-            messenger.log_only(f"Loaded custom optimizer configuration:")
-            messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
-            messenger.log_only(f"  Initial grid points: {optimizer_n_points_initial}")
-            messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
-            messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
-            messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
-            messenger.log_only(f"  Parameter grid: {len(param_grid_override)} hyperparameter sets")
-            if hasattr(optimizer_from_yaml, 'eff_C_pos_range'):
-                messenger.log_only(f"  C bounds: eff_C_pos_range={eff_C_pos_range}, eff_C_neg_max={eff_C_neg_max}")
-        except Exception as e:
-            messenger.warning(f"Failed to load optimizer config: {e}")
-            messenger.warning("Continuing with default optimizer settings...")
+            # Log optimizer settings
+            if optimizer_cfg:
+                messenger.log_only(f"Loaded optimizer configuration:")
+                messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
+                messenger.log_only(f"  Initial grid points: {optimizer_n_points_initial}")
+                messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
+                messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
+                messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
+                if param_grid_override:
+                    messenger.log_only(f"  Parameter grid: {len(param_grid_override)} hyperparameter sets")
+                if c_bounds:
+                    messenger.log_only(f"  C bounds: eff_C_pos_range={eff_C_pos_range}, eff_C_neg_max={eff_C_neg_max}")
+        else:
+            # No config found - use CLI defaults
+            messenger.log_only("No configuration file found - using CLI defaults")
+            optimizer_n_rounds = config.training.n_optimization_rounds
+            optimizer_cv_folds = config.training.n_cv_folds
+            optimizer_cv_processes = config.performance.cv_processes or config.performance.processes
+            optimizer_max_iter = config.training.max_iter
+            optimizer_n_points_initial = 13
+            param_grid_override = {}
+            eff_C_pos_range = (1e-3, 1e3)
+            eff_C_neg_max = None
+            yaml_n_models = None
+            yaml_subsample_u2 = None
+            yaml_subsample_ratio = None
+            yaml_training_max_iter = None
+            yaml_training_random_state = None
+            yaml_use_fold_averaged = None
+
+    except FileNotFoundError as e:
+        messenger.error(f"Config file not found: {e}")
+        messenger.error("Use --config to specify a valid config file path")
+        return 1
+    except Exception as e:
+        messenger.warning(f"Failed to load config: {e}")
+        messenger.warning("Continuing with CLI defaults...")
+        # Use CLI defaults if config loading fails
+        optimizer_n_rounds = config.training.n_optimization_rounds
+        optimizer_cv_folds = config.training.n_cv_folds
+        optimizer_cv_processes = config.performance.cv_processes or config.performance.processes
+        optimizer_max_iter = config.training.max_iter
+        optimizer_n_points_initial = 13
+        param_grid_override = {}
+        eff_C_pos_range = (1e-3, 1e3)
+        eff_C_neg_max = None
+        yaml_n_models = None
+        yaml_subsample_u2 = None
+        yaml_subsample_ratio = None
+        yaml_training_max_iter = None
+        yaml_training_random_state = None
+        yaml_use_fold_averaged = None
 
     # Create classifier with correct parameter names
     # IntronClassifier API uses:
@@ -1413,9 +1459,9 @@ def classify_introns(
     ensemble_max_iter = yaml_training_max_iter if yaml_training_max_iter is not None else optimizer_max_iter
     ensemble_random_state = yaml_training_random_state if yaml_training_random_state is not None else config.training.seed
 
-    # Get use_fold_averaged_params: CLI arg takes precedence over YAML
-    # Priority: CLI arg (if explicitly set) > YAML value > default (False)
-    yaml_use_fold_averaged = getattr(optimizer_from_yaml, 'training_use_fold_averaged_params', None) if optimizer_from_yaml else None
+    # Get use_fold_averaged_params: CLI arg takes precedence over config
+    # Priority: CLI arg (if explicitly set) > config value > default (False)
+    # yaml_use_fold_averaged was already extracted above from training_cfg
     if config.training.use_fold_averaged_params is not None:
         # CLI arg was explicitly provided
         use_fold_averaged_params = config.training.use_fold_averaged_params
@@ -1992,10 +2038,10 @@ def main_classify(config: IntronICConfig):
         messenger.log_only(f"Wrote sequences for {introns_written} introns to {seq_output_path.name}")
 
         # Clear large sequences to reduce memory before classification
-        messenger.log_only("Clearing large sequences to reduce memory (keeping scored regions)")
+        messenger.log_only("Clearing full intron sequences to reduce memory (keeping display fields for output)")
         scored_introns = clear_large_sequences_for_classification(scored_introns)
         gc.collect()
-        messenger.log_only("Memory freed from full sequences (~10-12 GB for large genomes)")
+        messenger.log_only("Memory freed from full sequences (~5-8 GB for large genomes)")
 
         # Check if using pretrained model
         if config.training.pretrained_model_path:

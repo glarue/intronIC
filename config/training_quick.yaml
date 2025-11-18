@@ -1,5 +1,14 @@
-# Quick validation configuration (~10-20 minutes on Chr19)
-# Tests min vs min+max features with minimal other parameters
+# ============================================================================
+# intronIC Quick Training Configuration
+# ============================================================================
+# Fast validation config (~10-20 minutes on Chr19)
+# For quick sanity checks during development
+#
+# Corrected Architecture (2025-01-17):
+# - ScoreNormalizer: RobustScaler(with_centering=True)
+# - Pipeline: BothEndsStrongTransformer → LinearSVC → CalibratedClassifierCV
+# - Two-stage optimization: C (balanced_accuracy) then method (log-loss)
+# ============================================================================
 
 optimizer:
   n_rounds: 2
@@ -9,17 +18,22 @@ optimizer:
   n_jobs: -1
   verbose: true
   max_iter: 20000
+  random_state: 42
 
+# CORRECTED ARCHITECTURE: Simplified grid (7D features, L2 penalty)
 param_grid:
-  # Test both min-only and min+max features
-  # Expert guidance: "model will mostly weight min"
-  # Min-only now includes: s5, sBP, s3, min_5_bp, min_5_3, min_all,
-  #                        neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3 (9D)
-  estimator__augment__include_max: [false, true]
+  # BothEndsStrong min features only (7D total)
+  # Features: five_z, bp_z, three_z, min_all,
+  #           neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3
+  include_pairwise_mins: [false]
 
-  # Fix other parameters to typical good values
-  estimator__svc__dual: [false]  # Required for L1
-  estimator__svc__penalty: ['l2']  # Use L2 for quick test (L1 slower)
-  estimator__svc__loss: ['squared_hinge']  # Required for L1 compatibility
-  estimator__svc__intercept_scaling: [1000.0]
-  method: ['sigmoid']  # Faster and safer than isotonic
+  # No max features (don't reward one-end-strong FPs)
+  include_max: [false]
+
+# Training settings
+training:
+  n_models: 1  # Single model for quick testing
+  subsample_u2: false
+  subsample_ratio: 0.85
+  max_iter: 20000
+  random_state: 42

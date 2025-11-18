@@ -144,12 +144,13 @@ class ZeroAnchoredRobustScaler:
         # Broadcasting: (n_samples, n_features) / (n_features,)
         return X / self.scales_
 
-    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+    def fit_transform(self, X: np.ndarray, y=None) -> np.ndarray:
         """
         Fit and transform in one step.
 
         Args:
             X: Feature matrix
+            y: Ignored (for sklearn Pipeline compatibility)
 
         Returns:
             Scaled features
@@ -159,6 +160,46 @@ class ZeroAnchoredRobustScaler:
 
 class ScoreNormalizer:
     """
+    Normalize PWM scores to z-scores with ML integrity guarantees.
+
+    ⚠️ DEPRECATION WARNING (NEW ARCHITECTURE - 2025):
+    ═══════════════════════════════════════════════════════════════════════
+
+    This class is DEPRECATED for use in the main training/prediction pipeline.
+    The new architecture uses ZeroAnchoredRobustScaler INSIDE the sklearn
+    Pipeline, which handles scaling automatically.
+
+    DO NOT USE THIS FOR:
+    - Training new models (pipeline scales internally)
+    - Making predictions (pipeline scales internally)
+    - Pre-processing features before classification
+
+    ONLY USE THIS FOR:
+    - Standalone z-score computation for analysis/debugging
+    - Extracting z-scores from old models
+    - Comparing old vs new normalization approaches
+
+    NEW ARCHITECTURE (Recommended):
+    ─────────────────────────────────────────────────────────────────────
+    Instead of using ScoreNormalizer, extract the scaler from the pipeline:
+
+        # From a trained model
+        first_model = ensemble.models[0].model
+        base_estimator = first_model.calibrated_classifiers_[0]
+        scaler = base_estimator.named_steps['scale']  # ZeroAnchoredRobustScaler
+
+        # Compute z-scores
+        z_scores = scaler.transform(raw_llr_scores)
+
+    This ensures you're using the EXACT same scaler the model uses, preventing
+    double-scaling issues and maintaining consistency.
+
+    Redesign: SCALER_ARCHITECTURE_REVIEW.md, SCALING_REDESIGN_PLAN.md
+    ═══════════════════════════════════════════════════════════════════════
+
+    LEGACY DOCUMENTATION (for reference only):
+    ───────────────────────────────────────────────────────────────────────
+
     Normalize PWM scores to z-scores with ML integrity guarantees.
 
     This class enforces ML best practices by preventing data leakage.
@@ -250,9 +291,10 @@ class ScoreNormalizer:
         # Port from: intronIC.py:5696-5699 (get_score_vector)
         score_matrix = self._extract_score_matrix(intron_list)
 
-        # Fit Zero-Anchored Robust (ZAR) scaler
-        # Scales by median(|s|) after winsorization, preserving semantic zero
-        self._scaler = ZeroAnchoredRobustScaler().fit(score_matrix)
+        # EXPERIMENT: Test centering hypothesis
+        # Use sklearn RobustScaler WITH centering to test if this fixes C. elegans FPs
+        from sklearn.preprocessing import RobustScaler
+        self._scaler = RobustScaler(with_centering=True, with_scaling=True).fit(score_matrix)
         self._fitted_on = dataset_type
         self._is_fitted = True
 

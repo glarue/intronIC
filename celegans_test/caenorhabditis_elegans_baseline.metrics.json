@@ -1,0 +1,7 @@
+{
+  "optimized_C": "N/A (pretrained)",
+  "cv_score": "N/A (pretrained)",
+  "n_models": 4,
+  "pretrained": true,
+  "model_path": "homo_sapiens_scaler.model.pkl"
+}

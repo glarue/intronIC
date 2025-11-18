@@ -101,6 +101,7 @@ class ConfigLoader:
             ('scoring', 'pseudocount', 'pseudocount', float),
             ('scoring', 'ignore_nc_dinucleotides', 'no_ignore_nc_dnts', cls._invert_bool),
             ('scoring', 'u12_boundary_correction', 'no_nc_ss_adjustment', cls._invert_bool),
+            ('scoring', 'normalizer_mode', 'normalizer_mode', str),
 
             # Output options
             ('output', 'clean_names', 'clean_names', bool),
@@ -269,6 +270,18 @@ ignore_nc_dinucleotides = true
 # Default: true (recommended - helps identify mis-annotated U12 introns)
 u12_boundary_correction = true
 
+# Normalizer mode for pretrained model classification
+# Controls how score normalization is applied when using a pretrained model:
+# - "human": Use the scaler from the training species (recommended for cross-species)
+#   Preserves composition bias correction and calibration consistency.
+#   Best for U12-absent or distant species (e.g., C. elegans, plants).
+# - "adaptive": Refit scaler on experimental data (experimental, may cause FPs)
+#   Domain adaptation approach - may produce false positives in U12-free genomes.
+# - "auto": Use human scaler if available in model, otherwise fall back to adaptive
+#   Provides backward compatibility with older models while preferring human mode.
+# Default: "auto" (recommended - balances compatibility and accuracy)
+normalizer_mode = "auto"
+
 
 # -----------------------------------------------------------------------------
 # Scoring Regions (PWM application windows)
@@ -401,7 +414,7 @@ eval_mode = "nested_cv"
 # Only used when eval_mode = "nested_cv"
 # Higher = more rigorous but slower (5 is standard)
 # Default: 5
-n_cv_folds = 5
+n_cv_folds = 7
 
 # Test set fraction for split evaluation
 # Only used when eval_mode = "split"

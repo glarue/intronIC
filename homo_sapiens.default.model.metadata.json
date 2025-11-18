@@ -1,0 +1,35 @@
+{
+  "model_name": "homo_sapiens.default.model",
+  "training_date": "2025-11-18 13:57:39",
+  "reference_data": {
+    "u12": {
+      "file": "/home/glarue/code/intronIC/data/u12_reference.introns.iic.gz",
+      "md5": "3e7d4665a811abf8ab86b11682cbf551",
+      "count": 387
+    },
+    "u2": {
+      "file": "/home/glarue/code/intronIC/data/u2_reference.introns.iic.gz",
+      "md5": "b3b0804abeea9d2dbb76f0d59abbdd06",
+      "count": 20690
+    },
+    "total": 21077
+  },
+  "hyperparameters": {
+    "C": 67.22927498925918,
+    "cv_score": 0.0020611677222273275,
+    "kernel": "linear",
+    "calibration_method": "isotonic",
+    "max_iter": 50000,
+    "n_models": 10,
+    "threshold": 90.0,
+    "random_seed": 42
+  },
+  "evaluation": {
+    "method": "nested_cv",
+    "n_folds": 9,
+    "mean_f1": 0.9974,
+    "std_f1": 0.0048,
+    "mean_pr_auc": 0.9974,
+    "std_pr_auc": 0.0073
+  }
+}
