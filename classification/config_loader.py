@@ -1,24 +1,155 @@
 """
-Configuration file loader for SVM optimizer settings.
+Configuration file loader for intronIC settings.
 
-Allows specification of optimizer parameters and parameter grids via YAML
-configuration files for easy testing without code modification.
+Supports unified YAML configuration with auto-loading from standard paths.
 
 Usage:
+    from classification.config_loader import load_config, find_config
+
+    # Auto-load from standard paths
+    config = load_config()
+
+    # Or load from explicit path
+    config = load_config('config/config.yaml')
+
+    # Find config file without loading
+    path = find_config()
+
+Legacy usage (deprecated):
     from classification.config_loader import load_optimizer_config
-
-    # Load from config file
     optimizer = load_optimizer_config('config/training_fast_test.yaml')
-
-    # Then use as normal
-    parameters = optimizer.optimize(u12_introns, u2_introns)
 """
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 import warnings
+import os
 
 from classification.optimizer import SVMOptimizer
+
+
+def find_config(explicit_path: Optional[str] = None) -> Optional[Path]:
+    """
+    Find configuration file using priority order.
+
+    Search order (highest to lowest priority):
+    1. explicit_path (if provided)
+    2. ./.intronIC.yaml (current directory)
+    3. ~/.config/intronIC/config.yaml (XDG config dir)
+    4. ~/.intronIC.yaml (user home)
+    5. <install_dir>/config/config.yaml (built-in defaults)
+
+    Args:
+        explicit_path: Optional explicit path to config file
+
+    Returns:
+        Path to config file, or None if not found
+
+    Examples:
+        >>> # Find using auto-discovery
+        >>> config_path = find_config()
+        >>> if config_path:
+        ...     print(f"Found: {config_path}")
+
+        >>> # Check explicit path
+        >>> config_path = find_config('my_config.yaml')
+    """
+    # Priority 1: Explicit path
+    if explicit_path:
+        path = Path(explicit_path)
+        if path.exists():
+            return path
+        else:
+            return None  # Let caller handle the error
+
+    # Priority 2: Project directory (./.intronIC.yaml)
+    project_config = Path('.intronIC.yaml')
+    if project_config.exists():
+        return project_config
+
+    # Priority 3: XDG config directory (~/.config/intronIC/config.yaml)
+    xdg_config_home = os.environ.get('XDG_CONFIG_HOME')
+    if xdg_config_home:
+        xdg_config = Path(xdg_config_home) / 'intronIC' / 'config.yaml'
+    else:
+        xdg_config = Path.home() / '.config' / 'intronIC' / 'config.yaml'
+    if xdg_config.exists():
+        return xdg_config
+
+    # Priority 4: User home (~/.intronIC.yaml)
+    home_config = Path.home() / '.intronIC.yaml'
+    if home_config.exists():
+        return home_config
+
+    # Priority 5: Built-in defaults (<install_dir>/config/config.yaml)
+    # Find install directory (where this file is located)
+    install_dir = Path(__file__).parent.parent
+    builtin_config = install_dir / 'config' / 'config.yaml'
+    if builtin_config.exists():
+        return builtin_config
+
+    # No config found
+    return None
+
+
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load unified configuration file with auto-discovery.
+
+    If config_path is not provided, searches standard locations in priority order:
+    1. ./.intronIC.yaml (project directory)
+    2. ~/.config/intronIC/config.yaml (XDG config dir)
+    3. ~/.intronIC.yaml (user home)
+    4. <install_dir>/config/config.yaml (built-in defaults)
+
+    Args:
+        config_path: Optional explicit path to config file
+
+    Returns:
+        Configuration dictionary with all sections (scoring, training, optimizer, etc.)
+
+    Raises:
+        FileNotFoundError: If explicit path provided but file doesn't exist
+        ValueError: If config file is invalid YAML
+
+    Examples:
+        >>> # Auto-load from standard paths
+        >>> config = load_config()
+        >>> threshold = config['scoring']['threshold']
+
+        >>> # Load from explicit path
+        >>> config = load_config('config/profiles/quick.yaml')
+
+        >>> # Load and access nested values
+        >>> config = load_config()
+        >>> n_models = config['training']['ensemble']['n_models']
+    """
+    # Find config file
+    found_path = find_config(config_path)
+
+    if found_path is None:
+        if config_path:
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        else:
+            # No config found anywhere - return empty dict (caller will use defaults)
+            return {}
+
+    # Load YAML
+    try:
+        import yaml
+    except ImportError:
+        raise ImportError(
+            "PyYAML is required for config loading. "
+            "Install with: pip install pyyaml"
+        )
+
+    with open(found_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    if config is None:
+        config = {}
+
+    return config
 
 
 def load_optimizer_config(
@@ -72,6 +203,9 @@ def load_optimizer_config(
     # Extract C bounds (for passing to optimize() method later)
     c_bounds = config.get('c_bounds', {})
 
+    # Extract training settings (ensemble configuration)
+    training_config = config.get('training', {})
+
     # Apply overrides
     optimizer_config.update(override_kwargs)
 
@@ -90,6 +224,12 @@ def load_optimizer_config(
         eff_C_neg_max = c_bounds.get('eff_C_neg_max')
         if eff_C_neg_max is not None:
             optimizer.eff_C_neg_max = eff_C_neg_max
+
+    # Attach training settings as attributes for later use
+    # These control ensemble training (n_models, subsampling, etc.)
+    if training_config:
+        for key, value in training_config.items():
+            setattr(optimizer, f'training_{key}', value)
 
     return optimizer
 

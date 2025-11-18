@@ -100,8 +100,11 @@ Train mode examples:
   # Parallel training (faster)
   intronIC train -n homo_sapiens -p 8
 
-  # Custom training config (recommended for reproducibility)
-  intronIC train -n homo_sapiens --optimizer-config config/training_default.yaml -p 12
+  # Custom config (recommended for reproducibility)
+  intronIC train -n homo_sapiens --config config/config.yaml -p 12
+
+  # Use testing profile
+  intronIC train -n test_model --config config/profiles/quick.yaml
 
   # Custom reference sequences
   intronIC train -n species --reference_u12s custom_u12.iic --reference_u2s custom_u2.iic
@@ -241,9 +244,10 @@ Classify mode examples:
             help='Number of parallel processes for scoring reference sequences (default: 1)'
         )
         training.add_argument(
-            '--optimizer-config',
+            '--config',
             type=Path,
-            help='Path to custom optimizer configuration YAML'
+            dest='config_path',
+            help='Path to configuration file (auto-loads from standard paths if not specified)'
         )
         training.add_argument(
             '--use-fold-averaged-params',
@@ -543,9 +547,10 @@ Classify mode examples:
             help='Optimization rounds (default: 5)'
         )
         training.add_argument(
-            '--optimizer-config',
+            '--config',
             type=Path,
-            help='Custom optimizer configuration'
+            dest='config_path',
+            help='Path to configuration file (auto-loads from standard paths if not specified)'
         )
         training.add_argument(
             '--use-fold-averaged-params',
