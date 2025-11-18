@@ -25,6 +25,7 @@ Related: intronIC.py:5290-5322 (helper functions)
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Optional, Dict, Any
 import os
+import sys
 import contextlib
 import warnings
 import joblib
@@ -345,6 +346,7 @@ class SVMOptimizer:
         previous_ranges = []
 
         # Run geometric refinement
+        early_stop = False
         for round_idx in range(self.n_rounds):
             # Note: Round header printed by _grid_search_round() for better organization
             round_result = self._grid_search_round(
@@ -370,7 +372,12 @@ class SVMOptimizer:
                             if self.verbose:
                                 print(f"  Convergence detected: range overlaps previous by {overlap_ratio*100:.0f}%", flush=True)
                                 print(f"  Stopping early at round {round_idx + 1}/{self.n_rounds}", flush=True)
+                            early_stop = True
                             break
+
+                # If early stop flagged, exit outer loop
+                if early_stop:
+                    break
 
                 previous_ranges.append(next_range)
                 current_grid = next_grid
@@ -623,27 +630,58 @@ class SVMOptimizer:
             print(f"Total model fits: {total_fits:,}", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
             print(f"Metric: balanced_accuracy (discrimination quality)", flush=True)
+            if self.n_jobs not in [0, 1, -1] and abs(self.n_jobs) > 4:
+                print(f"Note: With high parallelism (n_jobs={self.n_jobs}), progress bar may update", flush=True)
+                print(f"      in large increments as worker batches complete.", flush=True)
             print(f"{'='*80}", flush=True)
 
         # Fit grid search with progress bar
         import time
+        import threading
         start_time = time.time()
 
-        if self.verbose:
-            desc = f"Round {round_idx + 1}/{self.n_rounds}"
-            with suppress_convergence_warnings(verbose=True):
-                with tqdm_joblib(tqdm(
-                    total=total_tasks,
-                    desc=desc,
-                    unit="fit",
-                    leave=True,  # Keep bar visible after completion
-                    mininterval=0.1,  # Refresh every 0.1s for smoother updates
-                    ncols=100  # Fixed width for consistent display
-                )):
+        # Progress monitoring (time-based fallback for high parallelism)
+        # Note: With high n_jobs (e.g., 10+), joblib batches work and tqdm only
+        # updates when batches complete, which can appear as long pauses.
+        # Add periodic time updates as feedback that work is progressing.
+        stop_monitor = threading.Event()
+        def monitor_progress():
+            """Print time-based progress updates every 30s as fallback."""
+            interval = 30  # seconds between updates
+            while not stop_monitor.wait(interval):
+                elapsed = time.time() - start_time
+                print(f"  [Still running... {elapsed:.0f}s elapsed]", flush=True)
+
+        # Start background monitor for long-running tasks
+        monitor_thread = None
+        if self.verbose and total_tasks > 50:  # Only for substantial grid searches
+            monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+            monitor_thread.start()
+
+        try:
+            if self.verbose:
+                desc = f"Round {round_idx + 1}/{self.n_rounds}"
+                with suppress_convergence_warnings(verbose=True):
+                    with tqdm_joblib(tqdm(
+                        total=total_tasks,
+                        desc=desc,
+                        unit="fit",
+                        leave=True,  # Keep bar visible after completion
+                        mininterval=0.05,  # Faster refresh (50ms) for more responsive updates
+                        miniters=1,  # Update on every increment
+                        ncols=100,  # Fixed width for consistent display
+                        file=sys.stdout,  # Force output to stdout (not captured by logging)
+                        dynamic_ncols=False  # Disable dynamic width (can interfere with updates)
+                    )):
+                        grid_search.fit(X, y)
+            else:
+                with suppress_convergence_warnings(verbose=False):
                     grid_search.fit(X, y)
-        else:
-            with suppress_convergence_warnings(verbose=False):
-                grid_search.fit(X, y)
+        finally:
+            # Stop background monitor
+            if monitor_thread is not None:
+                stop_monitor.set()
+                monitor_thread.join(timeout=1)
 
         elapsed = time.time() - start_time
 
