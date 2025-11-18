@@ -28,6 +28,12 @@ class IntronICArgumentParser:
         Returns:
             Namespace object with parsed arguments
         """
+        # Helpful error for common mistake: --config after subcommand
+        # --config is a global argument and must come BEFORE the subcommand
+        import sys
+        args_to_check = args if args is not None else sys.argv[1:]
+        self._check_config_position(args_to_check)
+
         parsed = self.parser.parse_args(args)
 
         # Backward compatibility: if no subcommand, default to classify
@@ -39,6 +45,39 @@ class IntronICArgumentParser:
 
         self._validate_args(parsed)
         return parsed
+
+    def _check_config_position(self, args: list):
+        """Check if --config appears after subcommand and provide helpful error.
+
+        Args:
+            args: Command-line argument list
+
+        Raises:
+            SystemExit: If --config appears after subcommand
+        """
+        if '--config' not in args:
+            return
+
+        # Find positions
+        config_idx = args.index('--config')
+        subcommand_idx = None
+
+        for idx, arg in enumerate(args):
+            if arg in ('train', 'classify'):
+                subcommand_idx = idx
+                break
+
+        # If --config appears after subcommand, show helpful error
+        if subcommand_idx is not None and config_idx > subcommand_idx:
+            print("\n❌ Error: --config must come BEFORE the subcommand\n")
+            print("Incorrect usage:")
+            print("  intronIC train --config config/config.yaml -n model  ❌\n")
+            print("Correct usage:")
+            print("  intronIC --config config/config.yaml train -n model  ✅")
+            print("  intronIC --config config/profiles/quick.yaml train -n test  ✅\n")
+            print("Note: --config is a global argument and must appear before 'train' or 'classify'\n")
+            import sys
+            sys.exit(2)
 
     def _create_parser(self) -> argparse.ArgumentParser:
         """Create the main parser with subcommands."""
