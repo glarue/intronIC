@@ -216,7 +216,7 @@ class NestedCVEvaluator:
             # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
             if self.verbose:
                 print(f"\n{'─'*80}")
-                print(f"FOLD {fold_idx + 1}/{len(fold_indices)} - Hyperparameter Optimization")
+                print(f"FOLD {fold_idx + 1}/{self.n_folds} - Hyperparameter Optimization")
                 print(f"{'─'*80}")
 
             # If C is fixed, constrain the grid to that single value
@@ -246,7 +246,7 @@ class NestedCVEvaluator:
             # Train ensemble on training fold
             if self.verbose:
                 print(f"\n{'─'*80}")
-                print(f"FOLD {fold_idx + 1}/{len(fold_indices)} - Model Training")
+                print(f"FOLD {fold_idx + 1}/{self.n_folds} - Model Training")
                 print(f"{'─'*80}")
 
             trainer = SVMTrainer(
@@ -265,7 +265,7 @@ class NestedCVEvaluator:
             # Predict on test fold (honest evaluation)
             if self.verbose:
                 print(f"\n{'─'*80}")
-                print(f"FOLD {fold_idx + 1}/{len(fold_indices)} - Test Evaluation")
+                print(f"FOLD {fold_idx + 1}/{self.n_folds} - Test Evaluation")
                 print(f"{'─'*80}")
 
             predictor = SVMPredictor(
