@@ -44,12 +44,26 @@ def inspect_ensemble_weights(
         print("SVM Ensemble Coefficient Analysis")
         print("=" * 70)
 
+        # Print shared hyperparameters once at the top
+        # All models share these parameters (from Stage 1 & 2 optimization)
+        first_model = ensemble.models[0]
+        print("\nShared Hyperparameters (all models):")
+        print(f"  Optimal C:                   {first_model.parameters.C}")
+        print(f"  Calibration method:          {first_model.parameters.calibration_method}")
+        print(f"  include_max:                 {first_model.parameters.include_max}")
+        print(f"  include_pairwise_mins:       {first_model.parameters.include_pairwise_mins}")
+        print("\nEnsemble Diversity:")
+        print(f"  Number of models:            {len(ensemble.models)}")
+        print(f"  U2 subsampling:              {'Yes' if len(ensemble.models) > 1 else 'No'}")
+        if len(ensemble.models) > 1:
+            subsample_pct = int(ensemble.subsample_ratio * 100)
+            print(f"  U2 subsample variation:      Different random {subsample_pct}% per model")
+        print("\n" + "-" * 70)
+
     for i, model in enumerate(ensemble.models):
         if verbose:
-            print(f"\nModel {i+1}/{len(ensemble.models)}:")
-            print(f"  Hyperparameters:")
-            print(f"    include_max: {model.parameters.include_max}")
-            print(f"    C:           {model.parameters.C}")
+            print(f"\nModel {i+1}/{len(ensemble.models)} - Learned Coefficients:")
+            print(f"  Training set size: {model.train_size} introns ({model.u12_count} U12, {model.u2_count} U2)")
 
         # Extract SVC from calibrated classifier
         # model.model is CalibratedClassifierCV
@@ -61,20 +75,27 @@ def inspect_ensemble_weights(
         intercept = svc.intercept_[0]
 
         if verbose:
-            # Get feature names from the BothEndsStrong transformer
-            transformer = pipeline.named_steps['augment']
-            feature_names = transformer.get_feature_names_out()
+            # Get feature names (Phase 1: no augment step, Phase 2+: augment step exists)
+            if 'augment' in pipeline.named_steps:
+                transformer = pipeline.named_steps['augment']
+                feature_names = transformer.get_feature_names_out()
+            elif 'transform' in pipeline.named_steps:
+                # Get feature names from BothEndsStrongTransformer
+                transformer = pipeline.named_steps['transform']
+                feature_names = transformer.get_feature_names_out()
+            else:
+                # Phase 1: Only base features (3D)
+                feature_names = ['five_z_score', 'bp_z_score', 'three_z_score']
 
-            print(f"\n  Learned coefficients:")
-            # Print all features
+            # Print all features with coefficients
             for idx, (name, coef) in enumerate(zip(feature_names, coefs)):
                 # Highlight min/max features
                 if 'min' in name or 'max' in name:
-                    print(f"    {name:15s}: {coef:+.6f}  ← BothEndsStrong feature")
+                    print(f"    {name:25s}: {coef:+.6f}  ← Augmented feature")
                 else:
-                    print(f"    {name:15s}: {coef:+.6f}")
+                    print(f"    {name:25s}: {coef:+.6f}")
 
-            print(f"\n  Intercept: {intercept:+.6f}")
+            print(f"  Intercept:                 {intercept:+.6f}")
 
         # With min/max features, we expect positive weights on min features
         # (higher min = both strong = more likely U12)
@@ -101,11 +122,15 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     Returns:
         Dictionary with mean, std, min, max for each feature coefficient
     """
-    # Get feature names from the first model's transformer
+    # Get feature names from the first model's transformer (or default for Phase 1)
     first_model = ensemble.models[0]
     pipeline = first_model.model.calibrated_classifiers_[0].estimator
-    transformer = pipeline.named_steps['augment']
-    feature_names = transformer.get_feature_names_out()
+    if 'augment' in pipeline.named_steps:
+        transformer = pipeline.named_steps['augment']
+        feature_names = transformer.get_feature_names_out()
+    else:
+        # Phase 1: Only base features (3D)
+        feature_names = ['five_z_score', 'bp_z_score', 'three_z_score']
 
     # Collect coefficients from all models
     all_coefs = []

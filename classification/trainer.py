@@ -24,12 +24,11 @@ from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.preprocessing import RobustScaler
 
 from core.intron import Intron
 from classification.transformers import BothEndsStrongTransformer
-from classification.clipping import OutlierClipper
 from classification.optimizer import SVMParameters
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
@@ -74,6 +73,7 @@ class SVMEnsemble:
     """Collection of trained models for ensemble prediction."""
 
     models: Sequence[SVMModel]
+    subsample_ratio: float = 0.85  # Fraction of U2s used per model (for display)
 
     def __len__(self) -> int:
         return len(self.models)
@@ -136,8 +136,15 @@ class SVMTrainer:
         """
         models = []
 
+        # Print stage header
+        print(f"\n{'='*80}", flush=True)
+        print(f"STAGE 3: ENSEMBLE TRAINING ({self.n_models} models)", flush=True)
+        print(f"{'='*80}\n", flush=True)
+
         for i in range(self.n_models):
-            print(f"Training model {i+1}/{self.n_models}...")
+            print(f"\n{'─'*80}", flush=True)
+            print(f"STAGE 3 - MODEL {i+1}/{self.n_models}: Training ensemble model...", flush=True)
+            print(f"{'─'*80}", flush=True)
 
             # Subsample U2 if requested (for diversity)
             if subsample_u2 and self.n_models > 1:
@@ -158,9 +165,11 @@ class SVMTrainer:
             )
             models.append(model)
 
-        print(f"Ensemble training complete: {len(models)} models trained")
+        print(f"\n{'='*80}", flush=True)
+        print(f"STAGE 3 COMPLETE: Ensemble training finished ({len(models)} models trained)", flush=True)
+        print(f"{'='*80}\n", flush=True)
 
-        return SVMEnsemble(models=models)
+        return SVMEnsemble(models=models, subsample_ratio=subsample_ratio)
 
     def _train_single_model(
         self,
@@ -177,36 +186,37 @@ class SVMTrainer:
         # Prepare data
         X, y = self._prepare_training_data(u12_introns, u2_introns)
 
-        # Train LinearSVC with external calibration
-        # Following sklearn best practices for rare-class classification:
-        # - RobustScaler(with_centering=False): Scales by IQR while preserving semantic zero
-        #   (s=0 means "U12≈U2", centering would destroy this meaning)
-        # - BothEndsStrongTransformer: Augments 3D → 5D (or 7D) with both-ends-strong features
-        #   Adds min/max features for 5'SS-BPS and 5'SS-3'SS pairs
-        #   Min features capture "both must be strong" (expert: "model will mostly weight min")
-        # - LinearSVC: Faster than SVC(kernel='linear'), optimized for linear case
-        #   - dual=False: Primal formulation for n_samples >> n_features (21k >> 5-7)
-        #   - intercept_scaling=1000: High value to avoid over-regularizing intercept
-        #   - max_iter: Configurable iteration limit (default: 100000)
-        #   - tol=1e-4: Tight convergence tolerance
-        # - class_weight='balanced': Handle 1.8% positive class
-        # - CalibratedClassifierCV: Add external calibration (sigmoid or isotonic)
-        #   Calibration method chosen by optimizer via grid search
+        # CORRECTED ARCHITECTURE (2025 - Expert guidance)
+        #
+        # Pipeline: z-scores → augmented features → svc
+        #
+        # Scaling happens OUTSIDE pipeline via ScoreNormalizer:
+        # - ScoreNormalizer: RobustScaler(with_centering=True) fitted on reference LLRs
+        #   Domain adaptation: Refit per-species (or reuse human for cross-species)
+        # - Trainer receives pre-scaled z-scores: [five_z_score, bp_z_score, three_z_score]
+        #
+        # Pipeline steps:
+        # - BothEndsStrongTransformer: Augmented features from z-scores
+        #   → min_all, neg_absdiff_5_bp, neg_absdiff_5_3 (suppress one-end-strong FPs)
+        # - LinearSVC: L2-regularized linear classifier with balanced class weights
+        # - CalibratedClassifierCV: External calibration (isotonic or sigmoid)
+        #
+        # Key principle: Single scaling step (NOT double-scaling)
+        # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
+
         base_pipeline = Pipeline([
-            ('clip', OutlierClipper(quantile=0.999)),  # Clip extreme outliers before scaling
-            ('scale', RobustScaler(with_centering=False, with_scaling=True)),
-            ('augment', BothEndsStrongTransformer(
-                include_max=parameters.include_max
+            ('transform', BothEndsStrongTransformer(
+                include_max=parameters.include_max,
+                include_pairwise_mins=parameters.include_pairwise_mins
             )),
             ('svc', LinearSVC(
                 C=parameters.C,
-                dual=parameters.dual,  # From optimizer (typically False for our data)
-                penalty=parameters.penalty,  # From optimizer: 'l1' or 'l2' (L1 prunes redundant features)
-                loss=parameters.loss,  # From optimizer: 'squared_hinge' (required for L1)
-                intercept_scaling=parameters.intercept_scaling,  # High value when dual=False
-                class_weight='balanced',  # Critical for imbalanced data
-                max_iter=self.max_iter,  # Maximum iterations for convergence
-                tol=1e-4,  # Tighter tolerance
+                penalty='l2',
+                dual=False,
+                loss='squared_hinge',
+                class_weight='balanced',
+                max_iter=self.max_iter,
+                tol=1e-4,
                 random_state=seed
             ))
         ])
