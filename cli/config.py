@@ -105,6 +105,7 @@ class TrainingConfig:
     n_optimization_rounds: int = 5
     pretrained_model_path: Optional[Path] = None
     optimizer_config_path: Optional[Path] = None
+    use_fold_averaged_params: bool = False  # Use fold-averaged hyperparameters (better cross-species)
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +268,8 @@ class IntronICConfig:
             test_fraction=args.test_fraction,
             n_optimization_rounds=args.n_optimization_rounds,
             pretrained_model_path=pretrained_model_path,
-            optimizer_config_path=getattr(args, 'optimizer_config', None)
+            optimizer_config_path=getattr(args, 'optimizer_config', None),
+            use_fold_averaged_params=getattr(args, 'use_fold_averaged_params', False)
         )
 
         # Performance configuration

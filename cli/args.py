@@ -1,7 +1,11 @@
 """
-Argument parser for intronIC CLI.
+Argument parser for intronIC CLI with subcommand support.
 
-Handles command-line argument parsing and validation.
+Supports two modes:
+1. train - Train a model on reference data (no genome/annotation needed)
+2. classify - Extract and classify introns (requires genome/annotation)
+
+Backward compatible: old CLI without subcommands defaults to 'classify' mode.
 """
 
 import argparse
@@ -10,7 +14,7 @@ from typing import Optional
 
 
 class IntronICArgumentParser:
-    """Argument parser for intronIC command-line interface."""
+    """Argument parser for intronIC command-line interface with subcommands."""
 
     def __init__(self):
         self.parser = self._create_parser()
@@ -25,55 +29,300 @@ class IntronICArgumentParser:
             Namespace object with parsed arguments
         """
         parsed = self.parser.parse_args(args)
+
+        # Backward compatibility: if no subcommand, default to classify
+        if not hasattr(parsed, 'command') or parsed.command is None:
+            parsed.command = 'classify'
+            # Map old --pretrained_model to --model for backward compat
+            if hasattr(parsed, 'pretrained_model') and parsed.pretrained_model:
+                parsed.model = parsed.pretrained_model
+
         self._validate_args(parsed)
         return parsed
 
     def _create_parser(self) -> argparse.ArgumentParser:
-        """Create the argument parser with all options."""
-        parser = argparse.ArgumentParser(
-            description="intronIC: Intron classification and extraction tool",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="""
-Examples:
-  # Standard classification
-  intronIC -g genome.fa -a annotation.gff3 -n species_name
+        """Create the main parser with subcommands."""
 
-  # Extract sequences only (no classification)
-  intronIC -g genome.fa -a annotation.gff3 -n species_name -s
-
-  # Parallel processing with 8 cores
-  intronIC -g genome.fa -a annotation.gff3 -n species_name -p 8
-
-  # Stricter threshold (95%)
-  intronIC -g genome.fa -a annotation.gff3 -n species_name -t 95
-"""
-        )
-
-        # Version (read from package metadata)
+        # Get version
         try:
             from importlib.metadata import version
             __version__ = version("intronIC")
         except:
-            __version__ = "2.0.0"  # Fallback if not installed
+            __version__ = "2.0.0"
 
+        # Main parser
+        parser = argparse.ArgumentParser(
+            prog='intronIC',
+            description="intronIC: Intron classification and extraction tool",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Examples:
+  # Train a model on reference data (no genome needed!)
+  intronIC train -n homo_sapiens
+
+  # Classify introns with pretrained model
+  intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
+
+  # Classify and train on-the-fly
+  intronIC classify -g genome.fa -a annotation.gff -n species --train
+
+  # Backward compatible (no subcommand = classify)
+  intronIC -g genome.fa -a annotation.gff -n species --model species.model.pkl
+"""
+        )
+
+        # Global options (apply to all subcommands)
+        parser.add_argument('--version', action='version', version=f'intronIC {__version__}')
+        parser.add_argument('--quiet', action='store_true', help='Suppress non-essential output')
+        parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+        parser.add_argument('--config', type=Path, help='Path to TOML configuration file')
+        parser.add_argument('--generate-config', action='store_true',
+                           help='Generate configuration file template and exit')
+
+        # Create subparsers
+        subparsers = parser.add_subparsers(
+            dest='command',
+            help='Command to run (default: classify if not specified)'
+        )
+
+        # ===================================================================
+        # TRAIN SUBCOMMAND
+        # ===================================================================
+        train_parser = subparsers.add_parser(
+            'train',
+            help='Train a classifier on reference data only (no genome/annotation needed)',
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Train mode examples:
+  # Basic training with built-in reference data
+  intronIC train -n homo_sapiens
+
+  # Parallel training (faster)
+  intronIC train -n homo_sapiens -p 8
+
+  # Custom training config (recommended for reproducibility)
+  intronIC train -n homo_sapiens --optimizer-config config/training_default.yaml -p 12
+
+  # Custom reference sequences
+  intronIC train -n species --reference_u12s custom_u12.iic --reference_u2s custom_u2.iic
+
+  # Custom training parameters
+  intronIC train -n species --n_models 8 --n_cv_folds 10 -p 12
+
+  # Fast training (skip optimization)
+  intronIC train -n species -C 0.1 --eval_mode none
+"""
+        )
+        self._add_train_arguments(train_parser)
+
+        # ===================================================================
+        # CLASSIFY SUBCOMMAND
+        # ===================================================================
+        classify_parser = subparsers.add_parser(
+            'classify',
+            help='Extract and classify introns from genome/annotation',
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Classify mode examples:
+  # With pretrained model
+  intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
+
+  # Train on-the-fly
+  intronIC classify -g genome.fa -a annotation.gff -n species --train
+
+  # Extract sequences only (no classification)
+  intronIC classify -g genome.fa -a annotation.gff -n species -s
+
+  # From BED file
+  intronIC classify -g genome.fa -b introns.bed -n species --model species.model.pkl
+"""
+        )
+        self._add_classify_arguments(classify_parser)
+
+        # ===================================================================
+        # BACKWARD COMPATIBILITY
+        # ===================================================================
+        # Add all classify arguments to main parser for old CLI compatibility
+        # This allows: intronIC -g genome.fa -a annotation.gff -n species
+        self._add_classify_arguments(parser, for_backward_compat=True)
+
+        return parser
+
+    def _add_common_arguments(self, parser: argparse.ArgumentParser):
+        """Add arguments common to both train and classify."""
+
+        # Species name (required for both)
         parser.add_argument(
-            '--version',
-            action='version',
-            version=f'intronIC {__version__}'
-        )
-
-        # Required arguments (except for --generate-config)
-        required = parser.add_argument_group('required arguments')
-        required.add_argument(
             '-n', '--species_name', '--species-name',
-            help='Species name (e.g., homo_sapiens, required unless using --generate-config)'
+            required=True,
+            help='Species name for output files (e.g., homo_sapiens)'
         )
 
-        # Input selection
+        # Output directory
+        parser.add_argument(
+            '-o', '--output_dir', '--output-dir',
+            type=Path,
+            default=Path.cwd(),
+            help='Output directory (default: current directory)'
+        )
+
+    def _add_train_arguments(self, parser: argparse.ArgumentParser):
+        """Add arguments specific to train subcommand."""
+
+        # Common arguments
+        self._add_common_arguments(parser)
+
+        # === Reference Data ===
+        reference = parser.add_argument_group('reference data')
+        reference.add_argument(
+            '--reference_u12s', '--reference-u12s',
+            type=Path,
+            help='Custom U12 reference sequences (.iic format). Default: use built-in reference.'
+        )
+        reference.add_argument(
+            '--reference_u2s', '--reference-u2s',
+            type=Path,
+            help='Custom U2 reference sequences (.iic format). Default: use built-in reference.'
+        )
+
+        # === Training Parameters ===
+        training = parser.add_argument_group('training parameters')
+        training.add_argument(
+            '-C',
+            type=float,
+            help='Fixed SVM C parameter (skips hyperparameter optimization)'
+        )
+        training.add_argument(
+            '--n_models', '--n-models',
+            type=int,
+            default=1,
+            help='Number of ensemble models to train (default: 1, use YAML config for production)'
+        )
+        training.add_argument(
+            '--eval_mode', '--eval-mode',
+            choices=['nested_cv', 'split', 'none'],
+            default='nested_cv',
+            help='Evaluation mode: nested_cv (default), split, or none'
+        )
+        training.add_argument(
+            '--n_cv_folds', '--n-cv-folds',
+            type=int,
+            default=5,
+            help='Number of cross-validation folds (default: 5)'
+        )
+        training.add_argument(
+            '--test_fraction', '--test-fraction',
+            type=float,
+            default=0.2,
+            help='Test set fraction for split mode (default: 0.2)'
+        )
+        training.add_argument(
+            '--n_optimization_rounds', '--n-optimization-rounds',
+            type=int,
+            default=5,
+            help='Hyperparameter optimization rounds (default: 5)'
+        )
+        training.add_argument(
+            '--max_iter', '--max-iter',
+            type=int,
+            default=50000,
+            help='Maximum SVM iterations (default: 50000)'
+        )
+        training.add_argument(
+            '--cv_processes', '--cv-processes',
+            type=int,
+            default=1,
+            help='Processes for cross-validation (default: 1)'
+        )
+        training.add_argument(
+            '-p', '--processes',
+            type=int,
+            default=1,
+            help='Number of parallel processes for scoring reference sequences (default: 1)'
+        )
+        training.add_argument(
+            '--optimizer-config',
+            type=Path,
+            help='Path to custom optimizer configuration YAML'
+        )
+        training.add_argument(
+            '--use-fold-averaged-params',
+            action='store_true',
+            default=None,
+            help='Use fold-averaged hyperparameters from nested CV instead of re-optimizing on full dataset (better cross-species generalization)'
+        )
+
+        # === Scoring Parameters ===
+        # (Needed to score reference sequences during training)
+        scoring = parser.add_argument_group('scoring parameters (for reference sequences)')
+        scoring.add_argument(
+            '--five_score_coords', '--five-score-coords',
+            nargs=2,
+            type=int,
+            default=[-3, 9],
+            metavar=('START', 'END'),
+            help="5' splice site region (default: -3 9)"
+        )
+        scoring.add_argument(
+            '--bp_region_coords', '--bp-region-coords',
+            nargs=2,
+            type=int,
+            default=[-55, -5],
+            metavar=('START', 'END'),
+            help='Branch point region (default: -55 -5)'
+        )
+        scoring.add_argument(
+            '--three_score_coords', '--three-score-coords',
+            nargs=2,
+            type=int,
+            default=[-6, 4],
+            metavar=('START', 'END'),
+            help="3' splice site region (default: -6 4)"
+        )
+        scoring.add_argument(
+            '--pseudocount',
+            type=float,
+            default=0.0001,
+            help='PWM pseudocount (default: 0.0001)'
+        )
+
+        # === Advanced ===
+        advanced = parser.add_argument_group('advanced options')
+        advanced.add_argument(
+            '--seed',
+            type=int,
+            default=42,
+            help='Random seed for reproducibility (default: 42)'
+        )
+
+    def _add_classify_arguments(self, parser: argparse.ArgumentParser, for_backward_compat=False):
+        """Add arguments specific to classify subcommand.
+
+        Args:
+            parser: Parser to add arguments to
+            for_backward_compat: If True, makes species_name not required (for main parser)
+        """
+
+        # Common arguments (species name required only if not backward compat)
+        if not for_backward_compat:
+            self._add_common_arguments(parser)
+        else:
+            # For backward compat, don't require species_name yet (validated later)
+            parser.add_argument(
+                '-n', '--species_name', '--species-name',
+                help='Species name for output files (e.g., homo_sapiens)'
+            )
+            parser.add_argument(
+                '-o', '--output_dir', '--output-dir',
+                type=Path,
+                default=Path.cwd(),
+                help='Output directory (default: current directory)'
+            )
+
+        # === Input Selection ===
         input_group = parser.add_argument_group(
             'input selection',
-            'Choose one mode: (1) -g + -a for annotation-based extraction, '
-            '(2) -g + -b for BED-based extraction, or (3) -q for pre-extracted sequences'
+            'Choose one mode: (1) -g + -a for annotation, (2) -g + -b for BED, or (3) -q for sequences'
         )
         input_group.add_argument(
             '-g', '--genome',
@@ -93,284 +342,273 @@ Examples:
         input_group.add_argument(
             '-q', '--sequence_file', '--sequence-file',
             type=Path,
-            help='Path to pre-extracted intron sequences (.iic format, standalone)'
+            help='Path to pre-extracted intron sequences (.iic format)'
         )
 
-        # Output options
-        output_group = parser.add_argument_group('output options')
-        output_group.add_argument(
-            '-o', '--output_dir', '--output-dir',
+        # === Model Source ===
+        model_group = parser.add_argument_group('model source (choose one)')
+        model_exclusive = model_group.add_mutually_exclusive_group()
+        model_exclusive.add_argument(
+            '--model',
             type=Path,
-            default=Path.cwd(),
-            help='Output directory (default: current directory)'
+            help='Path to pretrained model (.model.pkl)'
         )
-        output_group.add_argument(
-            '--clean_names', '--clean-names',
+        model_exclusive.add_argument(
+            '--train',
             action='store_true',
-            default=True,
-            help='Remove "transcript:" and "gene:" prefixes from IDs (default: True)'
-        )
-        output_group.add_argument(
-            '--no_clean_names', '--no-clean-names',
-            dest='clean_names',
-            action='store_false',
-            help='Keep "transcript:" and "gene:" prefixes in IDs'
-        )
-        output_group.add_argument(
-            '-u', '--uninformative_naming', '--uninformative-naming',
-            action='store_true',
-            help='Use simple naming scheme for introns instead of verbose metadata format'
-        )
-        output_group.add_argument(
-            '--no_abbreviate', '--no-abbreviate',
-            '--na',
-            action='store_true',
-            help='Use full species name in output files (default: abbreviate to 6 chars)'
-        )
-        output_group.add_argument(
-            '--abbreviate_filenames', '--abbreviate-filenames',
-            '--afn',
-            action='store_true',
-            help='Use abbreviated species name in output filenames (default: use full name)'
+            help='Train model on-the-fly (slower, includes full training and evaluation)'
         )
 
-        # Scoring options
-        scoring_group = parser.add_argument_group('scoring options')
-        scoring_group.add_argument(
-            '-s', '--sequences_only', '--sequences-only',
-            action='store_true',
-            help='Extract sequences only, skip classification'
+        # Normalizer mode (for pretrained model classification)
+        parser.add_argument(
+            '--normalizer_mode', '--normalizer-mode',
+            choices=['human', 'adaptive', 'auto'],
+            default='auto',
+            help='''Normalizer mode for pretrained model classification (default: auto):
+              human: Use scaler from training species (recommended for U12-absent genomes)
+              adaptive: Refit scaler on experimental data (experimental, may cause FPs in U12-free species)
+              auto: Use human if available in model, otherwise adaptive'''
         )
-        scoring_group.add_argument(
-            '-t', '--threshold',
-            type=float,
-            default=90.0,
-            help='U12 probability threshold (0-100, default: 90)'
-        )
-        scoring_group.add_argument(
+
+        # Backward compatibility: old --pretrained_model flag
+        if for_backward_compat:
+            model_group.add_argument(
+                '--pretrained_model', '--pretrained-model',
+                type=Path,
+                help='(Deprecated: use --model) Path to pretrained model'
+            )
+
+        # === Extraction Parameters ===
+        extraction = parser.add_argument_group('extraction parameters')
+        extraction.add_argument(
             '-f', '--feature',
             choices=['cds', 'exon', 'both'],
             default='both',
-            help='Feature type to extract introns from (default: both)'
+            help='Feature type to extract from (default: both)'
         )
-        scoring_group.add_argument(
-            '--no_nc', '--no-nc',
-            action='store_true',
-            help='Exclude non-canonical introns from scoring'
-        )
-        scoring_group.add_argument(
-            '--pseudocount',
-            type=float,
-            default=0.0001,
-            help='Pseudocount value for PWM scoring to avoid division by zero (default: 0.0001)'
-        )
-        scoring_group.add_argument(
-            '--no_ignore_nc_dnts', '--no-ignore-nc-dnts',
-            action='store_true',
-            help='Include terminal dinucleotides when scoring non-canonical introns (default: ignore them)'
-        )
-        scoring_group.add_argument(
-            '--no_nc_ss_adjustment', '--no-nc-ss-adjustment',
-            action='store_true',
-            help='Disable U12 boundary correction for non-canonical introns (default: enabled)'
-        )
-
-        # Performance options
-        perf_group = parser.add_argument_group('performance options')
-        perf_group.add_argument(
-            '-p', '--processes',
-            type=int,
-            default=1,
-            help='Number of parallel processes (default: 1)'
-        )
-        perf_group.add_argument(
+        extraction.add_argument(
             '--min_intron_len', '--min-intron-len',
             type=int,
             default=30,
-            help='Minimum intron length in bp (default: 30)'
+            help='Minimum intron length (default: 30)'
         )
-
-        # Isoform selection
-        isoform_group = parser.add_argument_group('isoform selection')
-        isoform_group.add_argument(
+        extraction.add_argument(
             '-i', '--allow_multiple_isoforms', '--allow-multiple-isoforms',
             action='store_true',
             help='Include non-longest isoforms'
         )
-        isoform_group.add_argument(
+        extraction.add_argument(
             '-v', '--no_intron_overlap', '--no-intron-overlap',
             action='store_true',
             help='Exclude overlapping introns'
         )
-        isoform_group.add_argument(
+        extraction.add_argument(
             '-d', '--include_duplicates', '--include-duplicates',
             action='store_true',
-            help='Include introns with duplicate coordinates in output (default: exclude)'
+            help='Include duplicate coordinate introns'
+        )
+        extraction.add_argument(
+            '--flank_len', '--flank-len',
+            type=int,
+            default=50,
+            help='Exonic flank length (default: 50)'
+        )
+        extraction.add_argument(
+            '--no_nc_ss_adjustment', '--no-nc-ss-adjustment',
+            action='store_true',
+            help='Disable U12 boundary correction'
         )
 
-        # Training options
-        training_group = parser.add_argument_group('training options')
-        training_group.add_argument(
-            '--pwms',
-            type=Path,
-            help='Custom PWM matrix file'
-        )
-        training_group.add_argument(
-            '--reference_u12s', '--reference-u12s',
-            type=Path,
-            help='Custom U12 reference sequences'
-        )
-        training_group.add_argument(
-            '--reference_u2s', '--reference-u2s',
-            type=Path,
-            help='Custom U2 reference sequences'
-        )
-        training_group.add_argument(
-            '--generate_u2_bps_pwm', '--generate-u2-bps-pwm',
+        # === Scoring Parameters ===
+        scoring = parser.add_argument_group('scoring parameters')
+        scoring.add_argument(
+            '-s', '--sequences_only', '--sequences-only',
             action='store_true',
-            help='Generate U2 branch point PWM from data'
+            help='Extract sequences only, skip classification'
         )
-        training_group.add_argument(
-            '--recursive',
-            nargs='?',
-            const=True,
-            help='Perform recursive training (optional: U2 subset size)'
-        )
-        training_group.add_argument(
-            '-C',
+        scoring.add_argument(
+            '-t', '--threshold',
             type=float,
-            help='Fixed SVM C parameter (skips optimization)'
+            default=90.0,
+            help='U12 probability threshold 0-100 (default: 90)'
         )
-        training_group.add_argument(
-            '--n_models', '--n-models',
-            type=int,
-            default=1,
-            help='Number of ensemble models to train (default: 1)'
-        )
-        training_group.add_argument(
-            '--max_iter', '--max-iter',
-            type=int,
-            default=50000,
-            help='Maximum iterations for LinearSVC convergence (default: 50000)'
-        )
-        training_group.add_argument(
-            '--eval_mode', '--eval-mode',
-            choices=['nested_cv', 'split', 'none'],
-            default='nested_cv',
-            help='Model evaluation mode: nested_cv (default), split, or none'
-        )
-        training_group.add_argument(
-            '--n_cv_folds', '--n-cv-folds',
-            type=int,
-            default=5,
-            help='Number of folds for nested cross-validation (default: 5)'
-        )
-        training_group.add_argument(
-            '--test_fraction', '--test-fraction',
-            type=float,
-            default=0.2,
-            help='Test set fraction for split evaluation mode (default: 0.2)'
-        )
-        training_group.add_argument(
-            '--n_optimization_rounds', '--n-optimization-rounds',
-            type=int,
-            default=5,
-            help='Number of grid search refinement rounds for C optimization (default: 5)'
-        )
-        training_group.add_argument(
-            '--train',
+        scoring.add_argument(
+            '--no_nc', '--no-nc',
             action='store_true',
-            help='Train a new model from scratch (includes full training, CV, and evaluation). By default, uses pretrained model.'
+            help='Exclude non-canonical introns from scoring'
         )
-        training_group.add_argument(
-            '--pretrained_model',
-            '--pretrained-model',
-            type=Path,
-            default=None,
-            help='Path to custom pretrained model file (.model.pkl). If not specified, uses default pretrained model unless --train is set.'
+        scoring.add_argument(
+            '--pseudocount',
+            type=float,
+            default=0.0001,
+            help='PWM pseudocount (default: 0.0001)'
         )
-        training_group.add_argument(
-            '--optimizer-config',
-            type=Path,
-            help='Path to YAML configuration file for optimizer parameters. '
-                 'Allows customization of parameter grid, CV folds, n_rounds, etc. '
-                 'See config/training_quick.yaml for example format.'
+        scoring.add_argument(
+            '--no_ignore_nc_dnts', '--no-ignore-nc-dnts',
+            action='store_true',
+            help='Include terminal dinucleotides in non-canonical scoring'
         )
-
-        # Scoring region coordinates
-        coords_group = parser.add_argument_group('scoring region coordinates')
-        coords_group.add_argument(
+        scoring.add_argument(
             '--five_score_coords', '--five-score-coords',
             nargs=2,
             type=int,
             default=[-3, 9],
             metavar=('START', 'END'),
-            help="5' splice site scoring region (default: -3 9)"
+            help="5' splice site region (default: -3 9)"
         )
-        coords_group.add_argument(
+        scoring.add_argument(
             '--bp_region_coords', '--bp-region-coords',
             nargs=2,
             type=int,
             default=[-55, -5],
             metavar=('START', 'END'),
-            help='Branch point region coordinates (default: -55 -5)'
+            help='Branch point region (default: -55 -5)'
         )
-        coords_group.add_argument(
+        scoring.add_argument(
             '--three_score_coords', '--three-score-coords',
             nargs=2,
             type=int,
             default=[-6, 4],
             metavar=('START', 'END'),
-            help="3' splice site scoring region (default: -6 4)"
+            help="3' splice site region (default: -6 4)"
         )
 
-        # Configuration file options
-        config_group = parser.add_argument_group('configuration file')
-        config_group.add_argument(
-            '--config',
+        # === Training Parameters (only if --train flag used) ===
+        training = parser.add_argument_group('training parameters (only with --train)')
+        training.add_argument(
+            '--reference_u12s', '--reference-u12s',
             type=Path,
-            help='Path to TOML configuration file (default: search standard locations)'
+            help='Custom U12 reference sequences'
         )
-        config_group.add_argument(
-            '--generate-config',
+        training.add_argument(
+            '--reference_u2s', '--reference-u2s',
+            type=Path,
+            help='Custom U2 reference sequences'
+        )
+        training.add_argument(
+            '--pwms',
+            type=Path,
+            help='Custom PWM matrix file'
+        )
+        training.add_argument(
+            '--generate_u2_bps_pwm', '--generate-u2-bps-pwm',
             action='store_true',
-            help='Generate a configuration file template and exit'
+            help='Generate U2 branch point PWM from data'
+        )
+        training.add_argument(
+            '--recursive',
+            nargs='?',
+            const=True,
+            help='Perform recursive training'
+        )
+        training.add_argument(
+            '-C',
+            type=float,
+            help='Fixed SVM C parameter (skips optimization)'
+        )
+        training.add_argument(
+            '--n_models', '--n-models',
+            type=int,
+            default=1,
+            help='Number of ensemble models (default: 1)'
+        )
+        training.add_argument(
+            '--max_iter', '--max-iter',
+            type=int,
+            default=50000,
+            help='Maximum SVM iterations (default: 50000)'
+        )
+        training.add_argument(
+            '--eval_mode', '--eval-mode',
+            choices=['nested_cv', 'split', 'none'],
+            default='nested_cv',
+            help='Evaluation mode (default: nested_cv)'
+        )
+        training.add_argument(
+            '--n_cv_folds', '--n-cv-folds',
+            type=int,
+            default=5,
+            help='Cross-validation folds (default: 5)'
+        )
+        training.add_argument(
+            '--test_fraction', '--test-fraction',
+            type=float,
+            default=0.2,
+            help='Test fraction for split mode (default: 0.2)'
+        )
+        training.add_argument(
+            '--n_optimization_rounds', '--n-optimization-rounds',
+            type=int,
+            default=5,
+            help='Optimization rounds (default: 5)'
+        )
+        training.add_argument(
+            '--optimizer-config',
+            type=Path,
+            help='Custom optimizer configuration'
+        )
+        training.add_argument(
+            '--use-fold-averaged-params',
+            action='store_true',
+            default=None,
+            help='Use fold-averaged hyperparameters from nested CV instead of re-optimizing on full dataset (better cross-species generalization)'
         )
 
-        # Advanced options
-        advanced_group = parser.add_argument_group('advanced options')
-        advanced_group.add_argument(
-            '--flank_len', '--flank-len',
+        # === Performance ===
+        perf = parser.add_argument_group('performance options')
+        perf.add_argument(
+            '-p', '--processes',
             type=int,
-            default=50,
-            help='Length of exonic flanks to extract (default: 50)'
+            default=1,
+            help='Parallel processes for scoring (default: 1)'
         )
-        advanced_group.add_argument(
+        perf.add_argument(
             '--cv_processes', '--cv-processes',
             type=int,
-            help='Number of processes for cross-validation (default: same as -p)'
+            help='Processes for cross-validation (default: same as -p)'
         )
-        advanced_group.add_argument(
+
+        # === Output Options ===
+        output = parser.add_argument_group('output options')
+        output.add_argument(
+            '--clean_names', '--clean-names',
+            action='store_true',
+            default=True,
+            help='Remove "transcript:" and "gene:" prefixes (default: True)'
+        )
+        output.add_argument(
+            '--no_clean_names', '--no-clean-names',
+            dest='clean_names',
+            action='store_false',
+            help='Keep ID prefixes'
+        )
+        output.add_argument(
+            '-u', '--uninformative_naming', '--uninformative-naming',
+            action='store_true',
+            help='Use simple naming scheme'
+        )
+        output.add_argument(
+            '--no_abbreviate', '--no-abbreviate', '--na',
+            action='store_true',
+            help='Use full species name in outputs'
+        )
+        output.add_argument(
+            '--abbreviate_filenames', '--abbreviate-filenames', '--afn',
+            action='store_true',
+            help='Abbreviate species name in filenames'
+        )
+
+        # === Advanced ===
+        advanced = parser.add_argument_group('advanced options')
+        advanced.add_argument(
             '--seed',
             type=int,
             default=42,
-            help='Random seed for reproducibility (default: 42)'
+            help='Random seed (default: 42)'
         )
-        advanced_group.add_argument(
-            '--quiet',
-            action='store_true',
-            help='Suppress non-essential output'
-        )
-        advanced_group.add_argument(
-            '--debug',
-            action='store_true',
-            help='Enable debug logging'
-        )
-
-        return parser
 
     def _validate_args(self, args):
-        """Validate parsed arguments.
+        """Validate parsed arguments based on command.
 
         Args:
             args: Parsed argument namespace
@@ -382,70 +620,110 @@ Examples:
         if getattr(args, 'generate_config', False):
             return
 
-        # Check species_name is provided (required for normal operation)
-        if not args.species_name:
-            self.parser.error("the following arguments are required: -n/--species_name")
+        # Get command (train or classify)
+        command = getattr(args, 'command', 'classify')
 
-        # Determine input mode and validate
-        has_annotation = args.annotation is not None
-        has_bed = args.bed is not None
-        has_genome = args.genome is not None
-        has_sequences = args.sequence_file is not None
+        # ===============================================================
+        # TRAIN MODE VALIDATION
+        # ===============================================================
+        if command == 'train':
+            # Species name required
+            if not args.species_name:
+                self.parser.error("train: -n/--species_name is required")
 
-        # Check for genome without annotation/bed first (more specific error)
-        if has_genome and not has_annotation and not has_bed:
-            self.parser.error(
-                "Genome (-g) requires annotation (-a) or BED file (-b)"
-            )
+            # Validate CV parameters
+            if args.n_cv_folds < 2:
+                self.parser.error("train: n_cv_folds must be >= 2")
 
-        # Count input modes
-        input_modes = sum([has_annotation, has_bed, has_sequences])
+            if not 0 < args.test_fraction < 1:
+                self.parser.error("train: test_fraction must be between 0 and 1")
 
-        if input_modes == 0:
-            self.parser.error(
-                "No input specified. Choose one mode:\n"
-                "  Annotation mode: -g GENOME -a ANNOTATION\n"
-                "  BED mode: -g GENOME -b BED\n"
-                "  Sequences mode: -q SEQUENCE_FILE"
-            )
+            # Validate custom reference files exist
+            if args.reference_u12s and not args.reference_u12s.exists():
+                self.parser.error(f"train: reference U12 file not found: {args.reference_u12s}")
+            if args.reference_u2s and not args.reference_u2s.exists():
+                self.parser.error(f"train: reference U2 file not found: {args.reference_u2s}")
 
-        if input_modes > 1:
-            self.parser.error(
-                "Multiple input modes specified. Choose only one:\n"
-                "  -a (annotation), -b (bed), or -q (sequences)"
-            )
+        # ===============================================================
+        # CLASSIFY MODE VALIDATION
+        # ===============================================================
+        elif command == 'classify':
+            # Species name required
+            if not args.species_name:
+                self.parser.error("classify: -n/--species_name is required")
 
-        # Validate annotation/bed mode requires genome
-        if (has_annotation or has_bed) and not has_genome:
-            mode = "annotation (-a)" if has_annotation else "BED (-b)"
-            self.parser.error(f"{mode} mode requires genome file (-g)")
+            # Input validation
+            has_annotation = args.annotation is not None
+            has_bed = args.bed is not None
+            has_genome = args.genome is not None
+            has_sequences = args.sequence_file is not None
 
-        # Threshold validation
-        if not 0 <= args.threshold <= 100:
-            self.parser.error("Threshold must be between 0 and 100")
+            # Check for genome without annotation/bed
+            if has_genome and not has_annotation and not has_bed:
+                self.parser.error(
+                    "classify: genome (-g) requires annotation (-a) or BED file (-b)"
+                )
 
-        # Test fraction validation
-        if not 0 < args.test_fraction < 1:
-            self.parser.error("Test fraction must be between 0 and 1")
+            # Count input modes
+            input_modes = sum([has_annotation, has_bed, has_sequences])
 
-        # CV folds validation
-        if args.n_cv_folds < 2:
-            self.parser.error("Number of CV folds must be >= 2")
+            if input_modes == 0:
+                self.parser.error(
+                    "classify: no input specified. Choose one:\n"
+                    "  Annotation: -g GENOME -a ANNOTATION\n"
+                    "  BED: -g GENOME -b BED\n"
+                    "  Sequences: -q SEQUENCE_FILE"
+                )
 
-        # Process count validation
-        if args.processes < 1:
-            self.parser.error("Process count must be >= 1")
+            if input_modes > 1:
+                self.parser.error(
+                    "classify: multiple inputs specified. Choose only one: -a, -b, or -q"
+                )
 
-        # Set cv_processes to processes if not specified
-        if args.cv_processes is None:
-            args.cv_processes = args.processes
+            # Validate annotation/bed requires genome
+            if (has_annotation or has_bed) and not has_genome:
+                mode = "annotation (-a)" if has_annotation else "BED (-b)"
+                self.parser.error(f"classify: {mode} requires genome file (-g)")
 
-        # Validate file paths exist
-        for attr_name in ['genome', 'annotation', 'bed', 'sequence_file',
-                          'pwms', 'reference_u12s', 'reference_u2s']:
-            filepath = getattr(args, attr_name)
-            if filepath and not filepath.exists():
-                self.parser.error(f"File not found: {filepath}")
+            # Model source validation (skip if sequences_only mode)
+            if not args.sequences_only:
+                has_model = hasattr(args, 'model') and args.model is not None
+                has_train = hasattr(args, 'train') and args.train
 
-        # Create output directory if it doesn't exist
+                if not has_model and not has_train:
+                    self.parser.error(
+                        "classify: must specify model source:\n"
+                        "  --model PATH  (use pretrained model)\n"
+                        "  --train       (train on-the-fly)"
+                    )
+
+            # Validate file paths exist
+            file_attrs = ['genome', 'annotation', 'bed', 'sequence_file', 'model',
+                         'pwms', 'reference_u12s', 'reference_u2s', 'optimizer_config']
+            for attr_name in file_attrs:
+                if hasattr(args, attr_name):
+                    filepath = getattr(args, attr_name)
+                    if filepath and not filepath.exists():
+                        self.parser.error(f"classify: file not found: {filepath}")
+
+            # Threshold validation
+            if not 0 <= args.threshold <= 100:
+                self.parser.error("classify: threshold must be between 0 and 100")
+
+            # Training parameters validation (if --train used)
+            if hasattr(args, 'train') and args.train:
+                if args.n_cv_folds < 2:
+                    self.parser.error("classify: n_cv_folds must be >= 2")
+                if not 0 < args.test_fraction < 1:
+                    self.parser.error("classify: test_fraction must be between 0 and 1")
+
+            # Set cv_processes to processes if not specified
+            if args.cv_processes is None:
+                args.cv_processes = args.processes
+
+            # Process count validation
+            if args.processes < 1:
+                self.parser.error("classify: processes must be >= 1")
+
+        # Create output directory
         args.output_dir.mkdir(parents=True, exist_ok=True)

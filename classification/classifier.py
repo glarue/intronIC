@@ -24,6 +24,8 @@ Port from: intronIC.py:5038-5900 (main pipeline)
 
 from typing import Sequence, Optional, Tuple, Any
 from dataclasses import dataclass
+from collections import Counter
+import numpy as np
 
 from core.intron import Intron
 from classification.optimizer import SVMOptimizer, SVMParameters
@@ -134,7 +136,8 @@ class IntronClassifier:
         param_grid_override: Optional[dict] = None,
         n_points_initial: int = 13,
         eff_C_pos_range: tuple = (3e-4, 1e+2),  # Tightened to reduce FPR
-        eff_C_neg_max: Optional[float] = None
+        eff_C_neg_max: Optional[float] = None,
+        use_fold_averaged_params: bool = False
     ):
         """
         Initialize classifier.
@@ -160,6 +163,11 @@ class IntronClassifier:
                            (default: 3e-4 to 1e+2, tightened to reduce FPR)
                            Expert: "larger C tends to raise FPR"
             eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
+            use_fold_averaged_params: Use fold-averaged hyperparameters from nested CV instead of
+                                     re-optimizing on full dataset (default: False). When True,
+                                     uses geometric mean of fold C values and majority-vote calibration.
+                                     Recommended for cross-species applications. Only applies when
+                                     eval_mode='nested_cv'.
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -178,6 +186,7 @@ class IntronClassifier:
         self.n_points_initial = n_points_initial
         self.eff_C_pos_range = eff_C_pos_range
         self.eff_C_neg_max = eff_C_neg_max
+        self.use_fold_averaged_params = use_fold_averaged_params
 
         # Auto-skip evaluation when using fixed C
         # Rationale: When C is pre-specified, evaluation metrics aren't useful
@@ -201,6 +210,64 @@ class IntronClassifier:
             raise ValueError(
                 f"eval_mode must be 'nested_cv', 'split', or 'none', got {eval_mode}"
             )
+
+    def _compute_fold_averaged_params(self, nested_cv_result) -> SVMParameters:
+        """
+        Compute fold-averaged hyperparameters from nested CV results.
+
+        Uses geometric mean for C (better for log-scale parameters) and
+        majority vote for calibration method.
+
+        Args:
+            nested_cv_result: NestedCVResult with fold-specific parameters
+
+        Returns:
+            SVMParameters with fold-averaged C and calibration_method
+
+        Note:
+            This is more conservative than re-optimizing on full dataset,
+            favoring generalization over training-set fit. Recommended for
+            cross-species applications.
+        """
+        from classification.nested_cv import NestedCVResult
+
+        fold_results = nested_cv_result.fold_results
+
+        # Extract fold-specific C values and calibration methods
+        c_values = np.array([fold.optimized_C for fold in fold_results])
+        calibration_methods = [fold.calibration_method for fold in fold_results]
+
+        # Geometric mean of C values (better for log-scale parameters)
+        geometric_mean_C = float(np.exp(np.mean(np.log(c_values))))
+
+        # Majority vote for calibration method
+        method_counts = Counter(calibration_methods)
+        majority_calibration = method_counts.most_common(1)[0][0]
+
+        # Log the fold-specific values for transparency
+        print(f"\nFold-averaged hyperparameters:")
+        print(f"  Fold-specific C values: {[f'{c:.2e}' for c in c_values]}")
+        print(f"  Geometric mean C: {geometric_mean_C:.6e}")
+        print(f"  Fold-specific calibration: {calibration_methods}")
+        print(f"  Majority-vote calibration: {majority_calibration}")
+        print(f"  Rationale: Using conservative fold-averaged params for better cross-species generalization")
+
+        # Get fixed parameters from first fold's result (these don't vary across folds)
+        # We need to get these from the optimizer, which we'll need to reconstruct
+        # For now, use hardcoded defaults that match the corrected architecture
+        return SVMParameters(
+            C=geometric_mean_C,
+            calibration_method=majority_calibration,
+            saturate_enabled=False,  # Corrected arch: no saturation
+            include_max=False,  # Corrected arch: no max features
+            include_pairwise_mins=False,  # Corrected arch: no pairwise mins
+            dual=False,  # Corrected arch: primal formulation
+            penalty='l2',  # Corrected arch: L2 only
+            loss='squared_hinge',  # Corrected arch: squared hinge
+            intercept_scaling=1.0,  # Corrected arch: fixed
+            cv_score=nested_cv_result.mean_f1,  # Use mean F1 from nested CV
+            round_found=-1  # -1 indicates fold-averaged (not from specific round)
+        )
 
     def classify(
         self,
@@ -296,35 +363,52 @@ class IntronClassifier:
             print("Production Model Training (all reference data)")
             print("="*80)
 
-        # Stage 1: Optimize hyperparameters
-        # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
+        # Stage 1: Hyperparameter Optimization
+        # Choose between fold-averaged params (conservative) or re-optimization (aggressive)
         print("\n=== Stage 1: Hyperparameter Optimization ===")
 
-        # If C is fixed, constrain the grid to that single value
-        param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
-        if not self.optimize_c:
-            # Force C to the fixed value, but still search other parameters
-            param_grid['estimator__svc__C'] = [self.fixed_c]
-            print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+        # Check if we should use fold-averaged parameters from nested CV
+        if (self.use_fold_averaged_params and
+            self.eval_mode == 'nested_cv' and
+            eval_result is not None):
+            # Use fold-averaged hyperparameters (better cross-species generalization)
+            print("Using fold-averaged hyperparameters from nested CV")
+            print("(Skipping re-optimization on full dataset for better cross-species generalization)")
+            parameters = self._compute_fold_averaged_params(eval_result)
         else:
-            print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
+            # Standard approach: re-optimize on full dataset
+            if self.use_fold_averaged_params and self.eval_mode == 'nested_cv':
+                print("Note: use_fold_averaged_params=True but nested CV result not available")
+                print("Falling back to re-optimization on full dataset")
+            elif self.use_fold_averaged_params:
+                print("Note: use_fold_averaged_params=True but eval_mode is not 'nested_cv'")
+                print("Falling back to re-optimization on full dataset")
 
-        optimizer = SVMOptimizer(
-            n_rounds=self.n_optimization_rounds,
-            n_points_initial=self.n_points_initial,
-            cv_folds=self.n_cv_folds,
-            random_state=self.random_state,
-            n_jobs=self.cv_processes,
-            max_iter=self.max_iter,
-            param_grid_override=param_grid if param_grid else None
-        )
-        parameters = optimizer.optimize(
-            u12_reference,
-            u2_reference,
-            eff_C_pos_range=self.eff_C_pos_range,
-            eff_C_neg_max=self.eff_C_neg_max
-        )
-        print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
+            # If C is fixed, constrain the grid to that single value
+            param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+            if not self.optimize_c:
+                # Force C to the fixed value, but still search other parameters
+                param_grid['estimator__svc__C'] = [self.fixed_c]
+                print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+            else:
+                print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
+
+            optimizer = SVMOptimizer(
+                n_rounds=self.n_optimization_rounds,
+                n_points_initial=self.n_points_initial,
+                cv_folds=self.n_cv_folds,
+                random_state=self.random_state,
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter,
+                param_grid_override=param_grid if param_grid else None
+            )
+            parameters = optimizer.optimize(
+                u12_reference,
+                u2_reference,
+                eff_C_pos_range=self.eff_C_pos_range,
+                eff_C_neg_max=self.eff_C_neg_max
+            )
+            print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -351,21 +435,26 @@ class IntronClassifier:
 
         # Stage 3: Classify experimental introns
         print("\n=== Stage 3: Classification ===")
-        predictor = SVMPredictor(
-            threshold=self.classification_threshold,
-            n_jobs=self.classification_processes
-        )
-        classified = predictor.predict(ensemble, experimental)
 
-        # Count classifications
-        n_u12 = sum(
-            1 for i in classified
-            if i.metadata and i.metadata.type_id == 'u12'
-        )
-        n_u2 = len(classified) - n_u12
-        print(f"Classification complete:")
-        print(f"  U12: {n_u12} ({100*n_u12/len(classified):.1f}%)")
-        print(f"  U2: {n_u2} ({100*n_u2/len(classified):.1f}%)")
+        if len(experimental) == 0:
+            print("No experimental introns to classify (training-only mode)")
+            classified = []
+        else:
+            predictor = SVMPredictor(
+                threshold=self.classification_threshold,
+                n_jobs=self.classification_processes
+            )
+            classified = predictor.predict(ensemble, experimental)
+
+            # Count classifications
+            n_u12 = sum(
+                1 for i in classified
+                if i.metadata and i.metadata.type_id == 'u12'
+            )
+            n_u2 = len(classified) - n_u12
+            print(f"Classification complete:")
+            print(f"  U12: {n_u12} ({100*n_u12/len(classified):.1f}%)")
+            print(f"  U2: {n_u2} ({100*n_u2/len(classified):.1f}%)")
 
         return ClassificationResult(
             classified_introns=classified,
@@ -469,35 +558,52 @@ class IntronClassifier:
             print("Production Model Training (all reference data)")
             print("="*80)
 
-        # Stage 1: Optimize hyperparameters
-        # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
+        # Stage 1: Hyperparameter Optimization
+        # Choose between fold-averaged params (conservative) or re-optimization (aggressive)
         print("\n=== Stage 1: Hyperparameter Optimization ===")
 
-        # If C is fixed, constrain the grid to that single value
-        param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
-        if not self.optimize_c:
-            # Force C to the fixed value, but still search other parameters
-            param_grid['estimator__svc__C'] = [self.fixed_c]
-            print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+        # Check if we should use fold-averaged parameters from nested CV
+        if (self.use_fold_averaged_params and
+            self.eval_mode == 'nested_cv' and
+            eval_result is not None):
+            # Use fold-averaged hyperparameters (better cross-species generalization)
+            print("Using fold-averaged hyperparameters from nested CV")
+            print("(Skipping re-optimization on full dataset for better cross-species generalization)")
+            parameters = self._compute_fold_averaged_params(eval_result)
         else:
-            print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
+            # Standard approach: re-optimize on full dataset
+            if self.use_fold_averaged_params and self.eval_mode == 'nested_cv':
+                print("Note: use_fold_averaged_params=True but nested CV result not available")
+                print("Falling back to re-optimization on full dataset")
+            elif self.use_fold_averaged_params:
+                print("Note: use_fold_averaged_params=True but eval_mode is not 'nested_cv'")
+                print("Falling back to re-optimization on full dataset")
 
-        optimizer = SVMOptimizer(
-            n_rounds=self.n_optimization_rounds,
-            n_points_initial=self.n_points_initial,
-            cv_folds=self.n_cv_folds,
-            random_state=self.random_state,
-            n_jobs=self.cv_processes,
-            max_iter=self.max_iter,
-            param_grid_override=param_grid if param_grid else None
-        )
-        parameters = optimizer.optimize(
-            u12_reference,
-            u2_reference,
-            eff_C_pos_range=self.eff_C_pos_range,
-            eff_C_neg_max=self.eff_C_neg_max
-        )
-        print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
+            # If C is fixed, constrain the grid to that single value
+            param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+            if not self.optimize_c:
+                # Force C to the fixed value, but still search other parameters
+                param_grid['estimator__svc__C'] = [self.fixed_c]
+                print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+            else:
+                print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
+
+            optimizer = SVMOptimizer(
+                n_rounds=self.n_optimization_rounds,
+                n_points_initial=self.n_points_initial,
+                cv_folds=self.n_cv_folds,
+                random_state=self.random_state,
+                n_jobs=self.cv_processes,
+                max_iter=self.max_iter,
+                param_grid_override=param_grid if param_grid else None
+            )
+            parameters = optimizer.optimize(
+                u12_reference,
+                u2_reference,
+                eff_C_pos_range=self.eff_C_pos_range,
+                eff_C_neg_max=self.eff_C_neg_max
+            )
+            print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -524,20 +630,25 @@ class IntronClassifier:
 
         # Stage 3: Classify in batches
         print("\n=== Stage 3: Classification (Batch Mode) ===")
-        predictor = SVMPredictor(
-            threshold=self.classification_threshold,
-            n_jobs=self.classification_processes
-        )
-        classified = predictor.predict_batch(ensemble, experimental, batch_size)
 
-        n_u12 = sum(
-            1 for i in classified
-            if i.metadata and i.metadata.type_id == 'u12'
-        )
-        n_u2 = len(classified) - n_u12
-        print(f"Classification complete:")
-        print(f"  U12: {n_u12} ({100*n_u12/len(classified):.1f}%)")
-        print(f"  U2: {n_u2} ({100*n_u2/len(classified):.1f}%)")
+        if len(experimental) == 0:
+            print("No experimental introns to classify (training-only mode)")
+            classified = []
+        else:
+            predictor = SVMPredictor(
+                threshold=self.classification_threshold,
+                n_jobs=self.classification_processes
+            )
+            classified = predictor.predict_batch(ensemble, experimental, batch_size)
+
+            n_u12 = sum(
+                1 for i in classified
+                if i.metadata and i.metadata.type_id == 'u12'
+            )
+            n_u2 = len(classified) - n_u12
+            print(f"Classification complete:")
+            print(f"  U12: {n_u12} ({100*n_u12/len(classified):.1f}%)")
+            print(f"  U2: {n_u2} ({100*n_u2/len(classified):.1f}%)")
 
         return ClassificationResult(
             classified_introns=classified,

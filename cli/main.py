@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 from multiprocessing import Pool
 from itertools import repeat
+from dataclasses import replace
 
 from .args import IntronICArgumentParser
 from .config import IntronICConfig, ScoringRegions
@@ -1320,6 +1321,26 @@ def classify_introns(
     eff_C_pos_range = (1e-3, 1e3)  # Default C bounds
     eff_C_neg_max = None  # Default C bounds
 
+    # Initialize YAML training settings to None (may be overridden if YAML config provided)
+    yaml_n_models = None
+    yaml_subsample_u2 = None
+    yaml_subsample_ratio = None
+    yaml_training_max_iter = None
+    yaml_training_random_state = None
+
+    # Auto-load default config if it exists and user didn't specify --optimizer-config
+    # Only auto-load when actually training (not using a pretrained model)
+    if not config.training.optimizer_config_path and config.training.pretrained_model_path is None:
+        from pathlib import Path
+        default_config = Path(__file__).parent.parent / "config" / "training_default.yaml"
+        if default_config.exists():
+            # Update config to use default
+            config = replace(
+                config,
+                training=replace(config.training, optimizer_config_path=default_config)
+            )
+            messenger.log_only(f"Auto-loading default configuration: {default_config}")
+
     if config.training.optimizer_config_path:
         messenger.log_only(f"Loading optimizer configuration from: {config.training.optimizer_config_path}")
         try:
@@ -1337,6 +1358,28 @@ def classify_introns(
             # Extract C bounds if specified in config
             eff_C_pos_range = getattr(optimizer_from_yaml, 'eff_C_pos_range', (1e-3, 1e3))
             eff_C_neg_max = getattr(optimizer_from_yaml, 'eff_C_neg_max', None)
+
+            # Extract training settings if present in YAML (override CLI defaults)
+            yaml_n_models = getattr(optimizer_from_yaml, 'training_n_models', None)
+            yaml_subsample_u2 = getattr(optimizer_from_yaml, 'training_subsample_u2', None)
+            yaml_subsample_ratio = getattr(optimizer_from_yaml, 'training_subsample_ratio', None)
+            yaml_training_max_iter = getattr(optimizer_from_yaml, 'training_max_iter', None)
+            yaml_training_random_state = getattr(optimizer_from_yaml, 'training_random_state', None)
+
+            if yaml_n_models is not None:
+                config = replace(
+                    config,
+                    training=replace(config.training, n_models=yaml_n_models)
+                )
+                messenger.log_only(f"  Ensemble models: {yaml_n_models} (from YAML)")
+            if yaml_subsample_u2 is not None:
+                messenger.log_only(f"  Subsample U2: {yaml_subsample_u2} (from YAML)")
+            if yaml_subsample_ratio is not None:
+                messenger.log_only(f"  Subsample ratio: {yaml_subsample_ratio} (from YAML)")
+            if yaml_training_max_iter is not None:
+                messenger.log_only(f"  Training max_iter: {yaml_training_max_iter} (from YAML)")
+            if yaml_training_random_state is not None:
+                messenger.log_only(f"  Training random_state: {yaml_training_random_state} (from YAML)")
 
             messenger.log_only(f"Loaded custom optimizer configuration:")
             messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
@@ -1361,23 +1404,48 @@ def classify_introns(
     # - classification_processes (for prediction parallelization)
     # - param_grid_override (optional custom parameter grid)
     # - n_points_initial (initial grid points for optimization)
+    # - subsample_u2, subsample_ratio (ensemble diversity settings)
+    # - max_iter (for LinearSVC convergence during ensemble training)
+
+    # Use YAML training settings if available, otherwise use CLI defaults
+    ensemble_subsample_u2 = yaml_subsample_u2 if yaml_subsample_u2 is not None else True
+    ensemble_subsample_ratio = yaml_subsample_ratio if yaml_subsample_ratio is not None else 0.8
+    ensemble_max_iter = yaml_training_max_iter if yaml_training_max_iter is not None else optimizer_max_iter
+    ensemble_random_state = yaml_training_random_state if yaml_training_random_state is not None else config.training.seed
+
+    # Get use_fold_averaged_params: CLI arg takes precedence over YAML
+    # Priority: CLI arg (if explicitly set) > YAML value > default (False)
+    yaml_use_fold_averaged = getattr(optimizer_from_yaml, 'training_use_fold_averaged_params', None) if optimizer_from_yaml else None
+    if config.training.use_fold_averaged_params is not None:
+        # CLI arg was explicitly provided
+        use_fold_averaged_params = config.training.use_fold_averaged_params
+    elif yaml_use_fold_averaged is not None:
+        # Use YAML value as fallback
+        use_fold_averaged_params = yaml_use_fold_averaged
+    else:
+        # Default
+        use_fold_averaged_params = False
+
     classifier = IntronClassifier(
         n_optimization_rounds=optimizer_n_rounds,
         classification_threshold=config.scoring.threshold,
         n_ensemble_models=config.training.n_models,
+        subsample_u2=ensemble_subsample_u2,
+        subsample_ratio=ensemble_subsample_ratio,
         fixed_c=config.training.fixed_C,
         optimize_c=(config.training.fixed_C is None),
-        random_state=config.training.seed,
+        random_state=ensemble_random_state,
         cv_processes=optimizer_cv_processes,
         classification_processes=config.performance.processes,
-        max_iter=optimizer_max_iter,
+        max_iter=ensemble_max_iter,
         eval_mode=config.training.eval_mode,
         n_cv_folds=optimizer_cv_folds,
         test_fraction=config.training.test_fraction,
         param_grid_override=param_grid_override,
         n_points_initial=optimizer_n_points_initial,
         eff_C_pos_range=eff_C_pos_range,
-        eff_C_neg_max=eff_C_neg_max
+        eff_C_neg_max=eff_C_neg_max,
+        use_fold_averaged_params=use_fold_averaged_params
     )
 
     # Run complete classification pipeline (optimize + train + classify)
