@@ -93,7 +93,7 @@ class NestedCVEvaluator:
 
     def __init__(
         self,
-        n_folds: int = 5,
+        n_folds: int = 7,
         n_optimization_rounds: int = 3,
         n_ensemble_models: int = 1,
         classification_threshold: float = 90.0,
@@ -212,10 +212,12 @@ class NestedCVEvaluator:
                 print(f"Train: {n_u2_train} U2, {n_u12_train} U12")
                 print(f"Test:  {n_u2_test} U2, {n_u12_test} U12")
 
-            # Stage 1: Optimize hyperparameters
+            # Hyperparameter optimization for this fold
             # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
             if self.verbose:
-                print(f"\nStage 1: Hyperparameter Optimization (fold {fold_idx + 1})")
+                print(f"\n{'─'*80}")
+                print(f"FOLD {fold_idx + 1}/{len(fold_indices)} - Hyperparameter Optimization")
+                print(f"{'─'*80}")
 
             # If C is fixed, constrain the grid to that single value
             param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
@@ -241,9 +243,11 @@ class NestedCVEvaluator:
                 eff_C_neg_max=self.eff_C_neg_max
             )
 
-            # Stage 2: Train ensemble on training fold
+            # Train ensemble on training fold
             if self.verbose:
-                print(f"\nStage 2: Training Ensemble (fold {fold_idx + 1})")
+                print(f"\n{'─'*80}")
+                print(f"FOLD {fold_idx + 1}/{len(fold_indices)} - Model Training")
+                print(f"{'─'*80}")
 
             trainer = SVMTrainer(
                 n_models=self.n_ensemble_models,
@@ -258,9 +262,11 @@ class NestedCVEvaluator:
                 subsample_ratio=self.subsample_ratio
             )
 
-            # Stage 3: Predict on test fold (honest evaluation)
+            # Predict on test fold (honest evaluation)
             if self.verbose:
-                print(f"\nStage 3: Evaluating on Test Fold (fold {fold_idx + 1})")
+                print(f"\n{'─'*80}")
+                print(f"FOLD {fold_idx + 1}/{len(fold_indices)} - Test Evaluation")
+                print(f"{'─'*80}")
 
             predictor = SVMPredictor(
                 threshold=self.classification_threshold,

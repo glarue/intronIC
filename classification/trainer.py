@@ -136,14 +136,20 @@ class SVMTrainer:
         """
         models = []
 
-        # Print stage header
+        # Print training header (no stage number - context-dependent)
         print(f"\n{'='*80}", flush=True)
-        print(f"STAGE 3: ENSEMBLE TRAINING ({self.n_models} models)", flush=True)
+        if self.n_models == 1:
+            print(f"Model Training", flush=True)
+        else:
+            print(f"Ensemble Training ({self.n_models} models)", flush=True)
         print(f"{'='*80}\n", flush=True)
 
         for i in range(self.n_models):
             print(f"\n{'─'*80}", flush=True)
-            print(f"STAGE 3 - MODEL {i+1}/{self.n_models}: Training ensemble model...", flush=True)
+            if self.n_models == 1:
+                print(f"Training model...", flush=True)
+            else:
+                print(f"MODEL {i+1}/{self.n_models}: Training ensemble model...", flush=True)
             print(f"{'─'*80}", flush=True)
 
             # Subsample U2 if requested (for diversity)
@@ -166,7 +172,10 @@ class SVMTrainer:
             models.append(model)
 
         print(f"\n{'='*80}", flush=True)
-        print(f"STAGE 3 COMPLETE: Ensemble training finished ({len(models)} models trained)", flush=True)
+        if self.n_models == 1:
+            print(f"Model training complete", flush=True)
+        else:
+            print(f"Ensemble training complete ({len(models)} models trained)", flush=True)
         print(f"{'='*80}\n", flush=True)
 
         return SVMEnsemble(models=models, subsample_ratio=subsample_ratio)

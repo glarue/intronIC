@@ -218,12 +218,14 @@ class SplitEvaluator:
             print(f"Val:   {n_u2_val} U2, {n_u12_val} U12 ({self.val_fraction*100:.0f}%)")
             print(f"Test:  {n_u2_test} U2, {n_u12_test} U12 ({self.test_fraction*100:.0f}%)")
 
-        # Stage 1: Optimize hyperparameters
+        # Optimize hyperparameters on training set
         # Note: We could use train+val here, but using only train gives
         # a more conservative estimate
         # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
         if self.verbose:
-            print("\nStage 1: Hyperparameter Optimization (training set)")
+            print(f"\n{'='*80}")
+            print("Hyperparameter Optimization (training set)")
+            print(f"{'='*80}")
 
         # If C is fixed, constrain the grid to that single value
         param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
@@ -249,9 +251,11 @@ class SplitEvaluator:
             eff_C_neg_max=self.eff_C_neg_max
         )
 
-        # Stage 2: Train ensemble on training data
+        # Train ensemble on training data
         if self.verbose:
-            print("\nStage 2: Training Ensemble (training set)")
+            print(f"\n{'='*80}")
+            print("Model Training (training set)")
+            print(f"{'='*80}")
 
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
@@ -266,9 +270,11 @@ class SplitEvaluator:
             subsample_ratio=self.subsample_ratio
         )
 
-        # Stage 3: Predict on test set (honest evaluation)
+        # Predict on test set (honest evaluation)
         if self.verbose:
-            print("\nStage 3: Evaluating on Test Set (honest evaluation)")
+            print(f"\n{'='*80}")
+            print("Test Evaluation (test set)")
+            print(f"{'='*80}")
 
         predictor = SVMPredictor(
             threshold=self.classification_threshold,

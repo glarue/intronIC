@@ -390,13 +390,13 @@ class SVMOptimizer:
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
-            print(f"STAGE 1 COMPLETE: Optimal C = {final_C:.6e}", flush=True)
+            print(f"C Optimization Complete: C = {final_C:.6e}", flush=True)
             print(f"{'='*80}\n", flush=True)
 
-        # STAGE 2: Compare calibration methods using log-loss
+        # Calibration method selection using log-loss
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
-            print(f"STAGE 2: Calibration Method Selection (log-loss comparison)", flush=True)
+            print(f"Calibration Method Selection (log-loss comparison)", flush=True)
             print(f"{'='*80}", flush=True)
 
         # Evaluate sigmoid calibration
@@ -621,10 +621,10 @@ class SVMOptimizer:
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
-            print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search (Stage 1: C Optimization)", flush=True)
+            print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search (C Optimization)", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"Parameter combinations: {n_candidates} (C={len(C_grid)})", flush=True)
-            print(f"Model: UNCALIBRATED LinearSVC (calibration in Stage 2)", flush=True)
+            print(f"Model: UNCALIBRATED LinearSVC (calibration selected later)", flush=True)
             print(f"CV folds: {n_cv_folds}", flush=True)
             print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
             print(f"Total model fits: {total_fits:,}", flush=True)
@@ -733,13 +733,13 @@ class SVMOptimizer:
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
-            print(f"ROUND {round_idx + 1} SUMMARY (Stage 1: C Optimization)", flush=True)
+            print(f"ROUND {round_idx + 1} SUMMARY", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"Best C (geometric mean of rank-1): {best_C:.6e}", flush=True)
             print(f"Model: UNCALIBRATED LinearSVC", flush=True)
             print(f"Best CV score (balanced_accuracy): {best_score:.4f}", flush=True)
             print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
-            print(f"Note: Stage 2 will add calibration and compare sigmoid vs isotonic using log-loss", flush=True)
+            print(f"Note: Calibration method (sigmoid vs isotonic) will be selected after C optimization completes", flush=True)
             print(f"{'='*80}\n", flush=True)
 
         return OptimizationRound(
