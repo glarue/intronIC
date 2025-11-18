@@ -74,7 +74,7 @@ def generate_attributes(intron: Intron) -> str:
         if intron.metadata.is_omitted():
             attrs.append(intron.metadata.omitted.verbose)
 
-    return ','.join(attrs) if attrs else '.'
+    return ','.join(attrs) if attrs else 'NA'
 
 
 # ============================================================================
@@ -371,7 +371,7 @@ def generate_motif_schematic(intron: Intron, exonic: int = 3) -> str:
         exonic: Number of exonic bases to show (default: 3)
 
     Returns:
-        Motif schematic string or '.' if sequences missing
+        Motif schematic string or 'NA' if sequences missing
 
     Examples:
         >>> # intron with all sequences populated
@@ -380,7 +380,7 @@ def generate_motif_schematic(intron: Intron, exonic: int = 3) -> str:
         'AAG|GTCGGGGCTT...TACTAAC/CACAG...TTTAG|TCC'
     """
     if not intron.sequences:
-        return '.'
+        return 'NA'
 
     seqs = intron.sequences
 
@@ -391,7 +391,7 @@ def generate_motif_schematic(intron: Intron, exonic: int = 3) -> str:
         seqs.three_display_seq,
         seqs.downstream_flank
     ]):
-        return '.'
+        return 'NA'
 
     # Five prime boundary: {last 3bp of exon}|{first 10bp of intron}
     five_boundary = f"{seqs.upstream_flank[-exonic:]}|{seqs.five_display_seq}"
@@ -455,7 +455,7 @@ def generate_bp_context(intron: Intron) -> str:
         intron: Intron object with sequences
 
     Returns:
-        BP context string or '.' if sequences missing
+        BP context string or 'NA' if sequences missing
 
     Examples:
         >>> # intron with BP information populated
@@ -464,7 +464,7 @@ def generate_bp_context(intron: Intron) -> str:
         'TTGACAGGCAGTGATAT[TACTAAC]GACTGAGTTTAG'
     """
     if not intron.sequences:
-        return '.'
+        return 'NA'
 
     seqs = intron.sequences
 
@@ -474,7 +474,7 @@ def generate_bp_context(intron: Intron) -> str:
         seqs.bp_relative_coords,
         seqs.three_display_seq
     ]):
-        return '.'
+        return 'NA'
 
     try:
         start, stop = seqs.bp_relative_coords
@@ -485,7 +485,7 @@ def generate_bp_context(intron: Intron) -> str:
         return context
     except Exception:
         # If any error (e.g., invalid coordinates), return placeholder
-        return '.'
+        return 'NA'
 
 
 # ============================================================================
@@ -576,8 +576,8 @@ class BEDWriter:
         # Get BED start (0-based)
         start_0based = intron.start - 1
 
-        # Get SVM score or '.' if unavailable
-        score = '.' if intron.svm_score is None else str(intron.svm_score)
+        # Get SVM score or 'NA' if unavailable
+        score = 'NA' if intron.svm_score is None else str(intron.svm_score)
 
         # Generate intron label using shared function
         label = generate_intron_label(intron, species_name, simple_name, no_abbreviate)
@@ -693,7 +693,7 @@ class MetaWriter:
         species_name: Optional[str] = None,
         simple_name: bool = False,
         no_abbreviate: bool = False,
-        null: str = '.'
+        null: str = 'NA'
     ) -> None:
         """
         Write a single intron's metadata.
@@ -883,7 +883,7 @@ class SequenceWriter:
 
         # Optionally include score
         if include_score:
-            score = str(intron.svm_score) if intron.svm_score is not None else "."
+            score = str(intron.svm_score) if intron.svm_score is not None else "NA"
             fields.append(score)
 
         fields.extend([upstream, sequence, downstream])
@@ -992,7 +992,7 @@ class ScoreWriter:
         species_name: Optional[str] = None,
         simple_name: bool = False,
         no_abbreviate: bool = False,
-        null: str = '.'
+        null: str = 'NA'
     ) -> None:
         """
         Write a single intron's detailed scores.

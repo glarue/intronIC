@@ -165,11 +165,12 @@ def apply_u12_correction(
 
     updated_metadata = replace(
         intron.metadata,
-        corrected=True,  # Boolean flag
         correction_distance=shift,  # Store shift amount
         phase=new_phase,
         dynamic_tags=new_dynamic_tags
     )
+    # Set corrected flag using property (stored in flags field)
+    updated_metadata.corrected = True
 
     # Create corrected intron
     # Note: Sequences are NOT updated here - caller must re-extract
