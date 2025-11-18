@@ -22,7 +22,7 @@ from .config import IntronICConfig, ScoringRegions
 from .progress import IntronICProgressReporter
 
 # Import pipeline components
-from core.intron import Intron, IntronSequences
+from core.intron import Intron, IntronSequences, OmissionReason
 from utils.coordinates import GenomicCoordinate
 from file_io.genome import GenomeReader
 from file_io.parsers import AnnotationParser, BEDParser, SequenceParser
@@ -256,7 +256,7 @@ def merge_scored_and_omitted_introns(
         intron for intron in all_introns
         if id(intron) not in scored_ids
         and intron.metadata
-        and intron.metadata.omitted
+        and intron.metadata.omitted != OmissionReason.NONE
         and not intron.metadata.duplicate
     ]
 

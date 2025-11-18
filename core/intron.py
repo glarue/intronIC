@@ -20,14 +20,100 @@ Date: 2025-11-02
 
 from dataclasses import dataclass, field
 from typing import Literal, Optional
+from enum import IntEnum, IntFlag
 
 from utils.coordinates import GenomicCoordinate
 
 # Type aliases for clarity
 IntronType = Literal["u2", "u12", "unknown"]
-OmissionCode = Optional[
-    Literal["s", "a", "n", "i", "v", "d"]
-]  # short, ambiguous, noncanonical, isoform, overlap, duplicate
+
+
+class OmissionReason(IntEnum):
+    """
+    Omission reason codes (compact integer storage).
+
+    These match the original intronIC single-character codes but store as integers.
+    Conversion to human-readable strings happens only at write time.
+
+    Examples:
+        >>> reason = OmissionReason.SHORT
+        >>> reason.value  # 1
+        >>> reason.code   # 's'
+        >>> reason.name   # 'SHORT'
+        >>> reason.verbose  # 'omitted_short'
+    """
+    NONE = 0          # Not omitted (default)
+    SHORT = 1         # 's' - Too short
+    AMBIGUOUS = 2     # 'a' - Contains ambiguous bases
+    NONCANONICAL = 3  # 'n' - Non-canonical splice sites
+    ISOFORM = 4       # 'i' - Not from longest isoform
+    OVERLAP = 5       # 'v' - Overlapping coordinates
+    DUPLICATE = 6     # 'd' - Duplicate coordinates
+
+    @property
+    def code(self) -> str:
+        """Get single-character code for backward compatibility."""
+        _CODE_MAP = {
+            OmissionReason.NONE: '',
+            OmissionReason.SHORT: 's',
+            OmissionReason.AMBIGUOUS: 'a',
+            OmissionReason.NONCANONICAL: 'n',
+            OmissionReason.ISOFORM: 'i',
+            OmissionReason.OVERLAP: 'v',
+            OmissionReason.DUPLICATE: 'd',
+        }
+        return _CODE_MAP[self]
+
+    @property
+    def verbose(self) -> str:
+        """Get verbose name for output files."""
+        _VERBOSE_MAP = {
+            OmissionReason.NONE: '',
+            OmissionReason.SHORT: 'omitted_short',
+            OmissionReason.AMBIGUOUS: 'omitted_ambiguous',
+            OmissionReason.NONCANONICAL: 'omitted_noncanonical',
+            OmissionReason.ISOFORM: 'omitted_not_longest_isoform',
+            OmissionReason.OVERLAP: 'omitted_overlap',
+            OmissionReason.DUPLICATE: 'duplicate',
+        }
+        return _VERBOSE_MAP[self]
+
+    @classmethod
+    def from_code(cls, code: str) -> 'OmissionReason':
+        """Create from single-character code."""
+        _REVERSE_MAP = {
+            's': cls.SHORT,
+            'a': cls.AMBIGUOUS,
+            'n': cls.NONCANONICAL,
+            'i': cls.ISOFORM,
+            'v': cls.OVERLAP,
+            'd': cls.DUPLICATE,
+        }
+        return _REVERSE_MAP.get(code, cls.NONE)
+
+
+class IntronFlags(IntFlag):
+    """
+    Bit flags for intron properties (ultra-compact storage).
+
+    Multiple flags can be combined using bitwise OR (|).
+    Storage: single integer (28 bytes in Python, could be 4 bytes in numpy).
+
+    Examples:
+        >>> flags = IntronFlags.NONCANONICAL | IntronFlags.CORRECTED
+        >>> IntronFlags.NONCANONICAL in flags  # True
+        >>> IntronFlags.LONGEST_ISOFORM in flags  # False
+    """
+    NONE = 0
+    NONCANONICAL = 1 << 0     # 0x001 - Non-standard splice sites
+    LONGEST_ISOFORM = 1 << 1  # 0x002 - From longest transcript
+    CORRECTED = 1 << 2        # 0x004 - Boundaries were adjusted
+    DUPLICATE = 1 << 3        # 0x008 - Duplicate coordinates
+    EDGE_CASE = 1 << 4        # 0x010 - Edge case marker
+
+
+# Type alias for backward compatibility
+OmissionCode = Optional[OmissionReason]
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,18 +316,18 @@ class IntronMetadata:
         parent_length: Length of parent transcript (for tiebreaking)
         line_number: Annotation line number (for final tiebreaking)
         type_id: Classification ('u2', 'u12', 'unknown')
-        noncanonical: Whether intron has non-standard boundaries
-        omitted: Omission reason code (None if not omitted)
-        duplicate: Reference to representative if duplicate
+        omitted: Omission reason (integer enum, 0=not omitted)
+        duplicate: Reference to representative intron name if duplicate
         overlap: Overlapping coordinate record
-        longest_isoform: Whether from longest transcript
-        corrected: Whether boundaries were adjusted
+        flags: Compact bit flags (noncanonical, longest_isoform, corrected, etc.)
         phase: Coding phase information
-        dynamic_tags: Set of dynamic tags ([c:N], [d], [e], [n], [i], etc.)
+        defined_by: Which feature type defined this intron ('cds' or 'exon')
+        dynamic_tags: Set of dynamic tags for special cases ([c:N], etc.)
         correction_distance: Distance boundaries were shifted (for [c:N] tag)
 
     Note:
         Mutable (not frozen) to allow updating tags during pipeline.
+        Using integer codes and bit flags for memory efficiency.
     """
 
     parent: Optional[str] = None
@@ -251,21 +337,59 @@ class IntronMetadata:
     parent_length: Optional[int] = None
     line_number: Optional[int] = None  # Annotation line number for hierarchical sort tiebreaker
     type_id: IntronType = "unknown"
-    noncanonical: bool = False
-    omitted: OmissionCode = None
+    omitted: OmissionReason = OmissionReason.NONE  # Integer enum (4 bytes vs ~50 bytes for str)
     duplicate: Optional[str] = None
     overlap: Optional[str] = None
-    longest_isoform: bool = False
-    corrected: bool = False
+    flags: IntronFlags = IntronFlags.NONE  # Bit flags for boolean properties
     phase: Optional[int] = None
     defined_by: Optional[str] = None  # 'cds' or 'exon' - which feature type defined this intron
-    # Dynamic tagging system for various intron states
+    # Dynamic tagging system for special cases (rarely used, so overhead acceptable)
     dynamic_tags: set[str] = field(default_factory=set)
     correction_distance: Optional[int] = None
 
+    # Convenience properties for backward compatibility
+    @property
+    def noncanonical(self) -> bool:
+        """Check if intron has non-canonical boundaries."""
+        return IntronFlags.NONCANONICAL in self.flags
+
+    @noncanonical.setter
+    def noncanonical(self, value: bool):
+        """Set non-canonical flag."""
+        if value:
+            self.flags |= IntronFlags.NONCANONICAL
+        else:
+            self.flags &= ~IntronFlags.NONCANONICAL
+
+    @property
+    def longest_isoform(self) -> bool:
+        """Check if from longest transcript."""
+        return IntronFlags.LONGEST_ISOFORM in self.flags
+
+    @longest_isoform.setter
+    def longest_isoform(self, value: bool):
+        """Set longest isoform flag."""
+        if value:
+            self.flags |= IntronFlags.LONGEST_ISOFORM
+        else:
+            self.flags &= ~IntronFlags.LONGEST_ISOFORM
+
+    @property
+    def corrected(self) -> bool:
+        """Check if boundaries were adjusted."""
+        return IntronFlags.CORRECTED in self.flags
+
+    @corrected.setter
+    def corrected(self, value: bool):
+        """Set corrected flag."""
+        if value:
+            self.flags |= IntronFlags.CORRECTED
+        else:
+            self.flags &= ~IntronFlags.CORRECTED
+
     def is_omitted(self) -> bool:
         """Check if this intron should be omitted."""
-        return self.omitted is not None
+        return self.omitted != OmissionReason.NONE
 
     def is_duplicate(self) -> bool:
         """Check if this intron is a duplicate."""
@@ -296,8 +420,19 @@ class IntronMetadata:
             parts.append(f"i{self.index}/{self.family_size}")
         if self.type_id != "unknown":
             parts.append(self.type_id)
-        if self.omitted:
-            parts.append(f"omitted:{self.omitted}")
+        if self.is_omitted():
+            parts.append(f"omitted:{self.omitted.code}")
+
+        # Show flags
+        flag_parts = []
+        if self.noncanonical:
+            flag_parts.append("NC")
+        if self.longest_isoform:
+            flag_parts.append("longest")
+        if self.corrected:
+            flag_parts.append("corrected")
+        if flag_parts:
+            parts.append(f"[{','.join(flag_parts)}]")
 
         return f"IntronMetadata({', '.join(parts)})" if parts else "IntronMetadata()"
 

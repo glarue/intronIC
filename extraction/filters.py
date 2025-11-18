@@ -9,7 +9,7 @@ from typing import List, Dict, Set, Tuple, Optional
 from collections import defaultdict
 from dataclasses import dataclass
 
-from core.intron import Intron
+from core.intron import Intron, OmissionReason
 from utils.sequences import is_valid_dna, has_ambiguous_bases
 
 
@@ -187,22 +187,22 @@ class IntronFilter:
         """
         Check if intron meets omission criteria.
 
-        Updates intron.metadata.omitted with reason code:
-        - 's' = short
-        - 'a' = ambiguous sequence
-        - 'n' = noncanonical
-        - 'v' = coordinate overlap
-        - 'i' = not in longest isoform
+        Updates intron.metadata.omitted with OmissionReason enum:
+        - OmissionReason.SHORT = short
+        - OmissionReason.AMBIGUOUS = ambiguous sequence
+        - OmissionReason.NONCANONICAL = noncanonical
+        - OmissionReason.OVERLAP = coordinate overlap
+        - OmissionReason.ISOFORM = not in longest isoform
 
         Args:
             intron: Intron object to check
         """
         # Clear omitted flag to re-evaluate (important for second pass after tagging)
-        intron.metadata.omitted = None
+        intron.metadata.omitted = OmissionReason.NONE
 
         # Check length
         if intron.length < self.min_length:
-            intron.metadata.omitted = 's'
+            intron.metadata.omitted = OmissionReason.SHORT
             return
 
         # Check for ambiguous bases in scoring regions
@@ -210,11 +210,11 @@ class IntronFilter:
             for region in self.scoring_regions:
                 if region == 'five' and intron.sequences.five_seq:
                     if has_ambiguous_bases(intron.sequences.five_seq):
-                        intron.metadata.omitted = 'a'
+                        intron.metadata.omitted = OmissionReason.AMBIGUOUS
                         return
                 elif region == 'three' and intron.sequences.three_seq:
                     if has_ambiguous_bases(intron.sequences.three_seq):
-                        intron.metadata.omitted = 'a'
+                        intron.metadata.omitted = OmissionReason.AMBIGUOUS
                         return
 
             # Check bp region length and quality
@@ -225,14 +225,14 @@ class IntronFilter:
 
                 if valid_length < self.bp_matrix_length:
                     if len(bp_seq) < self.bp_matrix_length:
-                        intron.metadata.omitted = 's'
+                        intron.metadata.omitted = OmissionReason.SHORT
                     else:
-                        intron.metadata.omitted = 'a'
+                        intron.metadata.omitted = OmissionReason.AMBIGUOUS
                     return
 
         # Check noncanonical
         if not self.allow_noncanonical and intron.metadata.noncanonical:
-            intron.metadata.omitted = 'n'
+            intron.metadata.omitted = OmissionReason.NONCANONICAL
             return
 
         # Check longest isoform
@@ -240,12 +240,12 @@ class IntronFilter:
         # Original only omits when explicitly False, not when None
         # (see intronIC.py line 718: "if longest_only and self.longest_isoform is False")
         if self.longest_only and intron.metadata.longest_isoform is False:
-            intron.metadata.omitted = 'i'
+            intron.metadata.omitted = OmissionReason.ISOFORM
             return
 
         # Check overlap
         if not self.allow_overlap and intron.metadata.overlap:
-            intron.metadata.omitted = 'v'
+            intron.metadata.omitted = OmissionReason.OVERLAP
             return
 
     @staticmethod
@@ -276,7 +276,7 @@ class IntronFilter:
         region_id = (
             intron.coordinates.chromosome,
             intron.coordinates.strand,
-            not bool(intron.metadata.omitted)
+            intron.metadata.omitted == OmissionReason.NONE
         )
 
         # Create coordinate key
@@ -317,7 +317,7 @@ class IntronFilter:
             intron.metadata.longest_isoform = True
 
         # Check for coordinate overlap (only if not duplicate and not omitted)
-        if not intron.metadata.duplicate and not intron.metadata.omitted:
+        if not intron.metadata.duplicate and intron.metadata.omitted == OmissionReason.NONE:
             if (not intron.metadata.longest_isoform and
                 not self.allow_overlap and
                 not self.longest_only):
@@ -368,15 +368,15 @@ class IntronFilter:
             self.stats.duplicates += 1
 
         omitted = intron.metadata.omitted
-        if omitted == 's':
+        if omitted == OmissionReason.SHORT:
             self.stats.omitted_short += 1
-        elif omitted == 'a':
+        elif omitted == OmissionReason.AMBIGUOUS:
             self.stats.omitted_ambiguous += 1
-        elif omitted == 'n':
+        elif omitted == OmissionReason.NONCANONICAL:
             self.stats.omitted_noncanonical += 1
-        elif omitted == 'v':
+        elif omitted == OmissionReason.OVERLAP:
             self.stats.omitted_overlap += 1
-        elif omitted == 'i':
+        elif omitted == OmissionReason.ISOFORM:
             self.stats.omitted_isoform += 1
 
     def _should_keep(self, intron: Intron) -> bool:
@@ -390,7 +390,7 @@ class IntronFilter:
             True if intron should be kept, False otherwise
         """
         # Omitted introns are not kept
-        if intron.metadata.omitted:
+        if intron.metadata.omitted != OmissionReason.NONE:
             return False
 
         # Duplicates only kept if explicitly allowed

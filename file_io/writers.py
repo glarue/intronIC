@@ -24,22 +24,16 @@ from core.intron import Intron
 # Attribute Tag Mapping
 # ============================================================================
 
-# Maps tag codes to verbose attribute names
-# Used to generate both compact tags (e.g., [n][i]) and verbose attributes column
+from core.intron import OmissionReason, IntronFlags
+
+# NOTE: This mapping is now primarily for backward compatibility and dynamic tags.
+# For omission reasons, we use OmissionReason.verbose property.
+# For flags, we check IntronFlags directly.
 TAG_TO_ATTRIBUTE: Dict[str, str] = {
-    # Boolean flags (appear as tags in intron name)
-    'n': 'noncanonical',          # [n] - Non-canonical splice sites (not GT-AG, GC-AG, AT-AC)
-    'i': 'not_longest_isoform',   # [i] - Not from the longest transcript isoform
+    # Dynamic tags (still used for special cases)
     'c': 'corrected',             # [c] - Splice site boundaries were adjusted
     'd': 'duplicate',             # [d] - Duplicate coordinates (excluded from analysis)
-
-    # Omission codes (appear as [o:X] tags in intron name)
-    # These are INDEPENDENT of property tags - an intron can have both [n] and [o:s]
-    'o:s': 'omitted_short',       # [o:s] - Too short (below minimum length threshold)
-    'o:a': 'omitted_ambiguous',   # [o:a] - Contains ambiguous bases (N, etc.)
-    'o:n': 'omitted_noncanonical',  # [o:n] - Omitted because non-canonical
-    'o:v': 'omitted_overlap',     # [o:v] - Overlapping coordinates with another intron
-    'o:i': 'omitted_not_longest_isoform',  # [o:i] - Omitted because not in longest isoform
+    'e': 'edge_case',             # [e] - Edge case marker
 }
 
 
@@ -47,8 +41,7 @@ def generate_attributes(intron: Intron) -> str:
     """
     Generate verbose comma-separated attributes string from intron metadata.
 
-    Uses TAG_TO_ATTRIBUTE mapping to convert compact tags to
-    human-readable attribute names.
+    Uses the new enum-based system for compact and auditable storage.
 
     Args:
         intron: Intron object
@@ -67,22 +60,19 @@ def generate_attributes(intron: Intron) -> str:
     attrs = []
 
     if intron.metadata:
+        # Check flags (uses properties that access IntronFlags)
         if intron.metadata.noncanonical:
-            attrs.append(TAG_TO_ATTRIBUTE['n'])
+            attrs.append('noncanonical')
         if not intron.metadata.longest_isoform:
-            attrs.append(TAG_TO_ATTRIBUTE['i'])
+            attrs.append('not_longest_isoform')
         if intron.metadata.corrected:
-            attrs.append(TAG_TO_ATTRIBUTE['c'])
+            attrs.append('corrected')
         if intron.metadata.duplicate:
-            attrs.append(TAG_TO_ATTRIBUTE['d'])
-        if intron.metadata.omitted:
-            # Map omission code to verbose name using o: prefix
-            omit_code = f"o:{intron.metadata.omitted}"
-            if omit_code in TAG_TO_ATTRIBUTE:
-                attrs.append(TAG_TO_ATTRIBUTE[omit_code])
-            else:
-                # Fallback for unknown codes
-                attrs.append(f"omitted_{intron.metadata.omitted}")
+            attrs.append('duplicate')
+
+        # Omission reason (uses OmissionReason enum)
+        if intron.metadata.is_omitted():
+            attrs.append(intron.metadata.omitted.verbose)
 
     return ','.join(attrs) if attrs else '.'
 
@@ -145,28 +135,29 @@ def generate_species_abbreviation(species_name: str) -> str:
         return "XXXXXX"
 
 
-def format_omission_tag(omitted: Optional[str]) -> str:
+def format_omission_tag(omitted: OmissionReason) -> str:
     """
     Format omission tag for intron name.
 
     Port from: intronIC.py:629-632
+    Updated to use OmissionReason enum.
 
     Args:
-        omitted: Omission code (s/a/n/i/v) or None
+        omitted: OmissionReason enum value
 
     Returns:
         Formatted tag like ';[o:s]' or empty string if not omitted
 
     Examples:
-        >>> format_omission_tag('s')
+        >>> format_omission_tag(OmissionReason.SHORT)
         ';[o:s]'
-        >>> format_omission_tag('n')
+        >>> format_omission_tag(OmissionReason.NONCANONICAL)
         ';[o:n]'
-        >>> format_omission_tag(None)
+        >>> format_omission_tag(OmissionReason.NONE)
         ''
     """
-    if omitted:
-        return f';[o:{omitted}]'
+    if omitted != OmissionReason.NONE:
+        return f';[o:{omitted.code}]'
     return ''
 
 
@@ -356,8 +347,8 @@ def generate_intron_label(
                 tags.append("[c]")
         if intron.metadata.duplicate:
             tags.append("[d]")
-        if intron.metadata.omitted:
-            tags.append(f"[o:{intron.metadata.omitted}]")
+        if intron.metadata.omitted != OmissionReason.NONE:
+            tags.append(f"[o:{intron.metadata.omitted.code}]")
 
     if tags:
         name += ';' + ';'.join(tags)
