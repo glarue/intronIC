@@ -75,7 +75,12 @@ Examples:
         parser.add_argument('--version', action='version', version=f'intronIC {__version__}')
         parser.add_argument('--quiet', action='store_true', help='Suppress non-essential output')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-        parser.add_argument('--config', type=Path, help='Path to TOML configuration file')
+        parser.add_argument(
+            '--config',
+            type=Path,
+            dest='config_path',
+            help='Path to configuration file (auto-loads from standard paths if not specified)'
+        )
         parser.add_argument('--generate-config', action='store_true',
                            help='Generate configuration file template and exit')
 
@@ -242,12 +247,6 @@ Classify mode examples:
             type=int,
             default=1,
             help='Number of parallel processes for scoring reference sequences (default: 1)'
-        )
-        training.add_argument(
-            '--config',
-            type=Path,
-            dest='config_path',
-            help='Path to configuration file (auto-loads from standard paths if not specified)'
         )
         training.add_argument(
             '--use-fold-averaged-params',
@@ -545,12 +544,6 @@ Classify mode examples:
             type=int,
             default=5,
             help='Optimization rounds (default: 5)'
-        )
-        training.add_argument(
-            '--config',
-            type=Path,
-            dest='config_path',
-            help='Path to configuration file (auto-loads from standard paths if not specified)'
         )
         training.add_argument(
             '--use-fold-averaged-params',

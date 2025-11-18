@@ -230,53 +230,27 @@ optimizer:
 # ============================================================================
 # PARAMETER GRID (Advanced - for custom search space)
 # ============================================================================
-# Defines the hyperparameter space to search
-#
 # CORRECTED ARCHITECTURE (2025-01-17):
 # - ScoreNormalizer: RobustScaler(with_centering=True) - single scaling step
-# - Pipeline: BothEndsStrongTransformer → LinearSVC → CalibratedClassifierCV
-# - Two-stage optimization: C (balanced_accuracy), then method (log-loss)
+# - Pipeline: BothEndsStrongTransformer → LinearSVC (Stage 1) → CalibratedClassifierCV (Stage 2)
+# - Two-stage optimization:
+#   * Stage 1: Optimize C via grid search (metric: balanced_accuracy)
+#   * Stage 2: Select calibration method sigmoid vs isotonic (metric: log-loss)
 # - Result: 2 FPs on C. elegans (vs 130 uncentered, 49 centered-only)
 #
-# KEY ARCHITECTURE POINTS:
-# - include_max/include_pairwise_mins: Fixed to false (7D non-redundant features)
+# KEY ARCHITECTURE POINTS (HARDCODED):
+# - include_max: false (7D non-redundant features)
+# - include_pairwise_mins: false (min_all captures all constraints)
 # - penalty: L2 only (keeps all features appropriately weighted)
 # - calibration_method: Auto-selected (sigmoid vs isotonic) via log-loss
 # - C: Auto-optimized via geometric grid search (balanced_accuracy)
 #
+# These values are FIXED in the code (classification/optimizer.py:562-566) and
+# cannot be overridden via param_grid. Leave param_grid empty unless you're
+# doing advanced testing.
+#
 # References: SCALER_CENTERING_FIX_COMPLETE.md, test_corrected_architecture.py
-param_grid:
-  # Calibration method (selected in Stage 2 based on log-loss)
-  # - sigmoid: Parametric (Platt scaling), works with fewer samples
-  # - isotonic: Non-parametric, more flexible, needs more samples
-  # Both are evaluated and best is selected automatically
-  estimator__method:
-    - sigmoid
-    - isotonic
-
-  # BothEndsStrong feature set - Pairwise mins
-  # Controls which min features to include:
-  # - false: Only min_all (RECOMMENDED - 7D total, non-redundant)
-  #   Features: five_z, bp_z, three_z, min_all,
-  #             neg_absdiff_5_bp, neg_absdiff_5_3, neg_absdiff_bp_3
-  #   min_all = min(five_z, bp_z, three_z) captures all constraints
-  # - true: Pairwise mins + min_all (9D total, redundant)
-  #   Adds: min_5_bp, min_5_3 (redundant with min_all)
-  # CORRECTED ARCH: Fixed to false (simpler, non-redundant, validated)
-  estimator__svc__augment__include_pairwise_mins: [false]
-
-  # BothEndsStrong feature set - Max features
-  # - false: No max features (RECOMMENDED - don't reward one-end-strong FPs)
-  # - true: Adds max_5_bp, max_5_3 (can increase false positives)
-  # Expert: "model will mostly weight min" - max features not needed
-  # CORRECTED ARCH: Fixed to false (suppress one-end-strong FPs)
-  estimator__svc__augment__include_max: [false]
-
-  # SaturatingTransform (optional log compression for extreme scores)
-  # - false: No saturation (RECOMMENDED - linear features work well)
-  # - true: Apply log1p compression to large z-scores
-  # CORRECTED ARCH: Fixed to false (don't need saturation)
-  estimator__svc__augment__saturate_enabled: [false]
+param_grid: {}
 
 # ============================================================================
 # PERFORMANCE OPTIONS

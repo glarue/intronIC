@@ -54,11 +54,11 @@ optimizer:
   verbose: true
   max_iter: 30000             # Quick: 30k (vs 60k production)
 
-param_grid:
-  estimator__method: [sigmoid, isotonic]
-  estimator__svc__augment__include_pairwise_mins: [false]
-  estimator__svc__augment__include_max: [false]
-  estimator__svc__augment__saturate_enabled: [false]
+# param_grid not needed - architecture uses hardcoded values
+# (include_max=false, include_pairwise_mins=false)
+# C parameter is auto-optimized via grid search
+# Calibration method (sigmoid vs isotonic) is auto-selected in Stage 2
+param_grid: {}
 
 performance:
   processes: 1
