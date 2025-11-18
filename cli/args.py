@@ -145,10 +145,11 @@ Train mode examples:
   intronIC train -n homo_sapiens -p 8
 
   # Custom config (recommended for reproducibility)
-  intronIC train -n homo_sapiens --config config/config.yaml -p 12
+  # Note: --config is a global arg and must come BEFORE the subcommand
+  intronIC --config config/config.yaml train -n homo_sapiens -p 12
 
   # Use testing profile
-  intronIC train -n test_model --config config/profiles/quick.yaml
+  intronIC --config config/profiles/quick.yaml train -n test_model
 
   # Custom reference sequences
   intronIC train -n species --reference_u12s custom_u12.iic --reference_u2s custom_u2.iic
