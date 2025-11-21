@@ -98,9 +98,15 @@ class SplitEvaluator:
         fixed_c: float | None = None,
         cv_folds: int = 5,
         n_points_initial: int = 13,
+        scoring_metric: str = 'balanced_accuracy',
+        penalty_options: list | None = None,
+        loss_options: list | None = None,
+        class_weight_multipliers: list | None = None,
+        use_multiplier_tiebreaker: bool = True,
         param_grid_override: dict | None = None,
         eff_C_pos_range: tuple = (1e-3, 1e3),
-        eff_C_neg_max: float | None = None
+        eff_C_neg_max: float | None = None,
+        progress_tracker = None
     ):
         """
         Initialize split evaluator.
@@ -121,9 +127,15 @@ class SplitEvaluator:
             fixed_c: Fixed C value if not optimizing (default: None)
             cv_folds: Cross-validation folds for GridSearchCV (default: 5)
             n_points_initial: Initial grid points for optimization (default: 13)
+            scoring_metric: Metric for hyperparameter optimization (default: 'balanced_accuracy')
+            penalty_options: Penalty types to search (default: None -> ['l2'])
+            loss_options: Loss functions to search (default: None -> ['squared_hinge'])
+            class_weight_multipliers: Class weight multipliers (default: None -> [1.0])
+            use_multiplier_tiebreaker: Prefer 1.0 when multipliers tied (default: True)
             param_grid_override: Optional custom parameter grid (default: None)
             eff_C_pos_range: Target effective penalty range for positive class (default: 1e-3 to 1e3)
             eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
+            progress_tracker: Optional ProgressTracker for global step counting
         """
         self.test_fraction = test_fraction
         self.val_fraction = val_fraction
@@ -148,9 +160,15 @@ class SplitEvaluator:
         self.fixed_c = fixed_c
         self.cv_folds = cv_folds
         self.n_points_initial = n_points_initial
+        self.scoring_metric = scoring_metric
+        self.penalty_options = penalty_options
+        self.loss_options = loss_options
+        self.class_weight_multipliers = class_weight_multipliers
+        self.use_multiplier_tiebreaker = use_multiplier_tiebreaker
         self.param_grid_override = param_grid_override
         self.eff_C_pos_range = eff_C_pos_range
         self.eff_C_neg_max = eff_C_neg_max
+        self.progress_tracker = progress_tracker
 
     def evaluate(
         self,
@@ -241,8 +259,14 @@ class SplitEvaluator:
             random_state=self.random_state,
             n_jobs=self.n_jobs,
             max_iter=self.max_iter,
+            scoring_metric=self.scoring_metric,
+            penalty_options=self.penalty_options,
+            loss_options=self.loss_options,
+            class_weight_multipliers=self.class_weight_multipliers,
+            use_multiplier_tiebreaker=self.use_multiplier_tiebreaker,
             param_grid_override=param_grid if param_grid else None,
-            verbose=self.verbose
+            verbose=self.verbose,
+            progress_tracker=self.progress_tracker
         )
         parameters = optimizer.optimize(
             train_u12,
@@ -260,7 +284,8 @@ class SplitEvaluator:
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
             random_state=self.random_state,
-            max_iter=self.max_iter
+            max_iter=self.max_iter,
+            progress_tracker=self.progress_tracker
         )
         ensemble = trainer.train_ensemble(
             train_u12,

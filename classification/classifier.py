@@ -137,7 +137,14 @@ class IntronClassifier:
         n_points_initial: int = 13,
         eff_C_pos_range: tuple = (3e-4, 1e+2),  # Tightened to reduce FPR
         eff_C_neg_max: Optional[float] = None,
-        use_fold_averaged_params: bool = False
+        use_fold_averaged_params: bool = False,
+        scoring_metric: str = 'balanced_accuracy',
+        penalty_options: Optional[list] = None,
+        loss_options: Optional[list] = None,
+        class_weight_multipliers: Optional[list] = None,
+        use_multiplier_tiebreaker: bool = True,
+        features_list: Optional[list] = None,
+        gamma_imbalance_options: Optional[list] = None
     ):
         """
         Initialize classifier.
@@ -168,6 +175,28 @@ class IntronClassifier:
                                      uses geometric mean of fold C values and majority-vote calibration.
                                      Recommended for cross-species applications. Only applies when
                                      eval_mode='nested_cv'.
+            scoring_metric: Metric for hyperparameter optimization (default: 'balanced_accuracy').
+                          Options: 'balanced_accuracy', 'f_beta_0.5', 'f_beta_0.75'.
+                          Use 'f_beta_0.5' for precision-focused training (minimizes false positives).
+            penalty_options: Penalty types to search (default: ['l2']). Options: ['l1', 'l2'].
+                           WARNING: L1 can be 10-20× slower than L2.
+            loss_options: Loss functions to search (default: ['squared_hinge']). Options: ['hinge', 'squared_hinge'].
+                         NOTE: With dual=False, only 'squared_hinge' is valid.
+            class_weight_multipliers: Class weight multipliers for precision/recall tradeoffs (default: [1.0]).
+                                     Options: [0.8, 1.0, 1.2] - lower values are more conservative.
+            use_multiplier_tiebreaker: When multiple multipliers are tied for best score, prefer 1.0 (default: True).
+                                      Set to False to use GridSearchCV's default first-tie behavior.
+            features_list: List of composite feature names to include in BothEndsStrongTransformer (default: None).
+                          If None, uses default 7D feature set (min_all + neg_absdiff penalties).
+                          Available features: 'min_5_bp', 'min_5_3', 'min_all',
+                                            'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',
+                                            'max_5_bp', 'max_5_3'
+                          Example: ['neg_absdiff_bp_3'] for minimal 4D space (based on L1 analysis)
+            gamma_imbalance_options: List of gamma scaling factors to grid search (default: None).
+                                    Scales all neg_absdiff_* features to nudge L2 toward L1 behavior.
+                                    If None, uses gamma=1.0 (no scaling).
+                                    Higher values make imbalance more costly in the margin.
+                                    Example: [1.0, 2.0, 4.0] to search over scaling factors
         """
         self.n_optimization_rounds = n_optimization_rounds
         self.n_ensemble_models = n_ensemble_models
@@ -187,6 +216,19 @@ class IntronClassifier:
         self.eff_C_pos_range = eff_C_pos_range
         self.eff_C_neg_max = eff_C_neg_max
         self.use_fold_averaged_params = use_fold_averaged_params
+        self.scoring_metric = scoring_metric
+        self.penalty_options = penalty_options if penalty_options is not None else ['l2']
+        self.loss_options = loss_options if loss_options is not None else ['squared_hinge']
+        self.class_weight_multipliers = class_weight_multipliers if class_weight_multipliers is not None else [1.0]
+        self.use_multiplier_tiebreaker = use_multiplier_tiebreaker
+        self.features_list = features_list
+        self.gamma_imbalance_options = gamma_imbalance_options if gamma_imbalance_options is not None else [1.0]
+
+        # Debug: Log features being used
+        if features_list is not None:
+            print(f"IntronClassifier initialized with explicit feature list: {features_list}")
+        else:
+            print(f"IntronClassifier initialized with default 7D feature set")
 
         # Auto-skip evaluation when using fixed C
         # Rationale: When C is pre-specified, evaluation metrics aren't useful
@@ -253,17 +295,19 @@ class IntronClassifier:
         print(f"  Rationale: Using conservative fold-averaged params for better cross-species generalization")
 
         # Get fixed parameters from first fold's result (these don't vary across folds)
-        # We need to get these from the optimizer, which we'll need to reconstruct
-        # For now, use hardcoded defaults that match the corrected architecture
+        # Note: FoldResult doesn't store penalty/loss/class_weight_multiplier yet
+        # TODO: Enhance FoldResult to store all optimized parameters for better averaging
+        # For now, use defaults that match the configured search space
         return SVMParameters(
             C=geometric_mean_C,
             calibration_method=majority_calibration,
             saturate_enabled=False,  # Corrected arch: no saturation
             include_max=False,  # Corrected arch: no max features
             include_pairwise_mins=False,  # Corrected arch: no pairwise mins
+            penalty='l2',  # Default: L2 (most common in search space)
+            class_weight_multiplier=1.0,  # Default: balanced (middle of search range)
+            loss='squared_hinge',  # Fixed: only valid option for dual=False
             dual=False,  # Corrected arch: primal formulation
-            penalty='l2',  # Corrected arch: L2 only
-            loss='squared_hinge',  # Corrected arch: squared hinge
             intercept_scaling=1.0,  # Corrected arch: fixed
             cv_score=nested_cv_result.mean_f1,  # Use mean F1 from nested CV
             round_found=-1  # -1 indicates fold-averaged (not from specific round)
@@ -301,6 +345,19 @@ class IntronClassifier:
         print(f"  Reference: {len(u12_reference)} U12, {len(u2_reference)} U2")
         print(f"  Experimental: {len(experimental)} introns")
 
+        # Initialize global progress tracker
+        from classification.progress_tracker import ProgressTracker
+        skip_final_opt = self.use_fold_averaged_params and self.eval_mode == 'nested_cv'
+        total_steps = ProgressTracker.calculate_total_steps(
+            eval_mode=self.eval_mode,
+            n_cv_folds=self.n_cv_folds,
+            n_optimization_rounds=self.n_optimization_rounds,
+            n_ensemble_models=self.n_ensemble_models,
+            skip_final_optimization=skip_final_opt
+        )
+        progress_tracker = ProgressTracker(total_steps=total_steps, verbose=True)
+        print(f"\n[Starting training pipeline]\n")
+
         # ====================================================================
         # PHASE 1: EVALUATION (Honest Performance Assessment)
         # ====================================================================
@@ -323,9 +380,15 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
+                scoring_metric=self.scoring_metric,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                class_weight_multipliers=self.class_weight_multipliers,
+                use_multiplier_tiebreaker=self.use_multiplier_tiebreaker,
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
-                eff_C_neg_max=self.eff_C_neg_max
+                eff_C_neg_max=self.eff_C_neg_max,
+                progress_tracker=progress_tracker
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -347,9 +410,15 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
+                scoring_metric=self.scoring_metric,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                class_weight_multipliers=self.class_weight_multipliers,
+                use_multiplier_tiebreaker=self.use_multiplier_tiebreaker,
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
-                eff_C_neg_max=self.eff_C_neg_max
+                eff_C_neg_max=self.eff_C_neg_max,
+                progress_tracker=progress_tracker
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -400,7 +469,14 @@ class IntronClassifier:
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
-                param_grid_override=param_grid if param_grid else None
+                scoring_metric=self.scoring_metric,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                class_weight_multipliers=self.class_weight_multipliers,
+                features_list=self.features_list,
+                gamma_imbalance_options=self.gamma_imbalance_options,
+                param_grid_override=param_grid if param_grid else None,
+                progress_tracker=progress_tracker
             )
             parameters = optimizer.optimize(
                 u12_reference,
@@ -415,7 +491,10 @@ class IntronClassifier:
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
             random_state=self.random_state,
-            max_iter=self.max_iter
+            max_iter=self.max_iter,
+            features_list=self.features_list,
+            gamma_imbalance_options=self.gamma_imbalance_options,
+            progress_tracker=progress_tracker
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
@@ -518,9 +597,15 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
+                scoring_metric=self.scoring_metric,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                class_weight_multipliers=self.class_weight_multipliers,
+                use_multiplier_tiebreaker=self.use_multiplier_tiebreaker,
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
-                eff_C_neg_max=self.eff_C_neg_max
+                eff_C_neg_max=self.eff_C_neg_max,
+                progress_tracker=progress_tracker
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -542,9 +627,15 @@ class IntronClassifier:
                 fixed_c=self.fixed_c,
                 cv_folds=self.n_cv_folds,
                 n_points_initial=self.n_points_initial,
+                scoring_metric=self.scoring_metric,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                class_weight_multipliers=self.class_weight_multipliers,
+                use_multiplier_tiebreaker=self.use_multiplier_tiebreaker,
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
-                eff_C_neg_max=self.eff_C_neg_max
+                eff_C_neg_max=self.eff_C_neg_max,
+                progress_tracker=progress_tracker
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -595,7 +686,14 @@ class IntronClassifier:
                 random_state=self.random_state,
                 n_jobs=self.cv_processes,
                 max_iter=self.max_iter,
-                param_grid_override=param_grid if param_grid else None
+                scoring_metric=self.scoring_metric,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                class_weight_multipliers=self.class_weight_multipliers,
+                features_list=self.features_list,
+                gamma_imbalance_options=self.gamma_imbalance_options,
+                param_grid_override=param_grid if param_grid else None,
+                progress_tracker=progress_tracker
             )
             parameters = optimizer.optimize(
                 u12_reference,
@@ -610,7 +708,10 @@ class IntronClassifier:
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
             random_state=self.random_state,
-            max_iter=self.max_iter
+            max_iter=self.max_iter,
+            features_list=self.features_list,
+            gamma_imbalance_options=self.gamma_imbalance_options,
+            progress_tracker=progress_tracker
         )
         ensemble = trainer.train_ensemble(
             u12_reference,

@@ -46,6 +46,13 @@ from utils.metadata import generate_training_metadata, generate_pretrained_metad
 # This function must be at module level (not nested) to be picklable for multiprocessing
 
 
+def _score_intron_worker_unpack(args):
+    """Unpacking wrapper for imap_unordered compatibility with sequence tracking."""
+    seq_idx, *worker_args = args
+    result, error = _score_intron_worker(*worker_args)
+    return seq_idx, result, error
+
+
 def _score_intron_worker(
     intron: 'Intron',
     pwm_file: Path,
@@ -225,6 +232,120 @@ def format_count_with_percentage(count: int, total: int) -> str:
     return f"{count:,} ({percentage:.2f}%)"
 
 
+def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
+    """
+    Extract and log learned coefficients from trained ensemble.
+
+    Args:
+        ensemble: SVMEnsemble with trained models
+        messenger: UnifiedMessenger for logging
+    """
+    # Define feature names (matching BothEndsStrongTransformer canonical order)
+    base_features = ['s5', 'sBP', 's3']
+    composite_features_map = {
+        'min_5_bp': 'min_5_bp',
+        'min_5_3': 'min_5_3',
+        'min_all': 'min_all',
+        'neg_absdiff_5_bp': 'neg_absdiff_5_bp',
+        'neg_absdiff_5_3': 'neg_absdiff_5_3',
+        'neg_absdiff_bp_3': 'neg_absdiff_bp_3',
+        'max_5_bp': 'max_5_bp',
+        'max_5_3': 'max_5_3'
+    }
+
+    messenger.log_only("")
+    messenger.log_only("="*80)
+    messenger.log_only("LEARNED COEFFICIENTS")
+    messenger.log_only("="*80)
+
+    all_coefficients = []
+    all_feature_names = None
+
+    for i, svm_model in enumerate(ensemble.models):
+        model = svm_model.model
+
+        # Extract coefficients from CalibratedClassifierCV -> Pipeline -> LinearSVC
+        try:
+            # Navigate nested structure
+            if hasattr(model, 'calibrated_classifiers_'):
+                calibrated_clf = model.calibrated_classifiers_[0]
+                fitted_estimator = calibrated_clf.estimator
+
+                # Get LinearSVC from pipeline
+                linear_svc = None
+                if hasattr(fitted_estimator, 'named_steps'):
+                    for step_name in ['svc', 'linearsvc', 'classifier']:
+                        if step_name in fitted_estimator.named_steps:
+                            linear_svc = fitted_estimator.named_steps[step_name]
+                            break
+
+                if linear_svc is not None and hasattr(linear_svc, 'coef_'):
+                    coef = linear_svc.coef_[0]  # Shape (1, n_features)
+
+                    # Get feature list from transformer
+                    transformer = fitted_estimator.named_steps.get('transform')
+                    if transformer and hasattr(transformer, 'features') and transformer.features is not None:
+                        # Build feature names list
+                        feature_names = base_features.copy()
+                        for feat in transformer.features:
+                            if feat in composite_features_map:
+                                feature_names.append(composite_features_map[feat])
+                        all_feature_names = feature_names
+                    else:
+                        # Fallback: infer from coefficient count
+                        n_features = len(coef)
+                        if n_features == 3:
+                            all_feature_names = base_features
+                        else:
+                            # Create generic names for composite features
+                            all_feature_names = base_features + [f'feature_{j}' for j in range(3, n_features)]
+
+                    all_coefficients.append(coef)
+
+                    # Log this model's coefficients
+                    if i == 0:  # Only log first model in detail
+                        messenger.log_only(f"\nModel {i+1}/{len(ensemble.models)} Coefficients:")
+                        for feat_name, coef_val in zip(all_feature_names, coef):
+                            messenger.log_only(f"  {feat_name:20s}: {coef_val:+.6f}")
+        except Exception as e:
+            messenger.log_only(f"Warning: Could not extract coefficients from model {i+1}: {e}")
+
+    # Compute and log ensemble statistics
+    if all_coefficients:
+        coef_array = np.array(all_coefficients)  # Shape: (n_models, n_features)
+        mean_coef = coef_array.mean(axis=0)
+        std_coef = coef_array.std(axis=0)
+
+        messenger.log_only(f"\nEnsemble Statistics (n={len(all_coefficients)} models):")
+        messenger.log_only("-"*80)
+        messenger.log_only(f"{'Feature':<20s}  {'Mean':>12s}  {'Std':>12s}  {'Range':>24s}")
+        messenger.log_only("-"*80)
+
+        for feat_name, mean_val, std_val in zip(all_feature_names, mean_coef, std_coef):
+            feat_min = coef_array[:, all_feature_names.index(feat_name)].min()
+            feat_max = coef_array[:, all_feature_names.index(feat_name)].max()
+            messenger.log_only(
+                f"{feat_name:<20s}  {mean_val:+12.6f}  {std_val:12.6f}  "
+                f"[{feat_min:+.6f}, {feat_max:+.6f}]"
+            )
+
+        # Identify features with near-zero coefficients (L1-like sparsity)
+        messenger.log_only("")
+        threshold = 0.001
+        near_zero = [(name, mean) for name, mean in zip(all_feature_names, mean_coef)
+                     if abs(mean) < threshold]
+        if near_zero:
+            messenger.log_only(f"Features with near-zero coefficients (|mean| < {threshold}):")
+            for name, mean in near_zero:
+                messenger.log_only(f"  {name}: {mean:+.6f}")
+        else:
+            messenger.log_only(f"All features have non-zero coefficients (|mean| >= {threshold})")
+    else:
+        messenger.log_only("Warning: Could not extract coefficients from any models")
+
+    messenger.log_only("")
+
+
 def merge_scored_and_omitted_introns(
     scored_introns: List[Intron],
     all_introns: List[Intron],
@@ -348,11 +469,13 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
 
     # Create Rich console for log file with ANSI color support
     # force_terminal=True ensures ANSI codes are written even to files
+    # highlight=False disables automatic syntax highlighting to avoid false matches (e.g. "PUT" in "OUTPUT")
     log_console = Console(
         file=open(log_file, 'w', encoding='utf-8'),
         force_terminal=True,
         width=120,
-        legacy_windows=False
+        legacy_windows=False,
+        highlight=False
     )
 
     # File handler using Rich - preserves colors and formatting
@@ -843,14 +966,18 @@ def score_introns(
 
             with Pool(processes=n_workers) as pool:
                 try:
-                    # Use imap_unordered with chunking to avoid memory explosion
-                    # This streams results back instead of collecting all at once
+                    # Use imap_unordered with chunking for smooth progress updates
+                    # This streams results back as they complete, not in order
                     # Chunksize: balance between overhead and memory usage
                     chunksize = max(1, min(1000, len(introns) // (n_workers * 4)))
 
-                    results_iter = pool.starmap(
-                        _score_intron_worker,
+                    # Use imap_unordered for smooth progress monitoring across all workers
+                    # Add sequence indices to track original order, then sort at the end
+                    # This gives us both smooth progress AND correct ordering!
+                    results_iter = pool.imap_unordered(
+                        _score_intron_worker_unpack,
                         zip(
+                            range(len(introns)),  # Add sequence index
                             introns,
                             repeat(pwm_file),
                             repeat(u2_bp_file),
@@ -863,15 +990,20 @@ def score_introns(
                         chunksize=chunksize
                     )
 
-                    # Process results as they arrive
-                    for scored_intron, error in results_iter:
+                    # Collect results with their sequence indices
+                    # Store in dict to handle out-of-order completion
+                    results_dict = {}
+                    for seq_idx, scored_intron, error in results_iter:
                         if error is not None:
                             messenger.warning(f"Failed to score intron: {error}")
                             failed_count += 1
                         else:
-                            scored_introns.append(scored_intron)
+                            results_dict[seq_idx] = scored_intron
 
                         progress.update(task, advance=1)
+
+                    # Restore original order by sorting by sequence index
+                    scored_introns = [results_dict[i] for i in sorted(results_dict.keys())]
 
                 except KeyboardInterrupt:
                     messenger.warning("User interrupt - terminating workers")
@@ -1356,6 +1488,20 @@ def classify_introns(
             optimizer_max_iter = optimizer_cfg.get('max_iter', 60000)
             optimizer_n_points_initial = optimizer_cfg.get('n_points_initial', 13)
 
+            # Extract new robustness parameters
+            scoring_metric = optimizer_cfg.get('scoring_metric', 'balanced_accuracy')
+            penalty_options = optimizer_cfg.get('penalty_options', ['l2'])
+            loss_options = optimizer_cfg.get('loss_options', ['squared_hinge'])
+            class_weight_multipliers = optimizer_cfg.get('class_weight_multipliers', [1.0])
+            use_multiplier_tiebreaker = optimizer_cfg.get('use_multiplier_tiebreaker', True)
+
+            # Extract feature transformation settings
+            feature_transform_cfg = optimizer_cfg.get('feature_transform', {})
+            features_list = feature_transform_cfg.get('features', None)
+
+            # Extract gamma scaling options
+            gamma_imbalance_options = optimizer_cfg.get('gamma_imbalance_options', None)
+
             # Extract C bounds (if specified)
             c_bounds = optimizer_cfg.get('c_bounds', {})
             eff_C_pos_range = tuple(c_bounds.get('eff_C_pos_range', [1e-3, 1e3]))
@@ -1395,6 +1541,16 @@ def classify_introns(
                 messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
                 messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
                 messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
+                messenger.log_only(f"  Scoring metric: {scoring_metric}")
+                messenger.log_only(f"  Penalty options: {penalty_options}")
+                messenger.log_only(f"  Loss options: {loss_options}")
+                messenger.log_only(f"  Class weight multipliers: {class_weight_multipliers}")
+                if features_list:
+                    messenger.log_only(f"  Feature transform: {features_list}")
+                else:
+                    messenger.log_only(f"  Feature transform: default (7D)")
+                if gamma_imbalance_options:
+                    messenger.log_only(f"  Gamma imbalance options: {gamma_imbalance_options}")
                 if param_grid_override:
                     messenger.log_only(f"  Parameter grid: {len(param_grid_override)} hyperparameter sets")
                 if c_bounds:
@@ -1407,6 +1563,13 @@ def classify_introns(
             optimizer_cv_processes = config.performance.cv_processes or config.performance.processes
             optimizer_max_iter = config.training.max_iter
             optimizer_n_points_initial = 13
+            scoring_metric = 'balanced_accuracy'
+            penalty_options = ['l2']
+            loss_options = ['squared_hinge']
+            class_weight_multipliers = [1.0]
+            use_multiplier_tiebreaker = True
+            features_list = None
+            gamma_imbalance_options = None
             param_grid_override = {}
             eff_C_pos_range = (1e-3, 1e3)
             eff_C_neg_max = None
@@ -1430,6 +1593,13 @@ def classify_introns(
         optimizer_cv_processes = config.performance.cv_processes or config.performance.processes
         optimizer_max_iter = config.training.max_iter
         optimizer_n_points_initial = 13
+        scoring_metric = 'balanced_accuracy'
+        penalty_options = ['l2']
+        loss_options = ['squared_hinge']
+        class_weight_multipliers = [1.0]
+        use_multiplier_tiebreaker = True
+        features_list = None
+        gamma_imbalance_options = None
         param_grid_override = {}
         eff_C_pos_range = (1e-3, 1e3)
         eff_C_neg_max = None
@@ -1487,6 +1657,13 @@ def classify_introns(
         eval_mode=config.training.eval_mode,
         n_cv_folds=optimizer_cv_folds,
         test_fraction=config.training.test_fraction,
+        scoring_metric=scoring_metric,
+        penalty_options=penalty_options,
+        loss_options=loss_options,
+        class_weight_multipliers=class_weight_multipliers,
+        use_multiplier_tiebreaker=use_multiplier_tiebreaker,
+        features_list=features_list,
+        gamma_imbalance_options=gamma_imbalance_options,
         param_grid_override=param_grid_override,
         n_points_initial=optimizer_n_points_initial,
         eff_C_pos_range=eff_C_pos_range,
@@ -1596,6 +1773,9 @@ def classify_introns(
         except Exception as plot_error:
             messenger.warning(f"Failed to generate training plots: {plot_error}")
             # Continue even if plotting fails
+
+    # Log learned coefficients from ensemble
+    log_ensemble_coefficients(result.ensemble, messenger)
 
     # Save trained model with human-trained normalizer for cross-species classification
     model_path = config.output.get_output_path('.model.pkl')
@@ -1784,6 +1964,88 @@ def main_train(config: IntronICConfig):
     messenger.info(f"Training model: {config.output.species_name}")
     messenger.info("No genome/annotation needed - using reference sequences only")
 
+    # Log command and config for reproducibility
+    import sys
+    messenger.log_only("="*80)
+    messenger.log_only("COMMAND AND CONFIGURATION")
+    messenger.log_only("="*80)
+    messenger.log_only(f"intronIC version: 2.0.0")
+    messenger.log_only(f"Command: {' '.join(sys.argv)}")
+    messenger.log_only(f"Working directory: {Path.cwd()}")
+    messenger.log_only(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    messenger.log_only("")
+
+    # Log reference input files
+    messenger.log_only("Input Files:")
+    if config.scoring.reference_u12s:
+        messenger.log_only(f"  U12 reference: {config.scoring.reference_u12s}")
+    if config.scoring.reference_u2s:
+        messenger.log_only(f"  U2 reference: {config.scoring.reference_u2s}")
+    messenger.log_only("")
+
+    # Load yaml config for detailed logging
+    from classification.config_loader import load_config, find_config
+    yaml_config = None
+    try:
+        yaml_config = load_config(config.training.config_path)
+        if yaml_config:
+            config_path = find_config(config.training.config_path)
+            if config_path:
+                messenger.log_only(f"Config file: {config_path}")
+                messenger.log_only("")
+    except Exception as e:
+        messenger.log_only(f"Note: Could not load yaml config ({e})")
+        messenger.log_only("")
+
+    # Log key configuration parameters in condensed format
+    messenger.log_only("Configuration Parameters:")
+    messenger.log_only(f"  Species: {config.output.species_name or 'N/A'}")
+    messenger.log_only(f"  Random seed: {config.training.seed}")
+    messenger.log_only(f"  Classification threshold: {config.scoring.threshold}%")
+    messenger.log_only("")
+
+    messenger.log_only("Training:")
+    messenger.log_only(f"  n_models: {config.training.n_models}")
+    messenger.log_only(f"  max_iter: {config.training.max_iter}")
+    messenger.log_only(f"  eval_mode: {config.training.eval_mode}")
+    if config.training.fixed_C:
+        messenger.log_only(f"  C: {config.training.fixed_C:.6e} (fixed)")
+    else:
+        messenger.log_only(f"  C: optimized via grid search")
+        messenger.log_only(f"  n_optimization_rounds: {config.training.n_optimization_rounds}")
+        messenger.log_only(f"  n_cv_folds: {config.training.n_cv_folds}")
+    messenger.log_only("")
+
+    # Log optimizer-specific config if present
+    if yaml_config and 'optimizer' in yaml_config:
+        opt_cfg = yaml_config['optimizer']
+        messenger.log_only("Optimizer:")
+
+        # Penalty options
+        if 'penalty_options' in opt_cfg:
+            messenger.log_only(f"  penalty_options: {opt_cfg['penalty_options']}")
+
+        # Feature transform
+        if 'feature_transform' in opt_cfg:
+            ft = opt_cfg['feature_transform']
+            if 'features' in ft:
+                features_str = ', '.join(ft['features'])
+                messenger.log_only(f"  features: [{features_str}]")
+
+        # Gamma scaling
+        if 'gamma_imbalance_options' in opt_cfg:
+            messenger.log_only(f"  gamma_imbalance_options: {opt_cfg['gamma_imbalance_options']}")
+
+        # Class weight multipliers
+        if 'class_weight_multipliers' in opt_cfg:
+            cwm = opt_cfg['class_weight_multipliers']
+            messenger.log_only(f"  class_weight_multipliers: {cwm}")
+
+        messenger.log_only("")
+
+    messenger.log_only("="*80)
+    messenger.log_only("")
+
     pipeline_steps = [
         "Load reference data",
         "Score reference sequences",
@@ -1903,6 +2165,61 @@ def main_classify(config: IntronICConfig):
         quiet=config.output.quiet
     )
 
+    # Log command and config for reproducibility (log only, not console)
+    import sys
+    messenger.log_only("="*80)
+    messenger.log_only("COMMAND AND CONFIGURATION")
+    messenger.log_only("="*80)
+    messenger.log_only(f"intronIC version: 2.0.0")
+    messenger.log_only(f"Command: {' '.join(sys.argv)}")
+    messenger.log_only(f"Working directory: {Path.cwd()}")
+    messenger.log_only(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    messenger.log_only("")
+
+    # Log input files
+    messenger.log_only("Input Files:")
+    if config.input.mode == 'annotation':
+        if config.input.genome:
+            messenger.log_only(f"  Genome: {config.input.genome}")
+        if config.input.annotation:
+            messenger.log_only(f"  Annotation: {config.input.annotation}")
+    elif config.input.mode == 'bed':
+        if config.input.genome:
+            messenger.log_only(f"  Genome: {config.input.genome}")
+        if config.input.bed:
+            messenger.log_only(f"  BED file: {config.input.bed}")
+    elif config.input.mode == 'sequences':
+        if config.input.sequences:
+            messenger.log_only(f"  Sequences: {config.input.sequences}")
+    messenger.log_only("")
+
+    # Load yaml config for detailed logging
+    from classification.config_loader import load_config, find_config
+    yaml_config = None
+    try:
+        yaml_config = load_config(config.training.config_path)
+        if yaml_config:
+            config_path = find_config(config.training.config_path)
+            if config_path:
+                messenger.log_only(f"Config file: {config_path}")
+                messenger.log_only("")
+    except Exception as e:
+        messenger.log_only(f"Note: Could not load yaml config ({e})")
+        messenger.log_only("")
+
+    # Log key configuration parameters
+    messenger.log_only("Configuration Parameters:")
+    messenger.log_only(f"  Species: {config.output.species_name or 'N/A'}")
+    messenger.log_only(f"  Input mode: {config.input.mode}")
+    messenger.log_only(f"  Classification threshold: {config.scoring.threshold}%")
+    messenger.log_only(f"  Output directory: {config.output.output_dir}")
+    if config.training.pretrained_model_path:
+        messenger.log_only(f"  Model file: {config.training.pretrained_model_path}")
+    messenger.log_only("")
+
+    messenger.log_only("="*80)
+    messenger.log_only("")
+
     # Print header
     reporter.print_header(
         species_name=config.output.species_name,
@@ -1985,18 +2302,57 @@ def main_classify(config: IntronICConfig):
         stats = intron_filter.stats
         total = stats.total_introns
 
+        # Calculate removal statistics
+        total_removed = total - stats.kept_introns
+        total_omitted = stats.omitted_short + stats.omitted_ambiguous + stats.omitted_noncanonical + stats.omitted_isoform + stats.omitted_overlap
+
+        # Calculate breakdown: duplicates can also be omitted, so categories overlap
+        # Removed = Omitted ∪ Duplicates
+        duplicates_also_omitted = total_omitted + stats.duplicates - total_removed
+        duplicates_only = stats.duplicates - duplicates_also_omitted if duplicates_also_omitted <= stats.duplicates else 0
+
         messenger.log_only(
-            f"Filtering results: {format_count_with_percentage(stats.kept_introns, total)} "
-            f"introns kept for scoring"
+            f"Filtering results: {format_count_with_percentage(stats.kept_introns, total)} kept, "
+            f"{format_count_with_percentage(total_removed, total)} removed"
         )
-        messenger.log_only(
-            f"Omitted: {format_count_with_percentage(stats.omitted_short, total)} short, "
-            f"{format_count_with_percentage(stats.omitted_ambiguous, total)} ambiguous, "
-            f"{format_count_with_percentage(stats.omitted_noncanonical, total)} non-canonical, "
-            f"{format_count_with_percentage(stats.omitted_isoform, total)} non-longest isoform, "
-            f"{format_count_with_percentage(stats.omitted_overlap, total)} overlapping"
-        )
-        messenger.log_only(f"Duplicates marked: {format_count_with_percentage(stats.duplicates, total)}")
+
+        # Filtering breakdown table
+        # Only show table if introns were actually removed
+        if total_removed > 0:
+            messenger.log_only("")
+            messenger.log_only("Introns Removed from Scoring:")
+            messenger.log_only("┌──────────────────────────────┬──────────┬───────────┐")
+            messenger.log_only("│ Category                     │ Count    │ Percent   │")
+            messenger.log_only("├──────────────────────────────┼──────────┼───────────┤")
+
+            # Only show omitted section if any were omitted
+            if total_omitted > 0:
+                messenger.log_only(f"│ Omitted                      │ {total_omitted:>8,} │ {(total_omitted/total*100) if total > 0 else 0:>8.2f}% │")
+                # Only show breakdown items that have non-zero counts
+                if stats.omitted_short > 0:
+                    messenger.log_only(f"│   - Too short                │ {stats.omitted_short:>8,} │ {(stats.omitted_short/total*100) if total > 0 else 0:>8.2f}% │")
+                if stats.omitted_ambiguous > 0:
+                    messenger.log_only(f"│   - Ambiguous bases          │ {stats.omitted_ambiguous:>8,} │ {(stats.omitted_ambiguous/total*100) if total > 0 else 0:>8.2f}% │")
+                if stats.omitted_noncanonical > 0:
+                    messenger.log_only(f"│   - Non-canonical            │ {stats.omitted_noncanonical:>8,} │ {(stats.omitted_noncanonical/total*100) if total > 0 else 0:>8.2f}% │")
+                if stats.omitted_isoform > 0:
+                    messenger.log_only(f"│   - Non-longest isoform      │ {stats.omitted_isoform:>8,} │ {(stats.omitted_isoform/total*100) if total > 0 else 0:>8.2f}% │")
+                if stats.omitted_overlap > 0:
+                    messenger.log_only(f"│   - Overlapping              │ {stats.omitted_overlap:>8,} │ {(stats.omitted_overlap/total*100) if total > 0 else 0:>8.2f}% │")
+
+            # Only show duplicates row if there are duplicates that weren't also omitted
+            if duplicates_only > 0:
+                messenger.log_only(f"│ Duplicates only              │ {duplicates_only:>8,} │ {(duplicates_only/total*100) if total > 0 else 0:>8.2f}% │")
+
+            messenger.log_only("├──────────────────────────────┼──────────┼───────────┤")
+            messenger.log_only(f"│ Total removed                │ {total_removed:>8,} │ {(total_removed/total*100) if total > 0 else 0:>8.2f}% │")
+            messenger.log_only("└──────────────────────────────┴──────────┴───────────┘")
+            messenger.log_only("")
+
+            # Only show note if there are duplicates that were also omitted
+            if duplicates_also_omitted > 0 and stats.duplicates > 0:
+                messenger.log_only(f"Note: {format_count_with_percentage(duplicates_also_omitted, stats.duplicates)} of {stats.duplicates:,} total duplicates were also omitted for other reasons")
+                messenger.log_only("")
 
         messenger.success(
             f"Filtered to {len(filtered_introns):,} introns for scoring "
@@ -2109,35 +2465,37 @@ def main_classify(config: IntronICConfig):
                 else:
                     boundaries_u2[dnts] += 1
 
-        # Log U12 boundary statistics
+        # Log U12 boundary statistics as table
         if boundaries_u12:
             total_u12 = sum(boundaries_u12.values())
             # Sort by count (descending), then alphabetically by dinucleotide
             sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))[:20]
-            lines = [
-                f"  {i:2d}. {dnts:8s} {count:6,} ({(count / total_u12) * 100:5.2f}%)"
-                for i, (dnts, count) in enumerate(sorted_boundaries, 1)
-            ]
-            log_data_block(
-                logger,
-                "Top 20 splice site boundaries (U12-type introns)",
-                lines
-            )
 
-        # Log U2 boundary statistics
+            messenger.log_only("")
+            messenger.log_only("Top 20 Splice Site Boundaries (U12-type introns):")
+            messenger.log_only("┌──────┬──────────────┬──────────┬───────────┐")
+            messenger.log_only("│ Rank │ Dinucleotide │ Count    │ Percent   │")
+            messenger.log_only("├──────┼──────────────┼──────────┼───────────┤")
+            for i, (dnts, count) in enumerate(sorted_boundaries, 1):
+                messenger.log_only(f"│ {i:>4} │ {dnts:>12} │ {count:>8,} │ {(count / total_u12) * 100:>8.2f}% │")
+            messenger.log_only("└──────┴──────────────┴──────────┴───────────┘")
+            messenger.log_only("")
+
+        # Log U2 boundary statistics as table
         if boundaries_u2:
             total_u2 = sum(boundaries_u2.values())
             # Sort by count (descending), then alphabetically by dinucleotide
             sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))[:20]
-            lines = [
-                f"  {i:2d}. {dnts:8s} {count:6,} ({(count / total_u2) * 100:5.2f}%)"
-                for i, (dnts, count) in enumerate(sorted_boundaries, 1)
-            ]
-            log_data_block(
-                logger,
-                "Top 20 splice site boundaries (U2-type introns)",
-                lines
-            )
+
+            messenger.log_only("")
+            messenger.log_only("Top 20 Splice Site Boundaries (U2-type introns):")
+            messenger.log_only("┌──────┬──────────────┬──────────┬───────────┐")
+            messenger.log_only("│ Rank │ Dinucleotide │ Count    │ Percent   │")
+            messenger.log_only("├──────┼──────────────┼──────────┼───────────┤")
+            for i, (dnts, count) in enumerate(sorted_boundaries, 1):
+                messenger.log_only(f"│ {i:>4} │ {dnts:>12} │ {count:>8,} │ {(count / total_u2) * 100:>8.2f}% │")
+            messenger.log_only("└──────┴──────────────┴──────────┴───────────┘")
+            messenger.log_only("")
 
         # Save classification metrics to JSON file
         if metrics:

@@ -38,7 +38,8 @@ class IntronICProgressReporter:
         Args:
             quiet: If True, suppress non-essential output
         """
-        self.console = Console()
+        # Disable automatic highlighting to avoid false matches (e.g. "PUT" in "OUTPUT")
+        self.console = Console(highlight=False)
         self.quiet = quiet
         self._progress: Optional[Progress] = None
 

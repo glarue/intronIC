@@ -203,7 +203,7 @@ def test_sliding_window_search_simple_sequence(u12_bp_pwm, u2_bp_pwm):
     # Sequence: 5N + TACTAAC + 3N = 15bp total
     sequence = "NNNNN" + "TACTAAC" + "NNN"
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Should find TACTAAC
     assert match.sequence == "TACTAAC"
@@ -222,7 +222,7 @@ def test_sliding_window_finds_best_match(u12_bp_pwm, u2_bp_pwm):
     # TACTAAC (strong: perfect match)
     sequence = "TACGAAC" + "NNN" + "TACTAAC"
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Should find the second (stronger) TACTAAC
     assert match.sequence == "TACTAAC"
@@ -238,7 +238,7 @@ def test_sequence_too_short_for_pwm(u12_bp_pwm, u2_bp_pwm):
 
     # Should either raise error or return None/sentinel
     with pytest.raises(ValueError, match="too short|shorter than"):
-        scorer._find_best_in_sequence(short_seq)
+        scorer._find_best_in_sequence(short_seq, u12_bp_pwm, search_window_start=-55)
 
 
 def test_sequence_exactly_pwm_length(u12_bp_pwm, u2_bp_pwm):
@@ -248,7 +248,7 @@ def test_sequence_exactly_pwm_length(u12_bp_pwm, u2_bp_pwm):
     # Exactly 7bp
     sequence = "TACTAAC"
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     assert match.sequence == "TACTAAC"
     assert match.start_in_region == 0
@@ -278,12 +278,21 @@ def test_search_window_extraction(u12_bp_pwm, u2_bp_pwm, simple_intron):
     """Test that search window is correctly extracted from intron."""
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
 
-    # Extract region
-    region = scorer._extract_search_region(simple_intron, search_window=(-80, -60))
+    # Extract region (with default five_coords and three_coords)
+    region, start_pos = scorer._extract_search_region(
+        simple_intron,
+        search_window=(-80, -60),
+        five_coords=(-3, 9),
+        three_coords=(-6, 4)
+    )
 
     # Intron is 100bp, so:
     # -80 to -60 from end = positions 20-40
+    # five_end = 9, three_start = 100 + (-6) = 94
+    # start_pos = max(20, 9) = 20
+    # stop_pos = min(40, 94) = 40
     assert len(region) == 20
+    assert start_pos == 20
     assert region == simple_intron.sequences.seq[20:40]
 
 
@@ -327,7 +336,7 @@ def test_no_clear_winner_all_equal_scores(u12_bp_pwm, u2_bp_pwm):
     # All Ns - should score equally everywhere (all get pseudocount)
     sequence = "N" * 50
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Should return first occurrence when tied
     assert match.start_in_region == 0
@@ -358,6 +367,90 @@ def test_search_window_too_small_for_pwm(u12_bp_pwm, u2_bp_pwm, simple_intron):
     # Window of only 5bp, but PWM is 7bp - should return None
     match = scorer.find_best_match(simple_intron, search_window=(-10, -5))
     assert match is None, "Should return None for windows too small for PWM"
+
+
+def test_short_intron_excludes_five_prime_region(u12_bp_pwm, u2_bp_pwm):
+    """Test that short introns properly exclude 5' scoring region from BP search.
+
+    This tests the fix for the issue where very short introns had BPS overlapping
+    with the 5' splice site scoring region.
+
+    Note: The original intronIC v1.5.1 ONLY excludes the 5' region. BP is allowed
+    to overlap with the 3' region (typically 1 position overlap in short introns).
+    """
+    scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
+
+    # Create a 47bp intron (like the examples in the bug report)
+    # Structure: 9bp (5' region) + 33bp (searchable) + 6bp (3' region) = 48bp total
+    # Note: 1bp overlap at position 41 (searchable goes to 41, 3' starts at 41)
+    # Put TACTAAC in the middle of the searchable region (position 20-26)
+    seq = "GTAAGTNNN" + "NNNNNNNNN" + "NN" + "TACTAAC" + "N"*14 + "TTTCAG"
+    #     ^^^^^^^^^ 5' region (0-8, 9bp)
+    #     0-8         9-17 (9bp)    18-19  20-26 (7bp)  27-40 (14bp)  41-46 (6bp 3' region)
+    #                               TACTAAC at absolute position 20-26
+    #     Total length: 9+9+2+7+14+6 = 47bp
+
+    intron = Intron(
+        intron_id="short_intron_47bp",
+        coordinates=GenomicCoordinate(
+            chromosome="chr1",
+            start=1000,
+            stop=1047,
+            strand='+',
+            system='1-based'
+        ),
+        sequences=IntronSequences(
+            seq=seq,
+            upstream_flank="CAG",
+            downstream_flank="CCT",
+            five_prime_dnt="GT",
+            three_prime_dnt="AG"
+        ),
+        scores=IntronScores(),
+        metadata=IntronMetadata(
+            parent="transcript_short",
+            grandparent="gene_short"
+        )
+    )
+
+    # Search with standard window (-55, -5)
+    # For 47bp intron: start would be 47+(-55)=-8, stop would be 47+(-5)=42
+    # After clamping: start=max(-8, 9)=9, stop=min(42, 47)=42
+    match = scorer.find_best_match(
+        intron,
+        search_window=(-55, -5),
+        five_coords=(-3, 9),
+        three_coords=(-6, 4)
+    )
+
+    # Should find TACTAAC
+    assert match is not None, "Should find a match in the valid search region"
+    assert match.sequence == "TACTAAC"
+
+    # Verify that the search region excludes the 5' region
+    # Position should be relative to 3' end
+    # TACTAAC at position 20, intron length 47
+    # Position: 20 - 47 = -27
+    assert match.position == -27
+
+    # Extract the actual search region to verify it excludes 5' region
+    search_region, start_pos = scorer._extract_search_region(
+        intron,
+        search_window=(-55, -5),
+        five_coords=(-3, 9),
+        three_coords=(-6, 4)
+    )
+
+    # Search region should be positions [9, 42) = 33bp
+    assert len(search_region) == 33, f"Expected 33bp, got {len(search_region)}"
+    assert start_pos == 9
+    assert search_region == seq[9:42]
+
+    # Verify no overlap with 5' region (first 9bp)
+    assert search_region != seq[0:33]  # Would include 5' region at start
+
+    # Note: 1bp overlap with 3' region at position 41 is EXPECTED and ALLOWED
+    # (matches original intronIC v1.5.1 behavior)
 
 
 def test_negative_strand_intron(u12_bp_pwm, u2_bp_pwm):
@@ -402,7 +495,7 @@ def test_ambiguous_bases_in_match(u12_bp_pwm, u2_bp_pwm):
     # Sequence with some Ns in the match
     sequence = "NNNNN" + "TACTNNC" + "NNN"
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Should still find it, but with lower score (Ns get pseudocount)
     assert "TACTNNC" in match.sequence or match.sequence == "TACTNNC"
@@ -458,7 +551,7 @@ def test_algorithm_matches_original_logic(u12_bp_pwm, u2_bp_pwm):
     # Test sequence with known structure
     sequence = "AAA" + "TACTAAC" + "TTT"
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Verify structure matches original return signature
     assert hasattr(match, 'score')
@@ -501,7 +594,7 @@ def test_long_search_region_performance(u12_bp_pwm, u2_bp_pwm):
     sequence = "N" * 1000
 
     # Should complete quickly (sliding window is efficient)
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     assert match is not None
 
@@ -517,7 +610,7 @@ def test_uses_u12_pwm_for_scoring(u12_bp_pwm, u2_bp_pwm):
     # Sequence with perfect U12 BP
     sequence = "NNNNN" + "TACTAAC" + "NNN"
 
-    match = scorer._find_best_in_sequence(sequence)
+    match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Score should be high (matches U12 PWM well)
     # With our test PWM, perfect TACTAAC should score ~0.95^4 * 0.95^3 ≈ 0.7
@@ -532,7 +625,7 @@ def test_score_is_product_of_base_frequencies(u12_bp_pwm, u2_bp_pwm):
     test_seq = "TACTAAC"
 
     # Score via BranchPointScorer
-    match = scorer._find_best_in_sequence(test_seq)
+    match = scorer._find_best_in_sequence(test_seq, u12_bp_pwm, search_window_start=-55)
 
     # Score via PWM directly
     direct_score = u12_bp_pwm.score_sequence(test_seq)

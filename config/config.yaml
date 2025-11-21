@@ -87,27 +87,29 @@ training:
   # Model evaluation mode
   # How to evaluate classifier performance on reference data:
   # - "nested_cv": Nested cross-validation (honest evaluation, RECOMMENDED)
-  #   Most rigorous but slowest (~25 fits per parameter combination)
+  #   Most rigorous but slowest
   # - "split": Simple train/test split (faster, less rigorous)
   #   Single 80/20 split for quick evaluation
   # - "none": Skip evaluation (fastest, use when loading pretrained model)
   eval_mode: "nested_cv"
 
-  # Number of folds for nested cross-validation
+  # Number of folds for OUTER nested CV loop (evaluation only)
   # Only used when eval_mode = "nested_cv"
-  # Higher = more rigorous but slower (7-10 recommended for production)
-  n_cv_folds: 7
+  # IMPORTANT: Should match optimizer.cv_folds (below) per expert guidance
+  # Both outer and inner loops should use k=5 for optimal balance
+  # Recommendation: Keep synchronized with optimizer.cv_folds
+  n_cv_folds: 6  # Test with per-multiplier C grid fix
 
   # Test set fraction for split evaluation
   # Only used when eval_mode = "split"
   # Fraction of reference data held out for testing (0.0-1.0)
-  test_fraction: 0.15
+  test_fraction: 0.2
 
   # Number of optimization rounds for C parameter search
   # Controls iterative refinement rounds during hyperparameter optimization
   # Each round narrows search range around best C value
   # More rounds = finer granularity but longer optimization time
-  n_optimization_rounds: 5
+  n_optimization_rounds: 9
 
   # Fixed SVM C parameter (soft-margin penalty)
   # If set, skips hyperparameter optimization and uses this value directly
@@ -122,7 +124,7 @@ training:
     # - 3-5 = typical ensemble (good balance)
     # - 10+ = very robust but slower
     # Recommendation: 10 for production, 1 for fast testing
-    n_models: 10
+    n_models: 15
 
     # Whether to subsample U2 set for each model
     # - true: Each model sees different random U2 subset (more diversity)
@@ -135,13 +137,13 @@ training:
     # - 1.0 = use all U2s (no subsampling)
     # Only applies when subsample_u2=true
     # Recommendation: 0.7-0.9 for good diversity without losing too much data
-    subsample_ratio: 0.85
+    subsample_ratio: 0.8
 
     # Maximum iterations for LinearSVC convergence
     # Separate from optimizer.max_iter (which is for parameter search)
     # Used during final ensemble training
     # Production: 40000-50000, Fast testing: 3000-10000
-    max_iter: 40000
+    max_iter: 50000
 
     # Random seed for ensemble training
     # Controls U2 subsampling randomness
@@ -167,13 +169,13 @@ optimizer:
   # - Round 1: Coarse grid over full C range
   # - Rounds 2+: Refine around best C from previous round
   # Production: 3-5 rounds, Fast testing: 1-2 rounds
-  n_rounds: 5
+  n_rounds: 7
 
   # Initial grid points for round 1 (7-13 typical)
   # Number of C values to test in first round
   # More points = better coverage but slower
   # Production: 11-13 points, Fast testing: 3-7 points
-  n_points_initial: 13
+  n_points_initial: 20
 
   # Refinement grid points for rounds 2+ (20-100 typical)
   # Number of C values to test in refinement rounds
@@ -181,21 +183,28 @@ optimizer:
   # Production: 50-100 points, Fast testing: 20-30 points
   n_points_refine: 100
 
-  # Cross-validation folds for parameter validation (3-10 typical)
-  # Number of folds for parameter validation
-  # 7-10 = standard for production, 3 = faster
-  # Note: CalibratedClassifierCV adds another 3-fold internal CV
-  # Total model fits per parameter set = cv_folds × 3
-  cv_folds: 9
+  # Cross-validation folds for INNER loop (hyperparameter search)
+  # Used during grid search to evaluate each parameter combination
+  # IMPORTANT: Should match training.n_cv_folds (above) per expert guidance
+  # With hundreds-thousands of U12s, k=5 provides sufficient validation
+  # k=10 doesn't give significant benefits but costs 2× computation
+  # Recommendation: 5 for most datasets, 3 for very small reference sets
+  # Note: CalibratedClassifierCV adds another 5-fold internal CV
+  # Total model fits per parameter set ≈ cv_folds × 5 (calibration wrapper)
+  # KEEP SYNCHRONIZED: training.n_cv_folds = optimizer.cv_folds = 5
+  cv_folds: 6  # Test with per-multiplier C grid fix
 
   # Random seed for reproducibility
   # Ensures same train/test splits across runs
   random_state: 42
 
-  # Number of parallel jobs for GridSearchCV
-  # - -1: use all available CPU cores
-  # - 1: sequential (easier to debug)
-  # - N: use N cores
+  # Number of parallel jobs for GridSearchCV hyperparameter optimization
+  # - -1: use all available CPU cores (recommended for speed)
+  # - 1: sequential (useful for debugging)
+  # - N: use N cores (balance speed and resource usage)
+  #
+  # Higher parallelism = faster training but more memory usage
+  # Recommended: -1 for maximum speed on most systems
   n_jobs: -1
 
   # Print detailed progress messages
@@ -208,6 +217,109 @@ optimizer:
   # Lower = faster but may not converge (warns if hit)
   # Production: 60000-75000, Fast testing: 3000-10000
   max_iter: 65000
+
+  # Scoring metric for hyperparameter optimization
+  # Metric used during grid search to evaluate parameter combinations
+  # Options:
+  # - 'balanced_accuracy': (TPR + TNR) / 2 - treats both classes equally (DEFAULT)
+  #   Good for imbalanced data, no precision/recall bias
+  # - 'f_beta_0.5': F_0.5 score - heavily weights precision over recall
+  #   Best for minimizing false positives (conservative U12 calls)
+  # - 'f_beta_0.75': F_0.75 score - slightly weights precision over recall
+  #   Moderate precision focus, closer to balanced
+  #
+  # Expert recommendation: Try 'f_beta_0.5' for precision-focused training
+  # This encourages the optimizer to find hyperparameters that minimize false positives
+  # while still maintaining reasonable recall on true U12s.
+  scoring_metric: 'balanced_accuracy'
+
+  # Robustness improvements (2025-01-19)
+  # Penalty types to search (L1 = feature selection, L2 = full weighting)
+  # WARNING: L1 can be 10-20× slower than L2 and may cause memory issues with high parallelism
+  # L1 with max_iter=65000 can take minutes per fit vs seconds for L2
+  # Recommendation: Use ['l2'] only for production (sufficient for robustness)
+  # Advanced: Try ['l1', 'l2'] with reduced max_iter (10000) and lower n_jobs (4-8)
+  penalty_options: ['l2']
+
+  # Loss functions to search
+  # IMPORTANT: With dual=False (our default), only 'squared_hinge' is supported
+  # The 'hinge' loss requires dual=True which is slower for our feature count
+  # Default: ['squared_hinge'] (only valid option for dual=False)
+  # This parameter is kept for potential future dual=True support
+  loss_options: ['squared_hinge']
+
+  # Class weight multipliers to search (controls precision-recall tradeoff)
+  # Multiplies ONLY the positive class (U12) weight, keeping U2 weight fixed
+  # This changes the relative importance: w_pos/w_neg ratio
+  #
+  # - alpha < 1.0 (e.g., 0.8): Lower U12 penalty → HIGHER PRECISION (fewer false positives)
+  # - alpha = 1.0: Standard balanced weighting (equal importance)
+  # - alpha > 1.0 (e.g., 1.2): Higher U12 penalty → HIGHER RECALL (find more U12s)
+  #
+  # Grid search explores (C, alpha) combinations to find best balanced accuracy
+  # Default: [0.8, 1.0, 1.2] to test precision/recall tradeoffs
+  # For fastest search or to disable multiplier search: [1.0]
+  class_weight_multipliers: [0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2]
+
+  # Tie-breaking for class_weight_multiplier selection
+  # When multiple multipliers achieve the same best score:
+  # - true (default): Prefer multiplier closest to 1.0 (standard balanced weighting)
+  # - false: Use GridSearchCV default (first tie in parameter list order)
+  #
+  # Rationale: When precision/recall tradeoffs don't affect performance (tied scores),
+  # selecting 1.0 is more interpretable than arbitrarily selecting the first value.
+  # Set to false if you want deterministic first-tie behavior regardless of performance.
+  use_multiplier_tiebreaker: true
+
+  # Feature transformation configuration (BothEndsStrongTransformer)
+  # Controls which composite features are included in the model
+  # Base features (ALWAYS included): s5, sBP, s3 (3D z-scores)
+  #
+  # Specify list of composite features to add (beyond base 3D features):
+  # Available features:
+  #   - 'min_5_bp':      min(s5, sBP) - both 5' and BP must be strong
+  #   - 'min_5_3':       min(s5, s3) - both 5' and 3' must be strong
+  #   - 'min_all':       min(s5, sBP, s3) - ALL THREE must be strong
+  #   - 'absdiff_5_bp':  |s5 - sBP| - penalty for 5'/BP imbalance (expects negative coef)
+  #   - 'absdiff_5_3':   |s5 - s3| - penalty for 5'/3' imbalance (expects negative coef)
+  #   - 'absdiff_bp_3':  |sBP - s3| - penalty for BP/3' imbalance (expects negative coef)
+  #   - 'max_5_bp':      max(s5, sBP) - at least one of 5'/BP strong
+  #   - 'max_5_3':       max(s5, s3) - at least one of 5'/3' strong
+  #
+  # Note: Old models used 'neg_absdiff_*' (negative values) which caused models
+  # to learn positive coefficients that rewarded imbalance. New models use
+  # 'absdiff_*' (positive values) so negative coefficients properly penalize it.
+  #
+  # Default (7D): All except pairwise mins and max features
+  # Minimal (4D): Only the features L1 regularization found useful
+  # Custom: Specify exactly which features you want
+  #
+  # Examples:
+  #   # Default 7D (L2-friendly, non-redundant) - CORRECTED 2025-01-20
+  #   features: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3']
+  #
+  #   # Minimal 4D (based on L1 coefficient analysis)
+  #   features: ['absdiff_bp_3']
+  #
+  #   # Full 11D (all composite features)
+  #   features: ['min_5_bp', 'min_5_3', 'min_all', 'absdiff_5_bp',
+  #              'absdiff_5_3', 'absdiff_bp_3', 'max_5_bp', 'max_5_3']
+  feature_transform:
+    # List of composite features to include (default: 7D recommended set)
+    features: ['absdiff_bp_3']
+
+  # Gamma scaling for imbalance features (nudges L2 toward L1 behavior)
+  # Scales all absdiff_* features by this factor before training
+  # Higher gamma = imbalance is more costly in the margin
+  # Set to null to disable grid search (uses gamma=1.0 always)
+  # Set to list of values to grid search: e.g., [1.0, 2.0, 4.0]
+  #
+  # Intuition: L1 naturally emphasizes imbalance terms by zeroing others.
+  # L2 with gamma>1.0 achieves similar effect without L1's computational cost.
+  #
+  # Example: gamma=2.0 doubles the weight of imbalance penalties,
+  # making the model more sensitive to signal inconsistencies.
+  # gamma_imbalance_options: [1.0, 2.0, 3.0]
 
   # C parameter bounds (optional - uses auto-computed bounds if not specified)
   # Controls range of C (soft-margin penalty) values to search
@@ -230,24 +342,32 @@ optimizer:
 # ============================================================================
 # PARAMETER GRID (Advanced - for custom search space)
 # ============================================================================
-# CORRECTED ARCHITECTURE (2025-01-17):
+# UPDATED ARCHITECTURE (2025-01-19):
 # - ScoreNormalizer: RobustScaler(with_centering=True) - single scaling step
 # - Pipeline: BothEndsStrongTransformer → LinearSVC (Stage 1) → CalibratedClassifierCV (Stage 2)
 # - Two-stage optimization:
-#   * Stage 1: Optimize C via grid search (metric: balanced_accuracy)
+#   * Stage 1: Optimize C, penalty, loss, class_weight_mult (metric: balanced_accuracy)
 #   * Stage 2: Select calibration method sigmoid vs isotonic (metric: log-loss)
-# - Result: 2 FPs on C. elegans (vs 130 uncentered, 49 centered-only)
 #
-# KEY ARCHITECTURE POINTS (HARDCODED):
+# GRID-SEARCHED PARAMETERS (configurable above):
+# - C: Auto-optimized via geometric grid search (balanced_accuracy)
+# - penalty: L1 (feature selection) vs L2 (full weighting)
+# - loss: squared_hinge only (hinge requires dual=True)
+# - class_weight_multiplier: 0.8 (conservative) vs 1.0 (balanced) vs 1.2 (aggressive)
+# - calibration_method: Auto-selected (sigmoid vs isotonic) via log-loss
+#
+# FIXED ARCHITECTURE POINTS:
 # - include_max: false (7D non-redundant features)
 # - include_pairwise_mins: false (min_all captures all constraints)
-# - penalty: L2 only (keeps all features appropriately weighted)
-# - calibration_method: Auto-selected (sigmoid vs isotonic) via log-loss
-# - C: Auto-optimized via geometric grid search (balanced_accuracy)
+# - dual: false (primal formulation, faster for n_features << n_samples)
+# - Stratified U2 sampling: 2D binning (length × GC content)
+# - Ensemble diversity: Different stratified U2 samples per model
 #
-# These values are FIXED in the code (classification/optimizer.py:562-566) and
-# cannot be overridden via param_grid. Leave param_grid empty unless you're
-# doing advanced testing.
+# GRID SIZE: ~6× larger than previous
+# Example Round 1: 13 C values × 2 penalties × 1 loss × 3 multipliers = 78 combos
+#
+# Leave param_grid empty (uses optimizer config above).
+# Only override for advanced testing (requires code changes).
 #
 # References: SCALER_CENTERING_FIX_COMPLETE.md, test_corrected_architecture.py
 param_grid: {}
@@ -344,15 +464,15 @@ advanced:
 # ============================================================================
 #
 # ESTIMATED RUNTIME (on typical workstation):
-# - Chr19 only: ~30-60 minutes
-# - Full human genome: ~3-6 hours
+# - Chr19 only: ~20-40 minutes (with cv_folds=5)
+# - Full human genome: ~2-4 hours (with cv_folds=5)
 # - Use config/profiles/quick.yaml for faster validation
 # - Use config/profiles/minimal.yaml for smoke testing
 #
 # PARALLELIZATION:
 # - Controlled by optimizer.n_jobs (hyperparameter search)
-# - GridSearchCV parallelizes across C values
-# - Each C value: cv_folds fits (Stage 1), then 2 calibration methods (Stage 2)
+# - GridSearchCV parallelizes across C values and parameter combinations
+# - Each parameter combo: cv_folds=5 fits (Stage 1), then 2 calibration methods (Stage 2)
 # - Memory usage scales with n_jobs (more cores = more memory)
 #
 # MEMORY USAGE:

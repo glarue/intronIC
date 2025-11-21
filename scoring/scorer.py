@@ -375,7 +375,12 @@ class IntronScorer:
                 bp_scorer = BranchPointScorer(u12_pwm=u12_pwm, u2_pwm=u2_pwm)
 
                 # Find best matches for both U12 and U2 PWMs
-                match = bp_scorer.find_best_match(intron, search_window=self.bp_coords)
+                match = bp_scorer.find_best_match(
+                    intron,
+                    search_window=self.bp_coords,
+                    five_coords=self.five_coords,
+                    three_coords=self.three_coords
+                )
 
                 # If match is None (window too small), use pseudocount
                 if match is None:

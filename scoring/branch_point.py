@@ -95,7 +95,9 @@ class BranchPointScorer:
     def find_best_match(
         self,
         intron: Intron,
-        search_window: Tuple[int, int] = (-55, -5)
+        search_window: Tuple[int, int] = (-55, -5),
+        five_coords: Tuple[int, int] = (-3, 9),
+        three_coords: Tuple[int, int] = (-6, 4)
     ) -> BranchPointMatch | None:
         """
         Find the best branch point match in an intron.
@@ -106,6 +108,12 @@ class BranchPointScorer:
             intron: Intron object with sequence
             search_window: Tuple of (start, stop) positions relative to 3' end
                           Default: (-55, -5) matches original intronIC
+            five_coords: 5' splice site scoring region coordinates (start, stop)
+                        Used to exclude this region from BP search for short introns
+                        Default: (-3, 9) matches original intronIC
+            three_coords: 3' splice site scoring region coordinates (start, stop) relative to 3' end
+                         Used to exclude this region from BP search for short introns
+                         Default: (-6, 4) matches original intronIC
 
         Returns:
             BranchPointMatch with best-scoring sequence and position, or None
@@ -128,8 +136,8 @@ class BranchPointScorer:
                 "Cannot search for branch point."
             )
 
-        # Extract search region from intron
-        search_region = self._extract_search_region(intron, search_window)
+        # Extract search region from intron and get its actual start position
+        search_region, actual_start_pos = self._extract_search_region(intron, search_window, five_coords, three_coords)
 
         # Check if search region is long enough for PWM
         # Port from: intronIC.py:2944 - returns None for too-short sequences
@@ -144,10 +152,13 @@ class BranchPointScorer:
         u12_match = self._find_best_in_sequence(search_region, self.u12_pwm, search_window_start=search_window[0])
 
         # Calculate position relative to 3' end
-        # search_window[0] is negative (e.g., -55)
-        # u12_match.start_in_region is offset into region (e.g., 20)
-        # position = start_of_region + offset_in_region
-        position = search_window[0] + u12_match.start_in_region
+        # actual_start_pos is the absolute position in the intron where search region starts (after clamping)
+        # u12_match.start_in_region is offset into the search region
+        # absolute position in intron = actual_start_pos + u12_match.start_in_region
+        # position relative to 3' end = absolute_position - intron_length
+        intron_length = len(intron.sequences.seq)
+        absolute_position = actual_start_pos + u12_match.start_in_region
+        position = absolute_position - intron_length
 
         # Score the SAME sequence (U12's best match) with the U2 PWM
         # Port from: intronIC.py:3086-3095 (log_ratio using same bp_region_seq)
@@ -177,35 +188,45 @@ class BranchPointScorer:
     def _extract_search_region(
         self,
         intron: Intron,
-        search_window: Tuple[int, int]
-    ) -> str:
+        search_window: Tuple[int, int],
+        five_coords: Tuple[int, int],
+        three_coords: Tuple[int, int]
+    ) -> Tuple[str, int]:
         """
         Extract search region from intron sequence.
 
         Port from: intronIC.py:2527-2560 (_short_bp_adjust), 2607-2610
 
         For short introns, the search window is automatically adjusted to fit
-        within the intron boundaries. This ensures we search the maximum
-        available region rather than failing for short introns.
+        within the intron boundaries AND to exclude the 5' and 3' splice site
+        scoring regions. This ensures we never overlap with other scoring regions.
 
         Args:
             intron: Intron object
             search_window: (start, stop) relative to 3' end (negative values)
+            five_coords: (start, stop) for 5' splice site region
+            three_coords: (start, stop) for 3' splice site region (relative to 3' end)
 
         Returns:
-            Substring of intron sequence for the search region
+            Tuple of (search_region_sequence, actual_start_position) where:
+            - search_region_sequence: Substring of intron sequence for the search region
+            - actual_start_position: Absolute position in intron where search region starts (after clamping)
 
         Example:
-            For 100bp intron with window (-55, -5):
+            For 100bp intron with window (-55, -5), five_coords=(-3, 9), three_coords=(-6, 4):
             - start_pos = 100 + (-55) = 45
             - stop_pos = 100 + (-5) = 95
+            - five_end = 9 (end of 5' region)
+            - Final: start_pos = max(45, 9) = 45, stop_pos = min(95, 100) = 95
             - Returns intron.seq[45:95]
 
-            For 50bp intron with window (-55, -5):
-            - start_pos would be 50 + (-55) = -5 (INVALID!)
-            - Clamp to 0: start_pos = 0
-            - stop_pos = 50 + (-5) = 45
-            - Returns intron.seq[0:45] (45bp search region)
+            For 47bp intron with same coords (short intron case):
+            - start_pos = 47 + (-55) = -8 (INVALID!)
+            - stop_pos = 47 + (-5) = 42
+            - five_end = 9
+            - Clamp: start_pos = max(-8, 9) = 9, stop_pos = min(42, 47) = 42
+            - Returns intron.seq[9:42] (33bp search region, excluding 5' region only)
+            - Note: Position 41 overlaps with 3' region [41-46], which is allowed
         """
         intron_length = len(intron.sequences.seq)
 
@@ -214,14 +235,30 @@ class BranchPointScorer:
         start_pos = intron_length + search_window[0]
         stop_pos = intron_length + search_window[1]
 
-        # Clamp start position to stay within intron boundaries
+        # Calculate the boundaries of the 5' and 3' scoring regions
         # Port from: intronIC.py:2527-2560 (_short_bp_adjust)
-        # If start_pos < 0, the window extends before the intron start
-        if start_pos < 0:
-            start_pos = 0
+        # 5' region: [0, five_coords[1]) - ends at five_coords[1]
+        five_end = five_coords[1]  # e.g., 9 for (-3, 9)
 
-        # Extract region
-        return intron.sequences.seq[start_pos:stop_pos]
+        # 3' region: [intron_length + three_coords[0], intron_length) - starts at three_coords[0] from end
+        three_start = intron_length + three_coords[0]  # e.g., for 47bp intron and (-6, 4): 47 + (-6) = 41
+
+        # Clamp start position to:
+        # 1. Stay within intron boundaries (>= 0)
+        # 2. Not overlap with 5' scoring region (>= five_end)
+        # Port from: intronIC.py:2608-2612 (_short_bp_adjust only adjusts start, not stop)
+        start_pos = max(start_pos, five_end)
+
+        # Note: Original code does NOT clamp stop position to avoid 3' region
+        # BP region is allowed to overlap with 3' scoring region
+        # Only clamp to intron boundaries
+        stop_pos = min(stop_pos, intron_length)
+
+        # Extract region (may be empty string if stop_pos <= start_pos)
+        search_region = intron.sequences.seq[start_pos:stop_pos]
+
+        # Return both the search region and its actual start position in the intron
+        return search_region, start_pos
 
     def _find_best_in_sequence(self, sequence: str, pwm: PWM, search_window_start: int) -> BranchPointMatch:
         """

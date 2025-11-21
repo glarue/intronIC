@@ -5,6 +5,8 @@ This module provides transformers for augmenting base features with
 composite features that help the linear SVM better separate U12 from U2.
 """
 
+from typing import Optional
+
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -92,6 +94,8 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         self,
         include_max: bool = False,
         include_pairwise_mins: bool = False,
+        features: Optional[list] = None,
+        gamma_imbalance: float = 1.0,
         gamma_5_bp=None,  # Deprecated - kept for backward compatibility
         gamma_5_3=None    # Deprecated - kept for backward compatibility
     ):
@@ -100,15 +104,62 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
 
         Args:
             include_max: Whether to include max features (default: False)
-                        Expert guidance: "model will mostly weight min"
+                        DEPRECATED: Use features parameter instead for fine-grained control
             include_pairwise_mins: Whether to include pairwise min features (default: False)
-                        If False, only min_all is included (recommended - simpler, non-redundant)
-                        If True, includes min_5_bp, min_5_3, AND min_all (redundant but backward compatible)
+                        DEPRECATED: Use features parameter instead for fine-grained control
+            features: List of composite feature names to include (default: None = use flags)
+                     If specified, overrides include_max and include_pairwise_mins flags
+                     Available features: 'min_5_bp', 'min_5_3', 'min_all',
+                                        'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
+                                        'max_5_bp', 'max_5_3'
+                     Deprecated (backward compat): 'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3'
+                     Example: ['absdiff_bp_3'] for minimal 4D feature space
+                     Example: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3'] for 7D
+            gamma_imbalance: Scaling factor for imbalance features (default: 1.0)
+                           Multiplies all absdiff_* features to increase penalty for imbalance.
+                           Higher values (e.g., 2.0, 4.0) make imbalance more costly.
+                           Use with grid search to find optimal scaling.
             gamma_5_bp: DEPRECATED - Ignored, kept for backward compatibility with old models
             gamma_5_3: DEPRECATED - Ignored, kept for backward compatibility with old models
         """
+        # Store original flags for backward compatibility with pickled models
         self.include_max = include_max
         self.include_pairwise_mins = include_pairwise_mins
+        self.gamma_imbalance = gamma_imbalance
+
+        # New feature selection mechanism
+        if features is not None:
+            # Validate feature names
+            valid_features = {
+                'min_5_bp', 'min_5_3', 'min_all',
+                'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',  # New (correct sign)
+                'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',  # Deprecated (backward compat)
+                'max_5_bp', 'max_5_3'
+            }
+            invalid = set(features) - valid_features
+            if invalid:
+                raise ValueError(
+                    f"Invalid feature names: {invalid}. "
+                    f"Valid features: {valid_features}"
+                )
+
+            # Warn if using deprecated neg_absdiff names
+            deprecated_names = {'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3'}
+            using_deprecated = deprecated_names & set(features)
+            if using_deprecated:
+                import warnings
+                warnings.warn(
+                    f"Feature names {using_deprecated} are deprecated. "
+                    f"Use 'absdiff_*' instead for correct sign on coefficients. "
+                    f"Deprecated names will be removed in a future version.",
+                    DeprecationWarning,
+                    stacklevel=2
+                )
+
+            self.features = features
+        else:
+            # Fall back to old flag-based behavior for backward compatibility
+            self.features = None
 
         # Backward compatibility: Store gamma parameters as attributes even though they're unused
         # This allows old pickled models to load without errors
@@ -192,42 +243,81 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         # min_all = min(s5, sBP, s3)
         min_all = np.minimum(np.minimum(s5, sBP), s3)
 
-        # Imbalance penalties (NEW)
-        # Negative absdiff = penalty for inconsistency
-        # Model puts positive weight on these → rewards balanced signals
-        neg_absdiff_5_bp = -absdiff_5_bp
-        neg_absdiff_5_3 = -absdiff_5_3
-
-        # For BPS-3'SS imbalance
+        # Imbalance penalties (CORRECTED 2025-01-20)
+        # Absolute difference = penalty for inconsistency
+        # Model should learn negative weights → penalizes imbalanced signals
+        # (Previously used neg_absdiff which caused wrong sign on coefficients)
+        absdiff_5_bp_feat = absdiff_5_bp
+        absdiff_5_3_feat = absdiff_5_3
         absdiff_bp_3 = np.abs(sBP - s3)
-        neg_absdiff_bp_3 = -absdiff_bp_3
 
-        # Stack base features
+        # Stack base features (always included)
         features = [
             s5[:, np.newaxis],
             sBP[:, np.newaxis],
             s3[:, np.newaxis]
         ]
 
-        # Optional: pairwise min features (redundant with min_all, kept for backward compatibility)
-        if self.include_pairwise_mins:
-            features.append(min_5_bp[:, np.newaxis])
-            features.append(min_5_3[:, np.newaxis])
+        # Use explicit feature list if specified, otherwise fall back to flags
+        # Handle old pickled models that don't have 'features' attribute
+        if hasattr(self, 'features') and self.features is not None:
+            # Compute max features if needed
+            if 'max_5_bp' in self.features or 'max_5_3' in self.features:
+                max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
+                max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
 
-        # Always include: 3-way min and imbalance penalties
-        features.extend([
-            min_all[:, np.newaxis],           # ALL THREE must be strong
-            neg_absdiff_5_bp[:, np.newaxis],  # Imbalance penalties
-            neg_absdiff_5_3[:, np.newaxis],
-            neg_absdiff_bp_3[:, np.newaxis]
-        ])
+            # Add composite features in deterministic order
+            # This ensures consistent feature ordering regardless of input list order
+            # Apply gamma scaling to imbalance features (absdiff_*)
+            composite_feature_map = {
+                'min_5_bp': min_5_bp[:, np.newaxis],
+                'min_5_3': min_5_3[:, np.newaxis],
+                'min_all': min_all[:, np.newaxis],
+                'absdiff_5_bp': self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],
+                'absdiff_5_3': self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
+                'absdiff_bp_3': self.gamma_imbalance * absdiff_bp_3[:, np.newaxis],
+                # Backward compatibility: support old neg_absdiff names (deprecated)
+                'neg_absdiff_5_bp': -self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],
+                'neg_absdiff_5_3': -self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
+                'neg_absdiff_bp_3': -self.gamma_imbalance * absdiff_bp_3[:, np.newaxis],
+            }
+            # Add max features if computed
+            if 'max_5_bp' in self.features or 'max_5_3' in self.features:
+                composite_feature_map['max_5_bp'] = max_5_bp[:, np.newaxis]
+                composite_feature_map['max_5_3'] = max_5_3[:, np.newaxis]
 
-        # Optional: max features (expert: "you can drop max_* entirely")
-        if self.include_max:
-            max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
-            max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
-            features.append(max_5_bp[:, np.newaxis])
-            features.append(max_5_3[:, np.newaxis])
+            # Add features in canonical order (not self.features order)
+            for feature_name in ['min_5_bp', 'min_5_3', 'min_all',
+                                 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
+                                 'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',
+                                 'max_5_bp', 'max_5_3']:
+                if feature_name in self.features:
+                    features.append(composite_feature_map[feature_name])
+
+        else:
+            # Legacy flag-based behavior (for backward compatibility with old models)
+            # WARNING: Old models used neg_absdiff (negative values) which learned wrong signs
+            # New models should use explicit features list with absdiff (positive values)
+            # Optional: pairwise min features (redundant with min_all, kept for backward compatibility)
+            if self.include_pairwise_mins:
+                features.append(min_5_bp[:, np.newaxis])
+                features.append(min_5_3[:, np.newaxis])
+
+            # Always include: 3-way min and imbalance penalties
+            # Use negative absdiff for backward compatibility with old pickled models
+            features.extend([
+                min_all[:, np.newaxis],                                      # ALL THREE must be strong
+                -self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],   # Legacy: negative for old models
+                -self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
+                -self.gamma_imbalance * absdiff_bp_3[:, np.newaxis]
+            ])
+
+            # Optional: max features (expert: "you can drop max_* entirely")
+            if self.include_max:
+                max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
+                max_5_3= 0.5 * (sum_5_3 + absdiff_5_3)
+                features.append(max_5_bp[:, np.newaxis])
+                features.append(max_5_3[:, np.newaxis])
 
         return np.hstack(features)
 
@@ -239,7 +329,7 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             input_features: Input feature names (ignored, we know it's [s5, sBP, s3])
 
         Returns:
-            Array of output feature names (7, 9, or 11 strings depending on config)
+            Array of output feature names (varies depending on config)
         """
         names = [
             's5',
@@ -247,20 +337,32 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             's3'
         ]
 
-        # Optional: pairwise min features
-        if self.include_pairwise_mins:
-            names.extend(['min_5_bp', 'min_5_3'])
+        # Handle old pickled models that don't have 'features' attribute
+        if hasattr(self, 'features') and self.features is not None:
+            # Use explicit feature list in canonical order
+            # Support both new (absdiff_*) and deprecated (neg_absdiff_*) names
+            for feature_name in ['min_5_bp', 'min_5_3', 'min_all',
+                                 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
+                                 'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',
+                                 'max_5_bp', 'max_5_3']:
+                if feature_name in self.features:
+                    names.append(feature_name)
+        else:
+            # Legacy flag-based behavior
+            # Optional: pairwise min features
+            if self.include_pairwise_mins:
+                names.extend(['min_5_bp', 'min_5_3'])
 
-        # Always include: 3-way min and imbalance penalties
-        names.extend([
-            'min_all',
-            'neg_absdiff_5_bp',
-            'neg_absdiff_5_3',
-            'neg_absdiff_bp_3'
-        ])
+            # Always include: 3-way min and imbalance penalties
+            names.extend([
+                'min_all',
+                'neg_absdiff_5_bp',
+                'neg_absdiff_5_3',
+                'neg_absdiff_bp_3'
+            ])
 
-        # Optional: max features
-        if self.include_max:
-            names.extend(['max_5_bp', 'max_5_3'])
+            # Optional: max features
+            if self.include_max:
+                names.extend(['max_5_bp', 'max_5_3'])
 
         return np.array(names)

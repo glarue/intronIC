@@ -97,7 +97,10 @@ class SVMTrainer:
         n_models: int = 3,
         random_state: int = 42,
         kernel: str = 'linear',
-        max_iter: int = 20000
+        max_iter: int = 20000,
+        features_list: Optional[list] = None,
+        gamma_imbalance_options: Optional[list] = None,
+        progress_tracker: Optional[Any] = None
     ):
         """
         Initialize trainer.
@@ -107,11 +110,17 @@ class SVMTrainer:
             random_state: Random seed
             kernel: SVM kernel type (default: 'linear')
             max_iter: Maximum iterations for LinearSVC convergence (default: 20000)
+            features_list: List of composite feature names to include (default: None = use default 7D)
+            gamma_imbalance_options: Gamma scaling factors (default: None, uses parameters.gamma_imbalance from SVMParameters)
+            progress_tracker: Optional ProgressTracker for global step counting
         """
         self.n_models = n_models
         self.random_state = random_state
         self.kernel = kernel
         self.max_iter = max_iter
+        self.features_list = features_list
+        self.gamma_imbalance_options = gamma_imbalance_options
+        self.progress_tracker = progress_tracker
 
     def train_ensemble(
         self,
@@ -146,10 +155,11 @@ class SVMTrainer:
 
         for i in range(self.n_models):
             print(f"\n{'─'*80}", flush=True)
+            global_step_str = f" {self.progress_tracker.format_step()}" if self.progress_tracker else ""
             if self.n_models == 1:
-                print(f"Training model...", flush=True)
+                print(f"Training model...{global_step_str}", flush=True)
             else:
-                print(f"MODEL {i+1}/{self.n_models}: Training ensemble model...", flush=True)
+                print(f"MODEL {i+1}/{self.n_models}: Training ensemble model...{global_step_str}", flush=True)
             print(f"{'─'*80}", flush=True)
 
             # Subsample U2 if requested (for diversity)
@@ -170,6 +180,10 @@ class SVMTrainer:
                 seed=self.random_state + i
             )
             models.append(model)
+
+            # Update global progress
+            if self.progress_tracker:
+                self.progress_tracker.increment(f"Completed model {i+1}/{self.n_models}")
 
         print(f"\n{'='*80}", flush=True)
         if self.n_models == 1:
@@ -195,6 +209,14 @@ class SVMTrainer:
         # Prepare data
         X, y = self._prepare_training_data(u12_introns, u2_introns)
 
+        # Compute balanced class weights with multiplier (2025-01-19: robustness improvements)
+        n_samples = len(y)
+        n_pos = int(np.sum(y == 1))  # U12
+        n_neg = int(np.sum(y == 0))  # U2
+        w_pos = (n_samples / (2.0 * n_pos)) * parameters.class_weight_multiplier
+        w_neg = (n_samples / (2.0 * n_neg)) * parameters.class_weight_multiplier
+        class_weight = {0: w_neg, 1: w_pos}
+
         # CORRECTED ARCHITECTURE (2025 - Expert guidance)
         #
         # Pipeline: z-scores → augmented features → svc
@@ -207,7 +229,7 @@ class SVMTrainer:
         # Pipeline steps:
         # - BothEndsStrongTransformer: Augmented features from z-scores
         #   → min_all, neg_absdiff_5_bp, neg_absdiff_5_3 (suppress one-end-strong FPs)
-        # - LinearSVC: L2-regularized linear classifier with balanced class weights
+        # - LinearSVC: With penalty ∈ {l1, l2}, loss ∈ {hinge, squared_hinge}
         # - CalibratedClassifierCV: External calibration (isotonic or sigmoid)
         #
         # Key principle: Single scaling step (NOT double-scaling)
@@ -215,15 +237,15 @@ class SVMTrainer:
 
         base_pipeline = Pipeline([
             ('transform', BothEndsStrongTransformer(
-                include_max=parameters.include_max,
-                include_pairwise_mins=parameters.include_pairwise_mins
+                features=self.features_list,
+                gamma_imbalance=parameters.gamma_imbalance
             )),
             ('svc', LinearSVC(
                 C=parameters.C,
-                penalty='l2',
+                penalty=parameters.penalty,
                 dual=False,
-                loss='squared_hinge',
-                class_weight='balanced',
+                loss=parameters.loss,
+                class_weight=class_weight,
                 max_iter=self.max_iter,
                 tol=1e-4,
                 random_state=seed
@@ -259,20 +281,117 @@ class SVMTrainer:
         subsample_ratio: float = 0.8
     ) -> Sequence[Intron]:
         """
-        Randomly subsample U2 introns for diversity.
+        Stratified subsample of U2 introns by length and GC content (2025-01-19: robustness).
+
+        Creates 2D bins (length × GC content) and samples proportionally from each bin
+        to ensure diverse representation across both dimensions. This prevents models
+        from being biased toward specific length ranges or GC compositions.
+
+        Length bins:
+        - <100 bp, 100-500 bp, 500-1000 bp, 1000-5000 bp, ≥5000 bp
+
+        GC content bins:
+        - Low: <35% GC
+        - Medium-Low: 35-45% GC
+        - Medium: 45-55% GC
+        - Medium-High: 55-65% GC
+        - High: ≥65% GC
+
+        Args:
+            u2_introns: Full U2 intron set
+            seed: Random seed for reproducibility
+            subsample_ratio: Fraction of U2s to use (default: 0.8)
+
+        Returns:
+            Stratified sample of U2 introns
 
         Port from: intronIC.py:5356-5366 (subsetting logic)
         """
         np.random.seed(seed)
 
-        n_samples = int(len(u2_introns) * subsample_ratio)
-        indices = np.random.choice(
-            len(u2_introns),
-            size=n_samples,
-            replace=False
-        )
+        # Define length bins (in bp)
+        length_bins = [
+            (0, 100),
+            (100, 500),
+            (500, 1000),
+            (1000, 5000),
+            (5000, float('inf'))
+        ]
 
-        return [u2_introns[i] for i in indices]
+        # Define GC content bins (percentage)
+        gc_bins = [
+            (0.0, 0.35),   # Low GC
+            (0.35, 0.45),  # Medium-Low GC
+            (0.45, 0.55),  # Medium GC
+            (0.55, 0.65),  # Medium-High GC
+            (0.65, 1.0)    # High GC
+        ]
+
+        # Helper function to calculate GC content
+        def calc_gc_content(intron: Intron) -> float:
+            """Calculate GC content from intron sequence."""
+            if intron.sequences is None or intron.sequences.seq is None:
+                return 0.5  # Default to medium GC if no sequence available
+            seq = intron.sequences.seq.upper()
+            if len(seq) == 0:
+                return 0.5
+            gc_count = seq.count('G') + seq.count('C')
+            return gc_count / len(seq)
+
+        # Bin introns by length AND GC content (2D binning)
+        # binned_introns[length_idx][gc_idx] = list of introns
+        binned_introns = [[[] for _ in gc_bins] for _ in length_bins]
+
+        for intron in u2_introns:
+            length = intron.length
+            gc_content = calc_gc_content(intron)
+
+            # Find length bin
+            length_idx = None
+            for idx, (min_len, max_len) in enumerate(length_bins):
+                if min_len <= length < max_len:
+                    length_idx = idx
+                    break
+
+            # Find GC bin
+            gc_idx = None
+            for idx, (min_gc, max_gc) in enumerate(gc_bins):
+                if min_gc <= gc_content < max_gc:
+                    gc_idx = idx
+                    break
+
+            # Add to 2D bin (if both indices found)
+            if length_idx is not None and gc_idx is not None:
+                binned_introns[length_idx][gc_idx].append(intron)
+
+        # Sample proportionally from each 2D bin
+        sampled_introns = []
+        for length_idx in range(len(length_bins)):
+            for gc_idx in range(len(gc_bins)):
+                bin_introns = binned_introns[length_idx][gc_idx]
+                if len(bin_introns) == 0:
+                    continue
+
+                # Calculate how many to sample from this bin (proportional to bin size)
+                bin_fraction = len(bin_introns) / len(u2_introns)
+                n_bin_samples = max(1, int(bin_fraction * len(u2_introns) * subsample_ratio))
+
+                # Don't sample more than available
+                n_bin_samples = min(n_bin_samples, len(bin_introns))
+
+                # Sample from this bin
+                if n_bin_samples < len(bin_introns):
+                    indices = np.random.choice(
+                        len(bin_introns),
+                        size=n_bin_samples,
+                        replace=False
+                    )
+                    sampled_introns.extend([bin_introns[i] for i in indices])
+                else:
+                    # Use all introns if bin is small
+                    sampled_introns.extend(bin_introns)
+
+        return sampled_introns
 
     def _prepare_training_data(
         self,

@@ -59,7 +59,19 @@ def inspect_model(model_path):
         pipeline = model.model
         print(f"Pipeline type: {type(pipeline)}")
         if hasattr(model, 'parameters'):
-            print(f"Parameters: {model.parameters}")
+            try:
+                print(f"Parameters: {model.parameters}")
+            except AttributeError as e:
+                # Handle old pickled models with missing fields
+                print(f"Parameters (partial - old model format):")
+                params = model.parameters
+                for attr in ['C', 'penalty', 'loss', 'calibration_method', 'class_weight_multiplier']:
+                    if hasattr(params, attr):
+                        print(f"  {attr}: {getattr(params, attr)}")
+                # Try new fields
+                if hasattr(params, 'gamma_imbalance'):
+                    print(f"  gamma_imbalance: {params.gamma_imbalance}")
+                print(f"  (Note: Some fields may be missing in old model format)")
 
         # Check if it's a CalibratedClassifierCV
         if hasattr(pipeline, 'calibrated_classifiers_'):
@@ -74,15 +86,29 @@ def inspect_model(model_path):
                 for name, step in base_estimator.named_steps.items():
                     print(f"  {name}: {type(step)}")
 
-                # Get the transformer
-                if 'augment' in base_estimator.named_steps:
+                # Get the transformer (check both 'transform' and 'augment' names)
+                transformer = None
+                if 'transform' in base_estimator.named_steps:
+                    transformer = base_estimator.named_steps['transform']
+                elif 'augment' in base_estimator.named_steps:
                     transformer = base_estimator.named_steps['augment']
+
+                if transformer:
                     print(f"\nTransformer: {type(transformer)}")
-                    if hasattr(transformer, 'include_max'):
+                    # Check for explicit features list (new models)
+                    if hasattr(transformer, 'features') and transformer.features is not None:
+                        print(f"  features: {transformer.features}")
+                    # Check for legacy flags (old models)
+                    elif hasattr(transformer, 'include_max'):
                         print(f"  include_max: {transformer.include_max}")
+                        if hasattr(transformer, 'include_pairwise_mins'):
+                            print(f"  include_pairwise_mins: {transformer.include_pairwise_mins}")
+
                     if hasattr(transformer, 'get_feature_names_out'):
                         feature_names = transformer.get_feature_names_out()
-                        print(f"  Features ({len(feature_names)}): {list(feature_names)}")
+                        print(f"  Feature names ({len(feature_names)}): {list(feature_names)}")
+                    else:
+                        feature_names = None
                 else:
                     feature_names = None
 
@@ -164,20 +190,39 @@ def inspect_model(model_path):
     for i, mdl in enumerate(models, 1):
         print(f"\nModel {i}:")
         if hasattr(mdl, 'parameters'):
-            print(f"  Parameters: {mdl.parameters}")
+            try:
+                print(f"  Parameters: {mdl.parameters}")
+            except AttributeError:
+                # Handle old pickled models with missing fields
+                params = mdl.parameters
+                if hasattr(params, 'C'):
+                    print(f"  C: {params.C}")
+                if hasattr(params, 'penalty'):
+                    print(f"  penalty: {params.penalty}")
+                if hasattr(params, 'calibration_method'):
+                    print(f"  calibration_method: {params.calibration_method}")
 
         if hasattr(mdl, 'model'):
             cal_clf = mdl.model
             if hasattr(cal_clf, 'calibrated_classifiers_'):
                 base_est = cal_clf.calibrated_classifiers_[0].estimator
                 if hasattr(base_est, 'named_steps'):
-                    if 'augment' in base_est.named_steps and 'svc' in base_est.named_steps:
+                    # Check for both 'transform' (new) and 'augment' (old) step names
+                    transformer = None
+                    if 'transform' in base_est.named_steps:
+                        transformer = base_est.named_steps['transform']
+                    elif 'augment' in base_est.named_steps:
                         transformer = base_est.named_steps['augment']
+
+                    if transformer and 'svc' in base_est.named_steps:
                         svc = base_est.named_steps['svc']
 
                         if hasattr(svc, 'coef_'):
                             coefs = svc.coef_[0]
-                            feature_names = transformer.get_feature_names_out()
+                            if hasattr(transformer, 'get_feature_names_out'):
+                                feature_names = transformer.get_feature_names_out()
+                            else:
+                                feature_names = [f"feature_{j}" for j in range(len(coefs))]
 
                             print(f"  Coefficients:")
                             for name, coef in zip(feature_names, coefs):
@@ -186,7 +231,13 @@ def inspect_model(model_path):
                                     print(f"    {name:20s}: {sign}{coef:.6f}")
 
 if __name__ == '__main__':
-    model_path = Path('run_tests/hsapiens/homo_sapiens.model.pkl')
+    if len(sys.argv) < 2:
+        print("Usage: python inspect_model.py <model_path.pkl>")
+        print("\nExample:")
+        print("  python inspect_model.py homo_sapiens.model.pkl")
+        sys.exit(1)
+
+    model_path = Path(sys.argv[1])
 
     if not model_path.exists():
         print(f"Error: {model_path} not found")
