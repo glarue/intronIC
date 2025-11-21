@@ -69,10 +69,12 @@ def full_intron():
         index=3,
         family_size=5,
         type_id='u12',
-        noncanonical=False,
-        longest_isoform=True,
-        phase=0
+        phase=0,
+        fractional_position=0.5  # Set explicitly for testing
     )
+    # Set flag properties after creation
+    metadata.noncanonical = False
+    metadata.longest_isoform = True
 
     return Intron("intron_full", coord, scores, sequences, metadata)
 
@@ -342,7 +344,7 @@ class TestMetaWriter:
         assert fields[6] == "."  # parent (no metadata)
 
     def test_fractional_position(self, tmp_path, full_intron):
-        """Test fractional position calculation."""
+        """Test fractional position output in meta.iic."""
         meta_file = tmp_path / "test.meta.iic"
 
         with MetaWriter(meta_file) as writer:
@@ -351,7 +353,7 @@ class TestMetaWriter:
         lines = meta_file.read_text().strip().split('\n')
         fields = lines[0].split('\t')
 
-        # Intron 3 of 5: (3-1)/(5-1) = 2/4 = 0.5
+        # Fractional position is stored field, set to 0.5 in fixture
         assert fields[10] == "0.5"
 
     def test_write_multiple_introns(self, tmp_path, basic_intron, full_intron):

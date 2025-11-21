@@ -173,10 +173,11 @@ class TestIntronMetadata:
             grandparent="GENE001",
             index=1,
             family_size=5,
-            type_id='u12',
-            noncanonical=False,
-            longest_isoform=True
+            type_id='u12'
         )
+        # Set flag properties after creation
+        meta.noncanonical = False
+        meta.longest_isoform = True
 
         assert meta.parent == "TRANS001"
         assert meta.grandparent == "GENE001"
@@ -203,27 +204,34 @@ class TestIntronMetadata:
 
     def test_is_canonical(self):
         """Test canonical status checking."""
-        meta_canonical = IntronMetadata(noncanonical=False)
-        meta_noncanonical = IntronMetadata(noncanonical=True)
+        meta_canonical = IntronMetadata()
+        meta_canonical.noncanonical = False
+
+        meta_noncanonical = IntronMetadata()
+        meta_noncanonical.noncanonical = True
 
         assert meta_canonical.is_canonical() == True
         assert meta_noncanonical.is_canonical() == False
 
     def test_fractional_position(self):
-        """Test fractional position calculation."""
-        # First intron (index 1 of 5)
-        meta1 = IntronMetadata(index=1, family_size=5)
+        """Test fractional position storage."""
+        # fractional_position is now a stored field, not computed
+        # It's calculated during intron generation based on cumulative exon lengths
+
+        # First intron (would be 0.0 if evenly spaced)
+        meta1 = IntronMetadata(index=1, family_size=5, fractional_position=0.0)
         assert meta1.fractional_position == 0.0
 
-        # Middle intron (index 3 of 5)
-        meta3 = IntronMetadata(index=3, family_size=5)
-        assert meta3.fractional_position == 0.5
+        # Middle intron (could be any value based on actual exon lengths)
+        meta3 = IntronMetadata(index=3, family_size=5, fractional_position=0.52)
+        assert meta3.fractional_position == 0.52
 
-        # Last intron (index 5 of 5)
-        meta5 = IntronMetadata(index=5, family_size=5)
-        assert meta5.fractional_position == 1.0
+        # Last intron (would be 1.0 for last intron... but we use cumulative before last exon)
+        # So last intron is typically less than 1.0
+        meta5 = IntronMetadata(index=5, family_size=5, fractional_position=0.95)
+        assert meta5.fractional_position == 0.95
 
-        # Unknown position
+        # Unset position
         meta_unknown = IntronMetadata()
         assert meta_unknown.fractional_position is None
 
@@ -410,6 +418,116 @@ class TestIntron:
         with pytest.raises(ValueError, match="requires 1-based coordinates"):
             Intron("intron_1", coord)
 
+    def test_clear_sequences(self):
+        """Test clear_sequences clears large fields but preserves scoring sequences."""
+        coord = GenomicCoordinate("chr1", 1001, 2000, '+', '1-based')
+        seqs = IntronSequences(
+            seq="GTAAGT" + "A" * 988 + "TTTAG",
+            five_seq="GTAAGT",
+            three_seq="TTTAG",
+            bp_seq="TACTAAC",
+            bp_seq_u2="ATCCTTTT",
+            bp_region_seq="ATACTAACTA",
+            upstream_flank="AGGCT",
+            downstream_flank="CATGG",
+            five_display_seq="GTAAGTAAAA",
+            three_display_seq="ATTTAG",
+            five_prime_dnt="GT",
+            three_prime_dnt="AG",
+            bp_relative_coords=(5, 12)
+        )
+        intron = Intron("intron_1", coord, sequences=seqs)
+
+        cleared = intron.clear_sequences()
+
+        # Large sequences should be cleared
+        assert cleared.sequences.seq is None
+        assert cleared.sequences.upstream_flank is None
+        assert cleared.sequences.downstream_flank is None
+        assert cleared.sequences.bp_region_seq is None
+        assert cleared.sequences.five_display_seq is None
+        assert cleared.sequences.three_display_seq is None
+
+        # Small scoring sequences should be preserved
+        assert cleared.sequences.five_seq == "GTAAGT"
+        assert cleared.sequences.three_seq == "TTTAG"
+        assert cleared.sequences.bp_seq == "TACTAAC"
+        assert cleared.sequences.bp_seq_u2 == "ATCCTTTT"
+        assert cleared.sequences.bp_relative_coords == (5, 12)
+
+        # Dinucleotides should be preserved
+        assert cleared.sequences.five_prime_dnt == "GT"
+        assert cleared.sequences.three_prime_dnt == "AG"
+
+        # Original should be unchanged (immutability)
+        assert intron.sequences.seq is not None
+        assert intron.sequences.upstream_flank == "AGGCT"
+
+    def test_clear_sequences_when_no_sequences(self):
+        """Test clear_sequences returns same intron when no sequences present."""
+        coord = GenomicCoordinate("chr1", 1001, 2000, '+', '1-based')
+        intron = Intron("intron_1", coord)
+
+        cleared = intron.clear_sequences()
+
+        assert cleared is intron  # Should return same object
+        assert cleared.sequences is None
+
+    def test_clear_all_sequences(self):
+        """Test clear_all_sequences clears all sequence fields."""
+        coord = GenomicCoordinate("chr1", 1001, 2000, '+', '1-based')
+        seqs = IntronSequences(
+            seq="GTAAGT" + "A" * 988 + "TTTAG",
+            five_seq="GTAAGT",
+            three_seq="TTTAG",
+            bp_seq="TACTAAC",
+            bp_region_seq="ATACTAACTA",
+            upstream_flank="AGGCT",
+            downstream_flank="CATGG"
+        )
+        intron = Intron("intron_1", coord, sequences=seqs)
+
+        cleared = intron.clear_all_sequences()
+
+        # All sequences should be cleared
+        assert cleared.sequences is None
+        assert cleared.has_sequences == False
+
+        # Original should be unchanged (immutability)
+        assert intron.sequences is not None
+        assert intron.sequences.seq is not None
+
+    def test_clear_all_sequences_when_no_sequences(self):
+        """Test clear_all_sequences returns same intron when no sequences present."""
+        coord = GenomicCoordinate("chr1", 1001, 2000, '+', '1-based')
+        intron = Intron("intron_1", coord)
+
+        cleared = intron.clear_all_sequences()
+
+        assert cleared is intron  # Should return same object
+        assert cleared.sequences is None
+
+    def test_clear_sequences_preserves_other_components(self):
+        """Test that clearing sequences preserves scores and metadata."""
+        coord = GenomicCoordinate("chr1", 1001, 2000, '+', '1-based')
+        scores = IntronScores(svm_score=95.0)
+        seqs = IntronSequences(seq="GTAAGTTTAG", five_seq="GTAAGT", three_seq="TTTAG")
+        meta = IntronMetadata(parent="TRANS001", type_id='u12')
+
+        intron = Intron("intron_1", coord, scores, seqs, meta)
+        cleared = intron.clear_sequences()
+
+        # Sequences should be partially cleared
+        assert cleared.sequences.seq is None
+        assert cleared.sequences.five_seq == "GTAAGT"
+
+        # Other components should be unchanged
+        assert cleared.scores is not None
+        assert cleared.svm_score == 95.0
+        assert cleared.metadata is not None
+        assert cleared.metadata.parent == "TRANS001"
+        assert cleared.type_id == 'u12'
+
 
 class TestIntronIntegration:
     """Test integration scenarios with complete Intron objects."""
@@ -442,9 +560,9 @@ class TestIntronIntegration:
             grandparent="ENSG001",
             index=2,
             family_size=5,
-            type_id='u12',
-            longest_isoform=True
+            type_id='u12'
         )
+        meta.longest_isoform = True
 
         intron = Intron("intron_chr1_1001_2000", coord, scores, seqs, meta)
 

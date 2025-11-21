@@ -322,6 +322,9 @@ class IntronMetadata:
         flags: Compact bit flags (noncanonical, longest_isoform, corrected, etc.)
         phase: Coding phase information
         defined_by: Which feature type defined this intron ('cds' or 'exon')
+        upstream_exon_id: ID of exon/CDS feature upstream of this intron
+        downstream_exon_id: ID of exon/CDS feature downstream of this intron
+        fractional_position: Actual position in transcript based on cumulative exon lengths (0.0-1.0)
         dynamic_tags: Set of dynamic tags for special cases ([c:N], etc.)
         correction_distance: Distance boundaries were shifted (for [c:N] tag)
 
@@ -343,6 +346,9 @@ class IntronMetadata:
     flags: IntronFlags = IntronFlags.NONE  # Bit flags for boolean properties
     phase: Optional[int] = None
     defined_by: Optional[str] = None  # 'cds' or 'exon' - which feature type defined this intron
+    upstream_exon_id: Optional[str] = None  # ID of exon/CDS upstream of this intron
+    downstream_exon_id: Optional[str] = None  # ID of exon/CDS downstream of this intron
+    fractional_position: Optional[float] = None  # Actual position in transcript (0.0-1.0)
     # Dynamic tagging system for special cases (rarely used, so overhead acceptable)
     dynamic_tags: set[str] = field(default_factory=set)
     correction_distance: Optional[int] = None
@@ -398,18 +404,6 @@ class IntronMetadata:
     def is_canonical(self) -> bool:
         """Check if this intron has canonical boundaries."""
         return not self.noncanonical
-
-    @property
-    def fractional_position(self) -> Optional[float]:
-        """
-        Calculate fractional position in transcript (0.0-1.0).
-
-        Returns:
-            Fraction (0.0 = first intron, 1.0 = last), or None if index/family_size unknown
-        """
-        if self.index is None or self.family_size is None or self.family_size <= 1:
-            return None
-        return (self.index - 1) / (self.family_size - 1)
 
     def __str__(self) -> str:
         """Human-readable string representation."""
@@ -698,6 +692,85 @@ class Intron:
             sequences=self.sequences,
             metadata=metadata,
         )
+
+    def clear_sequences(self) -> "Intron":
+        """
+        Create a new Intron with large sequence fields cleared.
+
+        This clears the memory-heavy sequence fields (seq, upstream_flank,
+        downstream_flank, bp_region_seq) while preserving the small scoring
+        sequences (five_seq, three_seq, bp_seq, bp_seq_u12) needed for
+        scoring and classification.
+
+        Memory savings per intron:
+        - seq: ~500 bytes
+        - upstream_flank: ~200 bytes
+        - downstream_flank: ~200 bytes
+        - bp_region_seq: ~50 bytes
+        Total: ~950 bytes saved per intron
+
+        Returns:
+            New Intron with large sequences cleared (None)
+
+        Examples:
+            >>> intron = Intron("test", coord, sequences=IntronSequences(
+            ...     seq="ATCG"*100, five_seq="GTAAGT", three_seq="TTTAG"
+            ... ))
+            >>> cleared = intron.clear_sequences()
+            >>> cleared.sequences.seq is None
+            True
+            >>> cleared.sequences.five_seq  # Scoring sequences preserved
+            'GTAAGT'
+        """
+        if self.sequences is None:
+            return self  # No sequences to clear
+
+        cleared_sequences = IntronSequences(
+            # Clear large sequences
+            seq=None,
+            upstream_flank=None,
+            downstream_flank=None,
+            bp_region_seq=None,
+            five_display_seq=None,
+            three_display_seq=None,
+            # Preserve small scoring sequences
+            five_seq=self.sequences.five_seq,
+            three_seq=self.sequences.three_seq,
+            bp_seq=self.sequences.bp_seq,
+            bp_seq_u2=self.sequences.bp_seq_u2,
+            bp_relative_coords=self.sequences.bp_relative_coords,
+            # Preserve stored dinucleotides (memory-efficient fields)
+            five_prime_dnt=self.sequences.five_prime_dnt,
+            three_prime_dnt=self.sequences.three_prime_dnt,
+        )
+
+        return self.with_sequences(cleared_sequences)
+
+    def clear_all_sequences(self) -> "Intron":
+        """
+        Create a new Intron with ALL sequence fields cleared.
+
+        This clears all sequence-related fields, including the small scoring
+        sequences. Use this after scoring is complete and sequences are no
+        longer needed.
+
+        Memory savings per intron: ~13 KB (sequences + Python object overhead)
+
+        Returns:
+            New Intron with all sequences cleared (None)
+
+        Examples:
+            >>> intron = Intron("test", coord, sequences=IntronSequences(
+            ...     seq="ATCG"*100, five_seq="GTAAGT", three_seq="TTTAG"
+            ... ))
+            >>> cleared = intron.clear_all_sequences()
+            >>> cleared.sequences is None
+            True
+        """
+        if self.sequences is None:
+            return self  # No sequences to clear
+
+        return self.with_sequences(None)
 
     def __str__(self) -> str:
         """Human-readable string representation."""

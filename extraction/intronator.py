@@ -8,6 +8,8 @@ Exon objects in a transcript.
 from itertools import islice
 from typing import List, Iterator, Tuple, Dict, Union
 
+import numpy as np
+
 from core.models import Exon, Transcript, Gene
 from core.intron import Intron
 
@@ -147,10 +149,9 @@ class IntronGenerator:
                     print(f"[!] Warning: Could not create intron: {e}")
                     continue
 
-            # TODO: Store exon IDs for potential annotation updates
-            # (would need to add upstream_exon/downstream_exon to IntronMetadata)
-            # intron.metadata.upstream_exon = upstream_exon.feature_id
-            # intron.metadata.downstream_exon = downstream_exon.feature_id
+            # Store exon IDs for fractional position calculation
+            intron.metadata.upstream_exon_id = upstream_exon.feature_id
+            intron.metadata.downstream_exon_id = downstream_exon.feature_id
 
             # Set intron index (1-based position in transcript, matching original)
             intron.metadata.index = index
@@ -256,19 +257,48 @@ class IntronGenerator:
             # Positive strand: sort ascending
             non_redundant_introns.sort(key=lambda i: i.coordinates.start)
 
+        # Calculate fractional positions based on cumulative exon lengths
+        # (matching original intronIC.py:429-434)
+        exon_lengths = []
+        for intron in non_redundant_introns:
+            # Get upstream exon length
+            upstream_exon_id = intron.metadata.upstream_exon_id
+            if upstream_exon_id and upstream_exon_id in feature_index:
+                upstream_exon = feature_index[upstream_exon_id]
+                exon_lengths.append(upstream_exon.length)
+            else:
+                # Fallback if exon ID not found (shouldn't happen)
+                exon_lengths.append(0)
+
+        # Add last exon (downstream of last intron)
+        last_intron = non_redundant_introns[-1]
+        if last_intron.metadata.downstream_exon_id and last_intron.metadata.downstream_exon_id in feature_index:
+            last_exon = feature_index[last_intron.metadata.downstream_exon_id]
+            exon_lengths.append(last_exon.length)
+        else:
+            exon_lengths.append(0)
+
+        # Calculate cumulative sum and fractional positions
+        exon_cumsum = np.array(exon_lengths)[:-1].cumsum()
+        aggregate_length = sum(exon_lengths)
+
+        # Original multiplied by 100, but we store as 0.0-1.0 for clarity
+        if aggregate_length > 0:
+            frac_positions = (exon_cumsum / aggregate_length).round(4)
+        else:
+            frac_positions = np.zeros(len(non_redundant_introns))
+
         for index, intron in enumerate(non_redundant_introns, start=1):
             # Update intron metadata (1-based indexing to match original)
             intron.metadata.index = index  # Re-index sequentially
             intron.metadata.family_size = family_size
             intron.metadata.parent = transcript.feature_id
             intron.metadata.parent_length = coding_length  # Sum of CDS/exon lengths (not genomic span)
+            intron.metadata.fractional_position = float(frac_positions[index - 1])
 
             # Set grandparent if available
             if transcript.parent_id and transcript.parent_id in feature_index:
                 intron.metadata.grandparent = transcript.parent_id
-
-            # Note: fractional_position is a computed property based on index and family_size
-            # No need to set it manually
 
             yield intron
 

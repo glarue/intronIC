@@ -2321,32 +2321,32 @@ def main_classify(config: IntronICConfig):
         if total_removed > 0:
             messenger.log_only("")
             messenger.log_only("Introns Removed from Scoring:")
-            messenger.log_only("┌──────────────────────────────┬──────────┬───────────┐")
-            messenger.log_only("│ Category                     │ Count    │ Percent   │")
-            messenger.log_only("├──────────────────────────────┼──────────┼───────────┤")
+            messenger.log_only("┌──────────────────────────────┬────────────┬───────────┐")
+            messenger.log_only("│ Category                     │ Count      │ Percent   │")
+            messenger.log_only("├──────────────────────────────┼────────────┼───────────┤")
 
             # Only show omitted section if any were omitted
             if total_omitted > 0:
-                messenger.log_only(f"│ Omitted                      │ {total_omitted:>8,} │ {(total_omitted/total*100) if total > 0 else 0:>8.2f}% │")
+                messenger.log_only(f"│ Omitted                      │ {total_omitted:>10,} │ {(total_omitted/total*100) if total > 0 else 0:>8.2f}% │")
                 # Only show breakdown items that have non-zero counts
                 if stats.omitted_short > 0:
-                    messenger.log_only(f"│   - Too short                │ {stats.omitted_short:>8,} │ {(stats.omitted_short/total*100) if total > 0 else 0:>8.2f}% │")
+                    messenger.log_only(f"│   - Too short                │ {stats.omitted_short:>10,} │ {(stats.omitted_short/total*100) if total > 0 else 0:>8.2f}% │")
                 if stats.omitted_ambiguous > 0:
-                    messenger.log_only(f"│   - Ambiguous bases          │ {stats.omitted_ambiguous:>8,} │ {(stats.omitted_ambiguous/total*100) if total > 0 else 0:>8.2f}% │")
+                    messenger.log_only(f"│   - Ambiguous bases          │ {stats.omitted_ambiguous:>10,} │ {(stats.omitted_ambiguous/total*100) if total > 0 else 0:>8.2f}% │")
                 if stats.omitted_noncanonical > 0:
-                    messenger.log_only(f"│   - Non-canonical            │ {stats.omitted_noncanonical:>8,} │ {(stats.omitted_noncanonical/total*100) if total > 0 else 0:>8.2f}% │")
+                    messenger.log_only(f"│   - Non-canonical            │ {stats.omitted_noncanonical:>10,} │ {(stats.omitted_noncanonical/total*100) if total > 0 else 0:>8.2f}% │")
                 if stats.omitted_isoform > 0:
-                    messenger.log_only(f"│   - Non-longest isoform      │ {stats.omitted_isoform:>8,} │ {(stats.omitted_isoform/total*100) if total > 0 else 0:>8.2f}% │")
+                    messenger.log_only(f"│   - Non-longest isoform      │ {stats.omitted_isoform:>10,} │ {(stats.omitted_isoform/total*100) if total > 0 else 0:>8.2f}% │")
                 if stats.omitted_overlap > 0:
-                    messenger.log_only(f"│   - Overlapping              │ {stats.omitted_overlap:>8,} │ {(stats.omitted_overlap/total*100) if total > 0 else 0:>8.2f}% │")
+                    messenger.log_only(f"│   - Overlapping              │ {stats.omitted_overlap:>10,} │ {(stats.omitted_overlap/total*100) if total > 0 else 0:>8.2f}% │")
 
             # Only show duplicates row if there are duplicates that weren't also omitted
             if duplicates_only > 0:
-                messenger.log_only(f"│ Duplicates only              │ {duplicates_only:>8,} │ {(duplicates_only/total*100) if total > 0 else 0:>8.2f}% │")
+                messenger.log_only(f"│ Duplicates only              │ {duplicates_only:>10,} │ {(duplicates_only/total*100) if total > 0 else 0:>8.2f}% │")
 
-            messenger.log_only("├──────────────────────────────┼──────────┼───────────┤")
-            messenger.log_only(f"│ Total removed                │ {total_removed:>8,} │ {(total_removed/total*100) if total > 0 else 0:>8.2f}% │")
-            messenger.log_only("└──────────────────────────────┴──────────┴───────────┘")
+            messenger.log_only("├──────────────────────────────┼────────────┼───────────┤")
+            messenger.log_only(f"│ Total removed                │ {total_removed:>10,} │ {(total_removed/total*100) if total > 0 else 0:>8.2f}% │")
+            messenger.log_only("└──────────────────────────────┴────────────┴───────────┘")
             messenger.log_only("")
 
             # Only show note if there are duplicates that were also omitted
@@ -2394,10 +2394,13 @@ def main_classify(config: IntronICConfig):
         messenger.log_only(f"Wrote sequences for {introns_written} introns to {seq_output_path.name}")
 
         # Clear large sequences to reduce memory before classification
+        # IMPORTANT: Clear BOTH scored_introns AND the full introns list
+        # The full list includes omitted introns which still have sequences in memory
         messenger.log_only("Clearing full intron sequences to reduce memory (keeping display fields for output)")
         scored_introns = clear_large_sequences_for_classification(scored_introns)
+        introns = clear_large_sequences_for_classification(introns)  # Clear full list too!
         gc.collect()
-        messenger.log_only("Memory freed from full sequences (~5-8 GB for large genomes)")
+        messenger.log_only("Memory freed from full sequences (~10-15 GB for large genomes)")
 
         # Check if using pretrained model
         if config.training.pretrained_model_path:
