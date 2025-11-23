@@ -24,7 +24,7 @@ from smart_open import open as smart_open
 # Annotation Parsing (GFF3/GTF) - Modular interface
 # ============================================================================
 
-@dataclass
+@dataclass(slots=True)
 class AnnotationLine:
     """
     Standardized representation of a parsed annotation line.
@@ -154,7 +154,10 @@ class BioGLAnnotationParser:
         """Initialize parser.
 
         Args:
-            clean_names: If True, remove 'transcript:' and 'gene:' prefixes from IDs
+            clean_names: If True, remove Ensembl-style 'gene:' and 'transcript:' prefixes.
+                         This only removes colon-separated prefixes (Ensembl convention).
+                         RefSeq-style hyphen/underscore prefixes (gene-, rna_) are preserved
+                         to avoid ID collisions.
         """
         from biogl import GxfParse
         self._gxf_parse = GxfParse
@@ -163,21 +166,40 @@ class BioGLAnnotationParser:
     @staticmethod
     def _clean_id(id_str: Optional[str]) -> Optional[str]:
         """
-        Remove common GFF3 ID prefixes.
+        Remove Ensembl-style GFF3 ID prefixes (only colon-separated).
+
+        This conservatively removes only "gene:" and "transcript:" prefixes
+        that use colon separators (Ensembl style), which are truly redundant.
+
+        Does NOT remove hyphen/underscore prefixes (e.g., "gene-", "rna_")
+        which are used in RefSeq/NCBI annotations for disambiguation.
 
         Args:
             id_str: Feature ID string
 
         Returns:
             Cleaned ID string
+
+        Examples:
+            >>> _clean_id("transcript:ENST00000123456")
+            'ENST00000123456'
+            >>> _clean_id("gene:ENSG00000139618")
+            'ENSG00000139618'
+            >>> _clean_id("gene-MIR6859-1")
+            'gene-MIR6859-1'
+            >>> _clean_id("rna-NM_001234")
+            'rna-NM_001234'
         """
         if not id_str:
             return id_str
 
-        # Remove common prefixes
-        for prefix in ['transcript:', 'gene:', 'mRNA:', 'exon:', 'CDS:']:
-            if id_str.startswith(prefix):
-                return id_str[len(prefix):]
+        # Only remove Ensembl-style "gene:" and "transcript:" prefixes
+        # These are redundant because Ensembl IDs already indicate type
+        # (ENSG* = gene, ENST* = transcript, ENSP* = protein)
+        if id_str.startswith('gene:'):
+            return id_str[5:]
+        elif id_str.startswith('transcript:'):
+            return id_str[11:]
 
         return id_str
 
@@ -263,6 +285,36 @@ class BioGLAnnotationParser:
                 parsed = self.parse_line(line, line_num)
                 if parsed is not None:
                     yield parsed
+
+    def parse_lines(self, lines: List[str]) -> Iterator[AnnotationLine]:
+        """
+        Parse a list of annotation lines (streaming-friendly).
+
+        This method enables memory-efficient streaming processing by accepting
+        pre-extracted lines instead of requiring full file access.
+
+        Args:
+            lines: List of annotation lines (GFF3/GTF format)
+
+        Yields:
+            AnnotationLine objects
+
+        Examples:
+            >>> parser = BioGLAnnotationParser()
+            >>> lines = ["chr1\\tENSEMBL\\texon\\t1000\\t2000\\t.\\t+\\t.\\tID=exon1;Parent=trans1"]
+            >>> for ann in parser.parse_lines(lines):
+            ...     print(ann.feat_type)
+            exon
+
+        Note:
+            Line numbers in the returned AnnotationLine objects will be based on
+            the position within the provided list (1-indexed), not the original
+            file line numbers.
+        """
+        for line_num, line in enumerate(lines, start=1):
+            parsed = self.parse_line(line, line_num)
+            if parsed is not None:
+                yield parsed
 
 
 # ============================================================================

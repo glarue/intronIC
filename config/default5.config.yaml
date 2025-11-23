@@ -1,0 +1,417 @@
+# ============================================================================
+# intronIC v2.0 - Configuration
+# ============================================================================
+# Default configuration for intronIC (classify and train modes)
+# CLI arguments override these settings
+#
+# Auto-loaded from (in order of precedence):
+#   1. --config PATH (explicit CLI argument)
+#   2. ./.intronIC.yaml (current directory)
+#   3. ~/.config/intronIC/config.yaml (XDG config dir)
+#   4. ~/.intronIC.yaml (user home)
+#   5. <install_dir>/config/config.yaml (built-in defaults)
+#
+# Quick profiles:
+#   --config config/profiles/quick.yaml      (fast testing)
+#   --config config/profiles/production.yaml (full production)
+#
+# ============================================================================
+
+# ============================================================================
+# SCORING PARAMETERS
+# ============================================================================
+scoring:
+  # Classification threshold (0-100%)
+  # Introns with SVM probability >= threshold are classified as U12-type
+  # Lower = more sensitive (more U12s found, more false positives)
+  # Higher = more specific (fewer U12s, fewer false positives)
+  # Recommended: 90 for standard analysis, 95 for high-confidence set
+  threshold: 90.0
+
+  # Feature type to extract introns from
+  # - "cds": Only coding sequence features (excludes UTR introns)
+  # - "exon": All exon features (includes UTR introns)
+  # - "both": Use CDS where available, fall back to exons (recommended)
+  feature_type: "both"
+
+  # Exclude non-canonical introns from scoring
+  # When true, only GT-AG, GC-AG, and AT-AC introns are scored
+  # When false, all intron types are scored (including rare boundaries)
+  # Note: Most U12 introns are AT-AC, so excluding NC may miss some U12s
+  exclude_noncanonical: false
+
+  # Pseudocount for PWM scoring (log(0) prevention)
+  # Small value added to matrix frequencies to avoid log(0) errors
+  # Affects score magnitude but not relative rankings
+  pseudocount: 0.0001
+
+  # Ignore terminal dinucleotides when scoring non-canonical introns
+  # When true, only scores internal motif regions for NC introns
+  # Prevents biasing scores based on non-canonical boundaries
+  ignore_nc_dinucleotides: true
+
+  # Enable U12 boundary correction for non-canonical introns
+  # Searches ±6bp around splice sites for strong U12 motifs like ATATCCTT
+  # If found at offset position, adjusts boundaries by same shift
+  # Only applies if result is canonical (GT-AG, GC-AG, or AT-AC)
+  # Corrected introns marked with [c:shift] tag (e.g., [c:-2] = 2bp upstream)
+  # Useful for fixing annotation errors where U12 introns are off by 1-6bp
+  u12_boundary_correction: true
+
+  # Scoring regions (PWM application windows)
+  # Coordinates: negative = exonic, positive = intronic, 0 = boundary
+  regions:
+    # 5' splice site (donor)
+    # Typical U12 motif: RTATCCTT (extends into intron)
+    five_prime:
+      start: -3   # 3bp exonic context
+      end: 9      # 9bp intronic motif
+
+    # Branch point search region (upstream of acceptor)
+    # U12 BP motif: TCCTTAAC (7-8bp), located 10-50bp upstream of 3' site
+    # Scans this window to find best-scoring BP position
+    branch_point:
+      start: -55  # Start search 55bp upstream
+      end: -5     # End search 5bp upstream
+
+    # 3' splice site (acceptor)
+    # Typical U12 motif: YAC (polypyrimidine tract less pronounced than U2)
+    three_prime:
+      start: -6   # 6bp intronic context
+      end: 4      # 4bp exonic
+
+# ============================================================================
+# TRAINING PARAMETERS
+# ============================================================================
+training:
+  # Model evaluation mode
+  # How to evaluate classifier performance on reference data:
+  # - "nested_cv": Nested cross-validation (honest evaluation, RECOMMENDED)
+  #   Most rigorous but slowest
+  # - "split": Simple train/test split (faster, less rigorous)
+  #   Single 80/20 split for quick evaluation
+  # - "none": Skip evaluation (fastest, use when loading pretrained model)
+  eval_mode: "nested_cv"
+
+  # Number of folds for OUTER nested CV loop (evaluation only)
+  # Only used when eval_mode = "nested_cv"
+  # IMPORTANT: Should match optimizer.cv_folds (below) per expert guidance
+  # Both outer and inner loops should use k=5 for optimal balance
+  # Recommendation: Keep synchronized with optimizer.cv_folds
+  n_cv_folds: 5
+
+  # Test set fraction for split evaluation
+  # Only used when eval_mode = "split"
+  # Fraction of reference data held out for testing (0.0-1.0)
+  test_fraction: 0.2
+
+  # Number of optimization rounds for C parameter search
+  # Controls iterative refinement rounds during hyperparameter optimization
+  # Each round narrows search range around best C value
+  # More rounds = finer granularity but longer optimization time
+  n_optimization_rounds: 6
+
+  # Fixed SVM C parameter (soft-margin penalty)
+  # If set, skips hyperparameter optimization and uses this value directly
+  # Useful for reproducing previous runs or when you know optimal C
+  # If not set (commented out), C is optimized via grid search
+  # fixed_C: 50.0
+
+  # Ensemble configuration
+  ensemble:
+    # Number of models in ensemble
+    # - 1 = single model (faster, less robust)
+    # - 3-5 = typical ensemble (good balance)
+    # - 10+ = very robust but slower
+    # Recommendation: 10 for production, 1 for fast testing
+    n_models: 12
+
+    # Whether to subsample U2 set for each model
+    # - true: Each model sees different random U2 subset (more diversity)
+    # - false: All models see same U2 set (faster, less diverse)
+    # Only applies when n_models > 1
+    subsample_u2: true
+
+    # Fraction of U2 introns to use per model (if subsample_u2=true)
+    # - 0.8 = use 80% of U2s for each model
+    # - 1.0 = use all U2s (no subsampling)
+    # Only applies when subsample_u2=true
+    # Recommendation: 0.7-0.9 for good diversity without losing too much data
+    subsample_ratio: 0.85
+
+    # Maximum iterations for LinearSVC convergence
+    # Separate from optimizer.max_iter (which is for parameter search)
+    # Used during final ensemble training
+    # Production: 40000-50000, Fast testing: 3000-10000
+    max_iter: 50000
+
+    # Random seed for ensemble training
+    # Controls U2 subsampling randomness
+    # Set to same value as optimizer.random_state for full reproducibility
+    random_state: 42
+
+  # Use fold-averaged hyperparameters from nested CV
+  # - false: Re-optimize C and calibration on full dataset after nested CV
+  #   Maximizes performance on training data
+  #   May overfit to training species composition
+  # - true: Use geometric mean of fold-specific C values and majority-vote calibration
+  #   More conservative, favors generalization over training fit
+  #   RECOMMENDED for cross-species applications
+  #   Expected to reduce FPs on distant species (e.g., C. elegans: 2 FPs vs 6 FPs)
+  # Only applies when eval_mode='nested_cv'
+  use_fold_averaged_params: false
+
+# ============================================================================
+# HYPERPARAMETER OPTIMIZATION
+# ============================================================================
+optimizer:
+  # Number of geometric refinement rounds (1-5)
+  # - Round 1: Coarse grid over full C range
+  # - Rounds 2+: Refine around best C from previous round
+  # Production: 3-5 rounds, Fast testing: 1-2 rounds
+  n_rounds: 5
+
+  # Initial grid points for round 1 (7-13 typical)
+  # Number of C values to test in first round
+  # More points = better coverage but slower
+  # Production: 11-13 points, Fast testing: 3-7 points
+  n_points_initial: 15
+
+  # Refinement grid points for rounds 2+ (20-100 typical)
+  # Number of C values to test in refinement rounds
+  # Higher = finer granularity around optimal region
+  # Production: 50-100 points, Fast testing: 20-30 points
+  n_points_refine: 100
+
+  # Cross-validation folds for INNER loop (hyperparameter search)
+  # Used during grid search to evaluate each parameter combination
+  # IMPORTANT: Should match training.n_cv_folds (above) per expert guidance
+  # With hundreds-thousands of U12s, k=5 provides sufficient validation
+  # k=10 doesn't give significant benefits but costs 2× computation
+  # Recommendation: 5 for most datasets, 3 for very small reference sets
+  # Note: CalibratedClassifierCV adds another 5-fold internal CV
+  # Total model fits per parameter set ≈ cv_folds × 5 (calibration wrapper)
+  # KEEP SYNCHRONIZED: training.n_cv_folds = optimizer.cv_folds = 5
+  cv_folds: 5
+
+  # Random seed for reproducibility
+  # Ensures same train/test splits across runs
+  random_state: 42
+
+  # Number of parallel jobs for GridSearchCV
+  # - -1: use all available CPU cores
+  # - 1: sequential (easier to debug)
+  # - N: use N cores
+  n_jobs: -1
+
+  # Print detailed progress messages
+  # - true: show optimization progress, CV results, timings
+  # - false: quiet mode (only warnings/errors)
+  verbose: true
+
+  # Maximum iterations for LinearSVC convergence during optimization
+  # Higher = allows convergence on difficult datasets
+  # Lower = faster but may not converge (warns if hit)
+  # Production: 60000-75000, Fast testing: 3000-10000
+  max_iter: 65000
+
+  # Robustness improvements (2025-01-19)
+  # Penalty types to search (L1 = feature selection, L2 = full weighting)
+  # WARNING: L1 can be 10-20× slower than L2 and may cause memory issues with high parallelism
+  # L1 with max_iter=65000 can take minutes per fit vs seconds for L2
+  # Recommendation: Use ['l2'] only for production (sufficient for robustness)
+  # Advanced: Try ['l1', 'l2'] with reduced max_iter (10000) and lower n_jobs (4-8)
+  penalty_options: ['l2']
+
+  # Loss functions to search
+  # IMPORTANT: With dual=False (our default), only 'squared_hinge' is supported
+  # The 'hinge' loss requires dual=True which is slower for our feature count
+  # Default: ['squared_hinge'] (only valid option for dual=False)
+  # This parameter is kept for potential future dual=True support
+  loss_options: ['squared_hinge']
+
+  # Class weight multipliers to search
+  # Multiplies balanced class weights to test precision/recall tradeoffs
+  # - 0.8: more conservative (fewer false positives)
+  # - 1.0: standard balanced weighting
+  # - 1.2: more aggressive (more U12 calls)
+  # Default: [0.8, 1.0, 1.2] to test all three
+  # For faster search: [1.0] to use only balanced weights
+  class_weight_multipliers: [0.85, 1.0, 1.15]
+
+  # C parameter bounds (optional - uses auto-computed bounds if not specified)
+  # Controls range of C (soft-margin penalty) values to search
+  # By default, C bounds are computed automatically from class weights
+  # Leave commented to use auto-computed bounds (RECOMMENDED)
+  #
+  # AUTO-COMPUTED BOUNDS (default):
+  # - Range: [1e-3, 1e3] effective C for positive class (U12)
+  # - Adjusted by class imbalance (typically ~1:50 U12:U2 ratio)
+  # - Results in weight-aware search range appropriate for dataset
+  #
+  # MANUAL OVERRIDE (advanced):
+  # c_bounds:
+  #   # Effective C range for positive class (U12)
+  #   eff_C_pos_range: [0.001, 1000.0]
+  #   # Optional maximum effective C for negative class (U2)
+  #   # null = no limit, float = cap at this value
+  #   eff_C_neg_max: null
+
+# ============================================================================
+# PARAMETER GRID (Advanced - for custom search space)
+# ============================================================================
+# UPDATED ARCHITECTURE (2025-01-19):
+# - ScoreNormalizer: RobustScaler(with_centering=True) - single scaling step
+# - Pipeline: BothEndsStrongTransformer → LinearSVC (Stage 1) → CalibratedClassifierCV (Stage 2)
+# - Two-stage optimization:
+#   * Stage 1: Optimize C, penalty, loss, class_weight_mult (metric: balanced_accuracy)
+#   * Stage 2: Select calibration method sigmoid vs isotonic (metric: log-loss)
+#
+# GRID-SEARCHED PARAMETERS (configurable above):
+# - C: Auto-optimized via geometric grid search (balanced_accuracy)
+# - penalty: L1 (feature selection) vs L2 (full weighting)
+# - loss: squared_hinge only (hinge requires dual=True)
+# - class_weight_multiplier: 0.8 (conservative) vs 1.0 (balanced) vs 1.2 (aggressive)
+# - calibration_method: Auto-selected (sigmoid vs isotonic) via log-loss
+#
+# FIXED ARCHITECTURE POINTS:
+# - include_max: false (7D non-redundant features)
+# - include_pairwise_mins: false (min_all captures all constraints)
+# - dual: false (primal formulation, faster for n_features << n_samples)
+# - Stratified U2 sampling: 2D binning (length × GC content)
+# - Ensemble diversity: Different stratified U2 samples per model
+#
+# GRID SIZE: ~6× larger than previous
+# Example Round 1: 13 C values × 2 penalties × 1 loss × 3 multipliers = 78 combos
+#
+# Leave param_grid empty (uses optimizer config above).
+# Only override for advanced testing (requires code changes).
+#
+# References: SCALER_CENTERING_FIX_COMPLETE.md, test_corrected_architecture.py
+param_grid: {}
+
+# ============================================================================
+# PERFORMANCE OPTIONS
+# ============================================================================
+performance:
+  # Number of parallel processes for classification
+  # Uses multiprocessing to speed up SVM prediction on experimental introns
+  # Set to number of CPU cores for maximum speed (e.g., 8 for 8-core system)
+  # Memory usage scales linearly with processes (~1-2GB per process)
+  processes: 1
+
+  # Number of processes for cross-validation (if different from classification)
+  # Controls parallelization during hyperparameter optimization
+  # If not set, uses same value as 'processes' above
+  # Grid search is very parallel-friendly - can benefit from many cores
+  # cv_processes: 8
+
+  # Minimum intron length in base pairs
+  # Introns shorter than this are marked with [o:s] (omitted: short) tag
+  # Still written to output but not scored/classified
+  # Scoring requires sufficient sequence for all three regions (5', BP, 3')
+  # Typical valid range: 30-70bp depending on scoring region configuration
+  min_intron_length: 30
+
+# ============================================================================
+# ISOFORM SELECTION
+# ============================================================================
+isoform:
+  # Include non-longest isoforms in analysis
+  # - false: Only longest transcript per gene (reduces redundancy)
+  # - true: All isoforms included (may result in many similar introns)
+  # Recommendation: Keep false to avoid scoring ~5x more introns
+  allow_multiple_isoforms: false
+
+  # Exclude overlapping introns from different isoforms
+  # Some isoforms have introns with overlapping coordinates
+  # - true: Only one representative from each overlapping set
+  # - false: All overlapping introns kept (may cause duplicates)
+  exclude_overlapping: false
+
+  # Include duplicate introns in output files
+  # Duplicates are introns with identical coordinates (chr, strand, start, stop)
+  # - false: Only first occurrence written (cleaner output)
+  # - true: All occurrences written (useful for tracking gene families)
+  # Note: Duplicates marked with [d] tag and linked to representative
+  include_duplicates: false
+
+# ============================================================================
+# OUTPUT OPTIONS
+# ============================================================================
+output:
+  # Remove "transcript:" and "gene:" prefixes from IDs
+  # Makes output files more readable
+  clean_names: true
+
+# ============================================================================
+# EXTRACTION OPTIONS
+# ============================================================================
+extraction:
+  # Length of exonic flanks to extract (bp)
+  # Flanking exonic sequence extracted on both sides of each intron
+  # Used for context in output files and potential future analyses
+  # Does not affect scoring (scoring uses internal coordinates only)
+  # Larger values = more context, larger output files
+  flank_length: 50
+
+# ============================================================================
+# ADVANCED OPTIONS
+# ============================================================================
+advanced:
+  # Global random seed for reproducibility
+  # Seeds all random number generators (train/test splits, subsampling, etc.)
+  # Using same seed guarantees identical results across runs
+  # Change this value to get different random splits/samples
+  random_seed: 42
+
+  # Suppress non-essential output
+  # When true, reduces console output to warnings and errors only
+  # Useful for running in scripts or batch processing
+  # Log file still contains full details regardless of this setting
+  quiet: false
+
+  # Enable debug logging
+  # When true, writes detailed debugging information to log file
+  # Includes feature extraction details, score calculations, etc.
+  # Produces very large log files - only use for troubleshooting
+  debug: false
+
+# ============================================================================
+# NOTES & RECOMMENDATIONS
+# ============================================================================
+#
+# ESTIMATED RUNTIME (on typical workstation):
+# - Chr19 only: ~20-40 minutes (with cv_folds=5)
+# - Full human genome: ~2-4 hours (with cv_folds=5)
+# - Use config/profiles/quick.yaml for faster validation
+# - Use config/profiles/minimal.yaml for smoke testing
+#
+# PARALLELIZATION:
+# - Controlled by optimizer.n_jobs (hyperparameter search)
+# - GridSearchCV parallelizes across C values and parameter combinations
+# - Each parameter combo: cv_folds=5 fits (Stage 1), then 2 calibration methods (Stage 2)
+# - Memory usage scales with n_jobs (more cores = more memory)
+#
+# MEMORY USAGE:
+# - Typical: 2-5 GB for Chr19
+# - Full genome: 10-20 GB
+# - Scales with: number of introns, n_jobs, ensemble size
+#
+# QUICK TESTING PROFILES:
+# - config/profiles/quick.yaml: 2 rounds, 3 CV folds, 3 models (~10-20 min)
+# - config/profiles/minimal.yaml: 1 round, 2 CV folds, 1 model (~5-10 min)
+#
+# ARCHITECTURE NOTES (v2.0 - 2025-01-17):
+# - Single scaling step: RobustScaler(with_centering=True) outside pipeline
+# - 7D non-redundant features: include_max=false, include_pairwise_mins=false
+# - L2-only penalty: Keeps all features appropriately weighted
+# - Two-stage optimization: C first (balanced_accuracy), then calibration (log-loss)
+# - Validation: 2 FPs on C. elegans (vs 130 uncentered, 49 centered-only)
+#
+# REFERENCES:
+# - Architecture: SCALER_CENTERING_FIX_COMPLETE.md
+# - Tests: test_corrected_architecture.py
+# - Cross-species validation: C. elegans results
+#
+# ============================================================================

@@ -22,7 +22,11 @@ pyyaml = "*"
 pytest = ">=9.0.1,<10"
 
 [pypi-dependencies]
-biogl = "*"
+biogl = ">=3.0.0"
+pysam = ">=0.23.3, <0.24"
+pyfaidx = ">=0.9.0.3, <0.10"
+biopython = ">=1.86, <2"
+pyfastx = ">=2.2.0, <3"
 
 [tasks]
 # Installation: install intronIC in development mode

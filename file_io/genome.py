@@ -135,6 +135,41 @@ class GenomeReader:
             self.cache[name] = seq
         self.is_cached = True
 
+    def load_sequences(self, sequence_names: list[str]) -> None:
+        """
+        Load only specific sequences into cache (selective caching).
+
+        This is much more memory-efficient than loading the entire genome
+        when you only need a subset of contigs/chromosomes.
+
+        Args:
+            sequence_names: List of sequence names to load
+
+        Examples:
+            >>> reader = GenomeReader("genome.fa", cached=False)
+            >>> reader.load_sequences(["chr1", "chr2"])  # Only load chr1 and chr2
+            >>> seq = reader.get_sequence("chr1")  # Now works!
+
+        Note:
+            - Stops reading the file once all requested sequences are found
+            - Overwrites any existing cache
+            - Sets is_cached=True after loading
+        """
+        if not sequence_names:
+            return
+
+        self.cache = {}
+        target_names = set(sequence_names)
+
+        for name, seq in parse_fasta(self.file_path):
+            if name in target_names:
+                self.cache[name] = seq
+                # Stop early if we've found all requested sequences
+                if len(self.cache) == len(target_names):
+                    break
+
+        self.is_cached = True
+
     def stream(self) -> Iterator[Tuple[str, str]]:
         """
         Stream sequences from genome file (memory efficient).

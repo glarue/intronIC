@@ -48,7 +48,7 @@ class TestBioGLAnnotationParser:
         assert result.start == 1000
         assert result.stop == 2000
         assert result.line_number == 1
-        assert result.parent == [None]  # biogl returns [None] for features without parents
+        assert result.parent == []  # biogl returns empty list for features without parents
         assert result.phase is None
 
     def test_parse_gff3_transcript_line(self):
@@ -604,3 +604,220 @@ class TestDataStructures:
 
         assert seq.name == "intron1"
         assert seq.score == 95.5
+
+
+# ============================================================================
+# Graph Cycle Prevention Tests
+# ============================================================================
+
+class TestCyclePrevention:
+    """Test that ID cleaning prevents graph cycles."""
+
+    def test_refseq_style_no_cycles(self):
+        """
+        Test that RefSeq-style prefixes (gene-, rna-) are NOT cleaned,
+        preventing ID collisions and graph cycles.
+
+        This simulates the tRNA annotation pattern that caused 671 self-loops
+        in Basidiobolus when gene- and rna- prefixes were incorrectly removed.
+        """
+        from extraction.annotator import AnnotationHierarchyBuilder
+        from networkx import is_directed_acyclic_graph
+
+        # RefSeq-style annotation: gene and tRNA share same base ID
+        # gene-K493DRAFT_t33 and rna-K493DRAFT_t33
+        # If we incorrectly clean to just "K493DRAFT_t33", we get a self-loop!
+        gff_lines = [
+            "chr1\tGenbank\tgene\t1000\t2000\t.\t+\t.\tID=gene-TEST_t1;Name=TEST_t1",
+            "chr1\tGenbank\ttRNA\t1000\t2000\t.\t+\t.\tID=rna-TEST_t1;Parent=gene-TEST_t1",
+            "chr1\tGenbank\texon\t1000\t2000\t.\t+\t.\tID=exon-TEST_t1-1;Parent=rna-TEST_t1"
+        ]
+
+        builder = AnnotationHierarchyBuilder(
+            child_features=['exon'],
+            clean_names=True  # Use default cleaning
+        )
+
+        # Parse lines
+        from file_io.parsers import BioGLAnnotationParser
+        parser = BioGLAnnotationParser(clean_names=True)
+        annotations = list(parser.parse_lines(gff_lines))
+
+        # Build graph
+        from networkx import DiGraph
+        feat_graph = DiGraph()
+
+        for ann in annotations:
+            if ann.start > ann.stop:
+                continue
+
+            features = builder._create_features_from_annotation(ann)
+
+            for feat in features:
+                feat_type = feat.attributes.get('_orig_feat_type', '')
+                if not feat_type and hasattr(feat, 'feature_type'):
+                    feat_type = feat.feature_type
+                feat_type = feat_type.lower() if feat_type else 'unknown'
+
+                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
+                grandparent_name = feat.attributes.get('_grandparent_name')
+
+                if feat_type in builder.child_features:
+                    name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
+                else:
+                    name = feat.feature_id
+
+                # Build graph edges
+                if parent_name is not None:
+                    feat_graph.add_edge(parent_name, name)
+
+                if grandparent_name is not None:
+                    feat_graph.add_edge(grandparent_name, parent_name)
+
+        # CRITICAL: Graph must be acyclic
+        # If gene- and rna- prefixes were removed, we'd have:
+        # - gene-TEST_t1 -> TEST_t1 (after cleaning)
+        # - rna-TEST_t1 -> TEST_t1 (after cleaning)
+        # - Edge: TEST_t1 -> TEST_t1 (SELF-LOOP!)
+        assert is_directed_acyclic_graph(feat_graph), \
+            "Graph contains cycles! RefSeq-style prefixes (gene-, rna-) must NOT be cleaned"
+
+    def test_ensembl_style_cleaning(self):
+        """
+        Test that Ensembl-style prefixes (gene:, transcript:) ARE cleaned
+        without causing cycles.
+
+        Ensembl IDs are globally unique even without prefixes (ENSG*, ENST*),
+        so cleaning is safe and produces cleaner output.
+        """
+        from extraction.annotator import AnnotationHierarchyBuilder
+        from networkx import is_directed_acyclic_graph
+
+        # Ensembl-style annotation with redundant prefixes
+        gff_lines = [
+            "chr1\tENSEMBL\tgene\t1000\t2000\t.\t+\t.\tID=gene:ENSG00000001;Name=GENE1",
+            "chr1\tENSEMBL\tmRNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST00000001;Parent=gene:ENSG00000001",
+            "chr1\tENSEMBL\texon\t1000\t1500\t.\t+\t.\tID=exon:ENSE00000001;Parent=transcript:ENST00000001"
+        ]
+
+        builder = AnnotationHierarchyBuilder(
+            child_features=['exon'],
+            clean_names=True
+        )
+
+        from file_io.parsers import BioGLAnnotationParser
+        parser = BioGLAnnotationParser(clean_names=True)
+        annotations = list(parser.parse_lines(gff_lines))
+
+        # Check that prefixes were cleaned
+        gene_ann = [a for a in annotations if a.feat_type == 'gene'][0]
+        # biogl converts mRNA feature type to 'transcript'
+        transcript_ann = [a for a in annotations if a.feat_type == 'transcript'][0]
+
+        assert gene_ann.name == 'ENSG00000001', f"Expected ENSG00000001, got {gene_ann.name}"
+        assert transcript_ann.name == 'ENST00000001', f"Expected ENST00000001, got {transcript_ann.name}"
+
+        # Build graph
+        from networkx import DiGraph
+        feat_graph = DiGraph()
+
+        for ann in annotations:
+            if ann.start > ann.stop:
+                continue
+
+            features = builder._create_features_from_annotation(ann)
+
+            for feat in features:
+                feat_type = feat.attributes.get('_orig_feat_type', '')
+                if not feat_type and hasattr(feat, 'feature_type'):
+                    feat_type = feat.feature_type
+                feat_type = feat_type.lower() if feat_type else 'unknown'
+
+                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
+                grandparent_name = feat.attributes.get('_grandparent_name')
+
+                if feat_type in builder.child_features:
+                    name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
+                else:
+                    name = feat.feature_id
+
+                if parent_name is not None:
+                    feat_graph.add_edge(parent_name, name)
+
+                if grandparent_name is not None:
+                    feat_graph.add_edge(grandparent_name, parent_name)
+
+        # Graph must still be acyclic even with cleaning
+        assert is_directed_acyclic_graph(feat_graph), \
+            "Graph contains cycles! Ensembl-style cleaning should be safe"
+
+    def test_mirna_bidirectional_cycle_prevention(self):
+        """
+        Test that miRNA annotations don't create bidirectional cycles.
+
+        This simulates the human genome pattern where:
+        - gene-MIR6859-1 (gene)
+        - rna-NR_106918.1 (transcript, parent=gene-MIR6859-1)
+        - rna-MIR6859-1 (miRNA, parent=rna-NR_106918.1)
+
+        If gene- and rna- are cleaned, we get:
+        - MIR6859-1 -> NR_106918.1
+        - NR_106918.1 -> MIR6859-1
+        Creating a bidirectional cycle!
+        """
+        from extraction.annotator import AnnotationHierarchyBuilder
+        from networkx import is_directed_acyclic_graph
+
+        gff_lines = [
+            "chr1\tRefSeq\tgene\t1000\t2000\t.\t+\t.\tID=gene-MIR6859-1;Name=MIR6859-1",
+            "chr1\tRefSeq\ttranscript\t1000\t2000\t.\t+\t.\tID=rna-NR_106918.1;Parent=gene-MIR6859-1",
+            "chr1\tRefSeq\texon\t1000\t2000\t.\t+\t.\tID=exon-1;Parent=rna-NR_106918.1",
+            "chr1\tRefSeq\tmiRNA\t1000\t1500\t.\t+\t.\tID=rna-MIR6859-1;Parent=rna-NR_106918.1"
+        ]
+
+        builder = AnnotationHierarchyBuilder(
+            child_features=['exon'],
+            clean_names=True
+        )
+
+        from file_io.parsers import BioGLAnnotationParser
+        parser = BioGLAnnotationParser(clean_names=True)
+        annotations = list(parser.parse_lines(gff_lines))
+
+        # Build graph
+        from networkx import DiGraph
+        feat_graph = DiGraph()
+
+        for ann in annotations:
+            if ann.start > ann.stop:
+                continue
+
+            features = builder._create_features_from_annotation(ann)
+
+            for feat in features:
+                feat_type = feat.attributes.get('_orig_feat_type', '')
+                if not feat_type and hasattr(feat, 'feature_type'):
+                    feat_type = feat.feature_type
+                feat_type = feat_type.lower() if feat_type else 'unknown'
+
+                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
+                grandparent_name = feat.attributes.get('_grandparent_name')
+
+                if feat_type in builder.child_features:
+                    name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
+                else:
+                    name = feat.feature_id
+
+                if parent_name is not None:
+                    feat_graph.add_edge(parent_name, name)
+
+                if grandparent_name is not None:
+                    feat_graph.add_edge(grandparent_name, parent_name)
+
+        # CRITICAL: Must not have cycles
+        # With improper cleaning:
+        # - gene-MIR6859-1 cleans to MIR6859-1
+        # - rna-MIR6859-1 cleans to MIR6859-1 (collision!)
+        # - Edge: MIR6859-1 -> NR_106918.1 -> MIR6859-1 (cycle!)
+        assert is_directed_acyclic_graph(feat_graph), \
+            "Graph contains cycles! miRNA gene/rna- ID collision detected"

@@ -6,8 +6,8 @@ parent-child relationships between genes, transcripts, and exons/CDS features.
 """
 
 from collections import defaultdict
-from typing import List, Dict, Set, Tuple, Optional
-from networkx import DiGraph, find_cycle, lexicographical_topological_sort
+from typing import List, Dict, Set, Tuple, Optional, Iterable
+from networkx import DiGraph, find_cycle, lexicographical_topological_sort, is_directed_acyclic_graph
 
 from core.models import Gene, Transcript, Exon
 from file_io.parsers import BioGLAnnotationParser, AnnotationLine
@@ -32,16 +32,20 @@ class AnnotationHierarchyBuilder:
         parent_class_map: Maps feature types to their parent/grandparent classes
     """
 
-    def __init__(self, child_features: List[str], clean_names: bool = True):
+    def __init__(self, child_features: List[str], clean_names: bool = True, messenger=None):
         """
         Initialize the hierarchy builder.
 
         Args:
             child_features: List of feature types to extract (e.g., ['exon', 'cds'])
-            clean_names: If True, remove 'transcript:' and 'gene:' prefixes from IDs
+            clean_names: If True, remove Ensembl-style 'gene:' and 'transcript:' prefixes.
+                         This only removes colon-separated prefixes (Ensembl convention).
+                         RefSeq-style hyphen/underscore prefixes are preserved to avoid collisions.
+            messenger: Optional UnifiedMessenger for logging (if None, uses print)
         """
         self.child_features = [f.lower() for f in child_features]
         self.clean_names = clean_names
+        self.messenger = messenger
 
         # Maps feature types to expected parent classes
         self.parent_class_map = {
@@ -97,22 +101,61 @@ class AnnotationHierarchyBuilder:
             >>> gene = genes[0]
             >>> print(f"{gene.name}: {len(gene.children)} transcripts")
         """
-        # Parse annotation file
+        # Parse annotation file (streaming - don't materialize all at once!)
         parser = BioGLAnnotationParser(clean_names=self.clean_names)
-        annotations = list(parser.parse_file(annotation_file))
+        annotations_iter = parser.parse_file(annotation_file)
+
+        # Build hierarchy from iterator (processes as it goes)
+        return self.build_from_annotations(annotations_iter)
+
+    def build_from_lines(self, lines: List[str]) -> List[Gene]:
+        """
+        Build gene hierarchy from annotation lines (streaming-friendly).
+
+        This method enables memory-efficient streaming processing by accepting
+        pre-extracted lines instead of requiring full file parsing.
+
+        Args:
+            lines: List of annotation lines (GFF3/GTF format)
+
+        Returns:
+            List of Gene objects with children populated
+
+        Examples:
+            >>> # Get lines for chr1 from index
+            >>> from file_io.annotation_index import build_contig_index, extract_contig_lines
+            >>> index = build_contig_index('annotations.gff3.gz')
+            >>> chr1_lines = extract_contig_lines('annotations.gff3.gz', index.get_line_numbers('chr1'))
+            >>>
+            >>> # Build hierarchy from just chr1's lines
+            >>> builder = AnnotationHierarchyBuilder(['exon'])
+            >>> chr1_genes = builder.build_from_lines(chr1_lines)
+
+        Note:
+            This is the key method for streaming annotation processing.
+            It allows building gene hierarchies for one contig at a time
+            without loading the entire annotation file into memory.
+        """
+        # Parse lines using same parser
+        parser = BioGLAnnotationParser(clean_names=self.clean_names)
+        annotations = list(parser.parse_lines(lines))
 
         # Build hierarchy
         return self.build_from_annotations(annotations)
 
-    def build_from_annotations(self, annotations: List[AnnotationLine]) -> List[Gene]:
+    def build_from_annotations(self, annotations: Iterable[AnnotationLine]) -> List[Gene]:
         """
         Build gene hierarchy from parsed annotation lines.
 
         Args:
-            annotations: List of parsed AnnotationLine objects
+            annotations: Iterable of parsed AnnotationLine objects (can be generator)
 
         Returns:
             List of top-level Gene objects
+
+        Note:
+            Accepts an iterable (including generators) to enable streaming processing.
+            This avoids materializing all AnnotationLine objects in memory at once.
         """
         # Step 1: Create features and build graph
         feat_graph = DiGraph()
@@ -354,17 +397,61 @@ class AnnotationHierarchyBuilder:
         """
         Detect and remove cycles from the feature graph.
 
+        Optimized approach:
+        1. First check if graph is acyclic (fast check)
+        2. Only iterate if cycles exist
+        3. find_cycle() returns one cycle at a time, so we loop until none remain
+
         Args:
             graph: NetworkX directed graph of feature relationships
         """
-        try:
-            cycles = list(find_cycle(graph))
-            if cycles:
-                print(f"[!] Warning: Removed {len(cycles)} cycles from feature graph")
-                graph.remove_edges_from(cycles)
-        except:
-            # No cycles found
-            pass
+        # Fast check: if already acyclic, skip expensive cycle finding
+        if is_directed_acyclic_graph(graph):
+            return
+
+        all_cycle_edges = []
+        max_iterations = 1000  # Safety limit to prevent infinite loops
+
+        for iteration in range(max_iterations):
+            try:
+                cycles = list(find_cycle(graph))
+                if cycles:
+                    # Store cycle information for debugging
+                    all_cycle_edges.extend(cycles)
+                    graph.remove_edges_from(cycles)
+                else:
+                    # No more cycles found
+                    break
+            except:
+                # No cycles found (find_cycle raises exception when graph is acyclic)
+                break
+
+        if all_cycle_edges:
+            # Log cycle warning at warning level (always visible)
+            msg = f"Removed {len(all_cycle_edges)} cycle edge(s) from feature graph"
+            if self.messenger:
+                self.messenger.warning(msg)
+            else:
+                print(f"[!] Warning: {msg}")
+
+            # Log detailed cycle information at debug level (only in debug mode)
+            # Extract unique features involved in cycles
+            features_in_cycles = set()
+            cycle_details = []
+            for parent, child in all_cycle_edges:
+                features_in_cycles.add(parent)
+                features_in_cycles.add(child)
+                cycle_details.append(f"  Edge removed: {parent} -> {child}")
+
+            debug_msg = "Cycle details:\n" + "\n".join(cycle_details)
+            debug_msg += f"\nFeatures involved in cycles ({len(features_in_cycles)} total):\n"
+            debug_msg += "\n".join(f"  {f}" for f in sorted(features_in_cycles))
+
+            if self.messenger:
+                self.messenger.log_only(debug_msg, level="debug")
+            else:
+                # Fallback to print if no messenger
+                print(f"[!] {debug_msg}")
 
     def _build_relationships(
         self,

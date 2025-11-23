@@ -1,0 +1,43 @@
+{
+  "model_name": "homo_sapiens.d15.model",
+  "model_source": "pretrained",
+  "model_path": "homo_sapiens.d15.model.pkl",
+  "model_md5": "02b7eb79cce60558faef260f679410ff",
+  "threshold": 90.0,
+  "pretrained_metadata": {
+    "model_name": "homo_sapiens.d15.model",
+    "training_date": "2025-11-20 16:18:19",
+    "reference_data": {
+      "u12": {
+        "file": "/home/glarue/code/intronIC/data/u12_reference.introns.iic.gz",
+        "md5": "3e7d4665a811abf8ab86b11682cbf551",
+        "count": 387
+      },
+      "u2": {
+        "file": "/home/glarue/code/intronIC/data/u2_reference.introns.iic.gz",
+        "md5": "b3b0804abeea9d2dbb76f0d59abbdd06",
+        "count": 20690
+      },
+      "total": 21077
+    },
+    "hyperparameters": {
+      "C": 56.29709515754969,
+      "cv_score": 0.00017172483670854625,
+      "kernel": "linear",
+      "calibration_method": "isotonic",
+      "max_iter": 50000,
+      "n_models": 15,
+      "threshold": 90.0,
+      "random_seed": 42
+    },
+    "evaluation": {
+      "method": "nested_cv",
+      "n_folds": 6,
+      "mean_f1": 0.9987,
+      "std_f1": 0.0028,
+      "mean_pr_auc": 0.9974,
+      "std_pr_auc": 0.0058
+    }
+  },
+  "run_date": "2025-11-21 17:30:46"
+}

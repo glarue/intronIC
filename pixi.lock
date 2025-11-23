@@ -165,7 +165,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-h280c20c_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.2.5-hde8ca8f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb8e6e7a_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/d7/cb/61877367bf08670573d62513b239dc65cf2b7488dc74322cc6051da2e55e/biopython-1.86-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1f/9b/860b1f95ed305c0ae42d943cf9006733fd6bbb879ccf21a542e905b5d991/pyfastx-2.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/df/a6/c100df6c8118b4ce1f9c086bb9cf5bccd4f71d05ceb2ecf474f3b0ea87b8/pysam-0.23.3-cp312-cp312-manylinux_2_28_x86_64.whl
       osx-64:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/brotli-1.2.0-hb27157a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/brotli-bin-1.2.0-h5c1846c_0.conda
@@ -252,7 +256,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/yaml-0.2.5-h4132b18_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zlib-ng-2.2.5-h55e386d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstd-1.5.7-h8210216_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/e2/199b8ccbd4b9bf234157db0668177b5b7784d62f29d9096fd0d3a70e3b86/biopython-1.86-cp312-cp312-macosx_10_13_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/c0/ba/2494f64538417c066e6e1d3d123b3b22d0643b2369e34a5a7a3322f43f61/pyfastx-2.2.0-cp312-cp312-macosx_10_13_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/a2/6b/dd9f94da44463ecfddb7075f1048c044155c725d7d79fde2e7957561a3b0/pysam-0.23.3-cp312-cp312-macosx_10_13_x86_64.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/brotli-1.2.0-hca488c2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/brotli-bin-1.2.0-hce9b42c_0.conda
@@ -340,7 +348,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h925e9cb_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.2.5-h3470cca_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-h6491c7d_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/5b/e9/4057d4c2aa22ca25c180ecbed2ce9e7d65bf787999778bc63b41df0d03b5/biopython-1.86-cp312-cp312-macosx_11_0_arm64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/a5/54/b91919749f641cae82a804a8d0c582443d32db1ec0cc0d3af30b135567d6/pyfastx-2.2.0.tar.gz
+      - pypi: https://files.pythonhosted.org/packages/f3/e9/686e711a559a02e4c3ba0bc78cf031d9ddb525e9f0b2984d1b66536ba94a/pysam-0.23.3-cp312-cp312-macosx_11_0_arm64.whl
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/win-64/_openmp_mutex-4.5-2_gnu.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/brotli-1.2.0-h17ff524_0.conda
@@ -457,7 +469,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/yaml-0.2.5-h6a83c73_3.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zlib-ng-2.2.5-h32d8bfd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-hbeecb71_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/a9/13/00db03b01e54070d5b0ec9c71eef86e61afa733d9af76e5b9b09f5dc9165/biopython-1.86-cp312-cp312-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/83/43/74c580086e663c2e0ac80d7933a912a27c1f584adf5ca7841157f9f7c067/pyfastx-2.2.0-cp312-cp312-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/7c/2b/1cf19890a0e4c73ad2672ce7eb485606c4bd2846eef2d892c078ab193c92/pysam-0.23.3.tar.gz
   dev:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -633,7 +649,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-h280c20c_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.2.5-hde8ca8f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb8e6e7a_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/d7/cb/61877367bf08670573d62513b239dc65cf2b7488dc74322cc6051da2e55e/biopython-1.86-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1f/9b/860b1f95ed305c0ae42d943cf9006733fd6bbb879ccf21a542e905b5d991/pyfastx-2.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/df/a6/c100df6c8118b4ce1f9c086bb9cf5bccd4f71d05ceb2ecf474f3b0ea87b8/pysam-0.23.3-cp312-cp312-manylinux_2_28_x86_64.whl
       osx-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/black-25.1.0-pyh866005b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/brotli-1.2.0-hb27157a_0.conda
@@ -730,7 +750,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/yaml-0.2.5-h4132b18_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zlib-ng-2.2.5-h55e386d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstd-1.5.7-h8210216_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/98/e2/199b8ccbd4b9bf234157db0668177b5b7784d62f29d9096fd0d3a70e3b86/biopython-1.86-cp312-cp312-macosx_10_13_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/c0/ba/2494f64538417c066e6e1d3d123b3b22d0643b2369e34a5a7a3322f43f61/pyfastx-2.2.0-cp312-cp312-macosx_10_13_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/a2/6b/dd9f94da44463ecfddb7075f1048c044155c725d7d79fde2e7957561a3b0/pysam-0.23.3-cp312-cp312-macosx_10_13_x86_64.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/black-25.1.0-pyh866005b_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/brotli-1.2.0-hca488c2_0.conda
@@ -828,7 +852,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h925e9cb_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.2.5-h3470cca_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-h6491c7d_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/5b/e9/4057d4c2aa22ca25c180ecbed2ce9e7d65bf787999778bc63b41df0d03b5/biopython-1.86-cp312-cp312-macosx_11_0_arm64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/a5/54/b91919749f641cae82a804a8d0c582443d32db1ec0cc0d3af30b135567d6/pyfastx-2.2.0.tar.gz
+      - pypi: https://files.pythonhosted.org/packages/f3/e9/686e711a559a02e4c3ba0bc78cf031d9ddb525e9f0b2984d1b66536ba94a/pysam-0.23.3-cp312-cp312-macosx_11_0_arm64.whl
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/win-64/_openmp_mutex-4.5-2_gnu.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/black-25.1.0-pyh866005b_0.conda
@@ -955,7 +983,11 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/yaml-0.2.5-h6a83c73_3.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zlib-ng-2.2.5-h32d8bfd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-hbeecb71_2.conda
-      - pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/a9/13/00db03b01e54070d5b0ec9c71eef86e61afa733d9af76e5b9b09f5dc9165/biopython-1.86-cp312-cp312-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/83/43/74c580086e663c2e0ac80d7933a912a27c1f584adf5ca7841157f9f7c067/pyfastx-2.2.0-cp312-cp312-win_amd64.whl
+      - pypi: https://files.pythonhosted.org/packages/7c/2b/1cf19890a0e4c73ad2672ce7eb485606c4bd2846eef2d892c078ab193c92/pysam-0.23.3.tar.gz
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
   sha256: fe51de6107f9edc7aa4f786a70f4a883943bc9d39b3bb7307c04c41410990726
@@ -1004,12 +1036,46 @@ packages:
   purls: []
   size: 566531
   timestamp: 1744668655747
-- pypi: https://files.pythonhosted.org/packages/9d/15/70ef890b5fb0d5d40421dfb7ac36f336c1577653b6652de817a68a2ef10b/biogl-2.4.0-py3-none-any.whl
+- pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
   name: biogl
-  version: 2.4.0
-  sha256: dc61aff85de60f9498707c50aae0018434474d5813f78f2d03bf2b4176f6142c
+  version: 3.0.0
+  sha256: 33aca286910d8b1304c167a31ae4a193cfe8d0d0c8c285fc2d5da7b6cae048bb
   requires_dist:
   - smart-open
+  - pytest>=7.0 ; extra == 'dev'
+  - pytest-cov ; extra == 'dev'
+  - mypy ; extra == 'dev'
+  - black ; extra == 'dev'
+  - isort ; extra == 'dev'
+  - flake8 ; extra == 'dev'
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/5b/e9/4057d4c2aa22ca25c180ecbed2ce9e7d65bf787999778bc63b41df0d03b5/biopython-1.86-cp312-cp312-macosx_11_0_arm64.whl
+  name: biopython
+  version: '1.86'
+  sha256: 04f9abdf6cbf0087850de5f8148da0d420c4cb87905bf4de3145ad24a8d55dcd
+  requires_dist:
+  - numpy
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/98/e2/199b8ccbd4b9bf234157db0668177b5b7784d62f29d9096fd0d3a70e3b86/biopython-1.86-cp312-cp312-macosx_10_13_x86_64.whl
+  name: biopython
+  version: '1.86'
+  sha256: f8d372aae21d79b11613751c6ae23c88db0e94d25b7567b1f67aa0304fb61667
+  requires_dist:
+  - numpy
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/a9/13/00db03b01e54070d5b0ec9c71eef86e61afa733d9af76e5b9b09f5dc9165/biopython-1.86-cp312-cp312-win_amd64.whl
+  name: biopython
+  version: '1.86'
+  sha256: 35a6b9c5dcdfb5c2631a313a007f3f41a7d72573ba2b68c962e10ea92096ff3b
+  requires_dist:
+  - numpy
+  requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/d7/cb/61877367bf08670573d62513b239dc65cf2b7488dc74322cc6051da2e55e/biopython-1.86-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+  name: biopython
+  version: '1.86'
+  sha256: 1859830b8262785c6b59dfe0c82cddb643974f63b9d2779bb9f3e2c47c0a95da
+  requires_dist:
+  - numpy
   requires_python: '>=3.10'
 - conda: https://conda.anaconda.org/conda-forge/noarch/black-25.1.0-pyh866005b_0.conda
   sha256: c68f110cd491dc839a69e340930862e54c00fb02cede5f1831fcf8a253bd68d2
@@ -4536,6 +4602,30 @@ packages:
   purls: []
   size: 9389
   timestamp: 1726802555076
+- pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
+  name: pyfaidx
+  version: 0.9.0.3
+  sha256: e494edffd644dbfa141ec63196c274cbb1f029acfc5977108c4fe51fdf5dc3ae
+  requires_dist:
+  - importlib-metadata ; python_full_version < '3.8'
+  - packaging
+  requires_python: '>=3.7'
+- pypi: https://files.pythonhosted.org/packages/1f/9b/860b1f95ed305c0ae42d943cf9006733fd6bbb879ccf21a542e905b5d991/pyfastx-2.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+  name: pyfastx
+  version: 2.2.0
+  sha256: 72e347e959de5933e57fabe348b14ce5f1ccdef6d6064a7339a537e7c9994f43
+- pypi: https://files.pythonhosted.org/packages/83/43/74c580086e663c2e0ac80d7933a912a27c1f584adf5ca7841157f9f7c067/pyfastx-2.2.0-cp312-cp312-win_amd64.whl
+  name: pyfastx
+  version: 2.2.0
+  sha256: 5956b4a51cff100fea56058bc90317d7e470dcc2a704e16882fac70a20133503
+- pypi: https://files.pythonhosted.org/packages/a5/54/b91919749f641cae82a804a8d0c582443d32db1ec0cc0d3af30b135567d6/pyfastx-2.2.0.tar.gz
+  name: pyfastx
+  version: 2.2.0
+  sha256: 80f1585a0c0fd021d1e0091ec4275a2bed6587633bf69165748ff1a541fdcc27
+- pypi: https://files.pythonhosted.org/packages/c0/ba/2494f64538417c066e6e1d3d123b3b22d0643b2369e34a5a7a3322f43f61/pyfastx-2.2.0-cp312-cp312-macosx_10_13_x86_64.whl
+  name: pyfastx
+  version: 2.2.0
+  sha256: bfd5429595000c1e1460e2330e918e2de8dd7def582522a1dc607b6d0c0008b0
 - conda: https://conda.anaconda.org/conda-forge/noarch/pygments-2.19.2-pyhd8ed1ab_0.conda
   sha256: 5577623b9f6685ece2697c6eb7511b4c9ac5fb607c9babc2646c811b428fd46a
   md5: 6b6ece66ebcae2d5f326c77ef2c5a066
@@ -4559,6 +4649,26 @@ packages:
   - pkg:pypi/pyparsing?source=hash-mapping
   size: 104044
   timestamp: 1758436411254
+- pypi: https://files.pythonhosted.org/packages/7c/2b/1cf19890a0e4c73ad2672ce7eb485606c4bd2846eef2d892c078ab193c92/pysam-0.23.3.tar.gz
+  name: pysam
+  version: 0.23.3
+  sha256: 9ebcb1f004b296fd139b103ec6fd7e415e80f89f194eb7d0d972ac6d11bbaf24
+  requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/a2/6b/dd9f94da44463ecfddb7075f1048c044155c725d7d79fde2e7957561a3b0/pysam-0.23.3-cp312-cp312-macosx_10_13_x86_64.whl
+  name: pysam
+  version: 0.23.3
+  sha256: 69f90c0867fe43f04004bcea963f6b2e68b39180afab54bf551f61f43856638b
+  requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/df/a6/c100df6c8118b4ce1f9c086bb9cf5bccd4f71d05ceb2ecf474f3b0ea87b8/pysam-0.23.3-cp312-cp312-manylinux_2_28_x86_64.whl
+  name: pysam
+  version: 0.23.3
+  sha256: 4099393fc5097b5081c7efaf46b0109e4f0a8ed18f86d497219a8bf739c73992
+  requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/f3/e9/686e711a559a02e4c3ba0bc78cf031d9ddb525e9f0b2984d1b66536ba94a/pysam-0.23.3-cp312-cp312-macosx_11_0_arm64.whl
+  name: pysam
+  version: 0.23.3
+  sha256: 2310d72bfae7a0980d414156267e25b57aa221a768c11c087f3f7d00ceb9fed4
+  requires_python: '>=3.8'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/pyside6-6.9.3-py312h9da60e5_1.conda
   sha256: 31f0d79f4f9c989a9acf566948cbd7d2d1c08e4840a04461f58bc3a734b8332b
   md5: 30e8545156cab1f5ff0fe9f0297c77c6

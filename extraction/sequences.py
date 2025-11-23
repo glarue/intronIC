@@ -53,6 +53,7 @@ class SequenceExtractor:
         """
         self.genome_file = genome_file
         self.genome_reader = GenomeReader(genome_file, cached=use_cache)
+        self.use_cache = use_cache
 
     def extract_sequences(
         self,
@@ -86,12 +87,15 @@ class SequenceExtractor:
 
         # Process each chromosome/region
         for region_name, region_introns in introns_by_region.items():
-            # Get region sequence
-            try:
-                region_seq = self.genome_reader.get_sequence(region_name).upper()
-            except KeyError:
-                print(f"[!] Warning: Region '{region_name}' not found in genome, skipping")
-                continue
+            # For cached mode: load entire chromosome once
+            # For indexed mode: we'll use fetch() per intron instead
+            region_seq = None
+            if self.use_cache:
+                try:
+                    region_seq = self.genome_reader.get_sequence(region_name).upper()
+                except KeyError:
+                    print(f"[!] Warning: Region '{region_name}' not found in genome, skipping")
+                    continue
 
             # Process each intron in this region
             for intron in region_introns:
@@ -106,6 +110,88 @@ class SequenceExtractor:
                 )
 
                 yield intron
+
+    def extract_sequences_with_deduplication(
+        self,
+        introns: List[Intron],
+        flank_size: int | Tuple[int, int] = 200,
+        five_score_coords: Tuple[int, int] = (-3, 9),
+        three_score_coords: Tuple[int, int] = (-6, 4),
+        bp_coords: Tuple[int, int] = (-55, -5)
+    ) -> Iterator[Intron]:
+        """
+        Extract sequences with deduplication - reuse sequences for duplicate coordinates.
+
+        This method provides significant performance and memory benefits by extracting
+        sequences only once per unique coordinate set and reusing them for all introns
+        with the same coordinates.
+
+        Memory savings: For datasets with ~10% duplicates, saves ~10% of extraction time
+        and memory during extraction phase.
+
+        Args:
+            introns: List of Intron objects
+            flank_size: Size of flanking regions (int or (upstream, downstream) tuple)
+            five_score_coords: Coordinates for 5' splice site scoring region
+            three_score_coords: Coordinates for 3' splice site scoring region
+            bp_coords: Coordinates for branch point scoring region
+
+        Yields:
+            Intron objects with sequences populated
+
+        Examples:
+            >>> extractor = SequenceExtractor('genome.fa')
+            >>> introns_with_seqs = list(
+            ...     extractor.extract_sequences_with_deduplication(intron_list)
+            ... )
+        """
+        # Group introns by region for efficient genome access
+        introns_by_region = self._group_by_region(introns)
+
+        # Process each chromosome/region
+        for region_name, region_introns in introns_by_region.items():
+            # Get region sequence
+            try:
+                region_seq = self.genome_reader.get_sequence(region_name).upper()
+            except KeyError:
+                print(f"[!] Warning: Region '{region_name}' not found in genome, skipping")
+                continue
+
+            # Group introns by coordinates within this region
+            # Key: (start, stop, strand)
+            # Value: List of introns with same coordinates
+            coord_groups = defaultdict(list)
+            for intron in region_introns:
+                coord_key = (
+                    intron.coordinates.start,
+                    intron.coordinates.stop,
+                    intron.coordinates.strand
+                )
+                coord_groups[coord_key].append(intron)
+
+            # Process each coordinate group
+            for coord_key, duplicate_introns in coord_groups.items():
+                # Extract sequences for first intron in group
+                first_intron = duplicate_introns[0]
+                first_with_seqs = self._extract_intron_sequences(
+                    first_intron,
+                    region_seq,
+                    flank_size,
+                    five_score_coords,
+                    three_score_coords,
+                    bp_coords
+                )
+
+                # Yield first intron with extracted sequences
+                yield first_with_seqs
+
+                # For remaining introns (duplicates), reuse the sequences
+                if len(duplicate_introns) > 1:
+                    shared_sequences = first_with_seqs.sequences
+                    for dup_intron in duplicate_introns[1:]:
+                        # Attach same sequences object to duplicate intron
+                        dup_with_seqs = dup_intron.with_sequences(shared_sequences)
+                        yield dup_with_seqs
 
     def _group_by_region(self, introns: List[Intron]) -> Dict[str, List[Intron]]:
         """
@@ -125,7 +211,7 @@ class SequenceExtractor:
     def _extract_intron_sequences(
         self,
         intron: Intron,
-        region_seq: str,
+        region_seq: Optional[str],
         flank_size: int | Tuple[int, int],
         five_score_coords: Tuple[int, int],
         three_score_coords: Tuple[int, int],
@@ -136,7 +222,7 @@ class SequenceExtractor:
 
         Args:
             intron: Intron object
-            region_seq: Full chromosome/region sequence
+            region_seq: Full chromosome/region sequence (None for indexed mode)
             flank_size: Flanking sequence size(s)
             five_score_coords: 5'ss scoring coordinates
             three_score_coords: 3'ss scoring coordinates
@@ -154,20 +240,45 @@ class SequenceExtractor:
             upstream_flank_size, downstream_flank_size = flank_size
 
         # Extract intron sequence with flanks
-        # Coordinates are 1-based, Python slicing is 0-based
-        start_idx = coord.start - 1  # Convert to 0-based
-        stop_idx = coord.stop  # Stop is inclusive in 1-based, exclusive in 0-based
+        # For cached mode: slice from region_seq
+        # For indexed mode: use fetch() to get just what we need
+        if region_seq is not None:
+            # Cached mode: use provided region sequence
+            # Coordinates are 1-based, Python slicing is 0-based
+            start_idx = coord.start - 1  # Convert to 0-based
+            stop_idx = coord.stop  # Stop is inclusive in 1-based, exclusive in 0-based
 
-        # Calculate flank boundaries
-        upstream_start = max(0, start_idx - upstream_flank_size)
-        downstream_end = min(len(region_seq), stop_idx + downstream_flank_size)
+            # Calculate flank boundaries
+            upstream_start = max(0, start_idx - upstream_flank_size)
+            downstream_end = min(len(region_seq), stop_idx + downstream_flank_size)
 
-        # Extract full sequence with flanks
-        full_seq = region_seq[upstream_start:downstream_end]
+            # Extract full sequence with flanks
+            full_seq = region_seq[upstream_start:downstream_end]
 
-        # Calculate actual boundaries of intron within full_seq
-        intron_start_in_full = start_idx - upstream_start
-        intron_stop_in_full = intron_start_in_full + (stop_idx - start_idx)
+            # Calculate actual boundaries of intron within full_seq
+            intron_start_in_full = start_idx - upstream_start
+            intron_stop_in_full = intron_start_in_full + (stop_idx - start_idx)
+        else:
+            # Indexed mode: fetch just the region we need (with flanks)
+            # Calculate boundaries in 1-based coordinates
+            fetch_start = max(1, coord.start - upstream_flank_size)
+            fetch_stop = coord.stop + downstream_flank_size
+
+            # Fetch from indexed genome (handles coordinate conversion internally)
+            full_seq = self.genome_reader.fetch(
+                coord.chromosome,
+                fetch_start,
+                fetch_stop
+            ).upper()
+
+            # For indexed mode, calculate offset differently
+            # fetch_start is the actual start position in 1-based coords
+            # full_seq starts at fetch_start
+            actual_upstream_size = coord.start - fetch_start
+            intron_length = coord.stop - coord.start + 1  # +1 because both are inclusive
+
+            intron_start_in_full = actual_upstream_size
+            intron_stop_in_full = intron_start_in_full + intron_length
 
         # Split into components
         upstream_flank = full_seq[:intron_start_in_full]
@@ -205,21 +316,40 @@ class SequenceExtractor:
         # Extract branch point region
         # BP coords are relative to 3' splice site (acceptor)
         # Adjust to be 0-based and relative to intron end
-        bp_start_rel = bp_coords[0]  # Negative value
-        bp_end_rel = bp_coords[1]    # Negative value
+        bp_start_rel = bp_coords[0]  # Negative value (e.g., -55)
+        bp_end_rel = bp_coords[1]    # Negative value (e.g., -5)
 
         if coord.strand == '+':
+            # For + strand: 3' splice site is at coord.stop
+            # bp_start_rel is more negative (e.g., -55), so further upstream
+            # bp_end_rel is less negative (e.g., -5), so closer to 3'ss
             bp_start_abs = coord.stop + bp_start_rel - 1  # -1 for 0-based
             bp_end_abs = coord.stop + bp_end_rel - 1
         else:
-            # For negative strand, coordinates are reversed
-            bp_start_abs = coord.start - bp_start_rel - 1
-            bp_end_abs = coord.start - bp_end_rel - 1
+            # For - strand: 3' splice site is at coord.start
+            # On - strand, the coordinates are reversed: more negative means further
+            # in genomic coords (higher position), so we swap start/end
+            # This matches v1.5.1: bpc = (bp_stop, bp_start) for reverse strand
+            bp_end_abs = coord.start - bp_start_rel - 1  # Note: assigned to end
+            bp_start_abs = coord.start - bp_end_rel - 1   # Note: assigned to start
 
-        # Extract BP region (ensure within bounds)
-        bp_start_abs = max(0, bp_start_abs)
-        bp_end_abs = min(len(region_seq), bp_end_abs)
-        bp_region_seq = region_seq[bp_start_abs:bp_end_abs]
+        # Extract BP region (different handling for cached vs indexed mode)
+        if region_seq is not None:
+            # Cached mode: slice from region_seq
+            bp_start_abs = max(0, bp_start_abs)
+            bp_end_abs = min(len(region_seq), bp_end_abs)
+            bp_region_seq = region_seq[bp_start_abs:bp_end_abs]
+        else:
+            # Indexed mode: fetch from genome
+            # Convert back to 1-based for fetch
+            bp_fetch_start = max(1, bp_start_abs + 1)
+            bp_fetch_stop = bp_end_abs + 1
+
+            bp_region_seq = self.genome_reader.fetch(
+                coord.chromosome,
+                bp_fetch_start,
+                bp_fetch_stop
+            ).upper()
 
         if coord.strand == '-':
             bp_region_seq = reverse_complement(bp_region_seq)

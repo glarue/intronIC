@@ -729,11 +729,23 @@ Classify mode examples:
                 has_train = hasattr(args, 'train') and args.train
 
                 if not has_model and not has_train:
-                    self.parser.error(
-                        "classify: must specify model source:\n"
-                        "  --model PATH  (use pretrained model)\n"
-                        "  --train       (train on-the-fly)"
-                    )
+                    # Try to use default pretrained model if available
+                    from cli.config import get_default_pretrained_model_path
+                    default_model = get_default_pretrained_model_path()
+
+                    if default_model:
+                        # Auto-populate with default model
+                        args.model = default_model
+                        has_model = True
+                    else:
+                        # No default model available - require explicit specification
+                        self.parser.error(
+                            "classify: must specify model source:\n"
+                            "  --model PATH  (use pretrained model)\n"
+                            "  --train       (train on-the-fly)\n"
+                            "\n"
+                            "Note: Default pretrained model not found at data/default_pretrained.model.pkl"
+                        )
 
             # Validate file paths exist
             file_attrs = ['genome', 'annotation', 'bed', 'sequence_file', 'model',

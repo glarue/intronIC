@@ -95,6 +95,19 @@ def load_model_metadata(model_path: Path) -> Optional[Dict[str, Any]]:
     """
     metadata_path = model_path.with_suffix('.metadata.json')
     if metadata_path.exists():
-        with open(metadata_path) as f:
-            return json.load(f)
+        try:
+            # Try to load as plain JSON first
+            with open(metadata_path, 'r') as f:
+                return json.load(f)
+        except UnicodeDecodeError:
+            # File might be compressed - try with gzip
+            import gzip
+            try:
+                with gzip.open(metadata_path, 'rt') as f:
+                    return json.load(f)
+            except Exception as e:
+                # If both fail, return None and log warning
+                import warnings
+                warnings.warn(f"Failed to load metadata from {metadata_path}: {e}")
+                return None
     return None

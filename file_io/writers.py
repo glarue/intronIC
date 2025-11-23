@@ -230,11 +230,11 @@ def generate_intron_name(
 
     Examples:
         >>> generate_intron_name(intron, "homo_sapiens", False)
-        'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104)'
+        'HomSap-gene:ENSG00000196218@transcript:ENST00000355481_69(104)'
         >>> generate_intron_name(intron, "homo_sapiens", False, True)
-        'homo_sapiens-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104)'
+        'homo_sapiens-gene:ENSG00000196218@transcript:ENST00000355481_69(104)'
         >>> generate_intron_name(omitted_intron, "homo_sapiens", False)
-        'HomSap-gene:ENSG00000196218@transcript:ENST00000355481-intron_69(104);[o:i]'
+        'HomSap-gene:ENSG00000196218@transcript:ENST00000355481_69(104);[o:i]'
     """
     if simple_name:
         # Simple format: species-i_{intron_id}{tags}
@@ -271,8 +271,9 @@ def generate_intron_name(
     omit_tag = format_omission_tag(intron.metadata.omitted)
     dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags)
 
-    # Build name: species-grandparent@parent-intron_index(family_size)tags
-    name = f"{species_prefix}-{grandparent}@{parent}-intron_{index}({family_size}){omit_tag}{dyn_tag}"
+    # Build name: species-grandparent@parent_index(family_size)tags
+    # Note: Removed "-intron" as it doesn't add information and takes up space
+    name = f"{species_prefix}-{grandparent}@{parent}_{index}({family_size}){omit_tag}{dyn_tag}"
 
     return name
 
@@ -568,7 +569,7 @@ class BEDWriter:
             no_abbreviate: Use full species name instead of abbreviation
 
         Format:
-            chrom  start(0-based)  stop  label  svm_score  strand  attributes
+            chrom  start(0-based)  stop  name  svm_score  strand  attributes
         """
         if not self.file:
             raise ValueError("File not open. Call open() first or use context manager.")
@@ -579,8 +580,9 @@ class BEDWriter:
         # Get SVM score or 'NA' if unavailable
         score = 'NA' if intron.svm_score is None else str(intron.svm_score)
 
-        # Generate intron label using shared function
-        label = generate_intron_label(intron, species_name, simple_name, no_abbreviate)
+        # Generate intron name using same format as meta.iic
+        # Format: Species-Gene@Transcript-intron_N(family_size)
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
 
         # Generate verbose attributes
         attributes = generate_attributes(intron)
@@ -590,7 +592,7 @@ class BEDWriter:
             intron.chromosome,
             str(start_0based),
             str(intron.stop),
-            label,
+            name,
             score,
             intron.strand,
             attributes
@@ -814,20 +816,22 @@ class SequenceWriter:
         >>> #     writer.write_introns(introns, include_score=True)
     """
 
-    def __init__(self, file_path: Union[str, Path]):
+    def __init__(self, file_path: Union[str, Path], mode: str = 'w'):
         """
         Initialize sequence writer.
 
         Args:
             file_path: Path to output file
+            mode: File open mode ('w' for write, 'a' for append)
         """
         self.file_path = Path(file_path)
         self.file: Optional[TextIO] = None
         self.introns_written = 0
+        self.mode = mode
 
     def open(self) -> None:
         """Open output file for writing."""
-        self.file = open(self.file_path, 'w')
+        self.file = open(self.file_path, self.mode)
 
     def close(self) -> None:
         """Close output file."""

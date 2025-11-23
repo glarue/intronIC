@@ -427,6 +427,168 @@ class IntronFilter:
         return self.stats
 
 
+def should_extract_sequences_for(
+    intron: Intron,
+    min_length: int,
+    longest_only: bool,
+    longest_isoforms: Dict[str, str],
+    seen_coordinates: Set[Tuple[int, int]],
+    include_duplicates: bool
+) -> bool:
+    """
+    Determine if sequences should be extracted for this intron based on metadata only.
+
+    This function allows pre-filtering before expensive sequence extraction.
+    It checks criteria that can be determined without sequences:
+    - Length (too short to ever be useful)
+    - Longest isoform (if longest_only=True and not longest isoform)
+    - Duplicates (if not include_duplicates and is duplicate)
+
+    Args:
+        intron: Intron object (without sequences)
+        min_length: Minimum intron length
+        longest_only: Only extract for longest isoform
+        longest_isoforms: Dict mapping gene ID to longest transcript ID
+        seen_coordinates: Set of (start, stop) tuples already seen
+        include_duplicates: Whether to extract for all duplicates
+
+    Returns:
+        True if sequences should be extracted, False otherwise
+    """
+    # Check length - too short, skip extraction
+    if intron.length < min_length:
+        return False
+
+    # Check longest isoform - if longest_only=True, only extract for longest
+    if longest_only:
+        grandparent = intron.metadata.grandparent
+        parent = intron.metadata.parent
+        if grandparent and grandparent in longest_isoforms:
+            is_longest = (parent == longest_isoforms[grandparent])
+            if not is_longest:
+                return False
+
+    # Check duplicates - only extract for first occurrence
+    # We reuse sequences for all duplicates regardless of include_duplicates flag
+    # The include_duplicates flag affects filtering/output, not extraction
+    coord_key = (intron.coordinates.start, intron.coordinates.stop)
+    if coord_key in seen_coordinates:
+        # This is a duplicate - skip extraction (will reuse from first occurrence)
+        return False
+
+    # Extract by default
+    return True
+
+
+@dataclass
+class PrefilterResult:
+    """Result of pre-filtering introns before sequence extraction."""
+    extract_list: List[Intron]  # Introns that need sequences extracted
+    skip_list: List[Intron]     # Introns that can skip extraction
+    stats: Dict[str, int]        # Statistics about filtering decisions
+
+
+def prefilter_introns(
+    introns: List[Intron],
+    min_length: int = 30,
+    longest_only: bool = False,
+    include_duplicates: bool = False
+) -> PrefilterResult:
+    """
+    Pre-filter introns before sequence extraction based on metadata only.
+
+    This function separates introns into two groups:
+    1. extract_list: Introns that need sequences extracted
+    2. skip_list: Introns that can skip extraction (too short, wrong isoform, duplicates)
+
+    By filtering before extraction, we avoid the expensive operation of extracting
+    sequences for ~85-90% of introns that will be omitted anyway.
+
+    Args:
+        introns: List of Intron objects (without sequences)
+        min_length: Minimum intron length
+        longest_only: Only extract for longest isoform per gene
+        include_duplicates: Extract for all duplicate coordinates
+
+    Returns:
+        PrefilterResult containing extract_list, skip_list, and statistics
+
+    Examples:
+        >>> result = prefilter_introns(introns, min_length=50, longest_only=True)
+        >>> print(f"Extracting {len(result.extract_list)}/{len(introns)} introns")
+        >>> # Extract sequences only for result.extract_list
+        >>> introns_with_seq = extract_sequences(result.extract_list, ...)
+    """
+    extract_list = []
+    skip_list = []
+    stats = {
+        'total': len(introns),
+        'too_short': 0,
+        'not_longest_isoform': 0,
+        'duplicate': 0,
+        'extract': 0,
+        'skip': 0
+    }
+
+    # Sort introns using same hierarchical sort as filtering
+    # This ensures longest isoform identification is correct
+    sorted_introns = IntronFilter._sort_introns(introns)
+
+    # Identify longest isoforms (same logic as IntronFilter)
+    longest_isoforms: Dict[str, str] = {}
+    for intron in sorted_introns:
+        grandparent = intron.metadata.grandparent
+        parent = intron.metadata.parent
+        if grandparent and grandparent not in longest_isoforms:
+            longest_isoforms[grandparent] = parent
+
+    # Track seen coordinates per (chr, strand) to identify duplicates
+    seen_by_region: Dict[Tuple, Set[Tuple[int, int]]] = defaultdict(set)
+
+    # Process each intron
+    for intron in sorted_introns:
+        region_key = (intron.coordinates.chromosome, intron.coordinates.strand)
+        coord_key = (intron.coordinates.start, intron.coordinates.stop)
+        seen_coords = seen_by_region[region_key]
+
+        # Decide if we should extract sequences
+        should_extract = should_extract_sequences_for(
+            intron=intron,
+            min_length=min_length,
+            longest_only=longest_only,
+            longest_isoforms=longest_isoforms,
+            seen_coordinates=seen_coords,
+            include_duplicates=include_duplicates
+        )
+
+        if should_extract:
+            extract_list.append(intron)
+            stats['extract'] += 1
+            # Mark coordinates as seen AFTER deciding
+            seen_by_region[region_key].add(coord_key)
+        else:
+            skip_list.append(intron)
+            stats['skip'] += 1
+
+            # Track why it was skipped (for statistics)
+            if intron.length < min_length:
+                stats['too_short'] += 1
+            elif longest_only:
+                grandparent = intron.metadata.grandparent
+                parent = intron.metadata.parent
+                if grandparent and grandparent in longest_isoforms:
+                    if parent != longest_isoforms[grandparent]:
+                        stats['not_longest_isoform'] += 1
+            elif coord_key in seen_coords:
+                stats['duplicate'] += 1
+
+    return PrefilterResult(
+        extract_list=extract_list,
+        skip_list=skip_list,
+        stats=stats
+    )
+
+
 def filter_introns(
     introns: List[Intron],
     min_length: int = 30,

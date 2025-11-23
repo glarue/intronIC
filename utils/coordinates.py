@@ -75,7 +75,7 @@ Strand = Literal['+', '-']
 CoordinateSystem = Literal['0-based', '1-based']
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GenomicCoordinate:
     """
     Immutable representation of a genomic coordinate with explicit system tracking.
