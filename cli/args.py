@@ -328,6 +328,11 @@ Classify mode examples:
             default=0.0001,
             help='PWM pseudocount (default: 0.0001)'
         )
+        scoring.add_argument(
+            '--pwms',
+            type=Path,
+            help='Custom PWM matrix file (.iic or .yaml format)'
+        )
 
         # === Advanced ===
         advanced = parser.add_argument_group('advanced options')
