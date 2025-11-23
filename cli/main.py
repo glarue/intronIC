@@ -41,6 +41,36 @@ from utils.metadata import generate_training_metadata, generate_pretrained_metad
 
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+def get_pwm_file(config: 'IntronICConfig') -> Path:
+    """
+    Get PWM file path from config or use default.
+
+    Args:
+        config: IntronIC configuration
+
+    Returns:
+        Path to PWM file (supports both .iic and .yaml formats)
+
+    Raises:
+        FileNotFoundError: If PWM file doesn't exist
+    """
+    if config.pwm_file is not None:
+        pwm_file = config.pwm_file
+    else:
+        # Default to legacy format
+        data_dir = Path(__file__).parent.parent / "data"
+        pwm_file = data_dir / "scoring_matrices.fasta.iic"
+
+    if not pwm_file.exists():
+        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
+
+    return pwm_file
+
+
+# ============================================================================
 # PHASE 3: Parallel Scoring Worker Function
 # ============================================================================
 # This function must be at module level (not nested) to be picklable for multiprocessing
@@ -810,9 +840,7 @@ def extract_introns_from_annotation(
     contigs = sorted(introns_by_contig.keys())
 
     # Load PWM matrices (for minimum length calculation)
-    pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
-    if not pwm_file.exists():
-        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
+    pwm_file = get_pwm_file(config)
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
 
@@ -1013,7 +1041,6 @@ def extract_introns_from_annotation(
     del extract_list
     gc.collect()
 
-    messenger.info(f"Completed extraction: {len(all_introns):,} total introns")
     return all_introns
 
 
@@ -1094,10 +1121,7 @@ def extract_introns_from_bed(
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
-    pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
-    if not pwm_file.exists():
-        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
-
+    pwm_file = get_pwm_file(config)
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
     # Get any U12 BP matrix to determine length (all should be same length)
     bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
@@ -1178,10 +1202,7 @@ def score_introns(
     messenger.info("Loading PWM matrices")
 
     # Determine PWM file paths
-    pwm_file = Path(__file__).parent.parent / "data" / "scoring_matrices.fasta.iic"
-    if not pwm_file.exists():
-        raise FileNotFoundError(f"PWM file not found: {pwm_file}")
-
+    pwm_file = get_pwm_file(config)
     u2_bp_file = Path(__file__).parent.parent / "data" / "u2.conserved_empirical_bp_pwm.iic"
 
     # Extract scoring configuration
@@ -1381,7 +1402,7 @@ def normalize_scores(
     messenger.info("Scoring reference sequences")
 
     # Load PWM matrices
-    pwm_file = data_dir / "scoring_matrices.fasta.iic"
+    pwm_file = get_pwm_file(config)
     pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
 
     # Load U2 BP matrix from separate file (fallback/conserved matrix)
@@ -2512,8 +2533,6 @@ def main_classify(config: IntronICConfig):
         else:
             raise ValueError(f"Unknown input mode: {config.input.mode}")
 
-        messenger.success(f"Extracted {len(introns):,} introns")
-
         # If sequences only, skip to output
         if config.scoring.sequences_only:
             messenger.warning("Sequences-only mode: Skipping classification")
@@ -2607,7 +2626,6 @@ def main_classify(config: IntronICConfig):
         # Step 2: Score introns
         messenger.step(2, "Score Introns with PWMs", pipeline_steps)
         scored_introns = score_introns(introns_for_scoring, config, messenger, reporter)
-        messenger.success(f"Scored {len(scored_introns):,} introns")
 
         # MEMORY OPTIMIZATION: Write sequences to file now (while in memory)
         # Then clear large sequences before classification to save ~10-15 GB

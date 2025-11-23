@@ -349,10 +349,10 @@ class PWMLoader:
     @staticmethod
     def load_from_file(filepath: Path, pseudocount: float = 0.0001) -> Dict[str, PWMSet]:
         """
-        Load all PWMs from scoring_matrices.fasta.iic file.
+        Load all PWMs from file (supports both legacy .iic and YAML formats).
 
         Args:
-            filepath: Path to scoring_matrices.fasta.iic
+            filepath: Path to PWM file (.iic, .yaml, or .yml)
             pseudocount: Pseudocount value to use for PWM scoring (default: 0.0001)
 
         Returns:
@@ -366,13 +366,21 @@ class PWMLoader:
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If file format is invalid
+
+        Note:
+            Automatically detects format based on file extension:
+            - .yaml or .yml: YAML format
+            - Otherwise: Legacy .iic format
         """
         if not filepath.exists():
             raise FileNotFoundError(f"Matrix file not found: {filepath}")
 
-        # Parse all matrices from file
-        # Port from: intronIC.py:1242-1264
-        matrices = PWMLoader._parse_matrix_file(filepath)
+        # Auto-detect format based on extension
+        if filepath.suffix.lower() in ('.yaml', '.yml'):
+            matrices = PWMLoader._parse_yaml_file(filepath)
+        else:
+            # Legacy .iic format
+            matrices = PWMLoader._parse_matrix_file(filepath)
 
         # Group matrices by region (five, bp, three)
         pwm_sets = PWMLoader._group_into_pwm_sets(matrices, pseudocount)
@@ -460,6 +468,62 @@ class PWMLoader:
             matrices[parsed_name] = {
                 'matrix': current_matrix,
                 'start_index': current_start_index
+            }
+
+        return matrices
+
+    @staticmethod
+    def _parse_yaml_file(filepath: Path) -> Dict[tuple, Dict[str, Dict[int, float]]]:
+        """
+        Parse YAML format PWM file into raw frequency dictionaries.
+
+        Args:
+            filepath: Path to YAML PWM file
+
+        Returns:
+            Dictionary mapping (type, boundary, region) tuples to matrix data:
+            {
+                ('u12', 'atac', 'five'): {
+                    'A': {0: 0.25, 1: 0.30, ...},
+                    'C': {0: 0.25, 1: 0.20, ...},
+                    ...
+                },
+                start_index: -3  # Stored in special key
+            }
+        """
+        import yaml
+
+        with open(filepath, 'r') as f:
+            data = yaml.safe_load(f)
+
+        matrices = {}
+
+        # Process each matrix
+        for matrix_name, matrix_data in data.get('matrices', {}).items():
+            # Parse matrix name into components
+            parsed_name = PWMLoader._parse_matrix_name(matrix_name)
+
+            # Convert YAML matrix format to internal format
+            # YAML format: [[A, C, G, T], [A, C, G, T], ...]
+            # Internal format: {'A': {0: val, 1: val}, 'C': {0: val}, ...}
+
+            bases = matrix_data.get('bases', ['A', 'C', 'G', 'T'])
+            yaml_matrix = matrix_data.get('matrix', [])
+            start_index = matrix_data.get('start_index')
+            if start_index is None:
+                start_index = 0
+
+            # Build internal matrix structure
+            internal_matrix = {base: {} for base in bases}
+
+            for pos_idx, row in enumerate(yaml_matrix):
+                for base_idx, base in enumerate(bases):
+                    internal_matrix[base][pos_idx] = row[base_idx]
+
+            # Store with metadata
+            matrices[parsed_name] = {
+                'matrix': internal_matrix,
+                'start_index': start_index
             }
 
         return matrices
