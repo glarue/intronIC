@@ -141,10 +141,21 @@ def write_yaml_pwm(data: Dict[str, Any], filepath: Path):
         output['matrices'][name] = matrix_output
 
     # Write with custom formatting for readability
+    # Use flow style for lists to make the file more compact
+    class CompactDumper(yaml.SafeDumper):
+        """Custom YAML dumper that uses flow style for lists."""
+        pass
+
+    def represent_list(dumper, data):
+        """Represent lists in flow style (e.g., [A, C, G, T])."""
+        return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+
+    CompactDumper.add_representer(list, represent_list)
+
     with open(filepath, 'w') as f:
         f.write(f"# intronIC Position Weight Matrices (YAML format)\n")
         f.write(f"# Generated from: {Path(filepath).stem}\n\n")
-        yaml.dump(output, f, default_flow_style=False, sort_keys=False, width=120)
+        yaml.dump(output, f, Dumper=CompactDumper, default_flow_style=False, sort_keys=False, width=120)
 
 
 def write_legacy_pwm(data: Dict[str, Any], filepath: Path):
