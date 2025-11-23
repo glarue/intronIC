@@ -349,10 +349,10 @@ class PWMLoader:
     @staticmethod
     def load_from_file(filepath: Path, pseudocount: float = 0.0001) -> Dict[str, PWMSet]:
         """
-        Load all PWMs from file (supports both legacy .iic and YAML formats).
+        Load all PWMs from file (supports legacy .iic, YAML, and JSON formats).
 
         Args:
-            filepath: Path to PWM file (.iic, .yaml, or .yml)
+            filepath: Path to PWM file (.iic, .yaml, .yml, or .json)
             pseudocount: Pseudocount value to use for PWM scoring (default: 0.0001)
 
         Returns:
@@ -369,14 +369,17 @@ class PWMLoader:
 
         Note:
             Automatically detects format based on file extension:
-            - .yaml or .yml: YAML format
+            - .json: JSON format (grouped)
+            - .yaml or .yml: YAML format (flat)
             - Otherwise: Legacy .iic format
         """
         if not filepath.exists():
             raise FileNotFoundError(f"Matrix file not found: {filepath}")
 
         # Auto-detect format based on extension
-        if filepath.suffix.lower() in ('.yaml', '.yml'):
+        if filepath.suffix.lower() == '.json':
+            matrices = PWMLoader._parse_json_file(filepath)
+        elif filepath.suffix.lower() in ('.yaml', '.yml'):
             matrices = PWMLoader._parse_yaml_file(filepath)
         else:
             # Legacy .iic format
@@ -525,6 +528,75 @@ class PWMLoader:
                 'matrix': internal_matrix,
                 'start_index': start_index
             }
+
+        return matrices
+
+    @staticmethod
+    def _parse_json_file(filepath: Path) -> Dict[tuple, Dict[str, Dict[int, float]]]:
+        """
+        Parse JSON format PWM file into raw frequency dictionaries.
+
+        JSON format uses grouped matrices with metadata:
+        {
+            "format_version": "1.0",
+            "matrix_groups": [
+                {
+                    "description": ["comment1", "comment2", ...],
+                    "matrices": {
+                        "u12_atac_five": {
+                            "bases": ["A", "C", "G", "T"],
+                            "start_index": -20,
+                            "sample_size": 114,
+                            "matrix": [[0.26, 0.21, ...], ...]
+                        },
+                        ...
+                    }
+                },
+                ...
+            ]
+        }
+
+        Args:
+            filepath: Path to JSON PWM file
+
+        Returns:
+            Dictionary mapping (type, boundary, region) tuples to matrix data
+        """
+        import json
+
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+
+        matrices = {}
+
+        # Flatten grouped matrices
+        for group in data.get('matrix_groups', []):
+            for matrix_name, matrix_data in group.get('matrices', {}).items():
+                # Parse matrix name into components
+                parsed_name = PWMLoader._parse_matrix_name(matrix_name)
+
+                # Convert JSON matrix format to internal format
+                # JSON format: [[A, C, G, T], [A, C, G, T], ...]
+                # Internal format: {'A': {0: val, 1: val}, 'C': {0: val}, ...}
+
+                bases = matrix_data.get('bases', ['A', 'C', 'G', 'T'])
+                json_matrix = matrix_data.get('matrix', [])
+                start_index = matrix_data.get('start_index')
+                if start_index is None:
+                    start_index = 0
+
+                # Build internal matrix structure
+                internal_matrix = {base: {} for base in bases}
+
+                for pos_idx, row in enumerate(json_matrix):
+                    for base_idx, base in enumerate(bases):
+                        internal_matrix[base][pos_idx] = row[base_idx]
+
+                # Store with metadata
+                matrices[parsed_name] = {
+                    'matrix': internal_matrix,
+                    'start_index': start_index
+                }
 
         return matrices
 

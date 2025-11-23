@@ -52,17 +52,17 @@ def get_pwm_file(config: 'IntronICConfig') -> Path:
         config: IntronIC configuration
 
     Returns:
-        Path to PWM file (supports both .iic and .yaml formats)
+        Path to PWM file (supports .iic, .yaml, and .json formats)
 
     Raises:
         FileNotFoundError: If PWM file doesn't exist
     """
-    if config.pwm_file is not None:
-        pwm_file = config.pwm_file
+    if config.scoring.pwm_file is not None:
+        pwm_file = config.scoring.pwm_file
     else:
-        # Default to legacy format
+        # Default to JSON format
         data_dir = Path(__file__).parent.parent / "data"
-        pwm_file = data_dir / "scoring_matrices.fasta.iic"
+        pwm_file = data_dir / "scoring_matrices.json"
 
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
@@ -269,7 +269,7 @@ def format_count_with_percentage(count: int, total: int) -> str:
 
 def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
     """
-    Extract and log learned coefficients from trained ensemble.
+    Extract and log learned coefficients from trained ensemble with detailed hyperparameters.
 
     Args:
         ensemble: SVMEnsemble with trained models
@@ -290,11 +290,13 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
 
     messenger.log_only("")
     messenger.log_only("="*80)
-    messenger.log_only("LEARNED COEFFICIENTS")
+    messenger.log_only("MODEL DETAILS AND LEARNED COEFFICIENTS")
     messenger.log_only("="*80)
 
     all_coefficients = []
+    all_intercepts = []
     all_feature_names = None
+    model_hyperparams = []  # Store (C, penalty, loss, calibration, class_weight_mult)
 
     for i, svm_model in enumerate(ensemble.models):
         model = svm_model.model
@@ -306,6 +308,9 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
                 calibrated_clf = model.calibrated_classifiers_[0]
                 fitted_estimator = calibrated_clf.estimator
 
+                # Get calibration method
+                calib_method = getattr(model, 'method', 'unknown')
+
                 # Get LinearSVC from pipeline
                 linear_svc = None
                 if hasattr(fitted_estimator, 'named_steps'):
@@ -316,15 +321,35 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
 
                 if linear_svc is not None and hasattr(linear_svc, 'coef_'):
                     coef = linear_svc.coef_[0]  # Shape (1, n_features)
+                    intercept = linear_svc.intercept_[0] if hasattr(linear_svc, 'intercept_') else 0.0
+
+                    # Extract hyperparameters
+                    C_param = getattr(linear_svc, 'C', 'unknown')
+                    penalty = getattr(linear_svc, 'penalty', 'unknown')
+                    loss = getattr(linear_svc, 'loss', 'unknown')
+
+                    # Try to extract class_weight_multiplier if stored
+                    class_weight_mult = 'unknown'
+                    if hasattr(linear_svc, 'class_weight') and linear_svc.class_weight is not None:
+                        if isinstance(linear_svc.class_weight, dict) and 1 in linear_svc.class_weight:
+                            # Approximate multiplier from ratio (assuming balanced base)
+                            class_weight_mult = f"~{linear_svc.class_weight[1]:.2f}"
+
+                    model_hyperparams.append((C_param, penalty, loss, calib_method, class_weight_mult))
 
                     # Get feature list from transformer
                     transformer = fitted_estimator.named_steps.get('transform')
                     if transformer and hasattr(transformer, 'features') and transformer.features is not None:
-                        # Build feature names list
+                        # Build feature names list - use transformer features directly
                         feature_names = base_features.copy()
                         for feat in transformer.features:
+                            # Add features directly (transformer stores them without 'neg_' prefix)
+                            # Map old naming convention to current if needed
                             if feat in composite_features_map:
                                 feature_names.append(composite_features_map[feat])
+                            else:
+                                # Use feature name directly (handles both absdiff_X and neg_absdiff_X)
+                                feature_names.append(feat)
                         all_feature_names = feature_names
                     else:
                         # Fallback: infer from coefficient count
@@ -336,22 +361,82 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
                             all_feature_names = base_features + [f'feature_{j}' for j in range(3, n_features)]
 
                     all_coefficients.append(coef)
+                    all_intercepts.append(intercept)
 
-                    # Log this model's coefficients
-                    if i == 0:  # Only log first model in detail
-                        messenger.log_only(f"\nModel {i+1}/{len(ensemble.models)} Coefficients:")
+                    # Log first 3 models' coefficients in detail
+                    if i < 3:
+                        messenger.log_only(f"\nModel {i+1}/{len(ensemble.models)} Details:")
+                        messenger.log_only(f"  C={C_param:.6f}, penalty={penalty}, loss={loss}")
+                        messenger.log_only(f"  Calibration={calib_method}, class_weight_mult={class_weight_mult}")
+                        messenger.log_only(f"  Intercept: {intercept:+.6f}")
+                        messenger.log_only(f"  Coefficients:")
                         for feat_name, coef_val in zip(all_feature_names, coef):
-                            messenger.log_only(f"  {feat_name:20s}: {coef_val:+.6f}")
+                            messenger.log_only(f"    {feat_name:20s}: {coef_val:+.6f}")
         except Exception as e:
             messenger.log_only(f"Warning: Could not extract coefficients from model {i+1}: {e}")
 
     # Compute and log ensemble statistics
     if all_coefficients:
         coef_array = np.array(all_coefficients)  # Shape: (n_models, n_features)
+        intercept_array = np.array(all_intercepts)
         mean_coef = coef_array.mean(axis=0)
         std_coef = coef_array.std(axis=0)
+        mean_intercept = intercept_array.mean()
+        std_intercept = intercept_array.std()
 
-        messenger.log_only(f"\nEnsemble Statistics (n={len(all_coefficients)} models):")
+        # Log hyperparameter summary
+        messenger.log_only("\n" + "="*80)
+        messenger.log_only("ENSEMBLE HYPERPARAMETERS SUMMARY")
+        messenger.log_only("="*80)
+
+        if model_hyperparams:
+            # Extract unique values
+            C_values = [hp[0] for hp in model_hyperparams if hp[0] != 'unknown']
+            penalties = [hp[1] for hp in model_hyperparams if hp[1] != 'unknown']
+            losses = [hp[2] for hp in model_hyperparams if hp[2] != 'unknown']
+            calibs = [hp[3] for hp in model_hyperparams if hp[3] != 'unknown']
+
+            if C_values:
+                C_mean = np.mean(C_values)
+                C_std = np.std(C_values)
+                C_range = [min(C_values), max(C_values)]
+                messenger.log_only(f"C parameter: mean={C_mean:.6f}, std={C_std:.6f}, range={C_range}")
+
+            if penalties:
+                unique_penalties = list(set(penalties))
+                messenger.log_only(f"Penalty: {unique_penalties}")
+
+            if losses:
+                unique_losses = list(set(losses))
+                messenger.log_only(f"Loss: {unique_losses}")
+
+            if calibs:
+                from collections import Counter
+                calib_counts = Counter(calibs)
+                messenger.log_only(f"Calibration methods: {dict(calib_counts)}")
+
+        messenger.log_only("\n" + "="*80)
+        messenger.log_only("ENSEMBLE COEFFICIENT STATISTICS")
+        messenger.log_only("="*80)
+        messenger.log_only(f"Ensemble size: {len(all_coefficients)} models")
+        messenger.log_only(f"Feature dimensions: {len(all_feature_names)}")
+
+        # Feature list
+        if all_feature_names:
+            messenger.log_only(f"\nFeatures used:")
+            messenger.log_only(f"  Base features: {', '.join(base_features)}")
+            composite_feats = [f for f in all_feature_names if f not in base_features]
+            if composite_feats:
+                messenger.log_only(f"  Composite features: {', '.join(composite_feats)}")
+            else:
+                messenger.log_only(f"  Composite features: none")
+
+        messenger.log_only(f"\nIntercept Statistics:")
+        messenger.log_only(f"  Mean: {mean_intercept:+.6f}")
+        messenger.log_only(f"  Std:  {std_intercept:.6f}")
+        messenger.log_only(f"  Range: [{intercept_array.min():+.6f}, {intercept_array.max():+.6f}]")
+
+        messenger.log_only(f"\nCoefficient Statistics:")
         messenger.log_only("-"*80)
         messenger.log_only(f"{'Feature':<20s}  {'Mean':>12s}  {'Std':>12s}  {'Range':>24s}")
         messenger.log_only("-"*80)
@@ -363,6 +448,15 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
                 f"{feat_name:<20s}  {mean_val:+12.6f}  {std_val:12.6f}  "
                 f"[{feat_min:+.6f}, {feat_max:+.6f}]"
             )
+
+        # Feature importance ranking (by absolute mean coefficient)
+        messenger.log_only("\nFeature Importance Ranking (by |mean coefficient|):")
+        messenger.log_only("-"*80)
+        importance_list = [(name, abs(mean)) for name, mean in zip(all_feature_names, mean_coef)]
+        importance_list.sort(key=lambda x: x[1], reverse=True)
+        for rank, (name, abs_coef) in enumerate(importance_list, 1):
+            actual_coef = mean_coef[all_feature_names.index(name)]
+            messenger.log_only(f"  {rank}. {name:20s}: {abs_coef:.6f} (actual: {actual_coef:+.6f})")
 
         # Identify features with near-zero coefficients (L1-like sparsity)
         messenger.log_only("")
