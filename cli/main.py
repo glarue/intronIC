@@ -2476,9 +2476,11 @@ def main_train(config: IntronICConfig):
         # Feature transform
         if 'feature_transform' in opt_cfg:
             ft = opt_cfg['feature_transform']
-            if 'features' in ft:
+            if 'features' in ft and ft['features']:
                 features_str = ', '.join(ft['features'])
                 messenger.log_only(f"  features: [{features_str}]")
+            else:
+                messenger.log_only(f"  features: []")
 
         # Gamma scaling
         if 'gamma_imbalance_options' in opt_cfg:
