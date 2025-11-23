@@ -62,3 +62,24 @@ original_*.log
 comparison_test/
 test_verification/
 *.log
+
+# Documentation (keep only README.md and QUICKSTART.md tracked)
+/docs/
+/*.md
+!/README.md
+!/QUICKSTART.md
+
+# Test output directories
+run_tests/*/
+!run_tests/README.md
+test_*_output/
+*_test/
+*_validation*/
+celegans_*/
+test_chr19_output/
+
+# Model files from development
+*.model.pkl
+*.model.metadata.json
+homo_sapiens.d*.model.*
+homo_sapiens.default*.model.*
