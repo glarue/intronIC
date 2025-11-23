@@ -70,79 +70,177 @@ def get_pwm_file(config: 'IntronICConfig') -> Path:
     return pwm_file
 
 
+def merge_pwm_sets(
+    default_pwms: Dict[str, 'PWMSet'],
+    custom_pwms: Dict[str, 'PWMSet']
+) -> Dict[str, 'PWMSet']:
+    """
+    Merge custom PWM matrices into defaults (custom overwrites defaults).
+
+    Args:
+        default_pwms: Default PWM sets
+        custom_pwms: Custom PWM sets to merge in
+
+    Returns:
+        Merged PWM sets (modifies default_pwms in place and returns it)
+    """
+    for region in ['five', 'bp', 'three']:
+        if region in custom_pwms and region in default_pwms:
+            custom_matrices = custom_pwms[region].matrices
+            default_matrices = default_pwms[region].matrices
+
+            # Update defaults with custom (custom overwrites)
+            for key, pwm in custom_matrices.items():
+                default_matrices[key] = pwm
+
+    return default_pwms
+
+
+def load_pwms_with_fallback(config: 'IntronICConfig', messenger: 'UnifiedMessenger') -> Dict[str, 'PWMSet']:
+    """
+    Load PWM matrices with fallback to defaults for missing matrices.
+
+    If a custom PWM file is provided, it is merged with the default matrices,
+    allowing users to override only specific matrices without providing all of them.
+    This matches v1.5.1 behavior (add_custom_matrices function).
+
+    Args:
+        config: IntronIC configuration
+        messenger: Messenger for logging
+
+    Returns:
+        Dictionary mapping region to PWMSet (five, bp, three)
+
+    Raises:
+        FileNotFoundError: If PWM files don't exist
+    """
+    from scoring.pwm import PWMLoader
+
+    # Get default PWM file
+    data_dir = Path(__file__).parent.parent / "data"
+    default_pwm_file = data_dir / "scoring_matrices.json"
+
+    # Load default matrices
+    default_pwms = PWMLoader.load_from_file(
+        default_pwm_file,
+        pseudocount=config.scoring.pseudocount
+    )
+
+    # If no custom file, return defaults
+    if config.scoring.pwm_file is None:
+        return default_pwms
+
+    # Load custom matrices
+    custom_pwm_file = config.scoring.pwm_file
+    if not custom_pwm_file.exists():
+        raise FileNotFoundError(f"Custom PWM file not found: {custom_pwm_file}")
+
+    custom_pwms = PWMLoader.load_from_file(
+        custom_pwm_file,
+        pseudocount=config.scoring.pseudocount
+    )
+
+    # Merge custom into defaults
+    merge_pwm_sets(default_pwms, custom_pwms)
+
+    # Log which matrices were customized
+    custom_keys = []
+    for region in ['five', 'bp', 'three']:
+        if region in custom_pwms:
+            for key in custom_pwms[region].matrices.keys():
+                custom_keys.append(f"{region}:{'-'.join(str(k) for k in key)}")
+
+    if custom_keys:
+        messenger.log_only(f"Custom PWM matrices: {', '.join(custom_keys)}")
+
+    return default_pwms
+
+
 # ============================================================================
 # PHASE 3: Parallel Scoring Worker Function
 # ============================================================================
-# This function must be at module level (not nested) to be picklable for multiprocessing
+# These functions must be at module level (not nested) to be picklable for multiprocessing
+
+# Global variable to store PWMs in each worker process (set by initializer)
+_worker_pwm_sets = None
+_worker_scorer = None
 
 
-def _score_intron_worker_unpack(args):
-    """Unpacking wrapper for imap_unordered compatibility with sequence tracking."""
-    seq_idx, *worker_args = args
-    result, error = _score_intron_worker(*worker_args)
-    return seq_idx, result, error
-
-
-def _score_intron_worker(
-    intron: 'Intron',
-    pwm_file: Path,
-    u2_bp_file: Path,
+def _init_worker(
+    default_pwm_file: Path,
+    custom_pwm_file: Optional[Path],
     five_coords: Tuple[int, int],
     bp_coords: Tuple[int, int],
     three_coords: Tuple[int, int],
     ignore_nc_dnts: bool,
     pseudocount: float
-) -> Tuple[Optional['Intron'], Optional[str]]:
+):
+    """
+    Initialize worker process with PWMs and scorer.
+
+    This runs once per worker process (not per task), so PWMs are loaded once
+    and reused across all introns scored by this worker.
+
+    Args:
+        default_pwm_file: Path to default PWM matrices
+        custom_pwm_file: Optional custom PWM file (overrides defaults)
+        five_coords, bp_coords, three_coords: Scoring region coordinates
+        ignore_nc_dnts: Whether to ignore non-canonical dinucleotides
+        pseudocount: Pseudocount for PWM scoring
+    """
+    global _worker_pwm_sets, _worker_scorer
+
+    from scoring.scorer import IntronScorer
+    from scoring.pwm import PWMLoader
+
+    # Load default PWMs
+    pwm_sets = PWMLoader.load_from_file(default_pwm_file, pseudocount=pseudocount)
+
+    # Merge custom PWMs if provided
+    if custom_pwm_file is not None and custom_pwm_file.exists():
+        custom_pwms = PWMLoader.load_from_file(custom_pwm_file, pseudocount=pseudocount)
+        merge_pwm_sets(pwm_sets, custom_pwms)
+
+    # Store in global for this worker process
+    _worker_pwm_sets = pwm_sets
+
+    # Create scorer once for this worker
+    _worker_scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=five_coords,
+        bp_coords=bp_coords,
+        three_coords=three_coords,
+        ignore_nc_dnts=ignore_nc_dnts
+    )
+
+
+def _score_intron_worker_unpack(args):
+    """Unpacking wrapper for imap_unordered compatibility with sequence tracking."""
+    seq_idx, intron = args
+    result, error = _score_intron_worker(intron)
+    return seq_idx, result, error
+
+
+def _score_intron_worker(intron: 'Intron') -> Tuple[Optional['Intron'], Optional[str]]:
     """
     Worker function for parallel intron scoring.
 
-    Each worker loads PWMs (OS caches file reads for efficiency) and creates
-    its own scorer instance to avoid pickling issues.
+    Uses PWMs and scorer initialized once per worker process (by _init_worker).
+    This is much more efficient than loading PWMs for each intron.
 
     Args:
         intron: Intron to score
-        pwm_file: Path to PWM matrices file
-        u2_bp_file: Path to U2 branch point matrix file
-        five_coords: 5' splice site scoring region coordinates
-        bp_coords: Branch point search region coordinates
-        three_coords: 3' splice site scoring region coordinates
-        ignore_nc_dnts: Whether to ignore non-canonical dinucleotides
-        pseudocount: Pseudocount for PWM scoring
 
     Returns:
         (scored_intron, error_message) tuple
         If scoring succeeds: (intron, None)
         If scoring fails: (None, error_message)
     """
+    global _worker_scorer
+
     try:
-        # Import here to avoid issues with multiprocessing pickling
-        from scoring.scorer import IntronScorer
-        from scoring.pwm import PWMLoader, PWMSet
-        from pathlib import Path
-
-        # Load PWMs (OS file system cache makes this efficient across workers)
-        pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=pseudocount)
-
-        # Load U2 BP matrix if available
-        if u2_bp_file.exists():
-            u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=pseudocount)
-            if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
-                # Update BP PWM set with U2 GTAG matrix
-                updated_matrices = dict(pwm_sets['bp'].matrices)
-                updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
-                pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
-
-        # Create scorer for this worker
-        scorer = IntronScorer(
-            pwm_sets=pwm_sets,
-            five_coords=five_coords,
-            bp_coords=bp_coords,
-            three_coords=three_coords,
-            ignore_nc_dnts=ignore_nc_dnts
-        )
-
-        # Score intron
-        scored = scorer.score_intron(intron)
+        # Use scorer initialized once for this worker process
+        scored = _worker_scorer.score_intron(intron)
         return (scored, None)
 
     except Exception as e:
@@ -934,8 +1032,7 @@ def extract_introns_from_annotation(
     contigs = sorted(introns_by_contig.keys())
 
     # Load PWM matrices (for minimum length calculation)
-    pwm_file = get_pwm_file(config)
-    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
+    pwm_sets = load_pwms_with_fallback(config, messenger)
     bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
 
     # Calculate minimum length
@@ -1215,8 +1312,7 @@ def extract_introns_from_bed(
 
     # Load PWM matrices to get BP matrix length for minimum calculation
     # Port from: intronIC.py:4591-4592
-    pwm_file = get_pwm_file(config)
-    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
+    pwm_sets = load_pwms_with_fallback(config, messenger)
     # Get any U12 BP matrix to determine length (all should be same length)
     bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
     messenger.log_only(f"BP matrix length: {bp_matrix_length}bp", level="debug")
@@ -1295,9 +1391,8 @@ def score_introns(
     """
     messenger.info("Loading PWM matrices")
 
-    # Determine PWM file paths
-    pwm_file = get_pwm_file(config)
-    u2_bp_file = Path(__file__).parent.parent / "data" / "u2.conserved_empirical_bp_pwm.iic"
+    # Load PWM matrices with fallback support for custom matrices
+    pwm_sets = load_pwms_with_fallback(config, messenger)
 
     # Extract scoring configuration
     five_coords = (
@@ -1313,7 +1408,6 @@ def score_introns(
         config.scoring.scoring_regions.three_end
     )
     ignore_nc_dnts = config.scoring.ignore_nc_dnts
-    pseudocount = config.scoring.pseudocount
     n_workers = config.performance.processes
 
     # ========================================================================
@@ -1321,6 +1415,11 @@ def score_introns(
     # ========================================================================
     if n_workers > 1:
         messenger.info(f"Calculating PWM scores (parallel, {n_workers} workers)")
+
+        # Get PWM file paths for workers (they load PWMs in separate processes)
+        data_dir = Path(__file__).parent.parent / "data"
+        default_pwm_file = data_dir / "scoring_matrices.json"
+        custom_pwm_file = config.scoring.pwm_file
 
         progress = reporter.create_progress()
         scored_introns = []
@@ -1332,7 +1431,20 @@ def score_introns(
                 total=len(introns)
             )
 
-            with Pool(processes=n_workers) as pool:
+            # Use initializer to load PWMs once per worker process (not per intron)
+            with Pool(
+                processes=n_workers,
+                initializer=_init_worker,
+                initargs=(
+                    default_pwm_file,
+                    custom_pwm_file,
+                    five_coords,
+                    bp_coords,
+                    three_coords,
+                    ignore_nc_dnts,
+                    config.scoring.pseudocount
+                )
+            ) as pool:
                 try:
                     # Use imap_unordered with chunking for smooth progress updates
                     # This streams results back as they complete, not in order
@@ -1342,18 +1454,12 @@ def score_introns(
                     # Use imap_unordered for smooth progress monitoring across all workers
                     # Add sequence indices to track original order, then sort at the end
                     # This gives us both smooth progress AND correct ordering!
+                    # Workers now only need (seq_idx, intron) - PWMs loaded once per worker
                     results_iter = pool.imap_unordered(
                         _score_intron_worker_unpack,
                         zip(
                             range(len(introns)),  # Add sequence index
-                            introns,
-                            repeat(pwm_file),
-                            repeat(u2_bp_file),
-                            repeat(five_coords),
-                            repeat(bp_coords),
-                            repeat(three_coords),
-                            repeat(ignore_nc_dnts),
-                            repeat(pseudocount)
+                            introns
                         ),
                         chunksize=chunksize
                     )
@@ -1387,20 +1493,7 @@ def score_introns(
     else:
         messenger.info("Calculating PWM scores (sequential)")
 
-        # Load PWMs once for sequential mode
-        pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=pseudocount)
-
-        # Load U2 BP matrix if available
-        if u2_bp_file.exists():
-            from scoring.pwm import PWMSet
-            u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=pseudocount)
-            if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
-                # PWMSet is frozen, so create new PWMSet with updated U2 GTAG matrix
-                updated_matrices = dict(pwm_sets['bp'].matrices)
-                updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
-                pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
-                messenger.log_only("Loaded conserved U2-type BP matrix")
-
+        # PWMs already loaded with custom matrix fallback at function start
         # Create scorer
         scorer = IntronScorer(
             pwm_sets=pwm_sets,
@@ -1495,21 +1588,8 @@ def normalize_scores(
     # Score reference introns
     messenger.info("Scoring reference sequences")
 
-    # Load PWM matrices
-    pwm_file = get_pwm_file(config)
-    pwm_sets = PWMLoader.load_from_file(pwm_file, pseudocount=config.scoring.pseudocount)
-
-    # Load U2 BP matrix from separate file (fallback/conserved matrix)
-    from scoring.pwm import PWMSet
-    u2_bp_file = data_dir / "u2.conserved_empirical_bp_pwm.iic"
-    if u2_bp_file.exists():
-        u2_bp_matrices = PWMLoader.load_from_file(u2_bp_file, pseudocount=config.scoring.pseudocount)
-        if 'bp' in u2_bp_matrices and u2_bp_matrices['bp'].u2_gtag:
-            # PWMSet is frozen, so create new PWMSet with updated U2 GTAG matrix
-            updated_matrices = dict(pwm_sets['bp'].matrices)
-            updated_matrices[('u2', 'gtag')] = u2_bp_matrices['bp'].u2_gtag
-            pwm_sets['bp'] = PWMSet(matrices=updated_matrices)
-            messenger.log_only("Loaded conserved U2-type BP matrix for reference scoring")
+    # Load PWM matrices (U2 BP matrix now included in main file)
+    pwm_sets = load_pwms_with_fallback(config, messenger)
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
