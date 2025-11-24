@@ -74,8 +74,7 @@ test_verification/
 !/QUICKSTART.md
 
 # Test output directories
-run_tests/*/
-!run_tests/README.md
+run_tests/
 test_*_output/
 *_test/
 *_validation*/
