@@ -2860,11 +2860,9 @@ def main_classify(config: IntronICConfig):
         # Clear large sequences to reduce memory before classification
         # IMPORTANT: Clear BOTH scored_introns AND the full introns list
         # The full list includes omitted introns which still have sequences in memory
-        messenger.log_only("Clearing full intron sequences to reduce memory (keeping display fields for output)")
         scored_introns = clear_large_sequences_for_classification(scored_introns)
         introns = clear_large_sequences_for_classification(introns)  # Clear full list too!
         gc.collect()
-        messenger.log_only("Memory freed from full sequences (~10-15 GB for large genomes)")
 
         # Check if using pretrained model
         if config.training.pretrained_model_path:
