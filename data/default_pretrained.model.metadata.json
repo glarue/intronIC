@@ -1,6 +1,6 @@
 {
-  "model_name": "homo_sapiens.d15.model",
-  "training_date": "2025-11-20 16:18:19",
+  "model_name": "homo_sapiens.default.model",
+  "training_date": "2025-11-23 00:05:03",
   "reference_data": {
     "u12": {
       "file": "/home/glarue/code/intronIC/data/u12_reference.introns.iic.gz",

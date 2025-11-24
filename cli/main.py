@@ -62,7 +62,7 @@ def get_pwm_file(config: 'IntronICConfig') -> Path:
     else:
         # Default to JSON format
         data_dir = Path(__file__).parent.parent / "data"
-        pwm_file = data_dir / "scoring_matrices.json"
+        pwm_file = data_dir / "intronIC_scoring_PWMs.json"
 
     if not pwm_file.exists():
         raise FileNotFoundError(f"PWM file not found: {pwm_file}")
@@ -118,7 +118,7 @@ def load_pwms_with_fallback(config: 'IntronICConfig', messenger: 'UnifiedMesseng
 
     # Get default PWM file
     data_dir = Path(__file__).parent.parent / "data"
-    default_pwm_file = data_dir / "scoring_matrices.json"
+    default_pwm_file = data_dir / "intronIC_scoring_PWMs.json"
 
     # Load default matrices
     default_pwms = PWMLoader.load_from_file(
@@ -1418,7 +1418,7 @@ def score_introns(
 
         # Get PWM file paths for workers (they load PWMs in separate processes)
         data_dir = Path(__file__).parent.parent / "data"
-        default_pwm_file = data_dir / "scoring_matrices.json"
+        default_pwm_file = data_dir / "intronIC_scoring_PWMs.json"
         custom_pwm_file = config.scoring.pwm_file
 
         progress = reporter.create_progress()

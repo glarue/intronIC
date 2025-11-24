@@ -4,13 +4,13 @@ Converter between legacy .iic PWM format, YAML, and JSON formats.
 
 Usage:
     # Convert legacy to JSON (recommended)
-    python convert_pwm_format.py scoring_matrices.fasta.iic scoring_matrices.json
+    python convert_pwm_format.py scoring_matrices.fasta.iic intronIC_scoring_PWMs.json
 
     # Merge multiple legacy files into one JSON
     python convert_pwm_format.py --merge file1.iic file2.iic output.json
 
     # Convert JSON to legacy
-    python convert_pwm_format.py scoring_matrices.json scoring_matrices.iic
+    python convert_pwm_format.py intronIC_scoring_PWMs.json scoring_matrices.iic
 
     # Convert legacy to YAML (legacy support)
     python convert_pwm_format.py scoring_matrices.fasta.iic scoring_matrices.yaml
