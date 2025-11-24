@@ -357,7 +357,15 @@ def plot_training_results(
     Creates three plots:
     1. Reference scatter plot (U2 vs U12 training data)
     2. Reference hexplot (density of reference data)
-    3. Precision-Recall AUC curve
+    3. Precision-Recall AUC curve with aggregated statistics
+
+    For nested CV (multiple curves):
+    - Individual fold curves shown in light gray
+    - Mean PR curve computed via interpolation (bold blue line)
+    - Confidence bands (±1 std dev) as shaded region
+
+    For split evaluation (single curve):
+    - Single PR curve shown in bold blue
 
     Args:
         u2_scores: Nx2 array of U2 reference scores (5' z, BP z)
@@ -389,14 +397,74 @@ def plot_training_results(
         fig_dpi=fig_dpi
     )
 
-    # 3. Precision-Recall curve
-    # Plot all curves (matches original intronIC behavior for multiple CV folds)
+    # 3. Precision-Recall curve with aggregated statistics
     plt.figure(figsize=(8, 8))
-    for precision, recall in pr_curves:
-        plt.plot(recall, precision)
+
+    # If multiple curves (nested CV), show individual folds + mean + confidence bands
+    if len(pr_curves) > 1:
+        # Common recall grid for interpolation (0 to 1)
+        recall_grid = np.linspace(0, 1, 100)
+
+        # Interpolate each fold to common grid
+        interp_precisions = []
+        for precision, recall in pr_curves:
+            # Ensure monotonic decreasing recall (required for interpolation)
+            # PR curves typically go from high recall (1.0) to low recall (0.0)
+            if recall[0] < recall[-1]:
+                # Already increasing, reverse it
+                recall = recall[::-1]
+                precision = precision[::-1]
+
+            # Interpolate to common grid
+            # Fill with edge values for out-of-bounds recall
+            interp_p = np.interp(recall_grid[::-1], recall, precision)[::-1]
+            interp_precisions.append(interp_p)
+
+        # Compute mean and std
+        prec_array = np.array(interp_precisions)
+        mean_prec = prec_array.mean(axis=0)
+        std_prec = prec_array.std(axis=0)
+
+        # Plot individual fold curves in light gray
+        for precision, recall in pr_curves:
+            plt.plot(recall, precision, color='lightgray', alpha=0.5, linewidth=1)
+
+        # Plot confidence band (±1 std)
+        plt.fill_between(
+            recall_grid,
+            np.clip(mean_prec - std_prec, 0, 1),
+            np.clip(mean_prec + std_prec, 0, 1),
+            alpha=0.2,
+            color='steelblue',
+            label=f'±1 std (n={len(pr_curves)} folds)'
+        )
+
+        # Plot mean curve in bold
+        plt.plot(
+            recall_grid,
+            mean_prec,
+            color='steelblue',
+            linewidth=2.5,
+            label=f'Mean PR curve (AUC={pr_auc:.3f})'
+        )
+    else:
+        # Single curve (split eval) - just plot it
+        precision, recall = pr_curves[0]
+        plt.plot(
+            recall,
+            precision,
+            color='steelblue',
+            linewidth=2.5,
+            label=f'PR curve (AUC={pr_auc:.3f})'
+        )
+
     plt.xlabel('Recall', fontsize=14)
     plt.ylabel('Precision', fontsize=14)
-    plt.title(f'{species_name} - Precision-Recall AUC: {pr_auc:.3f}', fontsize=14)
+    plt.title(f'{species_name} - Precision-Recall Curve', fontsize=14)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.legend(loc='best', fontsize=12)
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
 
     auc_path = output_dir / f'{species_name}.AUC.iic.png'
