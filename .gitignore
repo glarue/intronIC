@@ -73,6 +73,8 @@ test_verification/
 !/README.md
 !/QUICKSTART.md
 !/SRC_LAYOUT_MIGRATION.md
+!/TODO.md
+!/FEATURE_SELECTION_IMPLEMENTATION_PLAN.md
 
 # Test output directories
 run_tests/
