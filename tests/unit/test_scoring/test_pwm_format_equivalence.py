@@ -18,7 +18,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict
 
-from scoring.pwm import PWM, PWMSet, PWMLoader
+from intronIC.scoring.pwm import PWM, PWMSet, PWMLoader
 
 
 # ============================================================================

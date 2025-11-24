@@ -14,8 +14,8 @@ from networkx import DiGraph, find_cycle, is_directed_acyclic_graph
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from extraction.annotator import AnnotationHierarchyBuilder
-from file_io.parsers import BioGLAnnotationParser
+from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+from intronIC.file_io.parsers import BioGLAnnotationParser
 
 
 def analyze_cycles(annotation_file: str, clean_names: bool = True):

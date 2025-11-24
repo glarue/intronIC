@@ -3,7 +3,7 @@
 Quick test to verify BothEndsStrongTransformer configurations.
 """
 import numpy as np
-from classification.transformers import BothEndsStrongTransformer
+from intronIC.classification.transformers import BothEndsStrongTransformer
 
 # Test data
 X = np.array([

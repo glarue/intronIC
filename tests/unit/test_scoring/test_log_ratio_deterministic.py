@@ -21,7 +21,7 @@ import pytest
 import numpy as np
 import math
 
-from scoring.pwm import PWM
+from intronIC.scoring.pwm import PWM
 
 
 # ============================================================================

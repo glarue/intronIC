@@ -8,9 +8,9 @@ sequence extraction before actually extracting sequences.
 import pytest
 from typing import Set, Tuple
 
-from core.intron import Intron, IntronMetadata
-from utils.coordinates import GenomicCoordinate
-from extraction.filters import (
+from intronIC.core.intron import Intron, IntronMetadata
+from intronIC.utils.coordinates import GenomicCoordinate
+from intronIC.extraction.filters import (
     should_extract_sequences_for,
     prefilter_introns,
     PrefilterResult

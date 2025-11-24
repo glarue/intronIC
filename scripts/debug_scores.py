@@ -7,10 +7,10 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from cli.main import load_reference_sequences, score_introns
+from intronIC.cli.main import load_reference_sequences, score_introns
 from config.config import IntronICConfig
-from cli.progress import IntronICProgressReporter
-from cli.messenger import UnifiedMessenger
+from intronIC.cli.progress import IntronICProgressReporter
+from intronIC.cli.messenger import UnifiedMessenger
 import logging
 
 # Setup minimal config
@@ -35,8 +35,8 @@ messenger = UnifiedMessenger(
     quiet=False
 )
 
-# Load reference sequences
-data_dir = Path(__file__).parent / "data"
+# Load reference sequences (from src/intronIC/data/)
+data_dir = Path(__file__).parent.parent / "src" / "intronIC" / "data"
 u12_file = data_dir / "u12_reference.introns.iic.gz"
 u2_file = data_dir / "u2_reference.introns.iic.gz"
 

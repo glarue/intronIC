@@ -28,7 +28,7 @@ import numpy as np
 import math
 from pathlib import Path
 
-from scoring.pwm import PWM, PWMLoader
+from intronIC.scoring.pwm import PWM, PWMLoader
 
 
 # ============================================================================

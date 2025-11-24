@@ -39,9 +39,9 @@ def run_fast_test(mode='quick', config_file=None):
 
     # Import here to show progress
     print("Loading modules...")
-    from classification.optimizer import SVMOptimizer
-    from classification.fast_test_config import get_fast_optimizer, print_config_summary
-    from classification.config_loader import load_optimizer_config
+    from intronIC.classification.optimizer import SVMOptimizer
+    from intronIC.classification.fast_test_config import get_fast_optimizer, print_config_summary
+    from intronIC.classification.config_loader import load_optimizer_config
 
     # Determine which config method to use
     if config_file:
@@ -49,7 +49,7 @@ def run_fast_test(mode='quick', config_file=None):
         optimizer = load_optimizer_config(config_file)
 
         # Print config summary
-        from classification.config_loader import get_config_summary
+        from intronIC.classification.config_loader import get_config_summary
         print("\n" + get_config_summary(config_file))
     else:
         print(f"\nUsing fast_test_config mode: {mode}")
@@ -73,7 +73,7 @@ def run_fast_test(mode='quick', config_file=None):
     # Example code structure:
     example_code = '''
     # Load references (example)
-    from data.loaders import load_reference_introns
+    from intronIC.data.loaders import load_reference_introns
     u12_introns = load_reference_introns('u12')
     u2_introns = load_reference_introns('u2')
 
@@ -90,7 +90,7 @@ def run_fast_test(mode='quick', config_file=None):
     print(f"  CV score: {parameters.cv_score:.4f}")
 
     # Train ensemble with optimized parameters
-    from classification.trainer import SVMTrainer
+    from intronIC.classification.trainer import SVMTrainer
     trainer = SVMTrainer(n_models=3)
     ensemble = trainer.train_ensemble(
         u12_introns,

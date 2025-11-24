@@ -9,9 +9,9 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from cli.args import IntronICArgumentParser
-from cli.config import IntronICConfig, ScoringRegions
-from cli.progress import IntronICProgressReporter
+from intronIC.cli.args import IntronICArgumentParser
+from intronIC.cli.config import IntronICConfig, ScoringRegions
+from intronIC.cli.progress import IntronICProgressReporter
 
 
 class TestArgumentParser:

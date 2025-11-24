@@ -13,7 +13,7 @@ Date: 2025-11-02
 import pytest
 import gzip
 from pathlib import Path
-from file_io.parsers import (
+from intronIC.file_io.parsers import (
     BioGLAnnotationParser,
     BEDParser,
     SequenceParser,
@@ -621,7 +621,7 @@ class TestCyclePrevention:
         This simulates the tRNA annotation pattern that caused 671 self-loops
         in Basidiobolus when gene- and rna- prefixes were incorrectly removed.
         """
-        from extraction.annotator import AnnotationHierarchyBuilder
+        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
         from networkx import is_directed_acyclic_graph
 
         # RefSeq-style annotation: gene and tRNA share same base ID
@@ -639,7 +639,7 @@ class TestCyclePrevention:
         )
 
         # Parse lines
-        from file_io.parsers import BioGLAnnotationParser
+        from intronIC.file_io.parsers import BioGLAnnotationParser
         parser = BioGLAnnotationParser(clean_names=True)
         annotations = list(parser.parse_lines(gff_lines))
 
@@ -690,7 +690,7 @@ class TestCyclePrevention:
         Ensembl IDs are globally unique even without prefixes (ENSG*, ENST*),
         so cleaning is safe and produces cleaner output.
         """
-        from extraction.annotator import AnnotationHierarchyBuilder
+        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
         from networkx import is_directed_acyclic_graph
 
         # Ensembl-style annotation with redundant prefixes
@@ -705,7 +705,7 @@ class TestCyclePrevention:
             clean_names=True
         )
 
-        from file_io.parsers import BioGLAnnotationParser
+        from intronIC.file_io.parsers import BioGLAnnotationParser
         parser = BioGLAnnotationParser(clean_names=True)
         annotations = list(parser.parse_lines(gff_lines))
 
@@ -765,7 +765,7 @@ class TestCyclePrevention:
         - NR_106918.1 -> MIR6859-1
         Creating a bidirectional cycle!
         """
-        from extraction.annotator import AnnotationHierarchyBuilder
+        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
         from networkx import is_directed_acyclic_graph
 
         gff_lines = [
@@ -780,7 +780,7 @@ class TestCyclePrevention:
             clean_names=True
         )
 
-        from file_io.parsers import BioGLAnnotationParser
+        from intronIC.file_io.parsers import BioGLAnnotationParser
         parser = BioGLAnnotationParser(clean_names=True)
         annotations = list(parser.parse_lines(gff_lines))
 

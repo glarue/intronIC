@@ -8,13 +8,13 @@ import pytest
 import numpy as np
 from dataclasses import replace
 
-from classification.trainer import (
+from intronIC.classification.trainer import (
     SVMTrainer,
     SVMModel,
     SVMEnsemble,
 )
-from classification.optimizer import SVMParameters
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.classification.optimizer import SVMParameters
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
 
 
 # =============================================================================

@@ -10,7 +10,7 @@ Tests:
 import numpy as np
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
-from classification.transformers import BothEndsStrongTransformer
+from intronIC.classification.transformers import BothEndsStrongTransformer
 
 def test_pipeline_creation():
     """Test that pipeline can be created with BothEndsStrongTransformer."""

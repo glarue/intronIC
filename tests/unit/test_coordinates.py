@@ -26,7 +26,7 @@ Test Coverage:
 import pytest
 
 # Import production implementations
-from utils.coordinates import (
+from intronIC.utils.coordinates import (
     GenomicCoordinate,
     bed_to_internal,
     internal_to_bed,

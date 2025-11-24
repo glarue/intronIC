@@ -10,10 +10,10 @@ from pathlib import Path
 import tempfile
 import gzip
 
-from extraction.annotator import AnnotationHierarchyBuilder
-from extraction.sequences import SequenceExtractor
-from scoring.pwm import PWMLoader
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+from intronIC.extraction.sequences import SequenceExtractor
+from intronIC.scoring.pwm import PWMLoader
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
 
 
 # ============================================================================

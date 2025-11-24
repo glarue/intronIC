@@ -19,11 +19,11 @@ import numpy as np
 from dataclasses import replace
 from typing import List
 
-from core.intron import (
+from intronIC.core.intron import (
     Intron, IntronScores, IntronSequences, IntronMetadata,
     GenomicCoordinate
 )
-from scoring.normalizer import ScoreNormalizer
+from intronIC.scoring.normalizer import ScoreNormalizer
 
 
 # ============================================================================

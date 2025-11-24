@@ -13,10 +13,10 @@ from dataclasses import replace
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 
-from classification.predictor import SVMPredictor
-from classification.trainer import SVMModel, SVMEnsemble
-from classification.optimizer import SVMParameters
-from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
+from intronIC.classification.predictor import SVMPredictor
+from intronIC.classification.trainer import SVMModel, SVMEnsemble
+from intronIC.classification.optimizer import SVMParameters
+from intronIC.core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
 
 
 # Test fixtures

@@ -7,10 +7,10 @@ Tests the full pipeline from annotation to introns.
 import pytest
 from pathlib import Path
 
-from extraction.annotator import AnnotationHierarchyBuilder
-from extraction.intronator import IntronGenerator
-from extraction.sequences import SequenceExtractor
-from extraction.filters import IntronFilter
+from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+from intronIC.extraction.intronator import IntronGenerator
+from intronIC.extraction.sequences import SequenceExtractor
+from intronIC.extraction.filters import IntronFilter
 
 # Mark all tests in this module
 pytestmark = [pytest.mark.integration, pytest.mark.extraction, pytest.mark.requires_chr19]

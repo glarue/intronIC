@@ -15,11 +15,11 @@ Date: 2025-11-02
 
 import pytest
 from pathlib import Path
-from file_io.parsers import BioGLAnnotationParser, BEDParser, SequenceParser
-from file_io.writers import BEDWriter, MetaWriter, SequenceWriter, ScoreWriter
-from file_io.genome import GenomeReader
-from core.intron import Intron, IntronSequences, IntronMetadata
-from utils.coordinates import GenomicCoordinate
+from intronIC.file_io.parsers import BioGLAnnotationParser, BEDParser, SequenceParser
+from intronIC.file_io.writers import BEDWriter, MetaWriter, SequenceWriter, ScoreWriter
+from intronIC.file_io.genome import GenomeReader
+from intronIC.core.intron import Intron, IntronSequences, IntronMetadata
+from intronIC.utils.coordinates import GenomicCoordinate
 
 
 # Test data paths

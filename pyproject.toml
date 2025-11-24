@@ -56,20 +56,17 @@ Repository = "https://github.com/glarue/intronIC"
 Issues = "https://github.com/glarue/intronIC/issues"
 
 [project.scripts]
-intronIC = "cli.main:main"
+intronIC = "intronIC.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cli", "core", "extraction", "file_io", "scoring", "classification", "utils"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"data" = "data"
+packages = ["src/intronIC"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-pythonpath = ["."]
+pythonpath = ["src"]
 
 [tool.black]
 line-length = 88

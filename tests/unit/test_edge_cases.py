@@ -7,11 +7,11 @@ This module tests unusual but valid inputs and boundary conditions.
 import pytest
 import numpy as np
 
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
-from scoring.scorer import IntronScorer
-from scoring.pwm import PWM, PWMSet
-from scoring.normalizer import ScoreNormalizer
-from extraction.filters import IntronFilter
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.scoring.scorer import IntronScorer
+from intronIC.scoring.pwm import PWM, PWMSet
+from intronIC.scoring.normalizer import ScoreNormalizer
+from intronIC.extraction.filters import IntronFilter
 
 
 # ============================================================================

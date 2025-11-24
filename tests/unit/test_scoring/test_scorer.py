@@ -25,9 +25,9 @@ import numpy as np
 import math
 from pathlib import Path
 
-from scoring.scorer import IntronScorer
-from scoring.pwm import PWM, PWMSet, PWMLoader
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.scoring.scorer import IntronScorer
+from intronIC.scoring.pwm import PWM, PWMSet, PWMLoader
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
 
 
 # ============================================================================

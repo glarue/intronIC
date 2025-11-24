@@ -10,7 +10,7 @@ from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from scoring.pwm import PWMLoader
+from intronIC.scoring.pwm import PWMLoader
 
 # Load matrices
 matrix_file = Path(__file__).parent.parent.parent.parent / "data" / "scoring_matrices.fasta.iic"

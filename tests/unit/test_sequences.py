@@ -16,7 +16,7 @@ Date: 2025-11-02
 """
 
 import pytest
-from utils.sequences import (
+from intronIC.utils.sequences import (
     reverse_complement,
     is_valid_dna,
     has_ambiguous_bases,

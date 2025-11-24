@@ -10,12 +10,12 @@ import numpy as np
 from scipy.stats import gmean
 from dataclasses import replace
 
-from classification.optimizer import (
+from intronIC.classification.optimizer import (
     SVMOptimizer,
     SVMParameters,
     OptimizationRound,
 )
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
 
 
 # =============================================================================

@@ -10,8 +10,8 @@ import tempfile
 from pathlib import Path
 import os
 
-from file_io.writers import MetaWriter, BedWriter, SeqWriter, ScoreWriter
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.file_io.writers import MetaWriter, BedWriter, SeqWriter, ScoreWriter
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
 
 
 # ============================================================================

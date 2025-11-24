@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import List, Tuple
 import numpy as np
 
-from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
-from scoring.pwm import PWM
-from scoring.scorer import IntronScorer
-from scoring.normalizer import ScoreNormalizer
-from classification.classifier import IntronClassifier, ClassificationResult
+from intronIC.core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
+from intronIC.scoring.pwm import PWM
+from intronIC.scoring.scorer import IntronScorer
+from intronIC.scoring.normalizer import ScoreNormalizer
+from intronIC.classification.classifier import IntronClassifier, ClassificationResult
 
 
 # Path to reference data (moved to root level in v2.0.0)

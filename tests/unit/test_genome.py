@@ -12,8 +12,8 @@ Date: 2025-11-02
 
 import pytest
 from pathlib import Path
-from file_io.genome import parse_fasta, GenomeReader
-from utils.coordinates import GenomicCoordinate
+from intronIC.file_io.genome import parse_fasta, GenomeReader
+from intronIC.utils.coordinates import GenomicCoordinate
 
 
 # Test data paths - use fixtures in tests

@@ -12,9 +12,9 @@ Date: 2025-11-02
 """
 
 import pytest
-from utils.coordinates import GenomicCoordinate
-from core.models import Exon
-from core.intron import (
+from intronIC.utils.coordinates import GenomicCoordinate
+from intronIC.core.models import Exon
+from intronIC.core.intron import (
     Intron,
     IntronScores,
     IntronSequences,

@@ -13,9 +13,9 @@ import pytest
 import numpy as np
 from numpy.testing import assert_array_almost_equal
 
-from classification.clipping import SymmetricClipper
-from classification.saturating import SaturatingTransform
-from scoring.normalizer import ZeroAnchoredRobustScaler
+from intronIC.classification.clipping import SymmetricClipper
+from intronIC.classification.saturating import SaturatingTransform
+from intronIC.scoring.normalizer import ZeroAnchoredRobustScaler
 
 
 # ==============================================================================

@@ -18,9 +18,9 @@ import numpy as np
 from pathlib import Path
 from dataclasses import replace
 
-from scoring.branch_point import BranchPointMatch, BranchPointScorer
-from scoring.pwm import PWM
-from core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+from intronIC.scoring.branch_point import BranchPointMatch, BranchPointScorer
+from intronIC.scoring.pwm import PWM
+from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
 
 
 # ============================================================================

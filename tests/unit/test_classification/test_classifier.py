@@ -10,8 +10,8 @@ Port from: intronIC.py:5038-5900
 
 import pytest
 
-from classification.classifier import IntronClassifier, ClassificationResult
-from core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
+from intronIC.classification.classifier import IntronClassifier, ClassificationResult
+from intronIC.core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
 
 
 # Test fixtures for validation tests

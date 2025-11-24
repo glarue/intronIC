@@ -14,15 +14,15 @@ Date: 2025-11-02
 
 import pytest
 from pathlib import Path
-from file_io.writers import (
+from intronIC.file_io.writers import (
     BEDWriter,
     MetaWriter,
     SequenceWriter,
     ScoreWriter,
     MappingWriter
 )
-from core.intron import Intron, IntronScores, IntronSequences, IntronMetadata
-from utils.coordinates import GenomicCoordinate
+from intronIC.core.intron import Intron, IntronScores, IntronSequences, IntronMetadata
+from intronIC.utils.coordinates import GenomicCoordinate
 
 
 # ============================================================================
