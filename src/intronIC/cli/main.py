@@ -2817,7 +2817,7 @@ def main_classify(config: IntronICConfig):
             messenger.log_only(f"Note: {format_count_with_percentage(duplicates_also_omitted, stats.duplicates)} of {stats.duplicates:,} total duplicates were also omitted for other reasons")
             messenger.log_only("")
 
-        messenger.success(f"Loaded {len(introns):,} introns from annotation")
+        messenger.success(f"Processed {len(introns):,} introns from annotation")
 
         # Important: Use filtered_introns for scoring, but keep original introns list
         # for potential output (user may want duplicates via -d flag)
