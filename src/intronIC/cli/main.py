@@ -1163,7 +1163,7 @@ def extract_introns_from_annotation(
                     if (current_percent // 10 > last_reported_percent // 10) or completed == len(contigs):
                         messenger.info(
                             f"Progress: {completed}/{len(contigs)} contigs ({current_percent}% of genome) - "
-                            f"{total_introns_extracted:,} introns extracted"
+                            f"{total_introns_extracted:,} sequences extracted"
                         )
                         last_reported_percent = current_percent
             except Exception as e:
