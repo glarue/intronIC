@@ -2852,7 +2852,7 @@ def main_classify(config: IntronICConfig):
                     species_name=config.output.species_name,
                     simple_name=config.output.uninformative_naming,
                     no_abbreviate=config.output.no_abbreviate,
-                    include_score=False  # Scores not final yet (not classified)
+                    include_score=True  # Include SVM score (matches v1.5.1 format)
                 )
                 introns_written += 1
         messenger.log_only(f"Wrote sequences for {introns_written} introns to {seq_output_path.name}")
