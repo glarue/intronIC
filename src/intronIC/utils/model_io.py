@@ -9,6 +9,62 @@ import joblib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
+import sys
+
+
+def _setup_legacy_module_aliases():
+    """
+    Set up module aliases for backward compatibility with pre-src-layout models.
+
+    Models pickled before the src/ layout migration reference old import paths
+    like 'classification.classifier'. This function creates aliases so those
+    old paths resolve to the new 'intronIC.classification.classifier' locations.
+
+    This only needs to be called once, and subsequent calls are no-ops.
+    """
+    # Mapping of old module paths to new ones
+    legacy_mappings = {
+        'classification': 'intronIC.classification',
+        'cli': 'intronIC.cli',
+        'core': 'intronIC.core',
+        'extraction': 'intronIC.extraction',
+        'file_io': 'intronIC.file_io',
+        'scoring': 'intronIC.scoring',
+        'utils': 'intronIC.utils',
+        'visualization': 'intronIC.visualization',
+    }
+
+    # Also need to handle submodules like 'classification.classifier'
+    submodules = [
+        'classifier', 'optimizer', 'ensemble', 'feature_extractor',
+        'main', 'progress', 'messenger',
+        'intron', 'sequence_region',
+        'annotator', 'filters', 'sequences',
+        'genome', 'parsers', 'writers',
+        'pwm', 'scorer',
+        'model_io',
+        'plots',
+    ]
+
+    for old_base, new_base in legacy_mappings.items():
+        # Alias the base module (e.g., 'classification' -> 'intronIC.classification')
+        if old_base not in sys.modules:
+            try:
+                new_module = __import__(new_base, fromlist=[''])
+                sys.modules[old_base] = new_module
+            except ImportError:
+                pass  # Module doesn't exist, skip
+
+        # Alias submodules (e.g., 'classification.classifier' -> 'intronIC.classification.classifier')
+        for submod in submodules:
+            old_path = f'{old_base}.{submod}'
+            new_path = f'{new_base}.{submod}'
+            if old_path not in sys.modules:
+                try:
+                    new_module = __import__(new_path, fromlist=[''])
+                    sys.modules[old_path] = new_module
+                except ImportError:
+                    pass  # Submodule doesn't exist, skip
 
 
 def save_model(
@@ -76,6 +132,12 @@ def load_model(model_path: Path) -> Any:
     """
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {model_path}")
+
+    # Set up module aliases for backward compatibility with pre-src-layout models
+    # Old models reference paths like 'classification.classifier' but now they're
+    # under 'intronIC.classification.classifier'
+    import sys
+    _setup_legacy_module_aliases()
 
     try:
         model = joblib.load(model_path)
