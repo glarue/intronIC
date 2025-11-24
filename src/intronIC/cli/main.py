@@ -1679,6 +1679,10 @@ def classify_with_pretrained_model(
     if not model_path.exists():
         raise FileNotFoundError(f"Pretrained model not found: {model_path}")
 
+    # Set up module aliases for backward compatibility with pre-src-layout models
+    from intronIC.utils.model_io import _setup_legacy_module_aliases
+    _setup_legacy_module_aliases()
+
     model_data = joblib.load(model_path)
 
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
