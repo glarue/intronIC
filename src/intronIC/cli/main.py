@@ -1111,6 +1111,15 @@ def extract_introns_from_annotation(
         cumulative_lengths = np.cumsum(contig_length_list)
         total_length = cumulative_lengths[-1]
 
+        # Report total genome size
+        if total_length < 1e6:
+            size_str = f"{total_length/1e3:.1f} Kb"
+        elif total_length < 1e9:
+            size_str = f"{total_length/1e6:.1f} Mb"
+        else:
+            size_str = f"{total_length/1e9:.2f} Gb"
+        messenger.info(f"Total genome size: {total_length:,} bp ({size_str})")
+
         # Prepare inputs for worker processes (no genome cache - workers use indexed FASTA!)
         worker_inputs = [
             (contig, introns_by_contig[contig],
