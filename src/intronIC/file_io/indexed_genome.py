@@ -224,3 +224,40 @@ def get_worker_genome() -> IndexedGenomeReader:
             "Use Pool(initializer=init_worker_genome, initargs=(genome_path,))"
         )
     return _WORKER_GENOME
+
+
+def get_contig_lengths(genome_path: Union[str, Path]) -> dict[str, int]:
+    """
+    Get contig lengths from pyfastx index (no extra file scan).
+
+    This reads metadata from the .fxi index file that was already created,
+    so there's no additional overhead beyond opening the index.
+
+    Args:
+        genome_path: Path to FASTA file (index must already exist)
+
+    Returns:
+        Dictionary mapping contig names to their lengths in base pairs
+
+    Examples:
+        >>> lengths = get_contig_lengths("genome.fa")
+        >>> print(f"chr1: {lengths['chr1']:,} bp")
+        chr1: 248,956,422 bp
+
+    Note:
+        Requires pyfastx index (.fxi file) to exist.
+        This is typically created automatically on first access.
+    """
+    try:
+        import pyfastx
+    except ImportError:
+        raise ImportError(
+            "pyfastx is required for indexed genome access. "
+            "Install with: pixi add --pypi pyfastx"
+        )
+
+    genome_path = Path(genome_path)
+    fa = pyfastx.Fasta(str(genome_path))
+
+    # Get lengths for all contigs in the genome
+    return {name: len(fa[name]) for name in fa.keys()}

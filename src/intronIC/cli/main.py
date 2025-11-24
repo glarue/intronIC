@@ -1102,6 +1102,15 @@ def extract_introns_from_annotation(
                 size_str = f"{index_size/(1024**3):.1f} GB"
             messenger.info(f"Created genome index ({size_str})")
 
+        # Get contig lengths for length-weighted progress reporting
+        from intronIC.file_io.indexed_genome import get_contig_lengths
+        contig_lengths = get_contig_lengths(config.input.genome)
+
+        # Prepare length-weighted progress tracking
+        contig_length_list = [contig_lengths[c] for c in contigs]
+        cumulative_lengths = np.cumsum(contig_length_list)
+        total_length = cumulative_lengths[-1]
+
         # Prepare inputs for worker processes (no genome cache - workers use indexed FASTA!)
         worker_inputs = [
             (contig, introns_by_contig[contig],
@@ -1138,12 +1147,13 @@ def extract_introns_from_annotation(
 
                     all_introns.extend(contig_introns_with_seqs)
 
-                    # Log progress every 10% or on completion
-                    current_percent = int((completed / len(contigs)) * 100)
+                    # Log progress every 10% or on completion (length-weighted)
+                    completed_length = cumulative_lengths[completed - 1]  # -1 because completed is 1-indexed
+                    current_percent = int((completed_length / total_length) * 100)
                     # Report when we cross a 10% boundary or complete
                     if (current_percent // 10 > last_reported_percent // 10) or completed == len(contigs):
                         messenger.info(
-                            f"Progress: {completed}/{len(contigs)} contigs ({current_percent}%) - "
+                            f"Progress: {completed}/{len(contigs)} contigs ({current_percent}% of genome) - "
                             f"{total_introns_extracted:,} introns extracted"
                         )
                         last_reported_percent = current_percent
