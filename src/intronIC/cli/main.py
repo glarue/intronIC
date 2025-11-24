@@ -2499,11 +2499,16 @@ def main_train(config: IntronICConfig):
         # Feature transform
         if 'feature_transform' in opt_cfg:
             ft = opt_cfg['feature_transform']
-            if 'features' in ft and ft['features']:
-                features_str = ', '.join(ft['features'])
+            # Extract features list from feature_transform dict
+            features_list = ft.get('features', None)
+            if features_list:
+                features_str = ', '.join(features_list)
                 messenger.log_only(f"  features: [{features_str}]")
             else:
-                messenger.log_only(f"  features: []")
+                messenger.log_only(f"  features: default (7D)")
+        else:
+            # No feature_transform section
+            messenger.log_only(f"  features: default (7D)")
 
         # Gamma scaling
         if 'gamma_imbalance_options' in opt_cfg:
