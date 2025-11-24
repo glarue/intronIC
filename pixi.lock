@@ -165,7 +165,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-h280c20c_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.2.5-hde8ca8f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb8e6e7a_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d7/cb/61877367bf08670573d62513b239dc65cf2b7488dc74322cc6051da2e55e/biopython-1.86-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1f/9b/860b1f95ed305c0ae42d943cf9006733fd6bbb879ccf21a542e905b5d991/pyfastx-2.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -256,7 +256,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/yaml-0.2.5-h4132b18_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zlib-ng-2.2.5-h55e386d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstd-1.5.7-h8210216_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/98/e2/199b8ccbd4b9bf234157db0668177b5b7784d62f29d9096fd0d3a70e3b86/biopython-1.86-cp312-cp312-macosx_10_13_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c0/ba/2494f64538417c066e6e1d3d123b3b22d0643b2369e34a5a7a3322f43f61/pyfastx-2.2.0-cp312-cp312-macosx_10_13_x86_64.whl
@@ -348,7 +348,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h925e9cb_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.2.5-h3470cca_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-h6491c7d_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/5b/e9/4057d4c2aa22ca25c180ecbed2ce9e7d65bf787999778bc63b41df0d03b5/biopython-1.86-cp312-cp312-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a5/54/b91919749f641cae82a804a8d0c582443d32db1ec0cc0d3af30b135567d6/pyfastx-2.2.0.tar.gz
@@ -469,7 +469,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/yaml-0.2.5-h6a83c73_3.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zlib-ng-2.2.5-h32d8bfd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-hbeecb71_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a9/13/00db03b01e54070d5b0ec9c71eef86e61afa733d9af76e5b9b09f5dc9165/biopython-1.86-cp312-cp312-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/83/43/74c580086e663c2e0ac80d7933a912a27c1f584adf5ca7841157f9f7c067/pyfastx-2.2.0-cp312-cp312-win_amd64.whl
@@ -649,7 +649,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/yaml-0.2.5-h280c20c_3.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.2.5-hde8ca8f_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb8e6e7a_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d7/cb/61877367bf08670573d62513b239dc65cf2b7488dc74322cc6051da2e55e/biopython-1.86-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1f/9b/860b1f95ed305c0ae42d943cf9006733fd6bbb879ccf21a542e905b5d991/pyfastx-2.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -750,7 +750,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/yaml-0.2.5-h4132b18_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zlib-ng-2.2.5-h55e386d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstd-1.5.7-h8210216_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/98/e2/199b8ccbd4b9bf234157db0668177b5b7784d62f29d9096fd0d3a70e3b86/biopython-1.86-cp312-cp312-macosx_10_13_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c0/ba/2494f64538417c066e6e1d3d123b3b22d0643b2369e34a5a7a3322f43f61/pyfastx-2.2.0-cp312-cp312-macosx_10_13_x86_64.whl
@@ -852,7 +852,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/yaml-0.2.5-h925e9cb_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.2.5-h3470cca_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-h6491c7d_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/5b/e9/4057d4c2aa22ca25c180ecbed2ce9e7d65bf787999778bc63b41df0d03b5/biopython-1.86-cp312-cp312-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a5/54/b91919749f641cae82a804a8d0c582443d32db1ec0cc0d3af30b135567d6/pyfastx-2.2.0.tar.gz
@@ -983,7 +983,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/yaml-0.2.5-h6a83c73_3.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zlib-ng-2.2.5-h32d8bfd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-hbeecb71_2.conda
-      - pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a9/13/00db03b01e54070d5b0ec9c71eef86e61afa733d9af76e5b9b09f5dc9165/biopython-1.86-cp312-cp312-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/ce/0b/fadfd7d0088efa3ba0cdcdbb51d093e18d3700f6f88634aa8387106394a4/pyfaidx-0.9.0.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/83/43/74c580086e663c2e0ac80d7933a912a27c1f584adf5ca7841157f9f7c067/pyfastx-2.2.0-cp312-cp312-win_amd64.whl
@@ -1036,10 +1036,10 @@ packages:
   purls: []
   size: 566531
   timestamp: 1744668655747
-- pypi: https://files.pythonhosted.org/packages/96/14/857c0aa5393540c1980912b735a1b97fd862cdf41060fe9d051983c20f35/biogl-3.0.0-py3-none-any.whl
+- pypi: https://files.pythonhosted.org/packages/1b/e3/83258ffa0a1606be804aab5c37eb402d2e4fce88841d69420881da7f3389/biogl-3.0.1-py3-none-any.whl
   name: biogl
-  version: 3.0.0
-  sha256: 33aca286910d8b1304c167a31ae4a193cfe8d0d0c8c285fc2d5da7b6cae048bb
+  version: 3.0.1
+  sha256: 1d48c61c9eda5758625e1d6acd852396e7b44b11c4150fc90e889612d776058b
   requires_dist:
   - smart-open
   - pytest>=7.0 ; extra == 'dev'
