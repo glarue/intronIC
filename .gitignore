@@ -72,6 +72,7 @@ test_verification/
 /*.md
 !/README.md
 !/QUICKSTART.md
+!/SRC_LAYOUT_MIGRATION.md
 
 # Test output directories
 run_tests/
