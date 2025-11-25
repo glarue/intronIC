@@ -208,7 +208,8 @@ def generate_intron_name(
     intron: Intron,
     species_name: Optional[str] = None,
     simple_name: bool = False,
-    no_abbreviate: bool = False
+    no_abbreviate: bool = False,
+    intron_number: Optional[int] = None
 ) -> str:
     """
     Generate standardized intron name for all output formats.
@@ -222,8 +223,9 @@ def generate_intron_name(
     Args:
         intron: Intron object
         species_name: Full species name (e.g., "homo_sapiens")
-        simple_name: Use simplified format (species-i_{intron_id})
+        simple_name: Use simplified format (species-i_{number})
         no_abbreviate: Use full species name instead of abbreviation
+        intron_number: Simple incrementing number (used with simple_name)
 
     Returns:
         Formatted intron name string
@@ -235,16 +237,20 @@ def generate_intron_name(
         'homo_sapiens-gene:ENSG00000196218@transcript:ENST00000355481_69(104)'
         >>> generate_intron_name(omitted_intron, "homo_sapiens", False)
         'HomSap-gene:ENSG00000196218@transcript:ENST00000355481_69(104);[o:i]'
+        >>> generate_intron_name(intron, "homo_sapiens", True, False, 123)
+        'HomSap-i123'
     """
     if simple_name:
-        # Simple format: species-i_{intron_id}{tags}
+        # Simple format: species-i{number}{tags}
         if no_abbreviate:
             species_prefix = species_name if species_name else "unknown"
         else:
             species_prefix = generate_species_abbreviation(species_name) if species_name else "XXXXXX"
         omit_tag = format_omission_tag(intron.metadata.omitted) if intron.metadata else ''
         dyn_tag = format_dynamic_tags(intron.metadata.dynamic_tags) if intron.metadata else ''
-        return f"{species_prefix}-i_{intron.intron_id}{omit_tag}{dyn_tag}"
+        # Use intron_number if provided, otherwise fall back to intron_id
+        identifier = str(intron_number) if intron_number is not None else intron.intron_id
+        return f"{species_prefix}-i{identifier}{omit_tag}{dyn_tag}"
 
     # Full format
     if not intron.metadata:
@@ -282,7 +288,8 @@ def generate_intron_label(
     intron: Intron,
     species_name: Optional[str] = None,
     simple_name: bool = False,
-    no_abbreviate: bool = False
+    no_abbreviate: bool = False,
+    intron_number: Optional[int] = None
 ) -> str:
     """
     Generate intron label for BED output (name + score).
@@ -290,12 +297,14 @@ def generate_intron_label(
     Port from: intronIC.py:649-659 (get_label)
 
     Format: {species-}parent_index(family_size);svm_score[;tags]
+    Or with simple_name + intron_number: {species-}i_{number};svm_score[;tags]
 
     Args:
         intron: Intron object
         species_name: Species name (optional)
-        simple_name: Exclude species prefix
+        simple_name: Exclude species prefix and use simple numbering
         no_abbreviate: Use full species name instead of abbreviation
+        intron_number: Simple incrementing number (used with simple_name)
 
     Returns:
         Intron label string
@@ -305,21 +314,24 @@ def generate_intron_label(
         'HomSap-ENST00000397910_1(83);0.00'
         >>> generate_intron_label(intron, "homo_sapiens", False, True)
         'homo_sapiens-ENST00000397910_1(83);0.00'
-        >>> generate_intron_label(intron_with_tag, "homo_sapiens", False)
-        'HomSap-ENST00000397910_1(83);0.00;[n]'
+        >>> generate_intron_label(intron, "homo_sapiens", True, False, 123)
+        'HomSap-i_123;0.00'
     """
     parts = []
 
-    # Add species prefix if requested
-    if species_name and not simple_name:
+    # Add species prefix (even with simple_name, we still show species)
+    if species_name:
         if no_abbreviate:
             parts.append(species_name)
         else:
             species_abbrev = generate_species_abbreviation(species_name)
             parts.append(species_abbrev)
 
-    # Add parent_index(family_size) - matching original format
-    if intron.metadata and intron.metadata.parent:
+    # Use simple numbering if requested and number provided
+    if simple_name and intron_number is not None:
+        parts.append(f"i_{intron_number}")
+    # Otherwise use parent_index(family_size) format
+    elif intron.metadata and intron.metadata.parent:
         parent = intron.metadata.parent
         index = intron.metadata.index if intron.metadata.index else 1
         family_size = intron.metadata.family_size if intron.metadata.family_size else 1
@@ -557,7 +569,8 @@ class BEDWriter:
         intron: Intron,
         species_name: Optional[str] = None,
         simple_name: bool = False,
-        no_abbreviate: bool = False
+        no_abbreviate: bool = False,
+        intron_number: Optional[int] = None
     ) -> None:
         """
         Write a single intron in BED format.
@@ -567,6 +580,7 @@ class BEDWriter:
             species_name: Species name for intron label (optional)
             simple_name: Use simple naming (no species prefix)
             no_abbreviate: Use full species name instead of abbreviation
+            intron_number: Simple incrementing number (used with simple_name)
 
         Format:
             chrom  start(0-based)  stop  name  svm_score  strand  attributes
@@ -582,7 +596,7 @@ class BEDWriter:
 
         # Generate intron name using same format as meta.iic
         # Format: Species-Gene@Transcript-intron_N(family_size)
-        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate, intron_number)
 
         # Generate verbose attributes
         attributes = generate_attributes(intron)
@@ -620,8 +634,10 @@ class BEDWriter:
             Number of introns written
         """
         count = 0
-        for intron in introns:
-            self.write_intron(intron, species_name, simple_name, no_abbreviate)
+        for idx, intron in enumerate(introns, start=1):
+            # Pass enumeration counter when using simple_name
+            intron_number = idx if simple_name else None
+            self.write_intron(intron, species_name, simple_name, no_abbreviate, intron_number)
             count += 1
         return count
 
@@ -695,7 +711,8 @@ class MetaWriter:
         species_name: Optional[str] = None,
         simple_name: bool = False,
         no_abbreviate: bool = False,
-        null: str = 'NA'
+        null: str = 'NA',
+        intron_number: Optional[int] = None
     ) -> None:
         """
         Write a single intron's metadata.
@@ -706,6 +723,7 @@ class MetaWriter:
             simple_name: Use simple naming
             no_abbreviate: Use full species name instead of abbreviation
             null: Placeholder for missing values
+            intron_number: Simple incrementing number (used with simple_name)
 
         Format:
             name  rel_score  dnts  motif  bp_context  length  parent  grandparent
@@ -715,7 +733,7 @@ class MetaWriter:
             raise ValueError("File not open. Call open() first or use context manager.")
 
         # Generate intron name using shared function
-        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate, intron_number)
 
         # Relative score (rounded to 4 decimal places)
         rel_score = null
@@ -790,8 +808,10 @@ class MetaWriter:
             Number of introns written
         """
         count = 0
-        for intron in introns:
-            self.write_intron(intron, species_name, simple_name)
+        for idx, intron in enumerate(introns, start=1):
+            # Pass enumeration counter when using simple_name
+            intron_number = idx if simple_name else None
+            self.write_intron(intron, species_name, simple_name, intron_number=intron_number)
             count += 1
         return count
 
@@ -854,7 +874,8 @@ class SequenceWriter:
         species_name: Optional[str] = None,
         simple_name: bool = False,
         no_abbreviate: bool = False,
-        include_score: bool = True
+        include_score: bool = True,
+        intron_number: Optional[int] = None
     ) -> None:
         """
         Write a single intron's sequences.
@@ -865,6 +886,7 @@ class SequenceWriter:
             simple_name: Use simple naming
             no_abbreviate: Use full species name instead of abbreviation
             include_score: Include SVM score in output
+            intron_number: Simple incrementing number (used with simple_name)
 
         Format:
             name  [score]  upstream_flank  sequence  downstream_flank
@@ -876,7 +898,7 @@ class SequenceWriter:
             raise ValueError(f"Intron {intron.intron_id} has no sequence data")
 
         # Generate intron name using shared function
-        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
+        name = generate_intron_name(intron, species_name, simple_name, no_abbreviate, intron_number)
 
         # Get sequences (with defaults)
         upstream = intron.sequences.upstream_flank or ""
@@ -917,8 +939,10 @@ class SequenceWriter:
             Number of introns written
         """
         count = 0
-        for intron in introns:
-            self.write_intron(intron, species_name, simple_name, no_abbreviate, include_score)
+        for idx, intron in enumerate(introns, start=1):
+            # Pass enumeration counter when using simple_name
+            intron_number = idx if simple_name else None
+            self.write_intron(intron, species_name, simple_name, no_abbreviate, include_score, intron_number)
             count += 1
         return count
 

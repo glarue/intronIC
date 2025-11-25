@@ -201,14 +201,14 @@ Classify mode examples:
 
         # Species name (required for both)
         parser.add_argument(
-            '-n', '--species_name', '--species-name',
+            '-n', '--species-name', '--species_name',
             required=True,
             help='Species name for output files (e.g., homo_sapiens)'
         )
 
         # Output directory
         parser.add_argument(
-            '-o', '--output_dir', '--output-dir',
+            '-o', '--output-dir', '--output_dir',
             type=Path,
             default=Path.cwd(),
             help='Output directory (default: current directory)'
@@ -223,12 +223,12 @@ Classify mode examples:
         # === Reference Data ===
         reference = parser.add_argument_group('reference data')
         reference.add_argument(
-            '--reference_u12s', '--reference-u12s',
+            '--reference-u12s', '--reference_u12s',
             type=Path,
             help='Custom U12 reference sequences (.iic format). Default: use built-in reference.'
         )
         reference.add_argument(
-            '--reference_u2s', '--reference-u2s',
+            '--reference-u2s', '--reference_u2s',
             type=Path,
             help='Custom U2 reference sequences (.iic format). Default: use built-in reference.'
         )
@@ -241,43 +241,43 @@ Classify mode examples:
             help='Fixed SVM C parameter (skips hyperparameter optimization)'
         )
         training.add_argument(
-            '--n_models', '--n-models',
+            '--n-models', '--n_models',
             type=int,
             default=1,
             help='Number of ensemble models to train (default: 1, use YAML config for production)'
         )
         training.add_argument(
-            '--eval_mode', '--eval-mode',
+            '--eval-mode', '--eval_mode',
             choices=['nested_cv', 'split', 'none'],
             default='nested_cv',
             help='Evaluation mode: nested_cv (default), split, or none'
         )
         training.add_argument(
-            '--n_cv_folds', '--n-cv-folds',
+            '--n-cv-folds', '--n_cv_folds',
             type=int,
             default=5,
             help='Number of cross-validation folds (default: 5)'
         )
         training.add_argument(
-            '--test_fraction', '--test-fraction',
+            '--test-fraction', '--test_fraction',
             type=float,
             default=0.2,
             help='Test set fraction for split mode (default: 0.2)'
         )
         training.add_argument(
-            '--n_optimization_rounds', '--n-optimization-rounds',
+            '--n-optimization-rounds', '--n_optimization_rounds',
             type=int,
             default=5,
             help='Hyperparameter optimization rounds (default: 5)'
         )
         training.add_argument(
-            '--max_iter', '--max-iter',
+            '--max-iter', '--max_iter',
             type=int,
             default=50000,
             help='Maximum SVM iterations (default: 50000)'
         )
         training.add_argument(
-            '--cv_processes', '--cv-processes',
+            '--cv-processes', '--cv_processes',
             type=int,
             default=1,
             help='Processes for cross-validation (default: 1)'
@@ -299,7 +299,7 @@ Classify mode examples:
         # (Needed to score reference sequences during training)
         scoring = parser.add_argument_group('scoring parameters (for reference sequences)')
         scoring.add_argument(
-            '--five_score_coords', '--five-score-coords',
+            '--five-score-coords', '--five_score_coords',
             nargs=2,
             type=int,
             default=[-3, 9],
@@ -307,7 +307,7 @@ Classify mode examples:
             help="5' splice site region (default: -3 9)"
         )
         scoring.add_argument(
-            '--bp_region_coords', '--bp-region-coords',
+            '--bp-region-coords', '--bp_region_coords',
             nargs=2,
             type=int,
             default=[-55, -5],
@@ -315,7 +315,7 @@ Classify mode examples:
             help='Branch point region (default: -55 -5)'
         )
         scoring.add_argument(
-            '--three_score_coords', '--three-score-coords',
+            '--three-score-coords', '--three_score_coords',
             nargs=2,
             type=int,
             default=[-6, 4],
@@ -357,11 +357,11 @@ Classify mode examples:
         else:
             # For backward compat, don't require species_name yet (validated later)
             parser.add_argument(
-                '-n', '--species_name', '--species-name',
+                '-n', '--species-name', '--species_name',
                 help='Species name for output files (e.g., homo_sapiens)'
             )
             parser.add_argument(
-                '-o', '--output_dir', '--output-dir',
+                '-o', '--output-dir', '--output_dir',
                 type=Path,
                 default=Path.cwd(),
                 help='Output directory (default: current directory)'
@@ -388,7 +388,7 @@ Classify mode examples:
             help='Path to BED file with intron coordinates (requires -g)'
         )
         input_group.add_argument(
-            '-q', '--sequence_file', '--sequence-file',
+            '-q', '--sequence-file', '--sequence_file',
             type=Path,
             help='Path to pre-extracted intron sequences (.iic format)'
         )
@@ -409,7 +409,7 @@ Classify mode examples:
 
         # Normalizer mode (for pretrained model classification)
         parser.add_argument(
-            '--normalizer_mode', '--normalizer-mode',
+            '--normalizer-mode', '--normalizer_mode',
             choices=['human', 'adaptive', 'auto'],
             default='auto',
             help='''Normalizer mode for pretrained model classification (default: auto):
@@ -421,7 +421,7 @@ Classify mode examples:
         # Backward compatibility: old --pretrained_model flag
         if for_backward_compat:
             model_group.add_argument(
-                '--pretrained_model', '--pretrained-model',
+                '--pretrained-model', '--pretrained_model',
                 type=Path,
                 help='(Deprecated: use --model) Path to pretrained model'
             )
@@ -435,34 +435,34 @@ Classify mode examples:
             help='Feature type to extract from (default: both)'
         )
         extraction.add_argument(
-            '--min_intron_len', '--min-intron-len',
+            '--min-intron-len', '--min_intron_len',
             type=int,
             default=30,
             help='Minimum intron length (default: 30)'
         )
         extraction.add_argument(
-            '-i', '--allow_multiple_isoforms', '--allow-multiple-isoforms',
+            '-i', '--allow-multiple-isoforms', '--allow_multiple_isoforms',
             action='store_true',
             help='Include non-longest isoforms'
         )
         extraction.add_argument(
-            '-v', '--no_intron_overlap', '--no-intron-overlap',
+            '-v', '--no-intron-overlap', '--no_intron_overlap',
             action='store_true',
             help='Exclude overlapping introns'
         )
         extraction.add_argument(
-            '-d', '--include_duplicates', '--include-duplicates',
+            '-d', '--include-duplicates', '--include_duplicates',
             action='store_true',
             help='Include duplicate coordinate introns'
         )
         extraction.add_argument(
-            '--flank_len', '--flank-len',
+            '--flank-len', '--flank_len',
             type=int,
             default=50,
             help='Exonic flank length (default: 50)'
         )
         extraction.add_argument(
-            '--no_nc_ss_adjustment', '--no-nc-ss-adjustment',
+            '--no-nc-ss-adjustment', '--no_nc_ss_adjustment',
             action='store_true',
             help='Disable U12 boundary correction'
         )
@@ -470,7 +470,7 @@ Classify mode examples:
         # === Scoring Parameters ===
         scoring = parser.add_argument_group('scoring parameters')
         scoring.add_argument(
-            '-s', '--sequences_only', '--sequences-only',
+            '-s', '--sequences-only', '--sequences_only',
             action='store_true',
             help='Extract sequences only, skip classification'
         )
@@ -481,7 +481,7 @@ Classify mode examples:
             help='U12 probability threshold 0-100 (default: 90)'
         )
         scoring.add_argument(
-            '--no_nc', '--no-nc',
+            '--no-nc', '--no_nc',
             action='store_true',
             help='Exclude non-canonical introns from scoring'
         )
@@ -492,12 +492,12 @@ Classify mode examples:
             help='PWM pseudocount (default: 0.0001)'
         )
         scoring.add_argument(
-            '--no_ignore_nc_dnts', '--no-ignore-nc-dnts',
+            '--no-ignore-nc-dnts', '--no_ignore_nc_dnts',
             action='store_true',
             help='Include terminal dinucleotides in non-canonical scoring'
         )
         scoring.add_argument(
-            '--five_score_coords', '--five-score-coords',
+            '--five-score-coords', '--five_score_coords',
             nargs=2,
             type=int,
             default=[-3, 9],
@@ -505,7 +505,7 @@ Classify mode examples:
             help="5' splice site region (default: -3 9)"
         )
         scoring.add_argument(
-            '--bp_region_coords', '--bp-region-coords',
+            '--bp-region-coords', '--bp_region_coords',
             nargs=2,
             type=int,
             default=[-55, -5],
@@ -513,7 +513,7 @@ Classify mode examples:
             help='Branch point region (default: -55 -5)'
         )
         scoring.add_argument(
-            '--three_score_coords', '--three-score-coords',
+            '--three-score-coords', '--three_score_coords',
             nargs=2,
             type=int,
             default=[-6, 4],
@@ -524,12 +524,12 @@ Classify mode examples:
         # === Training Parameters (only if --train flag used) ===
         training = parser.add_argument_group('training parameters (only with --train)')
         training.add_argument(
-            '--reference_u12s', '--reference-u12s',
+            '--reference-u12s', '--reference_u12s',
             type=Path,
             help='Custom U12 reference sequences'
         )
         training.add_argument(
-            '--reference_u2s', '--reference-u2s',
+            '--reference-u2s', '--reference_u2s',
             type=Path,
             help='Custom U2 reference sequences'
         )
@@ -539,7 +539,7 @@ Classify mode examples:
             help='Custom PWM matrix file'
         )
         training.add_argument(
-            '--generate_u2_bps_pwm', '--generate-u2-bps-pwm',
+            '--generate-u2-bps-pwm', '--generate_u2_bps_pwm',
             action='store_true',
             help='Generate U2 branch point PWM from data'
         )
@@ -555,37 +555,37 @@ Classify mode examples:
             help='Fixed SVM C parameter (skips optimization)'
         )
         training.add_argument(
-            '--n_models', '--n-models',
+            '--n-models', '--n_models',
             type=int,
             default=1,
             help='Number of ensemble models (default: 1)'
         )
         training.add_argument(
-            '--max_iter', '--max-iter',
+            '--max-iter', '--max_iter',
             type=int,
             default=50000,
             help='Maximum SVM iterations (default: 50000)'
         )
         training.add_argument(
-            '--eval_mode', '--eval-mode',
+            '--eval-mode', '--eval_mode',
             choices=['nested_cv', 'split', 'none'],
             default='nested_cv',
             help='Evaluation mode (default: nested_cv)'
         )
         training.add_argument(
-            '--n_cv_folds', '--n-cv-folds',
+            '--n-cv-folds', '--n_cv_folds',
             type=int,
             default=5,
             help='Cross-validation folds (default: 5)'
         )
         training.add_argument(
-            '--test_fraction', '--test-fraction',
+            '--test-fraction', '--test_fraction',
             type=float,
             default=0.2,
             help='Test fraction for split mode (default: 0.2)'
         )
         training.add_argument(
-            '--n_optimization_rounds', '--n-optimization-rounds',
+            '--n-optimization-rounds', '--n_optimization_rounds',
             type=int,
             default=5,
             help='Optimization rounds (default: 5)'
@@ -606,7 +606,7 @@ Classify mode examples:
             help='Parallel processes for scoring (default: 1)'
         )
         perf.add_argument(
-            '--cv_processes', '--cv-processes',
+            '--cv-processes', '--cv_processes',
             type=int,
             help='Processes for cross-validation (default: same as -p)'
         )
@@ -614,29 +614,29 @@ Classify mode examples:
         # === Output Options ===
         output = parser.add_argument_group('output options')
         output.add_argument(
-            '--clean_names', '--clean-names',
+            '--clean-names', '--clean_names',
             action='store_true',
             default=True,
             help='Remove "transcript:" and "gene:" prefixes (default: True)'
         )
         output.add_argument(
-            '--no_clean_names', '--no-clean-names',
+            '--no-clean-names', '--no_clean_names',
             dest='clean_names',
             action='store_false',
             help='Keep ID prefixes'
         )
         output.add_argument(
-            '-u', '--uninformative_naming', '--uninformative-naming',
+            '-u', '--uninformative-naming', '--uninformative_naming',
             action='store_true',
             help='Use simple naming scheme'
         )
         output.add_argument(
-            '--no_abbreviate', '--no-abbreviate', '--na',
+            '--no-abbreviate', '--no_abbreviate', '--na',
             action='store_true',
             help='Use full species name in outputs'
         )
         output.add_argument(
-            '--abbreviate_filenames', '--abbreviate-filenames', '--afn',
+            '--abbreviate-filenames', '--abbreviate_filenames', '--afn',
             action='store_true',
             help='Abbreviate species name in filenames'
         )
