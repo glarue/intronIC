@@ -658,9 +658,11 @@ class SVMOptimizer:
         # Debug: Log features being used
         if self.verbose and round_idx == 0:
             if self.features_list is not None:
-                print(f"  Using explicit feature list: {self.features_list}")
+                n_features = 3 + len(self.features_list)  # 3 base + composites
+                print(f"  Using {n_features}D feature set: [s5, sBP, s3] + {self.features_list}")
             else:
-                print(f"  Using default 7D feature set (min_all + all neg_absdiff)")
+                # Using transformer default (which is ['absdiff_bp_3'])
+                print(f"  Using transformer default: 4D feature set [s5, sBP, s3, absdiff_bp_3]")
 
         model = Pipeline([
             ('transform', BothEndsStrongTransformer(

@@ -17,7 +17,7 @@ This document tracks planned features, enhancements, and known issues for future
 
 ### 🟢 Flexible Feature Selection for Training
 **Status:** Deferred (post-v2.0)
-**Complexity:** Moderate-High (~19 hours)
+**Complexity:** Moderate-High
 **Issue:** Currently requires all three motifs (5'SS, BP, 3'SS). Cannot train with subset.
 
 **Use Cases:**
@@ -28,13 +28,12 @@ This document tracks planned features, enhancements, and known issues for future
 
 **Implementation Plan:** See `FEATURE_SELECTION_IMPLEMENTATION_PLAN.md`
 
-**Effort Estimate:**
-- Configuration changes: 2 hours
-- Scoring/normalization: 4 hours
-- Transformer refactor: 3 hours
-- Training/prediction updates: 2 hours
-- Testing: 6 hours
-- **Total:** ~19 hours (2-3 days)
+**Scope:**
+- Configuration changes
+- Scoring/normalization updates
+- Transformer refactor
+- Training/prediction updates
+- Comprehensive testing
 
 **Files Affected:** 16 files, ~600-800 LOC changes
 

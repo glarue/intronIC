@@ -6,12 +6,15 @@ Exon objects in a transcript.
 """
 
 from itertools import islice
-from typing import List, Iterator, Tuple, Dict, Union
+from typing import List, Iterator, Tuple, Dict, Union, Optional, TYPE_CHECKING
 
 import numpy as np
 
 from intronIC.core.models import Exon, Transcript, Gene
 from intronIC.core.intron import Intron
+
+if TYPE_CHECKING:
+    from intronIC.cli.messenger import Messenger
 
 
 class IntronGenerator:
@@ -28,6 +31,18 @@ class IntronGenerator:
         >>> introns = list(generator.generate_from_exons(exons))
         >>> print(f"Created {len(introns)} introns")
     """
+
+    def __init__(self, debug: bool = False, messenger: Optional['Messenger'] = None):
+        """
+        Initialize the IntronGenerator.
+
+        Args:
+            debug: If True, print detailed messages about touching exons
+            messenger: Optional Messenger instance for logging (if None, uses print)
+        """
+        self.debug = debug
+        self.messenger = messenger
+        self.touching_exons_count = 0  # Track total touching exons found
 
     @staticmethod
     def _sliding_window(seq: List[Exon], window_size: int = 2) -> Iterator[Tuple[Exon, ...]]:
@@ -153,7 +168,9 @@ class IntronGenerator:
             intron.metadata.upstream_exon_id = upstream_exon.feature_id
             intron.metadata.downstream_exon_id = downstream_exon.feature_id
 
-            # Set intron index (1-based position in transcript, matching original)
+            # Set intron index (1-based position in this feature type's exon pairs)
+            # Note: This will be recalculated in generate_from_transcript() to account
+            # for touching exons and maintain ordinal numbering
             intron.metadata.index = index
 
             # Set line_number as average of both exons (matching original intronIC.py:573)
@@ -163,6 +180,67 @@ class IntronGenerator:
             intron.metadata.line_number = (upstream_line + downstream_line) / 2
 
             yield intron
+
+    def _calculate_ordinal_positions(
+        self,
+        exons: List[Exon]
+    ) -> Tuple[Dict[Tuple[int, int], int], int]:
+        """
+        Calculate ordinal positions for all exon pairs, including touching ones.
+
+        Returns a mapping from (intron_start, intron_stop) -> ordinal_position
+        and the total count of exon pairs (including touching).
+
+        Args:
+            exons: List of all exons (CDS + non-CDS mixed)
+
+        Returns:
+            (position_map, total_pairs, touching_count)
+        """
+        if len(exons) < 2:
+            return {}, 0, 0
+
+        # Sort in coding direction
+        sorted_exons = self._sort_exons_by_coding_direction(exons)
+
+        position_map = {}
+        ordinal_index = 0
+        touching_count = 0
+
+        for upstream_exon, downstream_exon in self._sliding_window(sorted_exons):
+            ordinal_index += 1
+
+            # Check for overlapping exons (skip entirely)
+            if self._check_overlap(upstream_exon, downstream_exon):
+                continue
+
+            # Calculate intron coordinates
+            intron_start = min(upstream_exon.coordinates.stop, downstream_exon.coordinates.stop) + 1
+            intron_stop = max(upstream_exon.coordinates.start, downstream_exon.coordinates.start) - 1
+
+            if intron_start > intron_stop:
+                # Touching exons - count for ordinal but don't add to map
+                touching_count += 1
+                self.touching_exons_count += 1  # Track globally
+
+                # Only log details in debug mode
+                if self.debug:
+                    msg = (
+                        f"[!] Annotation error: Touching exons in {upstream_exon.parent_id} at ordinal position {ordinal_index}: "
+                        f"exon ends at {min(upstream_exon.coordinates.stop, downstream_exon.coordinates.stop)}, "
+                        f"next exon starts at {max(upstream_exon.coordinates.start, downstream_exon.coordinates.start)} "
+                        f"(counted in family size, omitted from output)"
+                    )
+                    if self.messenger:
+                        self.messenger.log_only(msg)
+                    else:
+                        print(msg)
+            else:
+                # Valid intron - map coordinates to ordinal position
+                position_map[(intron_start, intron_stop)] = ordinal_index
+
+        total_pairs = ordinal_index
+        return position_map, total_pairs, touching_count
 
     def generate_from_transcript(
         self,
@@ -218,6 +296,11 @@ class IntronGenerator:
         else:
             coding_length = 0  # No exons/CDS (shouldn't happen for valid transcripts)
 
+        # Calculate ordinal positions for ALL exons (including touching pairs)
+        # This ensures intron numbering reflects annotation structure
+        all_exons = cds_features + exon_features
+        ordinal_map, total_pairs, touching_count = self._calculate_ordinal_positions(all_exons)
+
         # Two-pass algorithm: CDS first, then exon (with overlap checking)
         non_redundant_introns = []
 
@@ -244,11 +327,10 @@ class IntronGenerator:
         if not non_redundant_introns:
             return
 
-        # Set family size (total number of introns in transcript)
-        family_size = len(non_redundant_introns)
+        # Family size includes touching exons (annotation errors)
+        family_size = total_pairs
 
-        # Re-index introns sequentially (since they came from two separate generate calls)
-        # Introns need to be sorted by genomic position first
+        # Sort introns by genomic position
         strand = non_redundant_introns[0].coordinates.strand if non_redundant_introns else '+'
         if strand == '-':
             # Negative strand: sort descending
@@ -256,6 +338,13 @@ class IntronGenerator:
         else:
             # Positive strand: sort ascending
             non_redundant_introns.sort(key=lambda i: i.coordinates.start)
+
+        # Assign ordinal positions from the map (preserves gaps for touching exons)
+        for intron in non_redundant_introns:
+            coords = (intron.coordinates.start, intron.coordinates.stop)
+            if coords in ordinal_map:
+                intron.metadata.index = ordinal_map[coords]
+            # If not in map, keep the index from generate_from_exons (shouldn't happen)
 
         # Calculate fractional positions based on cumulative exon lengths
         # (matching original intronIC.py:429-434)
@@ -288,13 +377,13 @@ class IntronGenerator:
         else:
             frac_positions = np.zeros(len(non_redundant_introns))
 
-        for index, intron in enumerate(non_redundant_introns, start=1):
-            # Update intron metadata (1-based indexing to match original)
-            intron.metadata.index = index  # Re-index sequentially
+        for array_index, intron in enumerate(non_redundant_introns):
+            # Set metadata (ordinal index already set above from ordinal_map)
             intron.metadata.family_size = family_size
             intron.metadata.parent = transcript.feature_id
             intron.metadata.parent_length = coding_length  # Sum of CDS/exon lengths (not genomic span)
-            intron.metadata.fractional_position = float(frac_positions[index - 1])
+            # Use array_index for fractional position array lookup (0-based)
+            intron.metadata.fractional_position = float(frac_positions[array_index])
 
             # Set grandparent if available
             if transcript.parent_id and transcript.parent_id in feature_index:

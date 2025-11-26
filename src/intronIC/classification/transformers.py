@@ -94,7 +94,7 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         self,
         include_max: bool = False,
         include_pairwise_mins: bool = False,
-        features: Optional[list] = None,
+        features: Optional[list] = ['absdiff_bp_3'],  # Default: minimal 4D set from L1 analysis
         gamma_imbalance: float = 1.0,
         gamma_5_bp=None,  # Deprecated - kept for backward compatibility
         gamma_5_3=None    # Deprecated - kept for backward compatibility
@@ -107,13 +107,14 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
                         DEPRECATED: Use features parameter instead for fine-grained control
             include_pairwise_mins: Whether to include pairwise min features (default: False)
                         DEPRECATED: Use features parameter instead for fine-grained control
-            features: List of composite feature names to include (default: None = use flags)
-                     If specified, overrides include_max and include_pairwise_mins flags
+            features: List of composite feature names to include
+                     DEFAULT: ['absdiff_bp_3'] - minimal 4D set identified by L1 regularization
+                     Set to None for legacy 7D behavior (backward compatibility with old models)
                      Available features: 'min_5_bp', 'min_5_3', 'min_all',
                                         'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
                                         'max_5_bp', 'max_5_3'
                      Deprecated (backward compat): 'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3'
-                     Example: ['absdiff_bp_3'] for minimal 4D feature space
+                     Example: ['absdiff_bp_3'] for minimal 4D feature space (DEFAULT)
                      Example: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3'] for 7D
             gamma_imbalance: Scaling factor for imbalance features (default: 1.0)
                            Multiplies all absdiff_* features to increase penalty for imbalance.
@@ -127,39 +128,24 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         self.include_pairwise_mins = include_pairwise_mins
         self.gamma_imbalance = gamma_imbalance
 
-        # New feature selection mechanism
-        if features is not None:
-            # Validate feature names
-            valid_features = {
-                'min_5_bp', 'min_5_3', 'min_all',
-                'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',  # New (correct sign)
-                'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',  # Deprecated (backward compat)
-                'max_5_bp', 'max_5_3'
-            }
-            invalid = set(features) - valid_features
-            if invalid:
-                raise ValueError(
-                    f"Invalid feature names: {invalid}. "
-                    f"Valid features: {valid_features}"
-                )
+        # If features is explicitly None, use the default
+        if features is None:
+            features = ['absdiff_bp_3']
 
-            # Warn if using deprecated neg_absdiff names
-            deprecated_names = {'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3'}
-            using_deprecated = deprecated_names & set(features)
-            if using_deprecated:
-                import warnings
-                warnings.warn(
-                    f"Feature names {using_deprecated} are deprecated. "
-                    f"Use 'absdiff_*' instead for correct sign on coefficients. "
-                    f"Deprecated names will be removed in a future version.",
-                    DeprecationWarning,
-                    stacklevel=2
-                )
+        # Validate feature names
+        valid_features = {
+            'min_5_bp', 'min_5_3', 'min_all',
+            'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
+            'max_5_bp', 'max_5_3'
+        }
+        invalid = set(features) - valid_features
+        if invalid:
+            raise ValueError(
+                f"Invalid feature names: {invalid}. "
+                f"Valid features: {valid_features}"
+            )
 
-            self.features = features
-        else:
-            # Fall back to old flag-based behavior for backward compatibility
-            self.features = None
+        self.features = features
 
         # Backward compatibility: Store gamma parameters as attributes even though they're unused
         # This allows old pickled models to load without errors
@@ -258,66 +244,34 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             s3[:, np.newaxis]
         ]
 
-        # Use explicit feature list if specified, otherwise fall back to flags
-        # Handle old pickled models that don't have 'features' attribute
-        if hasattr(self, 'features') and self.features is not None:
-            # Compute max features if needed
-            if 'max_5_bp' in self.features or 'max_5_3' in self.features:
-                max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
-                max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
+        # Use explicit feature list
+        # Compute max features if needed
+        if 'max_5_bp' in self.features or 'max_5_3' in self.features:
+            max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
+            max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
 
-            # Add composite features in deterministic order
-            # This ensures consistent feature ordering regardless of input list order
-            # Apply gamma scaling to imbalance features (absdiff_*)
-            composite_feature_map = {
-                'min_5_bp': min_5_bp[:, np.newaxis],
-                'min_5_3': min_5_3[:, np.newaxis],
-                'min_all': min_all[:, np.newaxis],
-                'absdiff_5_bp': self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],
-                'absdiff_5_3': self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
-                'absdiff_bp_3': self.gamma_imbalance * absdiff_bp_3[:, np.newaxis],
-                # Backward compatibility: support old neg_absdiff names (deprecated)
-                'neg_absdiff_5_bp': -self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],
-                'neg_absdiff_5_3': -self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
-                'neg_absdiff_bp_3': -self.gamma_imbalance * absdiff_bp_3[:, np.newaxis],
-            }
-            # Add max features if computed
-            if 'max_5_bp' in self.features or 'max_5_3' in self.features:
-                composite_feature_map['max_5_bp'] = max_5_bp[:, np.newaxis]
-                composite_feature_map['max_5_3'] = max_5_3[:, np.newaxis]
+        # Add composite features in deterministic order
+        # This ensures consistent feature ordering regardless of input list order
+        # Apply gamma scaling to imbalance features (absdiff_*)
+        composite_feature_map = {
+            'min_5_bp': min_5_bp[:, np.newaxis],
+            'min_5_3': min_5_3[:, np.newaxis],
+            'min_all': min_all[:, np.newaxis],
+            'absdiff_5_bp': self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],
+            'absdiff_5_3': self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
+            'absdiff_bp_3': self.gamma_imbalance * absdiff_bp_3[:, np.newaxis],
+        }
+        # Add max features if computed
+        if 'max_5_bp' in self.features or 'max_5_3' in self.features:
+            composite_feature_map['max_5_bp'] = max_5_bp[:, np.newaxis]
+            composite_feature_map['max_5_3'] = max_5_3[:, np.newaxis]
 
-            # Add features in canonical order (not self.features order)
-            for feature_name in ['min_5_bp', 'min_5_3', 'min_all',
-                                 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
-                                 'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',
-                                 'max_5_bp', 'max_5_3']:
-                if feature_name in self.features:
-                    features.append(composite_feature_map[feature_name])
-
-        else:
-            # Legacy flag-based behavior (for backward compatibility with old models)
-            # WARNING: Old models used neg_absdiff (negative values) which learned wrong signs
-            # New models should use explicit features list with absdiff (positive values)
-            # Optional: pairwise min features (redundant with min_all, kept for backward compatibility)
-            if self.include_pairwise_mins:
-                features.append(min_5_bp[:, np.newaxis])
-                features.append(min_5_3[:, np.newaxis])
-
-            # Always include: 3-way min and imbalance penalties
-            # Use negative absdiff for backward compatibility with old pickled models
-            features.extend([
-                min_all[:, np.newaxis],                                      # ALL THREE must be strong
-                -self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],   # Legacy: negative for old models
-                -self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
-                -self.gamma_imbalance * absdiff_bp_3[:, np.newaxis]
-            ])
-
-            # Optional: max features (expert: "you can drop max_* entirely")
-            if self.include_max:
-                max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
-                max_5_3= 0.5 * (sum_5_3 + absdiff_5_3)
-                features.append(max_5_bp[:, np.newaxis])
-                features.append(max_5_3[:, np.newaxis])
+        # Add features in canonical order (not self.features order)
+        for feature_name in ['min_5_bp', 'min_5_3', 'min_all',
+                             'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
+                             'max_5_bp', 'max_5_3']:
+            if feature_name in self.features:
+                features.append(composite_feature_map[feature_name])
 
         return np.hstack(features)
 

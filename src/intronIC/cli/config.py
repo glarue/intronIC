@@ -63,7 +63,7 @@ class ExtractionConfig:
     """Configuration for intron extraction."""
     feature_type: str = 'both'  # 'cds', 'exon', or 'both'
     min_intron_len: int = 30
-    flank_len: int = 50
+    flank_len: int = 100  # Length of flanking sequence to extract (upstream and downstream)
     allow_multiple_isoforms: bool = False
     no_intron_overlap: bool = False
     include_duplicates: bool = False
@@ -88,6 +88,9 @@ class ScoringConfig:
     pseudocount: float = 0.0001
     ignore_nc_dnts: bool = True  # Ignore terminal dinucleotides for NC introns by default
     normalizer_mode: str = 'auto'  # 'human', 'adaptive', or 'auto'
+    species_prior: Optional[float] = None  # Expected U12 prior for target species
+    load_normalizer: Optional[Path] = None  # Load saved normalizer for reproducible normalization
+    save_normalizer: bool = False  # Save fitted normalizer for future runs
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,16 +213,21 @@ class IntronICConfig:
             pwm_file=args.pwms,
             reference_u12s=args.reference_u12s,
             reference_u2s=args.reference_u2s,
-            generate_u2_bps_pwm=args.generate_u2_bps_pwm,
+            generate_u2_bps_pwm=getattr(args, 'generate_u2_bps_pwm', False),  # Not currently implemented
             pseudocount=args.pseudocount,
-            ignore_nc_dnts=not args.no_ignore_nc_dnts
+            ignore_nc_dnts=not args.no_ignore_nc_dnts,
+            normalizer_mode=args.normalizer_mode,
+            species_prior=getattr(args, 'species_prior', None),
+            load_normalizer=getattr(args, 'load_normalizer', None),
+            save_normalizer=getattr(args, 'save_normalizer', False)
         )
 
         # Training configuration
         recursive_subset = None
-        if args.recursive and isinstance(args.recursive, str):
+        recursive_arg = getattr(args, 'recursive', None)  # Not currently implemented
+        if recursive_arg and isinstance(recursive_arg, str):
             try:
-                recursive_subset = int(args.recursive)
+                recursive_subset = int(recursive_arg)
             except ValueError:
                 pass
 
@@ -259,7 +267,7 @@ class IntronICConfig:
         training_config = TrainingConfig(
             fixed_C=args.C,
             n_models=args.n_models,
-            recursive=bool(args.recursive),
+            recursive=bool(recursive_arg),
             recursive_subset=recursive_subset,
             seed=args.seed,
             max_iter=args.max_iter,

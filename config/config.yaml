@@ -137,7 +137,7 @@ training:
     # - 1.0 = use all U2s (no subsampling)
     # Only applies when subsample_u2=true
     # Recommendation: 0.7-0.9 for good diversity without losing too much data
-    subsample_ratio: 0.8
+    subsample_ratio: 0.85
 
     # Maximum iterations for LinearSVC convergence
     # Separate from optimizer.max_iter (which is for parameter search)

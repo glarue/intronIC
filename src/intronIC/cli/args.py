@@ -418,6 +418,45 @@ Classify mode examples:
               auto: Use human if available in model, otherwise adaptive'''
         )
 
+        # Species-specific prior adjustment (for U12-absent species)
+        parser.add_argument(
+            '--species-prior',
+            type=float,
+            default=None,
+            metavar='PRIOR',
+            help='''Expected U12 prior for target species (0 to 1). Adjusts classification
+              probabilities via Bayes rule to account for different U12 base rates.
+              Recommended values:
+                - 0.005: Human-like species (default if not specified)
+                - 1e-6: U12-absent species (C. elegans, many fungi)
+                - 1e-4: U12-poor species
+              Lower values reduce false positives in U12-free lineages.'''
+        )
+
+        # Load saved normalizer (for reproducible adaptive normalization)
+        parser.add_argument(
+            '--load-normalizer',
+            type=Path,
+            default=None,
+            metavar='PATH',
+            help='''Load a saved normalizer from a previous run (for reproducible normalization).
+              When using adaptive mode on a species, the first run on the full genome should
+              fit and save a normalizer. Subsequent runs on subsets can reuse this normalizer
+              for consistency. Only applies when using --normalizer-mode adaptive.
+              The normalizer is automatically saved as <output_prefix>.normalizer.pkl'''
+        )
+
+        # Save fitted normalizer (for future reproducibility)
+        parser.add_argument(
+            '--save-normalizer',
+            action='store_true',
+            default=False,
+            help='''Save the fitted normalizer for future runs (adaptive mode only).
+              Use this on your first full-genome run for a species to establish a reference
+              normalization. Future runs can use --load-normalizer to reuse this normalization.
+              Saved to <output_prefix>.normalizer.pkl'''
+        )
+
         # Backward compatibility: old --pretrained_model flag
         if for_backward_compat:
             model_group.add_argument(
@@ -538,17 +577,19 @@ Classify mode examples:
             type=Path,
             help='Custom PWM matrix file'
         )
-        training.add_argument(
-            '--generate-u2-bps-pwm', '--generate_u2_bps_pwm',
-            action='store_true',
-            help='Generate U2 branch point PWM from data'
-        )
-        training.add_argument(
-            '--recursive',
-            nargs='?',
-            const=True,
-            help='Perform recursive training'
-        )
+        # NOTE: The following arguments are not currently implemented in v2.0
+        # Uncomment when functionality is added
+        # training.add_argument(
+        #     '--generate-u2-bps-pwm', '--generate_u2_bps_pwm',
+        #     action='store_true',
+        #     help='Generate U2 branch point PWM from data (NOT IMPLEMENTED)'
+        # )
+        # training.add_argument(
+        #     '--recursive',
+        #     nargs='?',
+        #     const=True,
+        #     help='Perform recursive training (NOT IMPLEMENTED)'
+        # )
         training.add_argument(
             '-C',
             type=float,

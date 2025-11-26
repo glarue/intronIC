@@ -44,8 +44,6 @@ Enable flexible feature selection in intronIC to allow training/classification w
 - Backward compatibility concerns with existing models
 - Testing matrix grows significantly (1D, 2D combinations, 3D)
 
-**Estimated effort:** 4-8 hours of focused work + 2-4 hours testing
-
 ---
 
 ## Detailed Implementation Plan
@@ -102,7 +100,6 @@ class ScoringConfig:
 
 **Complexity:** LOW
 **Risks:** Frozen dataclass requires workaround for validation
-**Alternative:** Use `@validator` from pydantic if we switch config system
 
 ---
 
@@ -142,7 +139,6 @@ class IntronScorer:
 ```
 
 **Complexity:** LOW-MODERATE
-**Impact:** ~50 lines changed in scorer.py
 **Testing:** Verify None values handled correctly downstream
 
 ---
@@ -190,7 +186,6 @@ class ScoreNormalizer:
 ```
 
 **Complexity:** MODERATE
-**Impact:** ~100 lines changed in normalizer.py
 **Risks:** Need to handle None values carefully
 
 ---
@@ -295,7 +290,6 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
 ```
 
 **Complexity:** HIGH
-**Impact:** Complete rewrite of transformer (~200 lines)
 **Testing:** Need to test all combinations (7 possible base feature sets)
 
 ---
@@ -328,7 +322,6 @@ def train_ensemble(..., enabled_features=('five', 'bp', 'three')):
 ```
 
 **Complexity:** LOW
-**Impact:** ~30 lines changed
 
 ### 5.2 Update Predictor
 **File:** `src/intronIC/classification/predictor.py`
@@ -339,7 +332,6 @@ def train_ensemble(..., enabled_features=('five', 'bp', 'three')):
 - Handle models trained with different feature sets
 
 **Complexity:** LOW-MODERATE
-**Impact:** ~50 lines changed
 
 ---
 
@@ -364,7 +356,6 @@ def save_model(...):
 ```
 
 **Complexity:** LOW
-**Impact:** ~5 lines added
 **Note:** Provides backward compatibility detection
 
 ---
@@ -391,7 +382,6 @@ parser.add_argument(
 ```
 
 **Complexity:** LOW
-**Impact:** ~20 lines added
 
 ---
 
@@ -417,7 +407,6 @@ def load_model(model_path):
 ```
 
 **Complexity:** LOW
-**Impact:** ~10 lines added
 
 ---
 
@@ -436,7 +425,6 @@ Test cases:
 - Normalizer with missing features
 
 **Complexity:** MODERATE
-**Effort:** ~4 hours to write comprehensive tests
 
 ### 9.2 Integration Tests
 **Test scenarios:**
@@ -447,7 +435,6 @@ Test cases:
 - Test backward compatibility with old models
 
 **Complexity:** MODERATE
-**Effort:** ~2 hours
 
 ---
 
@@ -558,20 +545,6 @@ Create separate transformers for 1D, 2D, 3D cases:
 - Research question requires feature ablation studies
 - Performance issues with BP scoring in certain species
 - After v2.0 release when architecture is stable
-
----
-
-## Implementation Time Estimate
-
-If proceeding:
-- **Phase 1-2 (Config + Scoring):** 2 hours
-- **Phase 3 (Normalization):** 2 hours
-- **Phase 4 (Transformer):** 3 hours
-- **Phase 5-8 (Training/Prediction/CLI):** 2 hours
-- **Phase 9 (Testing):** 6 hours
-- **Total:** **15 hours** (2 full work days)
-
-Plus debugging and iteration: **+25% = ~19 hours total**
 
 ---
 

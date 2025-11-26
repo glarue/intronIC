@@ -395,6 +395,7 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
     all_intercepts = []
     all_feature_names = None
     model_hyperparams = []  # Store (C, penalty, loss, calibration, class_weight_mult)
+    model_details = []  # Store full model details for grouped logging
 
     for i, svm_model in enumerate(ensemble.models):
         model = svm_model.model
@@ -461,17 +462,70 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
                     all_coefficients.append(coef)
                     all_intercepts.append(intercept)
 
-                    # Log first 3 models' coefficients in detail
-                    if i < 3:
-                        messenger.log_only(f"\nModel {i+1}/{len(ensemble.models)} Details:")
-                        messenger.log_only(f"  C={C_param:.6f}, penalty={penalty}, loss={loss}")
-                        messenger.log_only(f"  Calibration={calib_method}, class_weight_mult={class_weight_mult}")
-                        messenger.log_only(f"  Intercept: {intercept:+.6f}")
-                        messenger.log_only(f"  Coefficients:")
-                        for feat_name, coef_val in zip(all_feature_names, coef):
-                            messenger.log_only(f"    {feat_name:20s}: {coef_val:+.6f}")
+                    # Store model details for grouped logging
+                    model_details.append({
+                        'index': i,
+                        'hyperparams': (C_param, penalty, loss, calib_method, class_weight_mult),
+                        'intercept': intercept,
+                        'coefficients': coef,
+                        'feature_names': all_feature_names
+                    })
         except Exception as e:
             messenger.log_only(f"Warning: Could not extract coefficients from model {i+1}: {e}")
+
+    # Group models by identical hyperparameters and log details
+    if model_details:
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        for detail in model_details:
+            grouped[detail['hyperparams']].append(detail)
+
+        # Helper function to format model indices into ranges
+        def format_model_indices(models):
+            """Format list of model indices into compact range notation."""
+            indices = sorted([m['index'] + 1 for m in models])  # 1-based for display
+            if len(indices) == 1:
+                return str(indices[0])
+
+            ranges = []
+            start = indices[0]
+            end = indices[0]
+
+            for i in range(1, len(indices)):
+                if indices[i] == end + 1:
+                    end = indices[i]
+                else:
+                    if start == end:
+                        ranges.append(str(start))
+                    else:
+                        ranges.append(f"{start}-{end}")
+                    start = indices[i]
+                    end = indices[i]
+
+            if start == end:
+                ranges.append(str(start))
+            else:
+                ranges.append(f"{start}-{end}")
+
+            return ", ".join(ranges)
+
+        # Log each group
+        for hyperparams, models in grouped.items():
+            C_param, penalty, loss, calib_method, class_weight_mult = hyperparams
+
+            # Header showing which models share these hyperparameters
+            model_range = format_model_indices(models)
+            messenger.log_only(f"\nModel(s) {model_range} (x{len(models)}) - Shared Hyperparameters:")
+            messenger.log_only(f"  C={C_param:.6f}, penalty={penalty}, loss={loss}")
+            messenger.log_only(f"  Calibration={calib_method}, class_weight_mult={class_weight_mult}")
+
+            # Show individual model coefficients
+            for model in models:
+                messenger.log_only(f"\n  Model {model['index']+1}/{len(ensemble.models)}:")
+                messenger.log_only(f"    Intercept: {model['intercept']:+.6f}")
+                messenger.log_only(f"    Coefficients:")
+                for feat_name, coef_val in zip(model['feature_names'], model['coefficients']):
+                    messenger.log_only(f"      {feat_name:20s}: {coef_val:+.6f}")
 
     # Compute and log ensemble statistics
     if all_coefficients:
@@ -977,10 +1031,17 @@ def extract_introns_from_annotation(
 
     # Generate introns (coordinates only, NO sequences yet)
     messenger.log_only("Generating introns from exon pairs")
-    generator = IntronGenerator()
+    generator = IntronGenerator(debug=config.output.debug, messenger=messenger)
     introns_iter = generator.generate_from_genes(genes, builder.feature_index)
     introns_all = list(introns_iter)
     messenger.log_only(f"Generated {len(introns_all):,} introns")
+
+    # Report touching exons if any were found
+    if generator.touching_exons_count > 0:
+        messenger.log_only(
+            f"Found {generator.touching_exons_count:,} touching/zero-length exon pairs "
+            f"(annotation errors, counted in family size but omitted from output)"
+        )
 
     # Filter by feature type (cds/exon/both)
     if config.extraction.feature_type == 'cds':
@@ -1199,7 +1260,6 @@ def extract_introns_from_annotation(
                 contig_introns,
                 flank_size=config.extraction.flank_len
             ))
-            messenger.log_only(f"  Extracted sequences for {len(contig_with_seqs):,} introns")
 
             # 5b: Apply U12 corrections if enabled
             if config.extraction.u12_boundary_correction:
@@ -1243,8 +1303,6 @@ def extract_introns_from_annotation(
             del contig_introns
             del contig_with_seqs
             gc.collect()
-
-            messenger.log_only(f"  Processed {contig}, freed intermediate memory")
 
     # Free contig grouping
     del introns_by_contig
@@ -1643,6 +1701,218 @@ def normalize_scores(
     return normalized_introns, u12_normalized, u2_normalized, normalizer
 
 
+def _apply_margin_alignment(
+    classified_introns: List[Intron],
+    ensemble: 'SVMEnsemble',
+    human_margin_stats: dict,
+    threshold: float,
+    messenger: 'UnifiedMessenger'
+) -> List[Intron]:
+    """
+    Apply margin-space alignment to classified introns (post-processing approach).
+
+    This function re-calibrates probabilities by aligning target species margins
+    to the human U2 margin distribution, then re-applying Platt calibration with
+    adjusted parameters.
+
+    Args:
+        classified_introns: Introns with initial probabilities from ensemble
+        ensemble: Trained SVM ensemble
+        human_margin_stats: Dict with 'margin_median', 'margin_iqr', 'n_samples'
+        threshold: Classification threshold (for diagnostics)
+        messenger: For logging diagnostics
+
+    Returns:
+        Introns with margin-aligned probabilities
+
+    Note:
+        This is mathematically equivalent to modifying the predictor, but simpler
+        to implement as a post-processing step.
+    """
+    from intronIC.scoring.margin_alignment import (
+        compute_margin_alignment,
+        fold_alignment_into_platt
+    )
+    from dataclasses import replace
+    from scipy.special import expit as sigmoid
+
+    messenger.log_only("Computing margin alignment parameters...")
+
+    # Step 1: Extract margins from classified introns
+    # The ensemble stores calibrated probabilities, we need to reverse-engineer margins
+    # Alternative: Re-compute margins from features
+    # We'll use the second approach for accuracy
+
+    # Extract features from introns
+    features = np.array([
+        [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+        for i in classified_introns
+    ])
+
+    # Get first model's base pipeline (for margin computation)
+    first_model = ensemble.models[0].model
+    if hasattr(first_model, 'calibrated_classifiers_'):
+        base_pipeline = first_model.calibrated_classifiers_[0].estimator
+    else:
+        base_pipeline = first_model
+
+    # Compute margins (before calibration)
+    target_margins = base_pipeline.decision_function(features)
+
+    # Step 2: Compute alignment parameters
+    scale, shift, align_stats = compute_margin_alignment(
+        target_margins=target_margins,
+        human_median=human_margin_stats['margin_median'],
+        human_iqr=human_margin_stats['margin_iqr'],
+        human_n=human_margin_stats['n_samples']
+    )
+
+    # Log diagnostics
+    messenger.log_only(align_stats.format_summary())
+
+    # Step 3: Check calibration method and apply alignment
+    if hasattr(first_model, 'calibrated_classifiers_'):
+        # For CalibratedClassifierCV with cv='prefit', there's one calibrated classifier
+        calibrator = first_model.calibrated_classifiers_[0].calibrators[0]
+
+        # Check if it's Platt (sigmoid) or isotonic calibration
+        if hasattr(calibrator, 'a_'):
+            # Platt/sigmoid calibration - can fold alignment into parameters
+            A = calibrator.a_
+            B = calibrator.b_
+
+            # Step 4: Fold alignment into Platt parameters
+            A_new, B_new = fold_alignment_into_platt(A, B, scale, shift)
+
+            messenger.log_only(f"Platt parameters: A={A:.4f}, B={B:.4f}")
+            messenger.log_only(f"Aligned Platt:    A'={A_new:.4f}, B'={B_new:.4f}")
+
+            # Step 5: Re-calibrate probabilities with aligned parameters
+            # p_new = sigmoid(A_new * margin + B_new)
+            probs_new = sigmoid(A_new * target_margins + B_new) * 100.0  # Convert to 0-100
+        else:
+            # Isotonic regression - cannot fold alignment, apply transform then re-calibrate
+            messenger.log_only("Model uses isotonic calibration - applying alignment then re-calibrating")
+
+            # Transform margins
+            aligned_margins = scale * target_margins + shift
+
+            # Re-calibrate with isotonic regressor
+            probs_new = calibrator.predict(aligned_margins) * 100.0  # Convert to 0-100
+    else:
+        # Shouldn't happen, but fallback
+        messenger.warning("Could not extract calibration parameters - skipping alignment")
+        return classified_introns
+
+    # Step 6: Update introns with new probabilities
+    updated_introns = []
+    for intron, new_prob in zip(classified_introns, probs_new):
+        # Update scores object
+        new_scores = replace(intron.scores, svm_score=float(new_prob))
+        # Reclassify based on new probability
+        new_type_id = 'u12' if new_prob >= threshold else 'u2'
+        new_metadata = replace(intron.metadata, type_id=new_type_id)
+        # Update intron
+        new_intron = replace(intron, scores=new_scores, metadata=new_metadata)
+        updated_introns.append(new_intron)
+
+    # Log effect
+    n_u12_before = sum(1 for i in classified_introns if i.metadata.type_id == 'u12')
+    n_u12_after = sum(1 for i in updated_introns if i.metadata.type_id == 'u12')
+    messenger.log_only(
+        f"Margin alignment effect: {n_u12_before} → {n_u12_after} U12 predictions "
+        f"({100*n_u12_after/len(updated_introns):.3f}%)"
+    )
+
+    return updated_introns
+
+
+def _apply_prior_adjustment(
+    classified_introns: List[Intron],
+    training_prior: float,
+    target_prior: float,
+    threshold: float,
+    messenger: 'UnifiedMessenger'
+) -> List[Intron]:
+    """
+    Apply Bayesian prior adjustment to classification probabilities.
+
+    This function adjusts probabilities via Bayes' rule to account for different
+    U12 base rates between training and target species. This is particularly
+    important for U12-absent species where the human prior significantly
+    overestimates the true prior.
+
+    Args:
+        classified_introns: Introns with initial probabilities
+        training_prior: U12 prior in training data (e.g., 0.005 for human)
+        target_prior: Expected U12 prior in target species (e.g., 1e-6 for C. elegans)
+        threshold: Classification threshold (for diagnostics)
+        messenger: For logging diagnostics
+
+    Returns:
+        Introns with prior-adjusted probabilities
+
+    Note:
+        This is independent of margin alignment and can be applied separately or
+        in combination.
+    """
+    from intronIC.scoring.prior_adjustment import (
+        adjust_probabilities_for_prior,
+        compute_prior_adjustment_diagnostics
+    )
+    from dataclasses import replace
+
+    messenger.log_only(f"Adjusting probabilities: training π={training_prior:.2e} → target π={target_prior:.2e}")
+
+    # Step 1: Extract probabilities (convert from 0-100 to 0-1)
+    probs = np.array([i.scores.svm_score / 100.0 for i in classified_introns])
+
+    # Step 2: Apply prior adjustment
+    probs_adj = adjust_probabilities_for_prior(
+        probabilities=probs,
+        training_prior=training_prior,
+        target_prior=target_prior
+    )
+
+    # Step 3: Convert back to 0-100 scale
+    probs_adj_scaled = probs_adj * 100.0
+
+    # Step 4: Compute diagnostics
+    diag = compute_prior_adjustment_diagnostics(
+        probabilities=probs,
+        adjusted_probabilities=probs_adj,
+        training_prior=training_prior,
+        target_prior=target_prior,
+        threshold=threshold / 100.0  # Convert threshold to 0-1 scale
+    )
+
+    # Step 5: Update introns with adjusted probabilities
+    updated_introns = []
+    for intron, new_prob in zip(classified_introns, probs_adj_scaled):
+        # Update scores object
+        new_scores = replace(intron.scores, svm_score=float(new_prob))
+        # Reclassify based on new probability
+        new_type_id = 'u12' if new_prob >= threshold else 'u2'
+        new_metadata = replace(intron.metadata, type_id=new_type_id)
+        # Update intron
+        new_intron = replace(intron, scores=new_scores, metadata=new_metadata)
+        updated_introns.append(new_intron)
+
+    # Log effect
+    messenger.log_only(
+        f"Prior adjustment effect: {diag['n_u12_before']} → {diag['n_u12_after']} U12 predictions "
+        f"({100*diag['frac_u12_after']:.3f}%)"
+    )
+    messenger.log_only(
+        f"Mean probability: {diag['mean_prob_before']:.4f} → {diag['mean_prob_after']:.4f}"
+    )
+    messenger.log_only(
+        f"Odds ratio: {diag['odds_ratio']:.4e}"
+    )
+
+    return updated_introns
+
+
 def classify_with_pretrained_model(
     introns: List[Intron],
     model_path: Path,
@@ -1673,6 +1943,8 @@ def classify_with_pretrained_model(
         The saved normalizer from training is NOT used. Instead, we fit a new normalizer
         on the experimental data to correct for species-specific score distributions.
     """
+    import joblib
+
     messenger.info(f"Loading pretrained model from {model_path}")
 
     # Load model bundle
@@ -1720,11 +1992,25 @@ def classify_with_pretrained_model(
         messenger.log_only("This preserves composition bias correction across species")
         normalizer = saved_normalizer
     else:  # adaptive
-        messenger.info("Fitting normalizer on experimental data (domain adaptation)")
-        messenger.log_only("Note: May cause FPs in U12-absent species (e.g., C. elegans)")
-        messenger.log_only(f"Fitting normalizer on {len(introns)} experimental introns")
-        normalizer = ScoreNormalizer()
-        normalizer.fit(introns, dataset_type='unlabeled')
+        # Check if user wants to load a saved normalizer
+        if config.scoring.load_normalizer is not None:
+            messenger.info(f"Loading saved normalizer from {config.scoring.load_normalizer}")
+            normalizer = joblib.load(config.scoring.load_normalizer)
+            messenger.log_only("Using saved normalizer for reproducible normalization")
+        else:
+            # Fit normalizer on experimental data (feature re-scaling)
+            messenger.info("Fitting normalizer on experimental data (domain adaptation)")
+            messenger.log_only("Re-normalizing features to target species distribution")
+            messenger.log_only(f"Fitting normalizer on {len(introns)} experimental introns")
+            normalizer = ScoreNormalizer()
+            normalizer.fit(introns, dataset_type='unlabeled')
+
+            # Save normalizer if requested
+            if config.scoring.save_normalizer:
+                normalizer_path = config.output.get_output_path('.normalizer.pkl')
+                messenger.info(f"Saving fitted normalizer to {normalizer_path}")
+                joblib.dump(normalizer, normalizer_path, compress=3)
+                messenger.log_only("Future runs can reuse this normalizer with --load-normalizer")
 
     normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
     messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
@@ -1740,6 +2026,24 @@ def classify_with_pretrained_model(
 
     classified_introns = list(predictor.predict(ensemble, normalized_introns))
     messenger.log_only(f"Classified {len(classified_introns)} introns")
+
+    # Apply prior adjustment if species-specific prior was provided
+    if config.scoring.species_prior is not None:
+        training_prior = model_data.get('training_prior')
+        if training_prior is not None:
+            messenger.info(f"Applying prior adjustment for target species (π={config.scoring.species_prior:.2e})")
+            classified_introns = _apply_prior_adjustment(
+                classified_introns=classified_introns,
+                training_prior=training_prior,
+                target_prior=config.scoring.species_prior,
+                threshold=config.scoring.threshold,
+                messenger=messenger
+            )
+        else:
+            messenger.warning(
+                "Cannot apply prior adjustment: model lacks training prior information"
+            )
+            messenger.warning("Retrain model with current version to enable this feature")
 
     # Create metrics (limited since we skipped training)
     metrics = {
@@ -1761,122 +2065,6 @@ def classify_with_pretrained_model(
     messenger.log_only(f"Run metadata saved to {run_metadata_path}")
 
     return classified_introns, metrics
-
-
-def _write_training_log(
-    log_path: Path,
-    classification_result,
-    u12_reference: List[Intron],
-    u2_reference: List[Intron],
-    config: IntronICConfig
-):
-    """
-    Write detailed training log with evaluation metrics and fold results.
-
-    Args:
-        log_path: Path to training log file
-        classification_result: ClassificationResult from IntronClassifier
-        u12_reference: U12 reference introns
-        u2_reference: U2 reference introns
-        config: Pipeline configuration
-    """
-    from intronIC.utils.logging_utils import TrainingLogger
-
-    with TrainingLogger(str(log_path)) as tlog:
-        # Overview section
-        tlog.section("TRAINING CONFIGURATION")
-        tlog.metric("Species", config.output.species_name)
-        tlog.metric("Classification Threshold", f"{config.scoring.threshold}%")
-        tlog.metric("Random Seed", config.training.seed)
-        tlog.metric("Max Iterations", config.training.max_iter)
-        tlog.blank()
-
-        tlog.subsection("Reference Data")
-        tlog.metric("U12 reference introns", f"{len(u12_reference):,}")
-        tlog.metric("U2 reference introns", f"{len(u2_reference):,}")
-        tlog.metric("Total reference", f"{len(u12_reference) + len(u2_reference):,}")
-        tlog.blank()
-
-        tlog.subsection("Model Configuration")
-        tlog.metric("Ensemble models", config.training.n_models)
-        tlog.metric("Evaluation mode", config.training.eval_mode)
-
-        if config.training.fixed_C:
-            tlog.metric("C parameter", f"{config.training.fixed_C:.6e} (fixed)")
-        else:
-            tlog.metric("C parameter", "Optimized via grid search")
-            tlog.metric("Optimization rounds", config.training.n_optimization_rounds)
-
-        # Hyperparameter optimization section
-        tlog.section("HYPERPARAMETER OPTIMIZATION")
-        tlog.metric("Optimized C", f"{classification_result.parameters.C:.6e}")
-        tlog.metric("CV score (balanced accuracy)", f"{classification_result.parameters.cv_score:.4f}")
-        tlog.metric("Calibration method", classification_result.parameters.calibration_method)
-        tlog.metric("Dual formulation", classification_result.parameters.dual)
-        tlog.metric("Intercept scaling", classification_result.parameters.intercept_scaling)
-        tlog.blank()
-
-        # Evaluation results section
-        eval_result = classification_result.eval_result
-        if eval_result is not None:
-            if hasattr(eval_result, 'mean_f1'):
-                # Nested CV results
-                tlog.section("NESTED CROSS-VALIDATION RESULTS")
-                tlog.metric("Number of folds", eval_result.n_folds)
-                tlog.blank()
-
-                tlog.subsection("Aggregate Performance")
-                tlog.metric("Mean F1 Score", f"{eval_result.mean_f1:.4f} ± {eval_result.std_f1:.4f}")
-                tlog.metric("Mean PR-AUC", f"{eval_result.mean_pr_auc:.4f} ± {eval_result.std_pr_auc:.4f}")
-                tlog.blank()
-
-                tlog.subsection("Per-Fold Results")
-                headers = ["Fold", "F1 Score", "PR-AUC", "Train U12", "Train U2", "Test U12", "Test U2"]
-                rows = []
-                for fold in eval_result.fold_results:
-                    rows.append([
-                        f"{fold.fold_idx + 1}/{eval_result.n_folds}",
-                        f"{fold.f1_score:.4f}",
-                        f"{fold.pr_auc:.4f}",
-                        f"{fold.n_u12_train:,}",
-                        f"{fold.n_u2_train:,}",
-                        f"{fold.n_u12_test:,}",
-                        f"{fold.n_u2_test:,}"
-                    ])
-                tlog.table(headers, rows)
-
-            elif hasattr(eval_result, 'test_f1'):
-                # Split evaluation results
-                tlog.section("TRAIN/TEST SPLIT EVALUATION")
-                tlog.blank()
-
-                tlog.subsection("Data Split")
-                tlog.metric("Training set", f"{eval_result.n_u2_train + eval_result.n_u12_train:,} introns "
-                                           f"({eval_result.n_u2_train:,} U2, {eval_result.n_u12_train:,} U12)")
-                if hasattr(eval_result, 'n_u2_val'):
-                    tlog.metric("Validation set", f"{eval_result.n_u2_val + eval_result.n_u12_val:,} introns "
-                                                  f"({eval_result.n_u2_val:,} U2, {eval_result.n_u12_val:,} U12)")
-                tlog.metric("Test set", f"{eval_result.n_u2_test + eval_result.n_u12_test:,} introns "
-                                        f"({eval_result.n_u2_test:,} U2, {eval_result.n_u12_test:,} U12)")
-                tlog.blank()
-
-                tlog.subsection("Test Set Performance (Honest Evaluation)")
-                tlog.metric("F1 Score", f"{eval_result.test_f1:.4f}")
-                tlog.metric("PR-AUC", f"{eval_result.test_pr_auc:.4f}")
-
-        # Ensemble summary
-        tlog.section("TRAINED ENSEMBLE")
-        tlog.metric("Number of models", len(classification_result.ensemble.models))
-        tlog.blank()
-
-        tlog.subsection("Model Details")
-        for i, model in enumerate(classification_result.ensemble.models, 1):
-            tlog.info(f"Model {i}/{len(classification_result.ensemble.models)}:", indent=1)
-            tlog.metric(f"  Training samples", f"{model.train_size:,}")
-            tlog.metric(f"  U12 samples", f"{model.u12_count:,}")
-            tlog.metric(f"  U2 samples", f"{model.u2_count:,}")
-            tlog.metric(f"  C parameter", f"{model.parameters.C:.6e}")
-            tlog.blank()
 
 
 def classify_introns(
@@ -1903,12 +2091,6 @@ def classify_introns(
         Tuple of (classified introns, classification metrics)
     """
     messenger.info("Training SVM classifier")
-
-    # Create training log if we're actually training (not using pretrained model or fixed C)
-    training_log_path = None
-    if config.training.pretrained_model_path is None and config.training.eval_mode != 'none':
-        training_log_path = config.output.get_output_path('.training.log')
-        messenger.log_only(f"Detailed training log will be written to: {training_log_path}")
 
     # Load optimizer configuration if specified
     param_grid_override = None
@@ -2179,25 +2361,21 @@ def classify_introns(
         messenger.log_only(f"  Nested CV results ({metrics['n_cv_folds']} folds):")
         messenger.log_only(f"    Mean F1: {metrics['mean_f1']:.4f} ± {metrics['std_f1']:.4f}")
         messenger.log_only(f"    Mean PR-AUC: {metrics['mean_pr_auc']:.4f} ± {metrics['std_pr_auc']:.4f}")
+
+        # Add per-fold results table to log
+        if hasattr(result.eval_result, 'fold_results'):
+            messenger.print_nested_cv_results(
+                n_folds=result.eval_result.n_folds,
+                mean_f1=result.eval_result.mean_f1,
+                std_f1=result.eval_result.std_f1,
+                mean_pr_auc=result.eval_result.mean_pr_auc,
+                std_pr_auc=result.eval_result.std_pr_auc,
+                fold_results=result.eval_result.fold_results
+            )
     elif 'f1' in metrics:
         messenger.log_only(f"  Test set evaluation:")
         messenger.log_only(f"    F1: {metrics['f1']:.4f}")
         messenger.log_only(f"    PR-AUC: {metrics['pr_auc']:.4f}")
-
-    # Write detailed training log if evaluation was performed
-    if training_log_path and result.eval_result is not None:
-        try:
-            from intronIC.utils.logging_utils import TrainingLogger
-            _write_training_log(
-                training_log_path,
-                result,
-                u12_reference,
-                u2_reference,
-                config
-            )
-            messenger.log_only(f"Detailed training log written to: {training_log_path}")
-        except Exception as e:
-            messenger.warning(f"Failed to write training log: {e}")
 
     # Generate training reference plots if evaluation was performed
     if result.eval_result is not None:
@@ -2247,14 +2425,69 @@ def classify_introns(
     # Save trained model with human-trained normalizer for cross-species classification
     model_path = config.output.get_output_path('.model.pkl')
     messenger.log_only(f"Saving trained model to {model_path}")
+
+    # Compute human U2 margin statistics for margin alignment in adaptive mode
+    # Use first model in ensemble as representative
+    messenger.log_only("Computing U2 margin statistics for cross-species adaptation")
+    first_model_obj = result.ensemble.models[0]
+    first_model = first_model_obj.model  # This is the sklearn Pipeline
+
+    # Extract features from U2 reference introns
+    u2_features = np.array([
+        [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+        for i in u2_reference
+    ])
+
+    # Get the transformer and base estimator from the Pipeline
+    # Pipeline structure: scale -> transform -> svc -> calibration
+    # We need to transform features then get decision_function from base SVM
+    try:
+        # Transform features through the pipeline up to (but not including) calibration
+        # The pipeline has: scale, transform, svc, and CalibratedClassifierCV wraps the whole thing
+        if hasattr(first_model, 'calibrated_classifiers_'):
+            # Model is CalibratedClassifierCV - get the base pipeline
+            base_pipeline = first_model.calibrated_classifiers_[0].estimator
+        else:
+            # Direct pipeline
+            base_pipeline = first_model
+
+        # Transform features and get decision function
+        # Note: decision_function is before Platt calibration
+        u2_margins = base_pipeline.decision_function(u2_features)
+
+        # Compute robust statistics (median and IQR)
+        mu_u2 = float(np.median(u2_margins))
+        q25, q75 = np.percentile(u2_margins, [25, 75])
+        sigma_u2 = float(q75 - q25)  # IQR
+
+        messenger.log_only(f"  U2 margin stats: median={mu_u2:.3f}, IQR={sigma_u2:.3f}, N={len(u2_margins):,}")
+
+        human_negative_stats = {
+            'margin_median': mu_u2,
+            'margin_iqr': sigma_u2,
+            'n_samples': len(u2_margins)
+        }
+    except Exception as e:
+        messenger.warning(f"Failed to compute margin statistics: {e}")
+        messenger.warning("Model will not support margin-aligned adaptive mode")
+        human_negative_stats = None
+
+    # Compute training prior for prior adjustment
+    n_u12 = len(u12_reference)
+    n_u2 = len(u2_reference)
+    training_prior = n_u12 / (n_u12 + n_u2)
+    messenger.log_only(f"  Training U12 prior: {training_prior:.4f} ({n_u12}/{n_u12+n_u2})")
+
+    # Build model bundle
     model_bundle = {
         'ensemble': result.ensemble,
         'normalizer': normalizer,  # Save human-trained scaler for cross-species use
-        'threshold': config.scoring.threshold
+        'threshold': config.scoring.threshold,
+        'human_negative_stats': human_negative_stats,  # For margin alignment (NEW)
+        'training_prior': training_prior  # For prior adjustment (NEW)
     }
     joblib.dump(model_bundle, model_path, compress=3)
-    messenger.log_only(f"Model saved successfully with human-trained normalizer")
-    messenger.log_only(f"Use '--normalizer_mode human' for cross-species classification")
+    messenger.log_only(f"Model saved successfully with cross-species adaptation statistics")
 
     # Generate and save training metadata
     metadata_path = model_path.with_suffix('.metadata.json')
@@ -2384,7 +2617,7 @@ def write_outputs(
         "Log": config.output.get_output_path('.log'),
     }
 
-    reporter.print_file_tree(output_files)
+    messenger.print_file_tree(output_files)
     messenger.success("All output files written successfully")
 
 
@@ -2436,18 +2669,18 @@ def main_train(config: IntronICConfig):
     messenger.log_only("="*80)
     messenger.log_only("COMMAND AND CONFIGURATION")
     messenger.log_only("="*80)
-    messenger.log_only(f"intronIC version: 2.0.0")
+
+    # Format command for easy copy/paste (one line, let terminal wrap)
     messenger.log_only(f"Command: {' '.join(sys.argv)}")
     messenger.log_only(f"Working directory: {Path.cwd()}")
-    messenger.log_only(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     messenger.log_only("")
 
-    # Log reference input files
+    # Log reference input files with full paths
     messenger.log_only("Input Files:")
     if config.scoring.reference_u12s:
-        messenger.log_only(f"  U12 reference: {config.scoring.reference_u12s}")
+        messenger.log_only(f"  U12 reference: {config.scoring.reference_u12s.absolute()}")
     if config.scoring.reference_u2s:
-        messenger.log_only(f"  U2 reference: {config.scoring.reference_u2s}")
+        messenger.log_only(f"  U2 reference: {config.scoring.reference_u2s.absolute()}")
     messenger.log_only("")
 
     # Load yaml config for detailed logging
@@ -2458,7 +2691,7 @@ def main_train(config: IntronICConfig):
         if yaml_config:
             config_path = find_config(config.training.config_path)
             if config_path:
-                messenger.log_only(f"Config file: {config_path}")
+                messenger.log_only(f"Config file: {config_path.absolute()}")
                 messenger.log_only("")
     except Exception as e:
         messenger.log_only(f"Note: Could not load yaml config ({e})")
@@ -2466,7 +2699,7 @@ def main_train(config: IntronICConfig):
 
     # Log key configuration parameters in condensed format
     messenger.log_only("Configuration Parameters:")
-    messenger.log_only(f"  Species: {config.output.species_name or 'N/A'}")
+    messenger.log_only(f"  Run name: {config.output.species_name or 'N/A'}")
     messenger.log_only(f"  Random seed: {config.training.seed}")
     messenger.log_only(f"  Classification threshold: {config.scoring.threshold}%")
     messenger.log_only("")
@@ -2639,65 +2872,21 @@ def main_classify(config: IntronICConfig):
         quiet=config.output.quiet
     )
 
-    # Log command and config for reproducibility (log only, not console)
+    # Print unified startup banner (both console and log)
+    # Convert paths to absolute for logging
     import sys
-    messenger.log_only("="*80)
-    messenger.log_only("COMMAND AND CONFIGURATION")
-    messenger.log_only("="*80)
-    messenger.log_only(f"intronIC version: 2.0.0")
-    messenger.log_only(f"Command: {' '.join(sys.argv)}")
-    messenger.log_only(f"Working directory: {Path.cwd()}")
-    messenger.log_only(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    messenger.log_only("")
-
-    # Log input files
-    messenger.log_only("Input Files:")
-    if config.input.mode == 'annotation':
-        if config.input.genome:
-            messenger.log_only(f"  Genome: {config.input.genome}")
-        if config.input.annotation:
-            messenger.log_only(f"  Annotation: {config.input.annotation}")
-    elif config.input.mode == 'bed':
-        if config.input.genome:
-            messenger.log_only(f"  Genome: {config.input.genome}")
-        if config.input.bed:
-            messenger.log_only(f"  BED file: {config.input.bed}")
-    elif config.input.mode == 'sequences':
-        if config.input.sequences:
-            messenger.log_only(f"  Sequences: {config.input.sequences}")
-    messenger.log_only("")
-
-    # Load yaml config for detailed logging
-    from intronIC.classification.config_loader import load_config, find_config
-    yaml_config = None
-    try:
-        yaml_config = load_config(config.training.config_path)
-        if yaml_config:
-            config_path = find_config(config.training.config_path)
-            if config_path:
-                messenger.log_only(f"Config file: {config_path}")
-                messenger.log_only("")
-    except Exception as e:
-        messenger.log_only(f"Note: Could not load yaml config ({e})")
-        messenger.log_only("")
-
-    # Log key configuration parameters
-    messenger.log_only("Configuration Parameters:")
-    messenger.log_only(f"  Species: {config.output.species_name or 'N/A'}")
-    messenger.log_only(f"  Input mode: {config.input.mode}")
-    messenger.log_only(f"  Classification threshold: {config.scoring.threshold}%")
-    messenger.log_only(f"  Output directory: {config.output.output_dir}")
-    if config.training.pretrained_model_path:
-        messenger.log_only(f"  Model file: {config.training.pretrained_model_path}")
-    messenger.log_only("")
-
-    messenger.log_only("="*80)
-    messenger.log_only("")
-
-    # Print header
-    reporter.print_header(
+    messenger.print_startup_banner(
         species_name=config.output.species_name,
-        input_mode=config.input.mode
+        input_mode=config.input.mode,
+        output_dir=config.output.output_dir.absolute(),
+        threshold=config.scoring.threshold,
+        command=' '.join(sys.argv),
+        working_dir=str(Path.cwd()),
+        model_path=config.training.pretrained_model_path.absolute() if config.training.pretrained_model_path else None,
+        genome_path=config.input.genome.absolute() if config.input.mode in ['annotation', 'bed'] and config.input.genome else None,
+        annotation_path=config.input.annotation.absolute() if config.input.mode == 'annotation' and config.input.annotation else None,
+        bed_path=config.input.bed.absolute() if config.input.mode == 'bed' and config.input.bed else None,
+        sequences_path=config.input.sequences.absolute() if config.input.mode == 'sequences' and config.input.sequences else None
     )
 
     # Define pipeline steps
@@ -2708,10 +2897,6 @@ def main_classify(config: IntronICConfig):
         "Train and apply classifier",
         "Write output files"
     ]
-
-    # Show initial pipeline overview (console only, not in log)
-    messenger.console_only("")  # Blank line
-    reporter.print_pipeline_steps(pipeline_steps)
 
     try:
         # Step 1: Load and extract introns
@@ -2780,37 +2965,19 @@ def main_classify(config: IntronICConfig):
         duplicates_also_omitted = total_omitted + stats.duplicates - total_removed
         duplicates_only = stats.duplicates - duplicates_also_omitted if duplicates_also_omitted <= stats.duplicates else 0
 
-        # Report filtering results
-        messenger.log_only("")
-        messenger.log_only("Intron Filtering Summary:")
-        messenger.log_only("┌──────────────────────────────┬────────────┬───────────┐")
-        messenger.log_only("│ Category                     │ Count      │ Percent   │")
-        messenger.log_only("├──────────────────────────────┼────────────┼───────────┤")
-
-        # Show omitted section if any were omitted
-        if total_omitted > 0:
-            messenger.log_only(f"│ Omitted                      │ {total_omitted:>10,} │ {(total_omitted/total*100) if total > 0 else 0:>8.2f}% │")
-            # Show breakdown items that have non-zero counts
-            if stats.omitted_short > 0:
-                messenger.log_only(f"│   - Too short                │ {stats.omitted_short:>10,} │ {(stats.omitted_short/total*100) if total > 0 else 0:>8.2f}% │")
-            if stats.omitted_ambiguous > 0:
-                messenger.log_only(f"│   - Ambiguous bases          │ {stats.omitted_ambiguous:>10,} │ {(stats.omitted_ambiguous/total*100) if total > 0 else 0:>8.2f}% │")
-            if stats.omitted_noncanonical > 0:
-                messenger.log_only(f"│   - Non-canonical            │ {stats.omitted_noncanonical:>10,} │ {(stats.omitted_noncanonical/total*100) if total > 0 else 0:>8.2f}% │")
-            if stats.omitted_isoform > 0:
-                messenger.log_only(f"│   - Non-longest isoform      │ {stats.omitted_isoform:>10,} │ {(stats.omitted_isoform/total*100) if total > 0 else 0:>8.2f}% │")
-            if stats.omitted_overlap > 0:
-                messenger.log_only(f"│   - Overlapping              │ {stats.omitted_overlap:>10,} │ {(stats.omitted_overlap/total*100) if total > 0 else 0:>8.2f}% │")
-
-        # Show duplicates row if there are duplicates that weren't also omitted
-        if duplicates_only > 0:
-            messenger.log_only(f"│ Duplicates only              │ {duplicates_only:>10,} │ {(duplicates_only/total*100) if total > 0 else 0:>8.2f}% │")
-
-        messenger.log_only("├──────────────────────────────┼────────────┼───────────┤")
-        messenger.log_only(f"│ Total filtered out           │ {total_removed:>10,} │ {(total_removed/total*100) if total > 0 else 0:>8.2f}% │")
-        messenger.log_only(f"│ Retained for scoring         │ {stats.kept_introns:>10,} │ {(stats.kept_introns/total*100) if total > 0 else 0:>8.2f}% │")
-        messenger.log_only("└──────────────────────────────┴────────────┴───────────┘")
-        messenger.log_only("")
+        # Report filtering results using unified method (console + log)
+        messenger.print_filtering_summary(
+            total=total,
+            omitted_short=stats.omitted_short,
+            omitted_ambiguous=stats.omitted_ambiguous,
+            omitted_noncanonical=stats.omitted_noncanonical,
+            omitted_isoform=stats.omitted_isoform,
+            omitted_overlap=stats.omitted_overlap,
+            duplicates=stats.duplicates,
+            duplicates_only=duplicates_only,
+            total_removed=total_removed,
+            kept=stats.kept_introns
+        )
 
         # Show note if there are duplicates that were also omitted
         if duplicates_also_omitted > 0 and stats.duplicates > 0:
@@ -2833,20 +3000,24 @@ def main_classify(config: IntronICConfig):
         seq_output_path = config.output.output_dir / f"{config.output.base_filename}.introns.iic"
         seq_writer = SequenceWriter(seq_output_path)
 
-        # Write introns that have sequences (pre-filtering may have skipped some)
+        # Write ALL introns including omitted ones (matches v1.5.1 behavior)
+        # However, only write introns that have sequences extracted
+        # (some introns may not have sequences due to extraction failures, ambiguous nucleotides, etc.)
         # Duplicates will be filtered if not -d flag
         introns_written = 0
         with seq_writer:
             for intron in introns:
-                # Skip introns without sequences (pre-filtered)
-                if not intron.has_sequences:
-                    continue
-
                 # Filter duplicates if not -d flag (matches write_outputs line 1536-1544)
                 if not config.extraction.include_duplicates:
                     if intron.metadata and intron.metadata.duplicate:
                         continue
 
+                # Skip introns without sequences (extraction failed or not attempted)
+                if not intron.has_sequences:
+                    continue
+
+                # Write all introns with sequences, including omitted ones
+                # This matches v1.5.1 behavior where all extracted introns are written to introns.iic
                 seq_writer.write_intron(
                     intron,
                     species_name=config.output.species_name,
@@ -2901,19 +3072,15 @@ def main_classify(config: IntronICConfig):
                 i.sequences and i.sequences.terminal_dinucleotides == 'AT-AC')
         )
 
-        reporter.print_classification_summary(
-            total=len(classified_introns),
+        # Display classification summary with unified formatting
+        total_classified = len(classified_introns)
+        messenger.print_classification_results(
+            total=total_classified,
             u12_count=u12_count,
             u2_count=u2_count,
+            atac_count=atac_count,
             threshold=config.scoring.threshold
         )
-
-        # Log classification summary to log file
-        total_classified = len(classified_introns)
-        messenger.log_only(f"Classification results:")
-        messenger.log_only(f"  {format_count_with_percentage(atac_count, total_classified)} putative AT-AC U12-type introns found")
-        messenger.log_only(f"  {format_count_with_percentage(u12_count, total_classified)} putative U12-type introns found with scores > {config.scoring.threshold}%")
-        messenger.log_only(f"  {format_count_with_percentage(u2_count, total_classified)} introns classified as U2-type")
 
         # Collect and log splice site boundary statistics (separate by U12/U2)
         from collections import Counter
@@ -2930,37 +3097,25 @@ def main_classify(config: IntronICConfig):
                 else:
                     boundaries_u2[dnts] += 1
 
-        # Log U12 boundary statistics as table
+        # Display U12 boundary statistics with unified formatting
         if boundaries_u12:
-            total_u12 = sum(boundaries_u12.values())
             # Sort by count (descending), then alphabetically by dinucleotide
-            sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))[:20]
+            sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))
+            messenger.print_dinucleotide_boundaries(
+                intron_type="U12-type",
+                boundaries=sorted_boundaries,
+                top_n=20
+            )
 
-            messenger.log_only("")
-            messenger.log_only("Top 20 Splice Site Boundaries (U12-type introns):")
-            messenger.log_only("┌──────┬──────────────┬──────────┬───────────┐")
-            messenger.log_only("│ Rank │ Dinucleotide │ Count    │ Percent   │")
-            messenger.log_only("├──────┼──────────────┼──────────┼───────────┤")
-            for i, (dnts, count) in enumerate(sorted_boundaries, 1):
-                messenger.log_only(f"│ {i:>4} │ {dnts:>12} │ {count:>8,} │ {(count / total_u12) * 100:>8.2f}% │")
-            messenger.log_only("└──────┴──────────────┴──────────┴───────────┘")
-            messenger.log_only("")
-
-        # Log U2 boundary statistics as table
+        # Display U2 boundary statistics with unified formatting
         if boundaries_u2:
-            total_u2 = sum(boundaries_u2.values())
             # Sort by count (descending), then alphabetically by dinucleotide
-            sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))[:20]
-
-            messenger.log_only("")
-            messenger.log_only("Top 20 Splice Site Boundaries (U2-type introns):")
-            messenger.log_only("┌──────┬──────────────┬──────────┬───────────┐")
-            messenger.log_only("│ Rank │ Dinucleotide │ Count    │ Percent   │")
-            messenger.log_only("├──────┼──────────────┼──────────┼───────────┤")
-            for i, (dnts, count) in enumerate(sorted_boundaries, 1):
-                messenger.log_only(f"│ {i:>4} │ {dnts:>12} │ {count:>8,} │ {(count / total_u2) * 100:>8.2f}% │")
-            messenger.log_only("└──────┴──────────────┴──────────┴───────────┘")
-            messenger.log_only("")
+            sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))
+            messenger.print_dinucleotide_boundaries(
+                intron_type="U2-type",
+                boundaries=sorted_boundaries,
+                top_n=20
+            )
 
         # Save classification metrics to JSON file
         if metrics:

@@ -446,8 +446,8 @@ n_optimization_rounds = 5
 # Used for context in output files and potential future analyses.
 # Does not affect scoring (scoring uses internal coordinates only).
 # Larger values = more context, larger output files
-# Default: 50 (sufficient for most purposes)
-flank_length = 50
+# Default: 100 (provides good context for downstream analyses)
+flank_length = 100
 
 
 # -----------------------------------------------------------------------------
