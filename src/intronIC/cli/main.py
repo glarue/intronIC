@@ -1088,11 +1088,8 @@ def _init_streaming_worker(
 
 
 def _process_contig_streaming_worker(
-    contig_name: str,
-    contig_introns: List[Intron],
-    flank_len: int,
-    u12_correction: bool,
-) -> tuple[List[Intron], int, int]:
+    worker_input: tuple[str, List[Intron], int, bool],
+) -> tuple[str, List[Intron], int, int]:
     """
     Worker function for parallel streaming contig processing.
 
@@ -1102,14 +1099,12 @@ def _process_contig_streaming_worker(
     3. Returns lightweight introns (no full sequences)
 
     Args:
-        contig_name: Name of the contig to process
-        contig_introns: Pre-filtered introns on this contig
-        flank_len: Flanking sequence length
-        u12_correction: Whether to apply U12 boundary corrections
+        worker_input: Tuple of (contig_name, contig_introns, flank_len, u12_correction)
 
     Returns:
-        Tuple of (lightweight_introns, sequences_stored_count, corrections_count)
+        Tuple of (contig_name, lightweight_introns, sequences_stored_count, corrections_count)
     """
+    contig_name, contig_introns, flank_len, u12_correction = worker_input
     from intronIC.extraction.sequences import SequenceExtractor
     from intronIC.file_io.indexed_genome import get_worker_genome
     from intronIC.file_io.sequence_store import StreamingSequenceStore
@@ -1200,7 +1195,7 @@ def _process_contig_streaming_worker(
         else:
             lightweight_introns.append(intron)
 
-    return lightweight_introns, sequences_stored, corrections_count
+    return contig_name, lightweight_introns, sequences_stored, corrections_count
 
 
 def extract_introns_from_annotation(
@@ -1824,7 +1819,7 @@ def extract_introns_streaming(
         # Parallel processing using Pool
         from multiprocessing import Pool
 
-        # Prepare worker inputs
+        # Prepare worker inputs and create contig index mapping
         worker_inputs = [
             (
                 contig,
@@ -1834,9 +1829,11 @@ def extract_introns_streaming(
             )
             for contig in contigs
         ]
+        contig_to_index = {contig: idx for idx, contig in enumerate(contigs)}
 
         # Process contigs in parallel with progress bar
         completed = 0
+        completed_length = 0
 
         # Create progress bar
         progress = reporter.create_progress()
@@ -1862,7 +1859,9 @@ def extract_introns_streaming(
             )
 
             try:
-                for lightweight_introns, seqs_stored, corrections in pool.starmap(
+                # Use imap_unordered to get results as soon as any worker completes
+                # This provides better visual feedback - small contigs update progress immediately
+                for contig_name, lightweight_introns, seqs_stored, corrections in pool.imap_unordered(
                     _process_contig_streaming_worker, worker_inputs
                 ):
                     completed += 1
@@ -1870,8 +1869,10 @@ def extract_introns_streaming(
                     total_sequences_stored += seqs_stored
                     total_corrected += corrections
 
-                    # Update progress bar based on genome length processed
-                    completed_length = cumulative_lengths[completed - 1]
+                    # Update progress bar based on this contig's length
+                    contig_idx = contig_to_index[contig_name]
+                    contig_length = contig_length_list[contig_idx]
+                    completed_length += contig_length
                     progress.update(task, completed=completed_length)
             except Exception as e:
                 messenger.error(
@@ -2776,22 +2777,21 @@ def _init_streaming_classify_worker(
 
 
 def _process_contig_streaming_classify_worker(
-    contig: str,
-    contig_annotation_count: int,
-) -> tuple[List[Intron], dict]:
+    contig_input: tuple[str, int],
+) -> tuple[str, List[Intron], dict]:
     """
     Worker function for parallel streaming classification.
 
     Processes a single contig: extracts sequences, scores, normalizes, and classifies.
-    Returns classified introns and statistics for this contig.
+    Returns contig name, classified introns and statistics for this contig.
 
     Args:
-        contig: Contig name to process
-        contig_annotation_count: Number of annotations for this contig (for stats)
+        contig_input: Tuple of (contig_name, contig_annotation_count)
 
     Returns:
-        Tuple of (classified_introns, stats_dict)
+        Tuple of (contig_name, classified_introns, stats_dict)
     """
+    contig, contig_annotation_count = contig_input
     from collections import Counter
 
     from intronIC.classification.predictor import classify_introns_batch
@@ -2975,7 +2975,7 @@ def _process_contig_streaming_classify_worker(
     del contig_genes, builder, contig_introns, contig_with_seqs
     del filtered_introns, scorable, scored_introns
 
-    return classified_introns, stats
+    return contig, classified_introns, stats
 
 
 def classify_streaming_per_contig(
@@ -3193,14 +3193,16 @@ def classify_streaming_per_contig(
         # Close annotation store in main process - workers will open their own
         annotation_store.close()
 
-        # Prepare worker inputs
+        # Prepare worker inputs and create contig index mapping
         worker_inputs = [
             (contig, count) for contig, count in contigs_with_counts
         ]
+        contig_to_index = {contig: idx for idx, (contig, _) in enumerate(contigs_with_counts)}
 
         # Process contigs in parallel with progress bar
         all_classified_introns = []
         completed = 0
+        completed_length = 0
 
         # Create progress bar
         progress = reporter.create_progress()
@@ -3224,7 +3226,9 @@ def classify_streaming_per_contig(
             )
 
             try:
-                for classified_introns, stats in pool.starmap(
+                # Use imap_unordered to get results as soon as any worker completes
+                # This provides better visual feedback - small contigs update progress immediately
+                for contig_name, classified_introns, stats in pool.imap_unordered(
                     _process_contig_streaming_classify_worker, worker_inputs
                 ):
                     completed += 1
@@ -3249,8 +3253,10 @@ def classify_streaming_per_contig(
                     accumulated_filter_stats.total_introns += filter_stats.total_introns
                     accumulated_filter_stats.kept_introns += filter_stats.kept_introns
 
-                    # Update progress bar based on genome length processed
-                    completed_length = cumulative_lengths[completed - 1]
+                    # Update progress bar based on this contig's length
+                    contig_idx = contig_to_index[contig_name]
+                    contig_length = contig_length_list[contig_idx]
+                    completed_length += contig_length
                     progress.update(task, completed=completed_length)
             except Exception as e:
                 messenger.error(
