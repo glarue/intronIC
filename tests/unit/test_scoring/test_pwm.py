@@ -14,17 +14,18 @@ Test Strategy:
 5. Test PWMLoader parsing from .iic format
 """
 
-import pytest
-import numpy as np
 from pathlib import Path
-from typing import Dict, Set, Optional
+from typing import Dict, Optional, Set
 
-from intronIC.scoring.pwm import PWM, PWMSet, PWMLoader
+import numpy as np
+import pytest
 
+from intronIC.scoring.pwm import PWM, PWMLoader, PWMSet
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def simple_pwm() -> PWM:
@@ -40,19 +41,16 @@ def simple_pwm() -> PWM:
 
     This should give perfect scores for "ACGT" and "ACGG".
     """
-    matrix = np.array([
-        [1.0, 0.0, 0.5, 0.25],  # A
-        [0.0, 1.0, 0.0, 0.25],  # C
-        [0.0, 0.0, 0.5, 0.25],  # G
-        [0.0, 0.0, 0.0, 0.25],  # T
-    ])
-
-    return PWM(
-        name="simple_test",
-        matrix=matrix,
-        length=4,
-        pseudocount=0.0001
+    matrix = np.array(
+        [
+            [1.0, 0.0, 0.5, 0.25],  # A
+            [0.0, 1.0, 0.0, 0.25],  # C
+            [0.0, 0.0, 0.5, 0.25],  # G
+            [0.0, 0.0, 0.0, 0.25],  # T
+        ]
     )
+
+    return PWM(name="simple_test", matrix=matrix, length=4, pseudocount=0.0001)
 
 
 @pytest.fixture
@@ -63,19 +61,21 @@ def canonical_five_prime_pwm() -> PWM:
     Models the canonical GT dinucleotide at positions 0-1.
     """
     # Positions: -3, -2, -1, 0(G), 1(T), 2, 3, 4
-    matrix = np.array([
-        [0.25, 0.30, 0.40, 0.01, 0.01, 0.35, 0.40, 0.30],  # A
-        [0.25, 0.20, 0.15, 0.01, 0.01, 0.20, 0.20, 0.25],  # C
-        [0.25, 0.30, 0.25, 0.97, 0.01, 0.25, 0.20, 0.20],  # G
-        [0.25, 0.20, 0.20, 0.01, 0.97, 0.20, 0.20, 0.25],  # T
-    ])
+    matrix = np.array(
+        [
+            [0.25, 0.30, 0.40, 0.01, 0.01, 0.35, 0.40, 0.30],  # A
+            [0.25, 0.20, 0.15, 0.01, 0.01, 0.20, 0.20, 0.25],  # C
+            [0.25, 0.30, 0.25, 0.97, 0.01, 0.25, 0.20, 0.20],  # G
+            [0.25, 0.20, 0.20, 0.01, 0.97, 0.20, 0.20, 0.25],  # T
+        ]
+    )
 
     return PWM(
         name="five_prime_test",
         matrix=matrix,
         length=8,
         pseudocount=0.0001,
-        start_index=-3  # Position 0 in matrix is -3 relative to splice site
+        start_index=-3,  # Position 0 in matrix is -3 relative to splice site
     )
 
 
@@ -136,6 +136,7 @@ A	C	G	T
 # PWM Data Structure Tests
 # ============================================================================
 
+
 def test_pwm_creation(simple_pwm):
     """Test that PWM objects can be created and are frozen."""
     assert simple_pwm.name == "simple_test"
@@ -155,13 +156,14 @@ def test_pwm_matrix_shape():
             name="bad_matrix",
             matrix=np.array([[1.0, 0.0]]),  # Only 1 row, not 4
             length=2,
-            pseudocount=0.0001
+            pseudocount=0.0001,
         )
 
 
 # ============================================================================
 # Sequence Scoring Tests (Core Algorithm)
 # ============================================================================
+
 
 def test_basic_sequence_scoring(simple_pwm):
     """
@@ -235,8 +237,7 @@ def test_ignore_positions(canonical_five_prime_pwm):
     # Score ignoring canonical positions (indices 0 and 1 in PWM space)
     # These correspond to positions 3 and 4 in the sequence
     score_without_canonical = canonical_five_prime_pwm.score_sequence(
-        seq,
-        ignore_positions={0, 1}
+        seq, ignore_positions={0, 1}
     )
 
     # Score without canonical should be higher (not penalized by GT requirement)
@@ -274,64 +275,68 @@ def test_empty_sequence(simple_pwm):
 # PWMSet Tests (U2/U12 Matrix Pairs)
 # ============================================================================
 
+
 def test_pwmset_creation():
     """Test that PWMSet can group U2 and U12 PWMs."""
     u2_pwm = PWM(
         name="u2_test",
-        matrix=np.array([[0.25]*4]*4),  # Uniform
+        matrix=np.array([[0.25] * 4] * 4),  # Uniform
         length=4,
-        pseudocount=0.0001
+        pseudocount=0.0001,
     )
 
     u12_pwm = PWM(
         name="u12_test",
-        matrix=np.array([[0.5, 0.5, 0.0, 0.0]]*4),  # Different
+        matrix=np.array([[0.5, 0.5, 0.0, 0.0]] * 4),  # Different
         length=4,
-        pseudocount=0.0001
+        pseudocount=0.0001,
     )
 
     pwm_set = PWMSet(
-        u2_canonical=u2_pwm,
-        u2_noncanonical=None,
-        u12_canonical=u12_pwm,
-        u12_noncanonical=None
+        matrices={
+            ("u2", "gtag"): u2_pwm,
+            ("u12", "gtag"): u12_pwm,
+        }
     )
 
-    assert pwm_set.u2_canonical == u2_pwm
-    assert pwm_set.u12_canonical == u12_pwm
-    assert pwm_set.u2_noncanonical is None
+    assert pwm_set.select_best("u2", "gtag") == u2_pwm
+    assert pwm_set.select_best("u12", "gtag") == u12_pwm
 
 
 def test_pwmset_with_noncanonical():
     """Test PWMSet with both canonical and non-canonical PWMs."""
     canonical = PWM(
         name="canonical",
-        matrix=np.array([[0.25]*4]*4),
+        matrix=np.array([[0.25] * 4] * 4),
         length=4,
-        pseudocount=0.0001
+        pseudocount=0.0001,
     )
 
     noncanonical = PWM(
         name="noncanonical",
-        matrix=np.array([[0.5]*4]*4),
+        matrix=np.array([[0.5] * 4] * 4),
         length=4,
-        pseudocount=0.0001
+        pseudocount=0.0001,
     )
 
     pwm_set = PWMSet(
-        u2_canonical=canonical,
-        u2_noncanonical=noncanonical,
-        u12_canonical=canonical,
-        u12_noncanonical=noncanonical
+        matrices={
+            ("u2", "gtag"): canonical,
+            ("u2", "gcag"): noncanonical,
+            ("u12", "gtag"): canonical,
+            ("u12", "atac"): noncanonical,
+        }
     )
 
-    assert pwm_set.u2_noncanonical is not None
-    assert pwm_set.u12_noncanonical is not None
+    # Non-canonical variants should be accessible
+    assert pwm_set.select_best("u2", "gcag") is not None
+    assert pwm_set.select_best("u12", "atac") is not None
 
 
 # ============================================================================
 # PWMLoader Tests (File Parsing)
 # ============================================================================
+
 
 def test_pwm_loader_basic(sample_matrix_file):
     """
@@ -362,12 +367,14 @@ def test_pwm_loader_parse_names(sample_matrix_file):
 
     # Check that U12 and U2 PWMs were loaded
     five_set = pwm_sets["five"]
-    assert five_set.u12_canonical is not None
-    assert five_set.u2_canonical is not None
+    u12_pwm = five_set.select_best("u12", "gtag")
+    u2_pwm = five_set.select_best("u2", "gtag")
+    assert u12_pwm is not None
+    assert u2_pwm is not None
 
     # Verify names
-    assert "u12" in five_set.u12_canonical.name.lower()
-    assert "u2" in five_set.u2_canonical.name.lower()
+    assert "u12" in u12_pwm.name.lower()
+    assert "u2" in u2_pwm.name.lower()
 
 
 def test_pwm_loader_parse_start_index(sample_matrix_file):
@@ -379,10 +386,10 @@ def test_pwm_loader_parse_start_index(sample_matrix_file):
     pwm_sets = PWMLoader.load_from_file(sample_matrix_file)
 
     # Five prime site starts at -3
-    assert pwm_sets["five"].u12_canonical.start_index == -3
+    assert pwm_sets["five"].select_best("u12", "gtag").start_index == -3
 
     # Branch point starts at -20
-    assert pwm_sets["bp"].u12_canonical.start_index == -20
+    assert pwm_sets["bp"].select_best("u12", "gtag").start_index == -20
 
 
 def test_pwm_loader_matrix_dimensions(sample_matrix_file):
@@ -390,12 +397,12 @@ def test_pwm_loader_matrix_dimensions(sample_matrix_file):
     pwm_sets = PWMLoader.load_from_file(sample_matrix_file)
 
     # Five prime PWM has 5 positions (from sample file)
-    five_pwm = pwm_sets["five"].u12_canonical
+    five_pwm = pwm_sets["five"].select_best("u12", "gtag")
     assert five_pwm.matrix.shape == (4, 5)  # 4 bases x 5 positions
     assert five_pwm.length == 5
 
     # Branch point PWM has 3 positions
-    bp_pwm = pwm_sets["bp"].u12_canonical
+    bp_pwm = pwm_sets["bp"].select_best("u12", "gtag")
     assert bp_pwm.matrix.shape == (4, 3)
     assert bp_pwm.length == 3
 
@@ -405,12 +412,13 @@ def test_pwm_loader_frequency_values(sample_matrix_file):
     pwm_sets = PWMLoader.load_from_file(sample_matrix_file)
 
     # Check that frequencies sum to ~1.0 at each position
-    five_pwm = pwm_sets["five"].u12_canonical
+    five_pwm = pwm_sets["five"].select_best("u12", "gtag")
 
     for pos in range(five_pwm.length):
         column_sum = sum(five_pwm.matrix[:, pos])
-        assert abs(column_sum - 1.0) < 0.01, \
+        assert abs(column_sum - 1.0) < 0.01, (
             f"Position {pos} frequencies should sum to ~1.0, got {column_sum}"
+        )
 
 
 def test_pwm_loader_nonexistent_file():
@@ -433,6 +441,7 @@ def test_pwm_loader_empty_file(tmp_path):
 # Integration Tests (Scoring with Loaded PWMs)
 # ============================================================================
 
+
 def test_score_real_sequence_with_loaded_pwm(sample_matrix_file):
     """
     Integration test: Load PWMs and score a sequence.
@@ -442,7 +451,7 @@ def test_score_real_sequence_with_loaded_pwm(sample_matrix_file):
     pwm_sets = PWMLoader.load_from_file(sample_matrix_file)
 
     # Get U12 five prime PWM (length 5, start=-3)
-    u12_five = pwm_sets["five"].u12_canonical
+    u12_five = pwm_sets["five"].select_best("u12", "gtag")
 
     # Create a sequence that matches: XXATX (positions -3 to +1)
     # Position -3: A (0.25), -2: T (0.20), -1: A (1.0), 0: T (1.0), +1: G (0.5)
@@ -462,8 +471,8 @@ def test_compare_u2_vs_u12_scores(sample_matrix_file):
     """
     pwm_sets = PWMLoader.load_from_file(sample_matrix_file)
 
-    u2_five = pwm_sets["five"].u2_canonical
-    u12_five = pwm_sets["five"].u12_canonical
+    u2_five = pwm_sets["five"].select_best("u2", "gtag")
+    u12_five = pwm_sets["five"].select_best("u12", "gtag")
 
     # Note: U2 and U12 PWMs may have different lengths
     # In sample file: U2 has 4 positions, U12 has 5 positions
@@ -482,7 +491,7 @@ def test_compare_u2_vs_u12_scores(sample_matrix_file):
     # Scores should differ if we score same-length sequences with different PWMs
     # Use the longer length (u12_five.length = 5)
     common_seq = "ACGTA"  # 5 bases to match u12 length
-    u2_common_seq = common_seq[:u2_five.length]  # First 4 bases for u2
+    u2_common_seq = common_seq[: u2_five.length]  # First 4 bases for u2
     u12_common_seq = common_seq  # All 5 bases for u12
 
     u2_common = u2_five.score_sequence(u2_common_seq)
@@ -496,6 +505,7 @@ def test_compare_u2_vs_u12_scores(sample_matrix_file):
 # ============================================================================
 # Edge Cases
 # ============================================================================
+
 
 def test_score_with_lowercase_sequence(simple_pwm):
     """Test that lowercase sequences are handled correctly."""
@@ -514,7 +524,7 @@ def test_pwm_with_custom_pseudocount():
         name="custom_pseudo",
         matrix=np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]]),
         length=2,
-        pseudocount=0.01  # Custom pseudocount
+        pseudocount=0.01,  # Custom pseudocount
     )
 
     # Sequence with zero frequency: "TT"

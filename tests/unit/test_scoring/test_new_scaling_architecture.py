@@ -9,18 +9,18 @@ Tests the core components that fix cross-species false positives:
 Design: SCALER_ARCHITECTURE_REVIEW.md, SCALING_REDESIGN_PLAN.md
 """
 
-import pytest
 import numpy as np
+import pytest
 from numpy.testing import assert_array_almost_equal
 
 from intronIC.classification.clipping import SymmetricClipper
 from intronIC.classification.saturating import SaturatingTransform
 from intronIC.scoring.normalizer import ZeroAnchoredRobustScaler
 
-
 # ==============================================================================
 # SymmetricClipper Tests
 # ==============================================================================
+
 
 def test_symmetric_clipper_preserves_zero():
     """Zero values should pass through unchanged."""
@@ -36,16 +36,19 @@ def test_symmetric_clipper_preserves_zero():
 def test_symmetric_clipper_clips_extreme_values():
     """Extreme values should be clipped to quantile threshold."""
     # Training data: mostly moderate values + one extreme
-    X_train = np.array([
-        [1.0, 2.0, 3.0],
-        [1.5, 2.5, 3.5],
-        [2.0, 3.0, 4.0],
-        [0.5, 1.0, 1.5],
-        # Extreme outlier
-        [10.0, 15.0, 20.0]
-    ])
+    X_train = np.array(
+        [
+            [1.0, 2.0, 3.0],
+            [1.5, 2.5, 3.5],
+            [2.0, 3.0, 4.0],
+            [0.5, 1.0, 1.5],
+            # Extreme outlier
+            [10.0, 15.0, 20.0],
+        ]
+    )
 
-    clipper = SymmetricClipper(quantile=0.8)  # Clip at 80th percentile
+    # Use domain_adaptive=False to test fixed-cap behavior
+    clipper = SymmetricClipper(quantile=0.8, domain_adaptive=False)
     clipper.fit(X_train)
 
     # Apply to extreme value (should be clipped)
@@ -57,14 +60,12 @@ def test_symmetric_clipper_clips_extreme_values():
     # For first feature: [1.0, 1.5, 2.0, 0.5, 10.0] → 80th % ≈ 2.0
     # Extreme value (100.0) should be clipped to cap
     assert X_clipped[0, 0] < 100.0  # Definitely clipped
-    assert X_clipped[0, 0] > 0.0    # Not zeroed
+    assert X_clipped[0, 0] > 0.0  # Not zeroed
 
 
 def test_symmetric_clipper_clips_both_positive_and_negative():
     """Clipping should be symmetric for positive and negative values."""
-    X_train = np.array([
-        [1.0], [2.0], [3.0], [4.0], [5.0]
-    ])
+    X_train = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]])
 
     clipper = SymmetricClipper(quantile=0.8)
     clipper.fit(X_train)
@@ -83,21 +84,27 @@ def test_symmetric_clipper_cross_species_use_case():
     """
     Test the actual cross-species scenario: C. elegans extreme value.
 
-    Scenario:
+    Scenario with domain_adaptive=False (legacy behavior):
     - Train on human z-scores (moderate range)
     - Apply to C. elegans with z=11.45 from composition bias
     - Should clip to ~3-4σ, preventing FP
+
+    NOTE: With domain_adaptive=True (default), the clipper recomputes
+    caps from the input data, so this test uses domain_adaptive=False.
     """
     # Human training z-scores (typical range: -3 to +3)
-    human_z = np.array([
-        [-2.0, 1.5, 0.8],
-        [1.0, -1.2, 2.1],
-        [0.5, 0.8, -0.5],
-        [2.5, -2.3, 1.8],
-        [1.8, 1.9, 2.8]
-    ])
+    human_z = np.array(
+        [
+            [-2.0, 1.5, 0.8],
+            [1.0, -1.2, 2.1],
+            [0.5, 0.8, -0.5],
+            [2.5, -2.3, 1.8],
+            [1.8, 1.9, 2.8],
+        ]
+    )
 
-    clipper = SymmetricClipper(quantile=0.975)
+    # Use domain_adaptive=False to test fixed-cap behavior
+    clipper = SymmetricClipper(quantile=0.975, domain_adaptive=False)
     clipper.fit(human_z)
 
     # C. elegans with extreme 3'SS z-score
@@ -108,7 +115,9 @@ def test_symmetric_clipper_cross_species_use_case():
     assert celegans_clipped[0, 2] < 11.45, "Extreme value should be clipped"
     assert celegans_clipped[0, 2] > 0, "Should remain positive"
     # Clipped value should be reasonable (roughly 3-4σ)
-    assert 2.5 < celegans_clipped[0, 2] < 5.0, f"Expected ~3-4σ, got {celegans_clipped[0, 2]}"
+    assert 2.5 < celegans_clipped[0, 2] < 5.0, (
+        f"Expected ~3-4σ, got {celegans_clipped[0, 2]}"
+    )
 
     # Moderate values should pass through
     assert celegans_clipped[0, 0] == pytest.approx(-0.15, abs=0.01)
@@ -118,6 +127,7 @@ def test_symmetric_clipper_cross_species_use_case():
 # ==============================================================================
 # SaturatingTransform Tests
 # ==============================================================================
+
 
 def test_saturating_transform_disabled_is_identity():
     """When disabled, transform should be identity (pass through)."""
@@ -220,6 +230,7 @@ def test_saturating_transform_inverse():
 # Integration Tests - Full Pipeline
 # ==============================================================================
 
+
 def test_full_pipeline_cross_species_scenario():
     """
     Integration test: Full pipeline on cross-species use case.
@@ -232,21 +243,26 @@ def test_full_pipeline_cross_species_scenario():
     3. Verifying extreme values are controlled
     """
     # Human training data (raw LLRs)
-    human_raw = np.array([
-        [2.0, 1.5, 1.8],
-        [1.8, 1.2, 2.1],
-        [2.2, 1.8, 1.5],
-        [1.5, 1.3, 2.0],
-        [2.1, 1.6, 1.9]
-    ])
+    human_raw = np.array(
+        [
+            [2.0, 1.5, 1.8],
+            [1.8, 1.2, 2.1],
+            [2.2, 1.8, 1.5],
+            [1.5, 1.3, 2.0],
+            [2.1, 1.6, 1.9],
+        ]
+    )
 
     # Build pipeline
     from sklearn.pipeline import Pipeline
-    pipeline = Pipeline([
-        ('scale', ZeroAnchoredRobustScaler()),
-        ('clip', SymmetricClipper(quantile=0.975)),
-        ('saturate', SaturatingTransform(enabled=True))
-    ])
+
+    pipeline = Pipeline(
+        [
+            ("scale", ZeroAnchoredRobustScaler()),
+            ("clip", SymmetricClipper(quantile=0.975)),
+            ("saturate", SaturatingTransform(enabled=True)),
+        ]
+    )
 
     # Fit on human data
     pipeline.fit(human_raw)
@@ -266,8 +282,9 @@ def test_full_pipeline_cross_species_scenario():
     # After scaling: ~8σ
     # After clipping: ~3-4σ
     # After saturation: ~1.6
-    assert celegans_transformed[0, 2] < 3.0, \
+    assert celegans_transformed[0, 2] < 3.0, (
         f"Extreme value not controlled: {celegans_transformed[0, 2]}"
+    )
 
 
 def test_pipeline_preserves_zero_semantic():
@@ -277,19 +294,19 @@ def test_pipeline_preserves_zero_semantic():
     s=0 means "U12≈U2" - this semantic meaning must be preserved.
     """
     # Training data with zeros
-    X_train = np.array([
-        [0.0, 1.5, 2.0],
-        [1.0, 0.0, 1.8],
-        [2.0, 1.2, 0.0],
-        [1.5, 1.8, 1.5]
-    ])
+    X_train = np.array(
+        [[0.0, 1.5, 2.0], [1.0, 0.0, 1.8], [2.0, 1.2, 0.0], [1.5, 1.8, 1.5]]
+    )
 
     from sklearn.pipeline import Pipeline
-    pipeline = Pipeline([
-        ('scale', ZeroAnchoredRobustScaler()),
-        ('clip', SymmetricClipper(quantile=0.95)),
-        ('saturate', SaturatingTransform(enabled=True))
-    ])
+
+    pipeline = Pipeline(
+        [
+            ("scale", ZeroAnchoredRobustScaler()),
+            ("clip", SymmetricClipper(quantile=0.95)),
+            ("saturate", SaturatingTransform(enabled=True)),
+        ]
+    )
 
     pipeline.fit(X_train)
 
@@ -310,18 +327,20 @@ def test_pipeline_steps_accessible():
 
     X_train = np.array([[1.0, 2.0, 3.0], [1.5, 2.5, 3.5]])
 
-    pipeline = Pipeline([
-        ('scale', ZeroAnchoredRobustScaler()),
-        ('clip', SymmetricClipper(quantile=0.95)),
-        ('saturate', SaturatingTransform(enabled=True))
-    ])
+    pipeline = Pipeline(
+        [
+            ("scale", ZeroAnchoredRobustScaler()),
+            ("clip", SymmetricClipper(quantile=0.95)),
+            ("saturate", SaturatingTransform(enabled=True)),
+        ]
+    )
 
     pipeline.fit(X_train)
 
     # Should be able to extract each component
-    scaler = pipeline.named_steps['scale']
-    clipper = pipeline.named_steps['clip']
-    saturator = pipeline.named_steps['saturate']
+    scaler = pipeline.named_steps["scale"]
+    clipper = pipeline.named_steps["clip"]
+    saturator = pipeline.named_steps["saturate"]
 
     # Should be fitted
     assert scaler.scales_ is not None, "Scaler should be fitted"

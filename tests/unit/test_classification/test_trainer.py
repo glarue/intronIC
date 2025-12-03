@@ -4,18 +4,20 @@ Tests for classification.trainer module.
 Tests the SVMTrainer class which implements ensemble training with U2 subsampling.
 """
 
-import pytest
-import numpy as np
 from dataclasses import replace
 
-from intronIC.classification.trainer import (
-    SVMTrainer,
-    SVMModel,
-    SVMEnsemble,
-)
-from intronIC.classification.optimizer import SVMParameters
-from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+import numpy as np
+import pytest
 
+from intronIC.classification.optimizer import SVMParameters
+from intronIC.classification.trainer import SVMEnsemble, SVMModel, SVMTrainer
+from intronIC.core.intron import (
+    GenomicCoordinate,
+    Intron,
+    IntronMetadata,
+    IntronScores,
+    IntronSequences,
+)
 
 # =============================================================================
 # FIXTURES
@@ -35,19 +37,19 @@ def mock_u12_introns():
                 start=1000 + i * 100,
                 stop=1100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTATGT" + "N" * 50 + "TCCTTAAC",
                 five_seq="GTATGT",
                 three_seq="TCCTTAAC",
-                bp_seq="TCCTTAAC"
+                bp_seq="TCCTTAAC",
             ),
             scores=IntronScores(
                 five_z_score=2.0 + np.random.randn() * 0.5,
                 bp_z_score=2.5 + np.random.randn() * 0.5,
                 three_z_score=2.0 + np.random.randn() * 0.5,
-            )
+            ),
         )
         introns.append(intron)
     return introns
@@ -66,19 +68,19 @@ def mock_u2_introns():
                 start=10000 + i * 100,
                 stop=10100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTAAGT" + "N" * 50 + "TTTCAG",
                 five_seq="GTAAGT",
                 three_seq="TTTCAG",
-                bp_seq="TTTCAG"
+                bp_seq="TTTCAG",
             ),
             scores=IntronScores(
                 five_z_score=-1.0 + np.random.randn() * 0.5,
                 bp_z_score=-1.5 + np.random.randn() * 0.5,
                 three_z_score=-1.0 + np.random.randn() * 0.5,
-            )
+            ),
         )
         introns.append(intron)
     return introns
@@ -89,11 +91,17 @@ def mock_parameters():
     """Create mock SVM parameters."""
     return SVMParameters(
         C=1.0,
-        calibration_method='sigmoid',
+        calibration_method="sigmoid",
+        saturate_enabled=False,
+        include_max=False,
+        include_pairwise_mins=False,
+        penalty="l2",
+        class_weight_multiplier=1.0,
+        loss="squared_hinge",
         dual=False,
         intercept_scaling=1.0,
         cv_score=0.95,
-        round_found=-1
+        round_found=-1,
     )
 
 
@@ -111,21 +119,18 @@ class TestSVMTrainer:
 
         assert trainer.n_models == 3
         assert trainer.random_state == 42
-        assert trainer.kernel == 'linear'
+        assert trainer.kernel == "linear"
         assert trainer.max_iter == 20000
 
     def test_initialization_custom_params(self):
         """Test trainer initialization with custom parameters."""
         trainer = SVMTrainer(
-            n_models=5,
-            random_state=123,
-            kernel='linear',
-            max_iter=10000
+            n_models=5, random_state=123, kernel="linear", max_iter=10000
         )
 
         assert trainer.n_models == 5
         assert trainer.random_state == 123
-        assert trainer.kernel == 'linear'
+        assert trainer.kernel == "linear"
         assert trainer.max_iter == 10000
 
     def test_prepare_training_data_structure(self, mock_u12_introns, mock_u2_introns):
@@ -175,9 +180,7 @@ class TestSVMTrainer:
 
         # Subsample 80% of U2 introns
         subsampled = trainer._subsample_u2(
-            mock_u2_introns,
-            seed=42,
-            subsample_ratio=0.8
+            mock_u2_introns, seed=42, subsample_ratio=0.8
         )
 
         # Check size
@@ -215,15 +218,14 @@ class TestSVMTrainer:
         # So we just check they're different sets (not identical)
         assert ids1 != ids2 or len(ids1) < len(mock_u2_introns)
 
-    def test_train_single_model(self, mock_u12_introns, mock_u2_introns, mock_parameters):
+    def test_train_single_model(
+        self, mock_u12_introns, mock_u2_introns, mock_parameters
+    ):
         """Test training a single SVM model."""
         trainer = SVMTrainer()
 
         model = trainer._train_single_model(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters,
-            seed=42
+            mock_u12_introns, mock_u2_introns, mock_parameters, seed=42
         )
 
         # Check model structure
@@ -247,10 +249,7 @@ class TestSVMTrainer:
         trainer = SVMTrainer()
 
         model = trainer._train_single_model(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters,
-            seed=42
+            mock_u12_introns, mock_u2_introns, mock_parameters, seed=42
         )
 
         # Check model can predict
@@ -268,10 +267,7 @@ class TestSVMTrainer:
         trainer = SVMTrainer(n_models=3)
 
         ensemble = trainer.train_ensemble(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters,
-            subsample_u2=True
+            mock_u12_introns, mock_u2_introns, mock_parameters, subsample_u2=True
         )
 
         # Check ensemble structure
@@ -284,7 +280,7 @@ class TestSVMTrainer:
             assert isinstance(model, SVMModel)
             assert model.model is not None
             # Verify model has predict_proba (is calibrated)
-            assert hasattr(model.model, 'predict_proba')
+            assert hasattr(model.model, "predict_proba")
 
     def test_train_ensemble_no_subsampling(
         self, mock_u12_introns, mock_u2_introns, mock_parameters
@@ -293,10 +289,7 @@ class TestSVMTrainer:
         trainer = SVMTrainer(n_models=2)
 
         ensemble = trainer.train_ensemble(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters,
-            subsample_u2=False
+            mock_u12_introns, mock_u2_introns, mock_parameters, subsample_u2=False
         )
 
         # All models should use same U2 count
@@ -314,7 +307,7 @@ class TestSVMTrainer:
             mock_u2_introns,
             mock_parameters,
             subsample_u2=True,
-            subsample_ratio=0.8
+            subsample_ratio=0.8,
         )
 
         # With subsampling, U2 counts should be less than full set
@@ -329,9 +322,7 @@ class TestSVMTrainer:
         trainer = SVMTrainer(n_models=3)
 
         ensemble = trainer.train_ensemble(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters
+            mock_u12_introns, mock_u2_introns, mock_parameters
         )
 
         # All models should have same parameters
@@ -349,17 +340,11 @@ class TestSVMTrainer:
         trainer = SVMTrainer()
 
         model1 = trainer._train_single_model(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters,
-            seed=42
+            mock_u12_introns, mock_u2_introns, mock_parameters, seed=42
         )
 
         model2 = trainer._train_single_model(
-            mock_u12_introns,
-            mock_u2_introns,
-            mock_parameters,
-            seed=42
+            mock_u12_introns, mock_u2_introns, mock_parameters, seed=42
         )
 
         # Should get same predictions
@@ -378,7 +363,7 @@ class TestSVMTrainer:
             mock_u12_introns,
             mock_u2_introns,
             mock_parameters,
-            subsample_u2=False  # No point subsampling with 1 model
+            subsample_u2=False,  # No point subsampling with 1 model
         )
 
         # Should have exactly 1 model
@@ -405,7 +390,7 @@ class TestSVMTrainerIntegration:
                 intron.scores,
                 five_z_score=3.0 + np.random.randn() * 0.3,
                 bp_z_score=4.0 + np.random.randn() * 0.3,
-                three_z_score=3.5 + np.random.randn() * 0.3
+                three_z_score=3.5 + np.random.randn() * 0.3,
             )
             realistic_u12s.append(replace(intron, scores=new_scores))
 
@@ -415,7 +400,7 @@ class TestSVMTrainerIntegration:
                 intron.scores,
                 five_z_score=-1.5 + np.random.randn() * 0.3,
                 bp_z_score=-2.0 + np.random.randn() * 0.3,
-                three_z_score=-1.5 + np.random.randn() * 0.3
+                three_z_score=-1.5 + np.random.randn() * 0.3,
             )
             realistic_u2s.append(replace(intron, scores=new_scores))
 
@@ -423,18 +408,20 @@ class TestSVMTrainerIntegration:
         trainer = SVMTrainer(n_models=3)
         parameters = SVMParameters(
             C=1.0,
-            calibration_method='sigmoid',
+            calibration_method="sigmoid",
+            saturate_enabled=False,
+            include_max=False,
+            include_pairwise_mins=False,
+            penalty="l2",
+            class_weight_multiplier=1.0,
+            loss="squared_hinge",
             dual=False,
             intercept_scaling=1.0,
             cv_score=0.95,
-            round_found=-1
+            round_found=-1,
         )
 
-        ensemble = trainer.train_ensemble(
-            realistic_u12s,
-            realistic_u2s,
-            parameters
-        )
+        ensemble = trainer.train_ensemble(realistic_u12s, realistic_u2s, parameters)
 
         # Should have trained 3 models
         assert len(ensemble.models) == 3
@@ -467,19 +454,19 @@ class TestSVMTrainerEdgeCases:
                     start=1000 + i * 100,
                     stop=1100 + i * 100,
                     strand="+",
-                    system="1-based"
+                    system="1-based",
                 ),
                 sequences=IntronSequences(
                     seq="GTATGT" + "N" * 50 + "TCCTTAAC",
                     five_seq="GTATGT",
                     three_seq="TCCTTAAC",
-                    bp_seq="TCCTTAAC"
+                    bp_seq="TCCTTAAC",
                 ),
                 scores=IntronScores(
                     five_z_score=2.0,
                     bp_z_score=2.5,
                     three_z_score=2.0,
-                )
+                ),
             )
             u12_introns.append(intron)
 
@@ -492,38 +479,41 @@ class TestSVMTrainerEdgeCases:
                     start=10000 + i * 100,
                     stop=10100 + i * 100,
                     strand="+",
-                    system="1-based"
+                    system="1-based",
                 ),
                 sequences=IntronSequences(
                     seq="GTAAGT" + "N" * 50 + "TTTCAG",
                     five_seq="GTAAGT",
                     three_seq="TTTCAG",
-                    bp_seq="TTTCAG"
+                    bp_seq="TTTCAG",
                 ),
                 scores=IntronScores(
                     five_z_score=-1.0,
                     bp_z_score=-1.5,
                     three_z_score=-1.0,
-                )
+                ),
             )
             u2_introns.append(intron)
 
         trainer = SVMTrainer(n_models=1)
         parameters = SVMParameters(
             C=1.0,
-            calibration_method='sigmoid',
+            calibration_method="sigmoid",
+            saturate_enabled=False,
+            include_max=False,
+            include_pairwise_mins=False,
+            penalty="l2",
+            class_weight_multiplier=1.0,
+            loss="squared_hinge",
             dual=False,
             intercept_scaling=1.0,
             cv_score=0.95,
-            round_found=-1
+            round_found=-1,
         )
 
         # Should still run without error
         ensemble = trainer.train_ensemble(
-            u12_introns,
-            u2_introns,
-            parameters,
-            subsample_u2=False
+            u12_introns, u2_introns, parameters, subsample_u2=False
         )
 
         assert len(ensemble.models) == 1
@@ -544,11 +534,10 @@ class TestSVMTrainerEdgeCases:
         trainer = SVMTrainer()
 
         # Create intron with missing z-scores
-        bad_scores = replace(
-            mock_u12_introns[0].scores,
-            five_z_score=None
-        )
+        bad_scores = replace(mock_u12_introns[0].scores, five_z_score=None)
         bad_intron = replace(mock_u12_introns[0], scores=bad_scores)
 
+        with pytest.raises(ValueError, match="missing z-scores"):
+            trainer._prepare_training_data([bad_intron], mock_u12_introns[1:])
         with pytest.raises(ValueError, match="missing z-scores"):
             trainer._prepare_training_data([bad_intron], mock_u12_introns[1:])

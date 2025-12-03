@@ -12,24 +12,29 @@ Tests the end-to-end workflow:
 This test uses real reference data from the original intronIC package.
 """
 
-import pytest
 import gzip
 from pathlib import Path
 from typing import List, Tuple
-import numpy as np
 
-from intronIC.core.intron import Intron, IntronScores, IntronSequences, GenomicCoordinate
+import numpy as np
+import pytest
+
+from intronIC.classification.classifier import ClassificationResult, IntronClassifier
+from intronIC.core.intron import (
+    GenomicCoordinate,
+    Intron,
+    IntronScores,
+    IntronSequences,
+)
+from intronIC.scoring.normalizer import ScoreNormalizer
 from intronIC.scoring.pwm import PWM
 from intronIC.scoring.scorer import IntronScorer
-from intronIC.scoring.normalizer import ScoreNormalizer
-from intronIC.classification.classifier import IntronClassifier, ClassificationResult
 
-
-# Path to reference data (moved to root level in v2.0.0)
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
+# Path to reference data
+DATA_DIR = Path(__file__).parent.parent.parent / "src" / "intronIC" / "data"
 U12_REFERENCE_FILE = DATA_DIR / "u12_reference.introns.iic.gz"
 U2_REFERENCE_FILE = DATA_DIR / "u2_reference.introns.iic.gz"
-PWM_FILE = DATA_DIR / "scoring_matrices.fasta.iic"
+PWM_FILE = DATA_DIR / "intronIC_scoring_PWMs.json"
 
 
 def load_reference_sequences(filepath: Path, max_count: int = None) -> List[Intron]:
@@ -54,14 +59,14 @@ def load_reference_sequences(filepath: Path, max_count: int = None) -> List[Intr
     """
     introns = []
 
-    with gzip.open(filepath, 'rt') as f:
+    with gzip.open(filepath, "rt") as f:
         for line_num, line in enumerate(f, 1):
             # Skip comments
-            if line.startswith('#'):
+            if line.startswith("#"):
                 continue
 
             # Parse line
-            fields = line.strip().split('\t')
+            fields = line.strip().split("\t")
             if len(fields) < 5:
                 continue
 
@@ -77,7 +82,7 @@ def load_reference_sequences(filepath: Path, max_count: int = None) -> List[Intr
                 start=1,
                 stop=len(intron_seq),
                 strand="+",
-                system="1-based"
+                system="1-based",
             )
 
             # Extract terminal dinucleotides
@@ -90,15 +95,11 @@ def load_reference_sequences(filepath: Path, max_count: int = None) -> List[Intr
                 upstream_flank=upstream_flank,
                 downstream_flank=downstream_flank,
                 five_prime_dnt=five_dnt,
-                three_prime_dnt=three_dnt
+                three_prime_dnt=three_dnt,
             )
 
             # Create Intron
-            intron = Intron(
-                intron_id=intron_id,
-                coordinates=coord,
-                sequences=sequences
-            )
+            intron = Intron(intron_id=intron_id, coordinates=coord, sequences=sequences)
 
             introns.append(intron)
 
@@ -122,33 +123,35 @@ def parse_pwm_file(filepath: Path) -> dict:
     current_name = None
     current_freqs = []
 
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         for line in f:
             line = line.strip()
 
             # Skip comments and empty lines
-            if not line or line.startswith('#'):
+            if not line or line.startswith("#"):
                 continue
 
             # Header line
-            if line.startswith('>'):
+            if line.startswith(">"):
                 # Save previous PWM if any
                 if current_name and current_freqs:
-                    pwms[current_name] = np.array(current_freqs).T  # Transpose to (bases, positions)
+                    pwms[current_name] = np.array(
+                        current_freqs
+                    ).T  # Transpose to (bases, positions)
                     current_freqs = []
 
                 # Parse new header
-                parts = line[1:].split('\t')
+                parts = line[1:].split("\t")
                 current_name = parts[0]
 
             # Skip metadata lines
-            elif line.startswith('A\t') or line == 'A	C	G	T':
+            elif line.startswith("A\t") or line == "A	C	G	T":
                 continue
 
             # Frequency line
             else:
                 try:
-                    freqs = [float(x) for x in line.split('\t')]
+                    freqs = [float(x) for x in line.split("\t")]
                     if len(freqs) == 4:  # A, C, G, T
                         current_freqs.append(freqs)
                 except ValueError:
@@ -162,6 +165,7 @@ def parse_pwm_file(filepath: Path) -> dict:
 
 
 # Test fixtures
+
 
 @pytest.fixture(scope="module")
 def u12_reference():
@@ -189,6 +193,7 @@ def pwm_matrices():
 
 # Integration tests
 
+
 @pytest.mark.integration
 def test_load_reference_data(u12_reference, u2_reference_subset):
     """Test that reference data loads correctly."""
@@ -208,9 +213,9 @@ def test_score_reference_introns(u12_reference, u2_reference_subset, pwm_matrice
     """Test scoring reference introns with PWMs."""
     # Create simple PWMs for testing
     # In production, would use full PWM objects from scoring module
-    five_pwm = pwm_matrices.get('u12_atac_five')
-    bp_pwm = pwm_matrices.get('u12_atac_bp')
-    three_pwm = pwm_matrices.get('u12_atac_three')
+    five_pwm = pwm_matrices.get("u12_atac_five")
+    bp_pwm = pwm_matrices.get("u12_atac_bp")
+    three_pwm = pwm_matrices.get("u12_atac_three")
 
     if five_pwm is None or bp_pwm is None or three_pwm is None:
         pytest.skip("Required PWMs not found in matrices file")
@@ -218,12 +223,14 @@ def test_score_reference_introns(u12_reference, u2_reference_subset, pwm_matrice
     # For this integration test, we'll just verify the data structure
     # Full scoring would require the complete PWM infrastructure
     assert five_pwm.shape[0] == 4  # A, C, G, T
-    assert five_pwm.shape[1] > 0   # Has positions
+    assert five_pwm.shape[1] > 0  # Has positions
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classification_pipeline_with_reference_data(u12_reference, u2_reference_subset):
+def test_classification_pipeline_with_reference_data(
+    u12_reference, u2_reference_subset
+):
     """
     Test complete classification pipeline with real reference data.
 
@@ -251,10 +258,10 @@ def test_classification_pipeline_with_reference_data(u12_reference, u2_reference
             intron_id=intron.intron_id,
             coordinates=intron.coordinates,
             sequences=intron.sequences,
-            scores=scores
+            scores=scores,
         )
         u12_scored.append(new_intron)
-        true_labels[intron.intron_id] = 'u12'
+        true_labels[intron.intron_id] = "u12"
 
     # Add z-scores to U2 reference (low values)
     u2_scored = []
@@ -268,10 +275,10 @@ def test_classification_pipeline_with_reference_data(u12_reference, u2_reference
             intron_id=intron.intron_id,
             coordinates=intron.coordinates,
             sequences=intron.sequences,
-            scores=scores
+            scores=scores,
         )
         u2_scored.append(new_intron)
-        true_labels[intron.intron_id] = 'u2'
+        true_labels[intron.intron_id] = "u2"
 
     # Split into reference (for training) and experimental (for testing)
     # Use 70% for training, 30% for testing
@@ -293,13 +300,11 @@ def test_classification_pipeline_with_reference_data(u12_reference, u2_reference
         n_optimization_rounds=3,  # Reduced for speed
         n_ensemble_models=3,
         classification_threshold=50.0,  # Lower for easier testing
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
-        u12_reference=u12_train,
-        u2_reference=u2_train,
-        experimental=experimental
+        u12_reference=u12_train, u2_reference=u2_train, experimental=experimental
     )
 
     # Validate results
@@ -311,8 +316,8 @@ def test_classification_pipeline_with_reference_data(u12_reference, u2_reference
 
     for intron in result.classified_introns:
         # True label from our tracking dict
-        true_label = true_labels.get(intron.intron_id, 'unknown')
-        pred_label = intron.metadata.type_id if intron.metadata else 'unknown'
+        true_label = true_labels.get(intron.intron_id, "unknown")
+        pred_label = intron.metadata.type_id if intron.metadata else "unknown"
 
         if pred_label == true_label:
             correct += 1
@@ -356,7 +361,7 @@ def test_classification_preserves_z_scores(u12_reference, u2_reference_subset):
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
@@ -372,7 +377,7 @@ def test_classification_preserves_z_scores(u12_reference, u2_reference_subset):
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
@@ -394,21 +399,17 @@ def test_classification_preserves_z_scores(u12_reference, u2_reference_subset):
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
     # Run classification
     classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
 
     result = classifier.classify(
-        u12_reference=u12_ref,
-        u2_reference=u2_ref,
-        experimental=experimental
+        u12_reference=u12_ref, u2_reference=u2_ref, experimental=experimental
     )
 
     # CRITICAL CHECK: Z-scores must be exactly the same
@@ -417,14 +418,15 @@ def test_classification_preserves_z_scores(u12_reference, u2_reference_subset):
         current = (
             intron.scores.five_z_score,
             intron.scores.bp_z_score,
-            intron.scores.three_z_score
+            intron.scores.three_z_score,
         )
 
-        assert original == current, \
-            f"Z-scores changed for {intron.intron_id}!\n" \
-            f"  Original: {original}\n" \
-            f"  Current:  {current}\n" \
+        assert original == current, (
+            f"Z-scores changed for {intron.intron_id}!\n"
+            f"  Original: {original}\n"
+            f"  Current:  {current}\n"
             f"This indicates data leakage - CRITICAL BUG!"
+        )
 
 
 @pytest.mark.integration
@@ -443,7 +445,7 @@ def test_batch_classification_with_reference_data(u12_reference, u2_reference_su
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
@@ -459,22 +461,20 @@ def test_batch_classification_with_reference_data(u12_reference, u2_reference_su
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
     # Run batch classification
     classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
 
     result = classifier.classify_batch(
         u12_reference=u12_scored[:20],
         u2_reference=u2_scored[:20],
         experimental=u12_scored[20:] + u2_scored[20:],
-        batch_size=5
+        batch_size=5,
     )
 
     assert len(result.classified_introns) == 20
@@ -497,7 +497,7 @@ def test_reproducibility_with_reference_data(u12_reference, u2_reference_subset)
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
@@ -513,7 +513,7 @@ def test_reproducibility_with_reference_data(u12_reference, u2_reference_subset)
                 intron_id=intron.intron_id,
                 coordinates=intron.coordinates,
                 sequences=intron.sequences,
-                scores=scores
+                scores=scores,
             )
         )
 
@@ -523,16 +523,12 @@ def test_reproducibility_with_reference_data(u12_reference, u2_reference_subset)
 
     # Run twice with same seed
     classifier1 = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
     result1 = classifier1.classify(train_u12, train_u2, experimental)
 
     classifier2 = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
     result2 = classifier2.classify(train_u12, train_u2, experimental)
 
@@ -547,6 +543,7 @@ def test_reproducibility_with_reference_data(u12_reference, u2_reference_subset)
 # Additional integration tests moved from unit tests (tests that do full SVM training)
 # =============================================================================
 
+
 @pytest.fixture
 def u12_synthetic():
     """Create synthetic U12 introns with z-scores for testing."""
@@ -559,13 +556,13 @@ def u12_synthetic():
                 start=1000 + i * 100,
                 stop=1100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTATGT" + "N" * 50 + "TCCTTAAC",
                 five_seq="GTATGT",
                 three_seq="TCCTTAAC",
-                bp_seq="TCCTTAAC"
+                bp_seq="TCCTTAAC",
             ),
             scores=IntronScores(
                 five_raw_score=12.5,
@@ -574,7 +571,7 @@ def u12_synthetic():
                 five_z_score=2.0 + np.random.randn() * 0.3,
                 bp_z_score=2.5 + np.random.randn() * 0.3,
                 three_z_score=2.0 + np.random.randn() * 0.3,
-            )
+            ),
         )
         introns.append(intron)
     return introns
@@ -592,13 +589,13 @@ def u2_synthetic():
                 start=10000 + i * 100,
                 stop=10100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTAAGT" + "N" * 50 + "TTTCAG",
                 five_seq="GTAAGT",
                 three_seq="TTTCAG",
-                bp_seq="CTAAC"
+                bp_seq="CTAAC",
             ),
             scores=IntronScores(
                 five_raw_score=5.2,
@@ -607,7 +604,7 @@ def u2_synthetic():
                 five_z_score=-1.0 + np.random.randn() * 0.3,
                 bp_z_score=-1.5 + np.random.randn() * 0.3,
                 three_z_score=-1.0 + np.random.randn() * 0.3,
-            )
+            ),
         )
         introns.append(intron)
     return introns
@@ -627,18 +624,18 @@ def experimental_synthetic():
                 start=1000 + i * 100,
                 stop=1100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTATGT" + "N" * 50 + "TCCTTAAC",
                 five_seq="GTATGT",
-                three_seq="TCCTTAAC"
+                three_seq="TCCTTAAC",
             ),
             scores=IntronScores(
                 five_z_score=2.2 + np.random.randn() * 0.2,
                 bp_z_score=2.7 + np.random.randn() * 0.2,
                 three_z_score=2.1 + np.random.randn() * 0.2,
-            )
+            ),
         )
         introns.append(intron)
 
@@ -651,18 +648,18 @@ def experimental_synthetic():
                 start=2000 + i * 100,
                 stop=2100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTAAGT" + "N" * 50 + "TTTCAG",
                 five_seq="GTAAGT",
-                three_seq="TTTCAG"
+                three_seq="TTTCAG",
             ),
             scores=IntronScores(
                 five_z_score=-0.9 + np.random.randn() * 0.2,
                 bp_z_score=-1.3 + np.random.randn() * 0.2,
                 three_z_score=-0.8 + np.random.randn() * 0.2,
-            )
+            ),
         )
         introns.append(intron)
 
@@ -671,19 +668,21 @@ def experimental_synthetic():
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classify_complete_pipeline(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classify_complete_pipeline(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """Test complete classification pipeline with synthetic data."""
     classifier = IntronClassifier(
         n_optimization_rounds=2,  # Faster for testing
         n_ensemble_models=2,
         classification_threshold=50.0,  # Lower for easier testing
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     # Check result structure
@@ -701,7 +700,7 @@ def test_classify_complete_pipeline(u12_synthetic, u2_synthetic, experimental_sy
         assert intron.scores.svm_score is not None
         assert 0 <= intron.scores.svm_score <= 100
         assert intron.metadata is not None
-        assert intron.metadata.type_id in ['u2', 'u12']
+        assert intron.metadata.type_id in ["u2", "u12"]
 
 
 @pytest.mark.integration
@@ -713,45 +712,51 @@ def test_classify_with_fixed_c(u12_synthetic, u2_synthetic, experimental_synthet
         fixed_c=1.0,
         n_ensemble_models=2,
         classification_threshold=50.0,
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     assert result.parameters.C == 1.0
-    assert result.parameters.round_found == 0  # Fixed, not optimized
+    # round_found == -1 indicates the C value was not found through optimization
+    # (either averaged from folds or fixed by user)
+    assert result.parameters.round_found == -1  # Fixed, not optimized
     assert len(result.classified_introns) == len(experimental_synthetic)
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classify_assigns_u12_and_u2(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classify_assigns_u12_and_u2(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """Test that classification assigns both U12 and U2 types."""
     classifier = IntronClassifier(
         n_optimization_rounds=2,
         n_ensemble_models=2,
         classification_threshold=50.0,
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     # Count classifications
     u12_count = sum(
-        1 for i in result.classified_introns
-        if i.metadata and i.metadata.type_id == 'u12'
+        1
+        for i in result.classified_introns
+        if i.metadata and i.metadata.type_id == "u12"
     )
     u2_count = sum(
-        1 for i in result.classified_introns
-        if i.metadata and i.metadata.type_id == 'u2'
+        1
+        for i in result.classified_introns
+        if i.metadata and i.metadata.type_id == "u2"
     )
 
     # Should have both types
@@ -762,7 +767,9 @@ def test_classify_assigns_u12_and_u2(u12_synthetic, u2_synthetic, experimental_s
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classify_preserves_z_scores_synthetic(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classify_preserves_z_scores_synthetic(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """
     CRITICAL TEST: Verify z-scores are NOT re-normalized during classification.
     This is Issue #1 fix - prevents data leakage.
@@ -772,21 +779,19 @@ def test_classify_preserves_z_scores_synthetic(u12_synthetic, u2_synthetic, expe
         intron.intron_id: (
             intron.scores.five_z_score,
             intron.scores.bp_z_score,
-            intron.scores.three_z_score
+            intron.scores.three_z_score,
         )
         for intron in experimental_synthetic
     }
 
     classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     # Check that z-scores are EXACTLY the same
@@ -795,7 +800,7 @@ def test_classify_preserves_z_scores_synthetic(u12_synthetic, u2_synthetic, expe
         current = (
             intron.scores.five_z_score,
             intron.scores.bp_z_score,
-            intron.scores.three_z_score
+            intron.scores.three_z_score,
         )
         assert original == current, f"Z-scores changed for {intron.intron_id}!"
 
@@ -808,14 +813,14 @@ def test_classify_batch_synthetic(u12_synthetic, u2_synthetic, experimental_synt
         n_optimization_rounds=2,
         n_ensemble_models=2,
         classification_threshold=50.0,
-        random_state=42
+        random_state=42,
     )
 
     # Regular classification
     result_regular = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     # Batch classification with small batch size
@@ -823,82 +828,92 @@ def test_classify_batch_synthetic(u12_synthetic, u2_synthetic, experimental_synt
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
         experimental=experimental_synthetic,
-        batch_size=5
+        batch_size=5,
     )
 
     # Results should be identical
-    assert len(result_regular.classified_introns) == len(result_batch.classified_introns)
+    assert len(result_regular.classified_introns) == len(
+        result_batch.classified_introns
+    )
 
-    for reg, batch in zip(result_regular.classified_introns, result_batch.classified_introns):
+    for reg, batch in zip(
+        result_regular.classified_introns, result_batch.classified_introns
+    ):
         assert abs(reg.scores.svm_score - batch.scores.svm_score) < 1e-6
         assert reg.metadata.type_id == batch.metadata.type_id
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classification_result_get_u12_predictions(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classification_result_get_u12_predictions(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """Test ClassificationResult.get_u12_predictions()."""
     classifier = IntronClassifier(
         n_optimization_rounds=2,
         n_ensemble_models=2,
         classification_threshold=50.0,
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     u12_predictions = result.get_u12_predictions(threshold=50.0)
 
     # All should be U12 with score >= threshold
     for intron in u12_predictions:
-        assert intron.metadata.type_id == 'u12'
+        assert intron.metadata.type_id == "u12"
         assert intron.scores.svm_score >= 50.0
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classification_result_get_u2_predictions(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classification_result_get_u2_predictions(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """Test ClassificationResult.get_u2_predictions()."""
     classifier = IntronClassifier(
         n_optimization_rounds=2,
         n_ensemble_models=2,
         classification_threshold=50.0,
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     u2_predictions = result.get_u2_predictions(threshold=50.0)
 
     # All should be U2 with score < threshold
     for intron in u2_predictions:
-        assert intron.metadata.type_id == 'u2'
+        assert intron.metadata.type_id == "u2"
         assert intron.scores.svm_score < 50.0
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classification_result_threshold_affects_filtering(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classification_result_threshold_affects_filtering(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """Test that threshold parameter affects get_u12_predictions filtering."""
     classifier = IntronClassifier(
         n_optimization_rounds=2,
         n_ensemble_models=2,
         classification_threshold=50.0,
-        random_state=42
+        random_state=42,
     )
 
     result = classifier.classify(
         u12_reference=u12_synthetic,
         u2_reference=u2_synthetic,
-        experimental=experimental_synthetic
+        experimental=experimental_synthetic,
     )
 
     # Lower threshold should give more U12 predictions
@@ -917,25 +932,15 @@ def test_classify_small_datasets(u12_synthetic, u2_synthetic):
         Intron(
             intron_id="single",
             coordinates=GenomicCoordinate(
-                chromosome="chr1",
-                start=1000,
-                stop=1100,
-                strand="+",
-                system="1-based"
+                chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
             ),
             sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-            scores=IntronScores(
-                five_z_score=2.0,
-                bp_z_score=2.5,
-                three_z_score=2.0
-            )
+            scores=IntronScores(five_z_score=2.0, bp_z_score=2.5, three_z_score=2.0),
         )
     ]
 
     classifier = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
 
     result = classifier.classify(u12_synthetic, u2_synthetic, single_exp)
@@ -946,21 +951,24 @@ def test_classify_small_datasets(u12_synthetic, u2_synthetic):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_classify_reproducibility_synthetic(u12_synthetic, u2_synthetic, experimental_synthetic):
+def test_classify_reproducibility_synthetic(
+    u12_synthetic, u2_synthetic, experimental_synthetic
+):
     """Test that classification is reproducible with same random_state."""
     classifier1 = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
     result1 = classifier1.classify(u12_synthetic, u2_synthetic, experimental_synthetic)
 
     classifier2 = IntronClassifier(
-        n_optimization_rounds=2,
-        n_ensemble_models=2,
-        random_state=42
+        n_optimization_rounds=2, n_ensemble_models=2, random_state=42
     )
     result2 = classifier2.classify(u12_synthetic, u2_synthetic, experimental_synthetic)
+
+    # Scores should be identical
+    for i1, i2 in zip(result1.classified_introns, result2.classified_introns):
+        assert abs(i1.scores.svm_score - i2.scores.svm_score) < 1e-6
+        assert i1.metadata.type_id == i2.metadata.type_id
 
     # Scores should be identical
     for i1, i2 in zip(result1.classified_introns, result2.classified_introns):

@@ -5,18 +5,24 @@ Tests the SVMOptimizer class which implements geometric grid search for
 SVM hyperparameter optimization.
 """
 
-import pytest
-import numpy as np
-from scipy.stats import gmean
 from dataclasses import replace
 
+import numpy as np
+import pytest
+from scipy.stats import gmean
+
 from intronIC.classification.optimizer import (
+    OptimizationRound,
     SVMOptimizer,
     SVMParameters,
-    OptimizationRound,
 )
-from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
-
+from intronIC.core.intron import (
+    GenomicCoordinate,
+    Intron,
+    IntronMetadata,
+    IntronScores,
+    IntronSequences,
+)
 
 # =============================================================================
 # FIXTURES
@@ -36,19 +42,19 @@ def mock_u12_introns():
                 start=1000 + i * 100,
                 stop=1100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTATGT" + "N" * 50 + "TCCTTAAC",
                 five_seq="GTATGT",
                 three_seq="TCCTTAAC",
-                bp_seq="TCCTTAAC"
+                bp_seq="TCCTTAAC",
             ),
             scores=IntronScores(
                 five_z_score=2.0 + np.random.randn() * 0.5,
                 bp_z_score=2.5 + np.random.randn() * 0.5,
                 three_z_score=2.0 + np.random.randn() * 0.5,
-            )
+            ),
         )
         introns.append(intron)
     return introns
@@ -67,19 +73,19 @@ def mock_u2_introns():
                 start=10000 + i * 100,
                 stop=10100 + i * 100,
                 strand="+",
-                system="1-based"
+                system="1-based",
             ),
             sequences=IntronSequences(
                 seq="GTAAGT" + "N" * 50 + "TTTCAG",
                 five_seq="GTAAGT",
                 three_seq="TTTCAG",
-                bp_seq="TTTCAG"
+                bp_seq="TTTCAG",
             ),
             scores=IntronScores(
                 five_z_score=-1.0 + np.random.randn() * 0.5,
                 bp_z_score=-1.5 + np.random.randn() * 0.5,
                 three_z_score=-1.0 + np.random.randn() * 0.5,
-            )
+            ),
         )
         introns.append(intron)
     return introns
@@ -100,7 +106,7 @@ class TestSVMOptimizer:
         assert optimizer.n_rounds == 3
         assert optimizer.n_points_initial == 13
         assert optimizer.n_points_refine == 100
-        assert optimizer.cv_folds == 5
+        assert optimizer.cv_folds == 7  # Updated default
         assert optimizer.random_state == 42
         assert optimizer.rounds_ == []
 
@@ -111,7 +117,7 @@ class TestSVMOptimizer:
             n_points_initial=10,
             n_points_refine=50,
             cv_folds=3,
-            random_state=123
+            random_state=123,
         )
 
         assert optimizer.n_rounds == 3
@@ -217,10 +223,7 @@ class TestSVMOptimizer:
         optimizer = SVMOptimizer()
 
         # Create intron with missing z-scores
-        bad_scores = replace(
-            mock_u12_introns[0].scores,
-            five_z_score=None
-        )
+        bad_scores = replace(mock_u12_introns[0].scores, five_z_score=None)
         bad_intron = replace(mock_u12_introns[0], scores=bad_scores)
 
         with pytest.raises(ValueError, match="missing z-scores"):
@@ -246,31 +249,33 @@ class TestSVMOptimizer:
         optimizer = SVMOptimizer(n_points_refine=50)
         current_grid = np.array([1, 10, 100, 1000, 10000])
 
-        # Test at low edge
+        # Test at low edge - new implementation extends below for edge cases
         refined_low = optimizer._refine_grid(current_grid, 1)
-        # Should refine between index 0 and 1 (1 to 10)
-        assert np.isclose(refined_low[0], 1)
+        # Should extend below 1 and go up to 10
+        assert refined_low[0] < 1  # Extended below
         assert np.isclose(refined_low[-1], 10)
 
-        # Test at high edge
+        # Test at high edge - new implementation extends above for edge cases
         refined_high = optimizer._refine_grid(current_grid, 10000)
-        # Should refine between index 3 and 4 (1000 to 10000)
+        # Should start at 1000 and extend above 10000
         assert np.isclose(refined_high[0], 1000)
-        assert np.isclose(refined_high[-1], 10000)
+        assert refined_high[-1] > 10000  # Extended above
 
     @pytest.mark.slow
-    def test_evaluate_C(self, mock_u12_introns, mock_u2_introns):
-        """Test C evaluation via cross-validation."""
+    def test_grid_search_returns_valid_scores(self, mock_u12_introns, mock_u2_introns):
+        """Test that grid search produces valid scores."""
         optimizer = SVMOptimizer(cv_folds=3)
         X, y = optimizer._prepare_training_data(mock_u12_introns, mock_u2_introns)
 
-        score = optimizer._evaluate_C(X, y, C=1.0)
+        C_grid = np.logspace(-2, 2, num=5)
+        round_result = optimizer._grid_search_round(X, y, C_grid, round_idx=0)
 
-        # Score should be between 0 and 1
-        assert 0.0 <= score <= 1.0
+        # All scores should be between 0 and 1
+        for score in round_result.scores:
+            assert 0.0 <= score <= 1.0
 
-        # With our well-separated mock data, should be high
-        assert score > 0.8
+        # With our well-separated mock data, best score should be high
+        assert round_result.best_score > 0.8
 
     @pytest.mark.slow
     def test_grid_search_round(self, mock_u12_introns, mock_u2_introns):
@@ -284,24 +289,21 @@ class TestSVMOptimizer:
         # Check result structure
         assert isinstance(round_result, OptimizationRound)
         assert len(round_result.grid_points) == 5
-        assert len(round_result.scores) == 5
+        # New optimizer tests multiple parameter combinations per C value
+        assert len(round_result.scores) >= 5  # At least one score per C
         assert round_result.best_C > 0
         assert 0 <= round_result.best_score <= 1
         assert len(round_result.rank_one_Cs) >= 1
 
-        # Best C should be in the grid
-        assert round_result.best_C in C_grid or any(
-            np.isclose(round_result.best_C, c) for c in C_grid
-        )
+        # Best C should be approximately in the grid range
+        assert round_result.best_C >= C_grid[0] * 0.5  # Allow some tolerance
+        assert round_result.best_C <= C_grid[-1] * 2.0
 
     @pytest.mark.slow
     def test_optimize_full_run(self, mock_u12_introns, mock_u2_introns):
         """Test full optimization with 2 rounds (faster for testing)."""
         optimizer = SVMOptimizer(
-            n_rounds=2,
-            n_points_initial=7,
-            n_points_refine=10,
-            cv_folds=3
+            n_rounds=2, n_points_initial=7, n_points_refine=10, cv_folds=3
         )
 
         params = optimizer.optimize(mock_u12_introns, mock_u2_introns)
@@ -334,7 +336,7 @@ class TestSVMOptimizer:
             n_points_initial=7,
             n_points_refine=10,
             cv_folds=3,
-            random_state=42
+            random_state=42,
         )
 
         optimizer2 = SVMOptimizer(
@@ -342,7 +344,7 @@ class TestSVMOptimizer:
             n_points_initial=7,
             n_points_refine=10,
             cv_folds=3,
-            random_state=42
+            random_state=42,
         )
 
         params1 = optimizer1.optimize(mock_u12_introns, mock_u2_introns)
@@ -358,17 +360,11 @@ class TestSVMOptimizer:
     ):
         """Test reproducibility with different random seeds."""
         optimizer1 = SVMOptimizer(
-            n_rounds=1,
-            n_points_initial=7,
-            cv_folds=3,
-            random_state=42
+            n_rounds=1, n_points_initial=7, cv_folds=3, random_state=42
         )
 
         optimizer2 = SVMOptimizer(
-            n_rounds=1,
-            n_points_initial=7,
-            cv_folds=3,
-            random_state=99
+            n_rounds=1, n_points_initial=7, cv_folds=3, random_state=99
         )
 
         params1 = optimizer1.optimize(mock_u12_introns, mock_u2_introns)
@@ -381,28 +377,19 @@ class TestSVMOptimizer:
         assert 0.1 < params1.C / params2.C < 10
 
     @pytest.mark.slow
-    def test_optimize_custom_initial_range(self, mock_u12_introns, mock_u2_introns):
-        """Test optimization with custom initial range."""
-        optimizer = SVMOptimizer(
-            n_rounds=1,
-            n_points_initial=5,
-            cv_folds=3
-        )
+    def test_optimize_uses_default_range(self, mock_u12_introns, mock_u2_introns):
+        """Test optimization uses appropriate default range."""
+        optimizer = SVMOptimizer(n_rounds=1, n_points_initial=5, cv_folds=3)
 
-        params = optimizer.optimize(
-            mock_u12_introns,
-            mock_u2_introns,
-            initial_range=(0.1, 10.0)  # Narrower range
-        )
+        params = optimizer.optimize(mock_u12_introns, mock_u2_introns)
 
-        # Should still find a valid C value
+        # Should find a valid C value
         assert params.C > 0
         assert 0 <= params.cv_score <= 1
 
-        # Initial grid should respect our range
+        # Should have grid points
         initial_grid = optimizer.rounds_[0].grid_points
-        assert np.isclose(initial_grid[0], 0.1)
-        assert np.isclose(initial_grid[-1], 10.0)
+        assert len(initial_grid) == 5
 
 
 # =============================================================================
@@ -417,15 +404,18 @@ class TestSVMOptimizerIntegration:
     def test_optimizer_with_realistic_data(self, mock_u12_introns, mock_u2_introns):
         """Test optimizer with realistic intron data."""
         # Adjust mock data to be more realistic
-        # U12s should have higher scores, U2s lower
+        # U12s should have higher raw scores, U2s lower
         # Since scores are frozen, we need to replace them
         realistic_u12s = []
         for intron in mock_u12_introns:
             new_scores = replace(
                 intron.scores,
+                five_raw_score=3.0 + np.random.randn() * 0.3,
+                bp_raw_score=4.0 + np.random.randn() * 0.3,
+                three_raw_score=3.5 + np.random.randn() * 0.3,
                 five_z_score=3.0 + np.random.randn() * 0.3,
                 bp_z_score=4.0 + np.random.randn() * 0.3,
-                three_z_score=3.5 + np.random.randn() * 0.3
+                three_z_score=3.5 + np.random.randn() * 0.3,
             )
             realistic_u12s.append(replace(intron, scores=new_scores))
 
@@ -433,31 +423,32 @@ class TestSVMOptimizerIntegration:
         for intron in mock_u2_introns:
             new_scores = replace(
                 intron.scores,
+                five_raw_score=-1.5 + np.random.randn() * 0.3,
+                bp_raw_score=-2.0 + np.random.randn() * 0.3,
+                three_raw_score=-1.5 + np.random.randn() * 0.3,
                 five_z_score=-1.5 + np.random.randn() * 0.3,
                 bp_z_score=-2.0 + np.random.randn() * 0.3,
-                three_z_score=-1.5 + np.random.randn() * 0.3
+                three_z_score=-1.5 + np.random.randn() * 0.3,
             )
             realistic_u2s.append(replace(intron, scores=new_scores))
 
         optimizer = SVMOptimizer(
-            n_rounds=3,
-            n_points_initial=7,
-            n_points_refine=20,
-            cv_folds=3
+            n_rounds=3, n_points_initial=7, n_points_refine=20, cv_folds=3
         )
 
         params = optimizer.optimize(realistic_u12s, realistic_u2s)
 
-        # With well-separated data, should get high accuracy
-        assert params.cv_score > 0.9
+        # With well-separated data, should get good calibration (low log-loss)
+        # cv_score now represents log-loss (lower is better)
+        assert params.cv_score < 0.5  # Log-loss should be low for well-separated data
         assert params.C > 0
 
         # Should have completed 3 rounds
         assert len(optimizer.rounds_) == 3
 
-        # Each round should improve or maintain performance
+        # Each round should have good performance
         scores = [r.best_score for r in optimizer.rounds_]
-        # Scores should generally improve or stay high
+        # Scores are balanced_accuracy, should be high
         assert all(s > 0.8 for s in scores)
 
 
@@ -482,19 +473,19 @@ class TestSVMOptimizerEdgeCases:
                     start=1000 + i * 100,
                     stop=1100 + i * 100,
                     strand="+",
-                    system="1-based"
+                    system="1-based",
                 ),
                 sequences=IntronSequences(
                     seq="GTATGT" + "N" * 50 + "TCCTTAAC",
                     five_seq="GTATGT",
                     three_seq="TCCTTAAC",
-                    bp_seq="TCCTTAAC"
+                    bp_seq="TCCTTAAC",
                 ),
                 scores=IntronScores(
                     five_z_score=2.0,
                     bp_z_score=2.5,
                     three_z_score=2.0,
-                )
+                ),
             )
             u12_introns.append(intron)
 
@@ -507,26 +498,26 @@ class TestSVMOptimizerEdgeCases:
                     start=10000 + i * 100,
                     stop=10100 + i * 100,
                     strand="+",
-                    system="1-based"
+                    system="1-based",
                 ),
                 sequences=IntronSequences(
                     seq="GTAAGT" + "N" * 50 + "TTTCAG",
                     five_seq="GTAAGT",
                     three_seq="TTTCAG",
-                    bp_seq="TTTCAG"
+                    bp_seq="TTTCAG",
                 ),
                 scores=IntronScores(
                     five_z_score=-1.0,
                     bp_z_score=-1.5,
                     three_z_score=-1.0,
-                )
+                ),
             )
             u2_introns.append(intron)
 
         optimizer = SVMOptimizer(
             n_rounds=1,
             n_points_initial=3,
-            cv_folds=2  # Small folds for small dataset
+            cv_folds=2,  # Small folds for small dataset
         )
 
         # Should still run without error

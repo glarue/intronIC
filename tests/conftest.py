@@ -5,9 +5,10 @@ Ensures proper imports by adding the project root to Python path.
 Provides shared fixtures for common paths.
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add the project root to the Python path
 project_root = Path(__file__).parent.parent
@@ -25,7 +26,7 @@ def project_root():
 @pytest.fixture(scope="session")
 def data_dir(project_root):
     """Return path to data directory."""
-    return project_root / "data"
+    return project_root / "src" / "intronIC" / "data"
 
 
 @pytest.fixture(scope="session")
@@ -36,5 +37,12 @@ def test_data_dir(data_dir):
 
 @pytest.fixture(scope="session")
 def matrix_file(data_dir):
-    """Return path to scoring matrices file."""
-    return data_dir / "scoring_matrices.fasta.iic"
+    """Return path to scoring matrices file (JSON format)."""
+    return data_dir / "intronIC_scoring_PWMs.json"
+
+
+@pytest.fixture(scope="session")
+def legacy_matrix_file(data_dir):
+    """Return path to legacy .iic scoring matrices file (archived)."""
+    return data_dir / "archive" / "scoring_matrices.fasta.iic"
+    return data_dir / "archive" / "scoring_matrices.fasta.iic"

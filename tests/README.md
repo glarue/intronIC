@@ -15,14 +15,13 @@ tests/
 │   ├── test_edge_cases.py          # Edge cases and boundary conditions
 │   ├── test_scoring/               # Scoring module tests
 │   │   ├── test_pwm.py             # PWM loading and scoring
+│   │   ├── test_pwm_format_equivalence.py  # Legacy .iic vs JSON format tests
+│   │   ├── test_pwm_indexing.py    # PWM position indexing
 │   │   ├── test_scorer.py          # IntronScorer pipeline
 │   │   ├── test_normalizer.py      # Z-score normalization
-│   │   ├── test_pwm_fix.py         # PWM bug fix validation
-│   │   ├── test_pwm_debug.py       # PWM debugging utilities
-│   │   ├── test_matrix_selection.py# Matrix selection logic
-│   │   ├── test_matrix_conversion.py# Matrix format conversion
-│   │   ├── test_log_ratio.py       # Log-ratio calculations
-│   │   └── test_correct_matrices.py# Matrix correctness validation
+│   │   ├── test_branch_point.py    # Branch point scoring
+│   │   ├── test_log_ratio_deterministic.py # Log-ratio calculations
+│   │   └── test_new_scaling_architecture.py # ZAR scaling tests
 │   ├── test_classification/        # Classification module tests
 │   │   └── test_ml_integrity.py    # ML data leakage prevention
 │   └── test_file_io/                # File I/O tests

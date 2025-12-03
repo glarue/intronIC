@@ -20,19 +20,26 @@ Test Strategy:
 7. Test handling of canonical vs non-canonical introns
 """
 
-import pytest
-import numpy as np
 import math
 from pathlib import Path
 
-from intronIC.scoring.scorer import IntronScorer
-from intronIC.scoring.pwm import PWM, PWMSet, PWMLoader
-from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
+import numpy as np
+import pytest
 
+from intronIC.core.intron import (
+    GenomicCoordinate,
+    Intron,
+    IntronMetadata,
+    IntronScores,
+    IntronSequences,
+)
+from intronIC.scoring.pwm import PWM, PWMLoader, PWMSet
+from intronIC.scoring.scorer import IntronScorer
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def simple_pwms():
@@ -45,92 +52,97 @@ def simple_pwms():
     # Favors AGGTAAGT pattern
     five_u12 = PWM(
         name="u12_five",
-        matrix=np.array([
-            # -3  -2  -1   0   1   2   3   4
-            [0.8, 0.1, 0.1, 0.1, 0.9, 0.9, 0.1, 0.1],  # A
-            [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],  # C
-            [0.1, 0.8, 0.1, 0.9, 0.1, 0.1, 0.8, 0.1],  # G
-            [0.1, 0.1, 0.8, 0.1, 0.1, 0.1, 0.1, 0.8],  # T
-        ]),
+        matrix=np.array(
+            [
+                # -3  -2  -1   0   1   2   3   4
+                [0.8, 0.1, 0.1, 0.1, 0.9, 0.9, 0.1, 0.1],  # A
+                [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],  # C
+                [0.1, 0.8, 0.1, 0.9, 0.1, 0.1, 0.8, 0.1],  # G
+                [0.1, 0.1, 0.8, 0.1, 0.1, 0.1, 0.1, 0.8],  # T
+            ]
+        ),
         length=8,
-        start_index=-3
+        start_index=-3,
     )
 
     five_u2 = PWM(
         name="u2_five",
-        matrix=np.array([
-            [0.3, 0.3, 0.3, 0.2, 0.4, 0.4, 0.3, 0.3],  # A
-            [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2],  # C
-            [0.3, 0.3, 0.2, 0.6, 0.2, 0.2, 0.3, 0.3],  # G
-            [0.2, 0.2, 0.3, 0.2, 0.2, 0.2, 0.2, 0.2],  # T
-        ]),
+        matrix=np.array(
+            [
+                [0.3, 0.3, 0.3, 0.2, 0.4, 0.4, 0.3, 0.3],  # A
+                [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2],  # C
+                [0.3, 0.3, 0.2, 0.6, 0.2, 0.2, 0.3, 0.3],  # G
+                [0.2, 0.2, 0.3, 0.2, 0.2, 0.2, 0.2, 0.2],  # T
+            ]
+        ),
         length=8,
-        start_index=-3
+        start_index=-3,
     )
 
     # Branch point PWM (7 positions for TACTAAC)
     bp_u12 = PWM(
         name="u12_bp",
-        matrix=np.array([
-            [0.05, 0.95, 0.05, 0.05, 0.95, 0.95, 0.05],  # A
-            [0.05, 0.05, 0.95, 0.05, 0.05, 0.05, 0.95],  # C
-            [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],  # G
-            [0.95, 0.05, 0.05, 0.95, 0.05, 0.05, 0.05],  # T
-        ]),
-        length=7
+        matrix=np.array(
+            [
+                [0.05, 0.95, 0.05, 0.05, 0.95, 0.95, 0.05],  # A
+                [0.05, 0.05, 0.95, 0.05, 0.05, 0.05, 0.95],  # C
+                [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],  # G
+                [0.95, 0.05, 0.05, 0.95, 0.05, 0.05, 0.05],  # T
+            ]
+        ),
+        length=7,
     )
 
     bp_u2 = PWM(
         name="u2_bp",
-        matrix=np.array([
-            [0.3, 0.4, 0.3, 0.3, 0.4, 0.5, 0.3],  # A
-            [0.3, 0.2, 0.3, 0.2, 0.2, 0.1, 0.3],  # C
-            [0.2, 0.2, 0.2, 0.3, 0.2, 0.2, 0.2],  # G
-            [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2],  # T
-        ]),
-        length=7
+        matrix=np.array(
+            [
+                [0.3, 0.4, 0.3, 0.3, 0.4, 0.5, 0.3],  # A
+                [0.3, 0.2, 0.3, 0.2, 0.2, 0.1, 0.3],  # C
+                [0.2, 0.2, 0.2, 0.3, 0.2, 0.2, 0.2],  # G
+                [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2],  # T
+            ]
+        ),
+        length=7,
     )
 
     # 3' splice site PWM (8 positions: -6 to +2 around AG)
     # Favors TTTCAGGT pattern
     three_u12 = PWM(
         name="u12_three",
-        matrix=np.array([
-            # -6  -5  -4  -3  -2  -1   0   1
-            [0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1],  # A
-            [0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1],  # C
-            [0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.8],  # G
-            [0.8, 0.8, 0.8, 0.1, 0.1, 0.1, 0.1, 0.1],  # T
-        ]),
+        matrix=np.array(
+            [
+                # -6  -5  -4  -3  -2  -1   0   1
+                [0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1],  # A
+                [0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1],  # C
+                [0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.8],  # G
+                [0.8, 0.8, 0.8, 0.1, 0.1, 0.1, 0.1, 0.1],  # T
+            ]
+        ),
         length=8,
-        start_index=-6
+        start_index=-6,
     )
 
     three_u2 = PWM(
         name="u2_three",
-        matrix=np.array([
-            [0.2, 0.2, 0.2, 0.2, 0.5, 0.2, 0.2, 0.3],  # A
-            [0.3, 0.3, 0.3, 0.4, 0.2, 0.2, 0.2, 0.2],  # C
-            [0.2, 0.2, 0.2, 0.2, 0.1, 0.6, 0.3, 0.3],  # G
-            [0.3, 0.3, 0.3, 0.2, 0.2, 0.2, 0.3, 0.2],  # T
-        ]),
+        matrix=np.array(
+            [
+                [0.2, 0.2, 0.2, 0.2, 0.5, 0.2, 0.2, 0.3],  # A
+                [0.3, 0.3, 0.3, 0.4, 0.2, 0.2, 0.2, 0.2],  # C
+                [0.2, 0.2, 0.2, 0.2, 0.1, 0.6, 0.3, 0.3],  # G
+                [0.3, 0.3, 0.3, 0.2, 0.2, 0.2, 0.3, 0.2],  # T
+            ]
+        ),
         length=8,
-        start_index=-6
+        start_index=-6,
     )
 
     pwm_sets = {
-        'five': PWMSet(matrices={
-            ('u2', 'gtag'): five_u2,
-            ('u12', 'gtag'): five_u12
-        }),
-        'bp': PWMSet(matrices={
-            ('u2', 'gtag'): bp_u2,
-            ('u12', 'gtag'): bp_u12
-        }),
-        'three': PWMSet(matrices={
-            ('u2', 'gtag'): three_u2,
-            ('u12', 'gtag'): three_u12
-        })
+        "five": PWMSet(matrices={("u2", "gtag"): five_u2, ("u12", "gtag"): five_u12}),
+        "bp": PWMSet(matrices={("u2", "gtag"): bp_u2, ("u12", "gtag"): bp_u12}),
+        "three": PWMSet(
+            matrices={("u2", "gtag"): three_u2, ("u12", "gtag"): three_u12}
+        ),
     }
 
     return pwm_sets
@@ -156,7 +168,9 @@ def u12_like_intron():
     three_region = "TTTCAGGT"  # Positions -6 to +2
     downstream = "NACTG"
 
-    full_seq = five_region + middle_before_bp + bp_region + middle_after_bp + three_region
+    full_seq = (
+        five_region + middle_before_bp + bp_region + middle_after_bp + three_region
+    )
 
     return Intron(
         intron_id="u12_like_intron",
@@ -164,21 +178,18 @@ def u12_like_intron():
             chromosome="chr1",
             start=1000,
             stop=1000 + len(full_seq),
-            strand='+',
-            system='1-based'
+            strand="+",
+            system="1-based",
         ),
         sequences=IntronSequences(
             seq=full_seq,
             upstream_flank=upstream,
             downstream_flank=downstream,
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_1",
-            grandparent="gene_1"
-        )
+        metadata=IntronMetadata(parent="transcript_1", grandparent="gene_1"),
     )
 
 
@@ -197,7 +208,9 @@ def u2_like_intron():
     three_region = "NNCNAGNN"  # Weaker 3' motif
     downstream = "NACTG"
 
-    full_seq = five_region + middle_before_bp + bp_region + middle_after_bp + three_region
+    full_seq = (
+        five_region + middle_before_bp + bp_region + middle_after_bp + three_region
+    )
 
     return Intron(
         intron_id="u2_like_intron",
@@ -205,21 +218,18 @@ def u2_like_intron():
             chromosome="chr1",
             start=2000,
             stop=2000 + len(full_seq),
-            strand='+',
-            system='1-based'
+            strand="+",
+            system="1-based",
         ),
         sequences=IntronSequences(
             seq=full_seq,
             upstream_flank=upstream,
             downstream_flank=downstream,
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_2",
-            grandparent="gene_2"
-        )
+        metadata=IntronMetadata(parent="transcript_2", grandparent="gene_2"),
     )
 
 
@@ -227,13 +237,14 @@ def u2_like_intron():
 # IntronScorer Initialization Tests
 # ============================================================================
 
+
 def test_intron_scorer_creation(simple_pwms):
     """Test that IntronScorer can be initialized with PWM sets."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-55, -5),
-        three_coords=(-6, 2)
+        three_coords=(-6, 2),
     )
 
     assert scorer.pwm_sets == simple_pwms
@@ -256,11 +267,12 @@ def test_intron_scorer_default_coordinates(simple_pwms):
 # 5' Splice Site Scoring Tests
 # ============================================================================
 
+
 def test_score_five_site_basic(simple_pwms, u12_like_intron):
     """Test scoring of 5' splice site."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
-        five_coords=(-3, 5)  # 8 positions
+        five_coords=(-3, 5),  # 8 positions
     )
 
     u12_score, u2_score = scorer._score_five_site(u12_like_intron)
@@ -274,25 +286,22 @@ def test_score_five_site_basic(simple_pwms, u12_like_intron):
 
 def test_five_site_extracts_correct_region(simple_pwms):
     """Test that 5' scoring extracts the correct sequence region."""
-    scorer = IntronScorer(
-        pwm_sets=simple_pwms,
-        five_coords=(-3, 5)
-    )
+    scorer = IntronScorer(pwm_sets=simple_pwms, five_coords=(-3, 5))
 
     # Create intron with known sequence
     seq = "AAAGTAAGT" + "N" * 90 + "TTTCAGNN"
     intron = Intron(
         intron_id="test",
-        coordinates=GenomicCoordinate("chr1", 1000, 1100, '+', '1-based'),
+        coordinates=GenomicCoordinate("chr1", 1000, 1100, "+", "1-based"),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="NNN",
             downstream_flank="NNN",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1")
+        metadata=IntronMetadata("t1", "g1"),
     )
 
     region = scorer._extract_five_region(intron)
@@ -309,12 +318,10 @@ def test_five_site_extracts_correct_region(simple_pwms):
 # 3' Splice Site Scoring Tests
 # ============================================================================
 
+
 def test_score_three_site_basic(simple_pwms, u12_like_intron):
     """Test scoring of 3' splice site."""
-    scorer = IntronScorer(
-        pwm_sets=simple_pwms,
-        three_coords=(-6, 2)
-    )
+    scorer = IntronScorer(pwm_sets=simple_pwms, three_coords=(-6, 2))
 
     u12_score, u2_score = scorer._score_three_site(u12_like_intron)
 
@@ -328,11 +335,12 @@ def test_score_three_site_basic(simple_pwms, u12_like_intron):
 # Branch Point Scoring Tests
 # ============================================================================
 
+
 def test_score_branch_point_basic(simple_pwms, u12_like_intron):
     """Test branch point detection and scoring."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
-        bp_coords=(-80, -5)  # Wide search window
+        bp_coords=(-80, -5),  # Wide search window
     )
 
     match, u2_score = scorer._score_branch_point(u12_like_intron)
@@ -346,6 +354,7 @@ def test_score_branch_point_basic(simple_pwms, u12_like_intron):
 # ============================================================================
 # Log-Ratio Calculation Tests
 # ============================================================================
+
 
 def test_log_ratio_calculation(simple_pwms):
     """Test log2 ratio calculation for scores."""
@@ -381,13 +390,14 @@ def test_log_ratio_with_zero_scores(simple_pwms):
 # Full Pipeline Integration Tests
 # ============================================================================
 
+
 def test_score_intron_full_pipeline(simple_pwms, u12_like_intron):
     """Test scoring a single intron through full pipeline."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-80, -5),
-        three_coords=(-6, 2)
+        three_coords=(-6, 2),
     )
 
     scored_intron = scorer.score_intron(u12_like_intron)
@@ -410,7 +420,7 @@ def test_score_introns_generator(simple_pwms, u12_like_intron, u2_like_intron):
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-80, -5),
-        three_coords=(-6, 2)
+        three_coords=(-6, 2),
     )
 
     introns = [u12_like_intron, u2_like_intron]
@@ -431,7 +441,7 @@ def test_u12_vs_u2_score_difference(simple_pwms, u12_like_intron, u2_like_intron
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-80, -5),
-        three_coords=(-6, 2)
+        three_coords=(-6, 2),
     )
 
     u12_scored = scorer.score_intron(u12_like_intron)
@@ -451,13 +461,14 @@ def test_u12_vs_u2_score_difference(simple_pwms, u12_like_intron, u2_like_intron
 # Canonical vs Non-Canonical Handling
 # ============================================================================
 
+
 def test_canonical_intron_scoring(simple_pwms):
     """Test scoring of canonical GT-AG intron."""
     # Create canonical intron
     seq = "GTAAGT" + "N" * 70 + "TACTAAC" + "N" * 10 + "TTTCAG"
     intron = Intron(
         intron_id="canonical",
-        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), '+', '1-based'),
+        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), "+", "1-based"),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="NNN",
@@ -466,14 +477,15 @@ def test_canonical_intron_scoring(simple_pwms):
             three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1", noncanonical=False)
+        metadata=IntronMetadata("t1", "g1"),
     )
+    # noncanonical defaults to False, no need to set
 
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-80, -5),
-        three_coords=(-6, 2)
+        three_coords=(-6, 2),
     )
     scored = scorer.score_intron(intron)
 
@@ -486,7 +498,7 @@ def test_noncanonical_intron_with_ignore_dnts(simple_pwms):
     seq = "GCAAGT" + "N" * 70 + "TACTAAC" + "N" * 10 + "TTTCAG"
     intron = Intron(
         intron_id="noncanonical",
-        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), '+', '1-based'),
+        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), "+", "1-based"),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="NNN",
@@ -495,15 +507,17 @@ def test_noncanonical_intron_with_ignore_dnts(simple_pwms):
             three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1", noncanonical=True)
+        metadata=IntronMetadata("t1", "g1"),
     )
+    # Set noncanonical flag after construction
+    intron.metadata.noncanonical = True
 
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-80, -5),
         three_coords=(-6, 2),
-        ignore_nc_dnts=True
+        ignore_nc_dnts=True,
     )
     scored = scorer.score_intron(intron)
 
@@ -515,29 +529,30 @@ def test_noncanonical_intron_with_ignore_dnts(simple_pwms):
 # Edge Cases
 # ============================================================================
 
+
 def test_very_short_intron(simple_pwms):
     """Test handling of intron too short for branch point search."""
     # Create very short intron (20bp) - too short for BP search window
     seq = "GTAA" + "N" * 12 + "TTAG"  # Only 20bp total
     intron = Intron(
         intron_id="short",
-        coordinates=GenomicCoordinate("chr1", 1000, 1020, '+', '1-based'),
+        coordinates=GenomicCoordinate("chr1", 1000, 1020, "+", "1-based"),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="NNN",
             downstream_flank="NNN",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1")
+        metadata=IntronMetadata("t1", "g1"),
     )
 
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
         five_coords=(-3, 5),
         bp_coords=(-55, -5),  # This requires 50bp search window
-        three_coords=(-6, 2)
+        three_coords=(-6, 2),
     )
 
     # Should handle gracefully - either skip BP scoring or use what's available
@@ -554,10 +569,10 @@ def test_intron_without_sequences(simple_pwms):
     """Test error handling for intron without sequences."""
     intron = Intron(
         intron_id="no_seq",
-        coordinates=GenomicCoordinate("chr1", 1000, 1100, '+', '1-based'),
+        coordinates=GenomicCoordinate("chr1", 1000, 1100, "+", "1-based"),
         sequences=IntronSequences(seq=None),  # No sequence!
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1")
+        metadata=IntronMetadata("t1", "g1"),
     )
 
     scorer = IntronScorer(pwm_sets=simple_pwms)
@@ -570,11 +585,12 @@ def test_intron_without_sequences(simple_pwms):
 # Coordinate System Tests
 # ============================================================================
 
+
 def test_custom_five_coordinates(simple_pwms):
     """Test custom 5' splice site coordinates."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
-        five_coords=(-5, 10)  # Wider region
+        five_coords=(-5, 10),  # Wider region
     )
 
     assert scorer.five_coords == (-5, 10)
@@ -584,7 +600,7 @@ def test_custom_bp_coordinates(simple_pwms):
     """Test custom branch point search coordinates."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
-        bp_coords=(-100, -10)  # Different window
+        bp_coords=(-100, -10),  # Different window
     )
 
     assert scorer.bp_coords == (-100, -10)
@@ -594,7 +610,7 @@ def test_custom_three_coordinates(simple_pwms):
     """Test custom 3' splice site coordinates."""
     scorer = IntronScorer(
         pwm_sets=simple_pwms,
-        three_coords=(-10, 5)  # Wider region
+        three_coords=(-10, 5),  # Wider region
     )
 
     assert scorer.three_coords == (-10, 5)
@@ -604,7 +620,10 @@ def test_custom_three_coordinates(simple_pwms):
 # Real PWM Integration Tests
 # ============================================================================
 
-@pytest.mark.skip(reason="Real PWM files don't have complete U2/U12 pairs for all regions")
+
+@pytest.mark.skip(
+    reason="Real PWM files don't have complete U2/U12 pairs for all regions"
+)
 def test_with_real_pwms_if_available(matrix_file):
     """Test scoring with real PWM matrices if available."""
     # Try to load real PWMs
@@ -622,25 +641,25 @@ def test_with_real_pwms_if_available(matrix_file):
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
-        five_coords=(-3, 9),   # Default from original
-        bp_coords=(-55, -5),   # Default BP search window
-        three_coords=(-20, 3)  # Adjusted for real PWM start position
+        five_coords=(-3, 9),  # Default from original
+        bp_coords=(-55, -5),  # Default BP search window
+        three_coords=(-20, 3),  # Adjusted for real PWM start position
     )
 
     # Create test intron with canonical U12-like sequences
     seq = "GTAAGTAT" + "N" * 60 + "TACTAAC" + "N" * 15 + "TTTTTTTTTTTTTTTTTTTCAG"
     intron = Intron(
         intron_id="real_pwm_test",
-        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), '+', '1-based'),
+        coordinates=GenomicCoordinate("chr1", 1000, 1000 + len(seq), "+", "1-based"),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="NNNNN",
             downstream_flank="NNNNN",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1", noncanonical=False)
+        metadata=IntronMetadata("t1", "g1", noncanonical=False),
     )
 
     # Score with real PWMs
@@ -653,3 +672,219 @@ def test_with_real_pwms_if_available(matrix_file):
     assert math.isfinite(scored.scores.five_raw_score)
     assert math.isfinite(scored.scores.bp_raw_score)
     assert math.isfinite(scored.scores.three_raw_score)
+    assert scored.scores.five_raw_score is not None
+    assert scored.scores.bp_raw_score is not None
+    assert scored.scores.three_raw_score is not None
+    assert math.isfinite(scored.scores.five_raw_score)
+    assert math.isfinite(scored.scores.bp_raw_score)
+    assert math.isfinite(scored.scores.three_raw_score)
+
+
+# ============================================================================
+# Streaming Scoring Tests (score_and_normalize_introns)
+# ============================================================================
+
+
+@pytest.fixture
+def fitted_scaler():
+    """Create a fitted RobustScaler for testing streaming scoring."""
+    from sklearn.preprocessing import RobustScaler
+
+    # Create scaler with realistic parameters
+    scaler = RobustScaler(with_centering=True, with_scaling=True)
+
+    # Fit on synthetic data that represents typical score distributions
+    # five: slightly positive, bp: positive, three: slightly negative
+    synthetic_data = np.array(
+        [
+            [0.5, 1.2, -0.3],
+            [0.8, 1.5, -0.1],
+            [0.3, 0.9, -0.5],
+            [0.6, 1.1, -0.2],
+            [0.4, 1.3, -0.4],
+        ]
+    )
+    scaler.fit(synthetic_data)
+
+    return scaler
+
+
+def test_score_and_normalize_introns_basic(simple_pwms, u12_like_intron, fitted_scaler):
+    """Test streaming scoring with normalization."""
+    from intronIC.scoring.scorer import score_and_normalize_introns
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+
+    # Score a single intron
+    results = list(
+        score_and_normalize_introns([u12_like_intron], scorer, fitted_scaler)
+    )
+
+    assert len(results) == 1
+    intron = results[0]
+
+    # Check raw scores are populated
+    assert intron.scores.five_raw_score is not None
+    assert intron.scores.bp_raw_score is not None
+    assert intron.scores.three_raw_score is not None
+
+    # Check z-scores are populated
+    assert intron.scores.five_z_score is not None
+    assert intron.scores.bp_z_score is not None
+    assert intron.scores.three_z_score is not None
+
+    # Z-scores should be finite
+    assert math.isfinite(intron.scores.five_z_score)
+    assert math.isfinite(intron.scores.bp_z_score)
+    assert math.isfinite(intron.scores.three_z_score)
+
+
+def test_score_and_normalize_introns_generator(
+    simple_pwms, u12_like_intron, u2_like_intron, fitted_scaler
+):
+    """Test streaming scoring returns generator (memory efficient)."""
+    from intronIC.scoring.scorer import score_and_normalize_introns
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+
+    # The function should return a generator, not a list
+    result = score_and_normalize_introns(
+        [u12_like_intron, u2_like_intron], scorer, fitted_scaler
+    )
+
+    # Generators are iterators
+    assert hasattr(result, "__iter__")
+    assert hasattr(result, "__next__")
+
+    # Verify we can iterate through it
+    results = list(result)
+    assert len(results) == 2
+
+
+def test_score_and_normalize_introns_preserves_metadata(
+    simple_pwms, u12_like_intron, fitted_scaler
+):
+    """Test that streaming scoring preserves intron metadata."""
+    from intronIC.scoring.scorer import score_and_normalize_introns
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+
+    results = list(
+        score_and_normalize_introns([u12_like_intron], scorer, fitted_scaler)
+    )
+    intron = results[0]
+
+    # Original metadata should be preserved
+    assert intron.intron_id == u12_like_intron.intron_id
+    assert intron.coordinates == u12_like_intron.coordinates
+    assert intron.metadata.parent == u12_like_intron.metadata.parent
+    assert intron.metadata.grandparent == u12_like_intron.metadata.grandparent
+
+
+def test_score_and_normalize_batch_basic(
+    simple_pwms, u12_like_intron, u2_like_intron, fitted_scaler
+):
+    """Test batch scoring with normalization."""
+    from intronIC.scoring.scorer import score_and_normalize_batch
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+
+    # Score a batch of introns
+    results = score_and_normalize_batch(
+        [u12_like_intron, u2_like_intron], scorer, fitted_scaler
+    )
+
+    assert isinstance(results, list)
+    assert len(results) == 2
+
+    for intron in results:
+        # Check raw scores
+        assert intron.scores.five_raw_score is not None
+        assert intron.scores.bp_raw_score is not None
+        assert intron.scores.three_raw_score is not None
+
+        # Check z-scores
+        assert intron.scores.five_z_score is not None
+        assert intron.scores.bp_z_score is not None
+        assert intron.scores.three_z_score is not None
+
+
+def test_score_and_normalize_batch_empty(simple_pwms, fitted_scaler):
+    """Test batch scoring with empty list."""
+    from intronIC.scoring.scorer import score_and_normalize_batch
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+
+    results = score_and_normalize_batch([], scorer, fitted_scaler)
+
+    assert results == []
+
+
+def test_batch_matches_streaming(
+    simple_pwms, u12_like_intron, u2_like_intron, fitted_scaler
+):
+    """Test that batch and streaming produce identical results."""
+    from intronIC.scoring.scorer import (
+        score_and_normalize_batch,
+        score_and_normalize_introns,
+    )
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+
+    introns = [u12_like_intron, u2_like_intron]
+
+    # Get results from both methods
+    streaming_results = list(
+        score_and_normalize_introns(introns, scorer, fitted_scaler)
+    )
+    batch_results = score_and_normalize_batch(introns, scorer, fitted_scaler)
+
+    assert len(streaming_results) == len(batch_results)
+
+    for s_intron, b_intron in zip(streaming_results, batch_results):
+        # Raw scores should match
+        assert np.isclose(
+            s_intron.scores.five_raw_score, b_intron.scores.five_raw_score
+        )
+        assert np.isclose(s_intron.scores.bp_raw_score, b_intron.scores.bp_raw_score)
+        assert np.isclose(
+            s_intron.scores.three_raw_score, b_intron.scores.three_raw_score
+        )
+
+        # Z-scores should match
+        assert np.isclose(s_intron.scores.five_z_score, b_intron.scores.five_z_score)
+        assert np.isclose(s_intron.scores.bp_z_score, b_intron.scores.bp_z_score)
+        assert np.isclose(s_intron.scores.three_z_score, b_intron.scores.three_z_score)
+        assert np.isclose(s_intron.scores.five_z_score, b_intron.scores.five_z_score)
+        assert np.isclose(s_intron.scores.bp_z_score, b_intron.scores.bp_z_score)
+        assert np.isclose(s_intron.scores.three_z_score, b_intron.scores.three_z_score)

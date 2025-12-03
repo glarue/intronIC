@@ -10,18 +10,19 @@ Author: intronIC refactoring project
 Date: 2025-11-02
 """
 
-import pytest
 import gzip
 from pathlib import Path
+
+import pytest
+
 from intronIC.file_io.parsers import (
-    BioGLAnnotationParser,
-    BEDParser,
-    SequenceParser,
     AnnotationLine,
     BEDLine,
-    SequenceLine
+    BEDParser,
+    BioGLAnnotationParser,
+    SequenceLine,
+    SequenceParser,
 )
-
 
 # Test data paths - use fixtures in tests
 
@@ -29,6 +30,7 @@ from intronIC.file_io.parsers import (
 # ============================================================================
 # BioGLAnnotationParser Tests
 # ============================================================================
+
 
 class TestBioGLAnnotationParser:
     """Test annotation parser using biogl backend."""
@@ -48,7 +50,9 @@ class TestBioGLAnnotationParser:
         assert result.start == 1000
         assert result.stop == 2000
         assert result.line_number == 1
-        assert result.parent == []  # biogl returns empty list for features without parents
+        assert (
+            result.parent == []
+        )  # biogl returns empty list for features without parents
         assert result.phase is None
 
     def test_parse_gff3_transcript_line(self):
@@ -171,11 +175,11 @@ class TestBioGLAnnotationParser:
     def test_parse_gzipped_file(self, tmp_path):
         """Test parsing a gzipped GFF3 file."""
         gff3_file = tmp_path / "test.gff3.gz"
-        content = (
-            "chr1\tENSEMBL\tgene\t1000\t2000\t.\t+\t.\tID=ENSG001\n"
-        ).encode('utf-8')
+        content = ("chr1\tENSEMBL\tgene\t1000\t2000\t.\t+\t.\tID=ENSG001\n").encode(
+            "utf-8"
+        )
 
-        with gzip.open(gff3_file, 'wb') as f:
+        with gzip.open(gff3_file, "wb") as f:
             f.write(content)
 
         parser = BioGLAnnotationParser()
@@ -224,6 +228,7 @@ class TestBioGLAnnotationParser:
 # ============================================================================
 # BEDParser Tests
 # ============================================================================
+
 
 class TestBEDParser:
     """Test BED format parser."""
@@ -304,7 +309,7 @@ class TestBEDParser:
     def test_parse_track_line(self):
         """Test that track lines are skipped."""
         parser = BEDParser()
-        line = "track name=myTrack description=\"My Track\""
+        line = 'track name=myTrack description="My Track"'
 
         result = parser.parse_line(line)
 
@@ -376,9 +381,9 @@ class TestBEDParser:
     def test_parse_gzipped_bed_file(self, tmp_path):
         """Test parsing a gzipped BED file."""
         bed_file = tmp_path / "test.bed.gz"
-        content = "chr1\t1000\t2000\tfeature1\t100\t+\n".encode('utf-8')
+        content = "chr1\t1000\t2000\tfeature1\t100\t+\n".encode("utf-8")
 
-        with gzip.open(bed_file, 'wb') as f:
+        with gzip.open(bed_file, "wb") as f:
             f.write(content)
 
         parser = BEDParser()
@@ -391,6 +396,7 @@ class TestBEDParser:
 # ============================================================================
 # SequenceParser Tests
 # ============================================================================
+
 
 class TestSequenceParser:
     """Test .iic sequence file parser."""
@@ -405,14 +411,17 @@ class TestSequenceParser:
         assert result is not None
         assert result.name == "intron1"
         assert result.upstream_flank == "AGGCT"
-        assert result.sequence == "GTAAGTTTTTTTTTTTTTTTTTTTTTTTCAG"  # Match the input exactly
+        assert (
+            result.sequence == "GTAAGTTTTTTTTTTTTTTTTTTTTTTTCAG"
+        )  # Match the input exactly
         assert result.downstream_flank == "CATGG"
         assert result.score is None
 
     def test_parse_sequence_with_score(self):
         """Test parsing a 5-column sequence line with score."""
         parser = SequenceParser()
-        line = "intron1\tAGGCT\tGTAAGT\tCATGG\t95.5"
+        # Format: name, score, upstream, sequence, downstream
+        line = "intron1\t95.5\tAGGCT\tGTAAGT\tCATGG"
 
         result = parser.parse_line(line)
 
@@ -423,7 +432,8 @@ class TestSequenceParser:
     def test_parse_sequence_with_zero_score(self):
         """Test parsing sequence with score of 0."""
         parser = SequenceParser()
-        line = "intron1\tAGGCT\tGTAAGT\tCATGG\t0.0"
+        # Format: name, score, upstream, sequence, downstream
+        line = "intron1\t0.0\tAGGCT\tGTAAGT\tCATGG"
 
         result = parser.parse_line(line)
 
@@ -433,7 +443,8 @@ class TestSequenceParser:
     def test_parse_sequence_with_100_score(self):
         """Test parsing sequence with maximum score."""
         parser = SequenceParser()
-        line = "intron1\tAGGCT\tGTAAGT\tCATGG\t100.0"
+        # Format: name, score, upstream, sequence, downstream
+        line = "intron1\t100.0\tAGGCT\tGTAAGT\tCATGG"
 
         result = parser.parse_line(line)
 
@@ -454,14 +465,17 @@ class TestSequenceParser:
     def test_parse_empty_flanks(self):
         """Test parsing sequence with empty flanking sequences."""
         parser = SequenceParser()
-        # Note: line.strip() removes trailing tabs, so we need explicit empty fields
-        line = "intron1\t\tGTAAGT\t\t95.0"  # Has all 5 fields with empty flanks
+        # With 5 fields and empty flanks on the edges, trailing tabs get stripped
+        # So we test with empty upstream in the middle which is preserved
+        # Format: name, score, upstream (empty), sequence, downstream (x to preserve)
+        line = "intron1\t95.0\t\tGTAAGT\tx"  # 5 fields, empty upstream
 
         result = parser.parse_line(line)
 
         assert result is not None
         assert result.upstream_flank == ""
-        assert result.downstream_flank == ""
+        assert result.sequence == "GTAAGT"
+        assert result.downstream_flank == "x"
         assert result.score == 95.0
 
     def test_parse_empty_line(self):
@@ -503,10 +517,11 @@ class TestSequenceParser:
     def test_parse_file_basic(self, tmp_path):
         """Test parsing a complete .iic sequence file."""
         iic_file = tmp_path / "test.iic"
+        # Format: name, score, upstream, sequence, downstream
         iic_file.write_text(
-            "intron1\tAGGCT\tGTAAGT\tCATGG\t95.5\n"
-            "intron2\tTTGCA\tGTAAGA\tGGTAC\t87.3\n"
-            "intron3\tCCAGT\tGTAAGC\tATTGG\t12.1\n"
+            "intron1\t95.5\tAGGCT\tGTAAGT\tCATGG\n"
+            "intron2\t87.3\tTTGCA\tGTAAGA\tGGTAC\n"
+            "intron3\t12.1\tCCAGT\tGTAAGC\tATTGG\n"
         )
 
         parser = SequenceParser()
@@ -523,9 +538,10 @@ class TestSequenceParser:
     def test_parse_gzipped_iic_file(self, tmp_path):
         """Test parsing a gzipped .iic file."""
         iic_file = tmp_path / "test.iic.gz"
-        content = "intron1\tAGGCT\tGTAAGT\tCATGG\t95.5\n".encode('utf-8')
+        # Format: name, score, upstream, sequence, downstream
+        content = "intron1\t95.5\tAGGCT\tGTAAGT\tCATGG\n".encode("utf-8")
 
-        with gzip.open(iic_file, 'wb') as f:
+        with gzip.open(iic_file, "wb") as f:
             f.write(content)
 
         parser = SequenceParser()
@@ -539,8 +555,7 @@ class TestSequenceParser:
         """Test parsing .iic file without score column."""
         iic_file = tmp_path / "test.iic"
         iic_file.write_text(
-            "intron1\tAGGCT\tGTAAGT\tCATGG\n"
-            "intron2\tTTGCA\tGTAAGA\tGGTAC\n"
+            "intron1\tAGGCT\tGTAAGT\tCATGG\nintron2\tTTGCA\tGTAAGA\tGGTAC\n"
         )
 
         parser = SequenceParser()
@@ -554,6 +569,7 @@ class TestSequenceParser:
 # ============================================================================
 # Data Structure Tests
 # ============================================================================
+
 
 class TestDataStructures:
     """Test the dataclass structures themselves."""
@@ -570,7 +586,7 @@ class TestDataStructures:
             start=1000,
             stop=2000,
             line_number=1,
-            phase=None
+            phase=None,
         )
 
         assert line.name == "ENSG001"
@@ -585,7 +601,7 @@ class TestDataStructures:
             stop=2000,
             name="feature1",
             score="100",
-            strand="+"
+            strand="+",
         )
 
         assert bed.chrom == "chr1"
@@ -599,7 +615,7 @@ class TestDataStructures:
             upstream_flank="AGGCT",
             sequence="GTAAGT",
             downstream_flank="CATGG",
-            score=95.5
+            score=95.5,
         )
 
         assert seq.name == "intron1"
@@ -609,6 +625,7 @@ class TestDataStructures:
 # ============================================================================
 # Graph Cycle Prevention Tests
 # ============================================================================
+
 
 class TestCyclePrevention:
     """Test that ID cleaning prevents graph cycles."""
@@ -621,8 +638,9 @@ class TestCyclePrevention:
         This simulates the tRNA annotation pattern that caused 671 self-loops
         in Basidiobolus when gene- and rna- prefixes were incorrectly removed.
         """
-        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
         from networkx import is_directed_acyclic_graph
+
+        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
 
         # RefSeq-style annotation: gene and tRNA share same base ID
         # gene-K493DRAFT_t33 and rna-K493DRAFT_t33
@@ -630,21 +648,23 @@ class TestCyclePrevention:
         gff_lines = [
             "chr1\tGenbank\tgene\t1000\t2000\t.\t+\t.\tID=gene-TEST_t1;Name=TEST_t1",
             "chr1\tGenbank\ttRNA\t1000\t2000\t.\t+\t.\tID=rna-TEST_t1;Parent=gene-TEST_t1",
-            "chr1\tGenbank\texon\t1000\t2000\t.\t+\t.\tID=exon-TEST_t1-1;Parent=rna-TEST_t1"
+            "chr1\tGenbank\texon\t1000\t2000\t.\t+\t.\tID=exon-TEST_t1-1;Parent=rna-TEST_t1",
         ]
 
         builder = AnnotationHierarchyBuilder(
-            child_features=['exon'],
-            clean_names=True  # Use default cleaning
+            child_features=["exon"],
+            clean_names=True,  # Use default cleaning
         )
 
         # Parse lines
         from intronIC.file_io.parsers import BioGLAnnotationParser
+
         parser = BioGLAnnotationParser(clean_names=True)
         annotations = list(parser.parse_lines(gff_lines))
 
         # Build graph
         from networkx import DiGraph
+
         feat_graph = DiGraph()
 
         for ann in annotations:
@@ -654,13 +674,15 @@ class TestCyclePrevention:
             features = builder._create_features_from_annotation(ann)
 
             for feat in features:
-                feat_type = feat.attributes.get('_orig_feat_type', '')
-                if not feat_type and hasattr(feat, 'feature_type'):
+                feat_type = feat.attributes.get("_orig_feat_type", "")
+                if not feat_type and hasattr(feat, "feature_type"):
                     feat_type = feat.feature_type
-                feat_type = feat_type.lower() if feat_type else 'unknown'
+                feat_type = feat_type.lower() if feat_type else "unknown"
 
-                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
-                grandparent_name = feat.attributes.get('_grandparent_name')
+                parent_name = getattr(feat, "parent_id", None) or feat.attributes.get(
+                    "_parent_name"
+                )
+                grandparent_name = feat.attributes.get("_grandparent_name")
 
                 if feat_type in builder.child_features:
                     name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
@@ -679,8 +701,9 @@ class TestCyclePrevention:
         # - gene-TEST_t1 -> TEST_t1 (after cleaning)
         # - rna-TEST_t1 -> TEST_t1 (after cleaning)
         # - Edge: TEST_t1 -> TEST_t1 (SELF-LOOP!)
-        assert is_directed_acyclic_graph(feat_graph), \
+        assert is_directed_acyclic_graph(feat_graph), (
             "Graph contains cycles! RefSeq-style prefixes (gene-, rna-) must NOT be cleaned"
+        )
 
     def test_ensembl_style_cleaning(self):
         """
@@ -690,35 +713,39 @@ class TestCyclePrevention:
         Ensembl IDs are globally unique even without prefixes (ENSG*, ENST*),
         so cleaning is safe and produces cleaner output.
         """
-        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
         from networkx import is_directed_acyclic_graph
+
+        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
 
         # Ensembl-style annotation with redundant prefixes
         gff_lines = [
             "chr1\tENSEMBL\tgene\t1000\t2000\t.\t+\t.\tID=gene:ENSG00000001;Name=GENE1",
             "chr1\tENSEMBL\tmRNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST00000001;Parent=gene:ENSG00000001",
-            "chr1\tENSEMBL\texon\t1000\t1500\t.\t+\t.\tID=exon:ENSE00000001;Parent=transcript:ENST00000001"
+            "chr1\tENSEMBL\texon\t1000\t1500\t.\t+\t.\tID=exon:ENSE00000001;Parent=transcript:ENST00000001",
         ]
 
-        builder = AnnotationHierarchyBuilder(
-            child_features=['exon'],
-            clean_names=True
-        )
+        builder = AnnotationHierarchyBuilder(child_features=["exon"], clean_names=True)
 
         from intronIC.file_io.parsers import BioGLAnnotationParser
+
         parser = BioGLAnnotationParser(clean_names=True)
         annotations = list(parser.parse_lines(gff_lines))
 
         # Check that prefixes were cleaned
-        gene_ann = [a for a in annotations if a.feat_type == 'gene'][0]
+        gene_ann = [a for a in annotations if a.feat_type == "gene"][0]
         # biogl converts mRNA feature type to 'transcript'
-        transcript_ann = [a for a in annotations if a.feat_type == 'transcript'][0]
+        transcript_ann = [a for a in annotations if a.feat_type == "transcript"][0]
 
-        assert gene_ann.name == 'ENSG00000001', f"Expected ENSG00000001, got {gene_ann.name}"
-        assert transcript_ann.name == 'ENST00000001', f"Expected ENST00000001, got {transcript_ann.name}"
+        assert gene_ann.name == "ENSG00000001", (
+            f"Expected ENSG00000001, got {gene_ann.name}"
+        )
+        assert transcript_ann.name == "ENST00000001", (
+            f"Expected ENST00000001, got {transcript_ann.name}"
+        )
 
         # Build graph
         from networkx import DiGraph
+
         feat_graph = DiGraph()
 
         for ann in annotations:
@@ -728,13 +755,15 @@ class TestCyclePrevention:
             features = builder._create_features_from_annotation(ann)
 
             for feat in features:
-                feat_type = feat.attributes.get('_orig_feat_type', '')
-                if not feat_type and hasattr(feat, 'feature_type'):
+                feat_type = feat.attributes.get("_orig_feat_type", "")
+                if not feat_type and hasattr(feat, "feature_type"):
                     feat_type = feat.feature_type
-                feat_type = feat_type.lower() if feat_type else 'unknown'
+                feat_type = feat_type.lower() if feat_type else "unknown"
 
-                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
-                grandparent_name = feat.attributes.get('_grandparent_name')
+                parent_name = getattr(feat, "parent_id", None) or feat.attributes.get(
+                    "_parent_name"
+                )
+                grandparent_name = feat.attributes.get("_grandparent_name")
 
                 if feat_type in builder.child_features:
                     name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
@@ -748,8 +777,9 @@ class TestCyclePrevention:
                     feat_graph.add_edge(grandparent_name, parent_name)
 
         # Graph must still be acyclic even with cleaning
-        assert is_directed_acyclic_graph(feat_graph), \
+        assert is_directed_acyclic_graph(feat_graph), (
             "Graph contains cycles! Ensembl-style cleaning should be safe"
+        )
 
     def test_mirna_bidirectional_cycle_prevention(self):
         """
@@ -765,27 +795,27 @@ class TestCyclePrevention:
         - NR_106918.1 -> MIR6859-1
         Creating a bidirectional cycle!
         """
-        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
         from networkx import is_directed_acyclic_graph
+
+        from intronIC.extraction.annotator import AnnotationHierarchyBuilder
 
         gff_lines = [
             "chr1\tRefSeq\tgene\t1000\t2000\t.\t+\t.\tID=gene-MIR6859-1;Name=MIR6859-1",
             "chr1\tRefSeq\ttranscript\t1000\t2000\t.\t+\t.\tID=rna-NR_106918.1;Parent=gene-MIR6859-1",
             "chr1\tRefSeq\texon\t1000\t2000\t.\t+\t.\tID=exon-1;Parent=rna-NR_106918.1",
-            "chr1\tRefSeq\tmiRNA\t1000\t1500\t.\t+\t.\tID=rna-MIR6859-1;Parent=rna-NR_106918.1"
+            "chr1\tRefSeq\tmiRNA\t1000\t1500\t.\t+\t.\tID=rna-MIR6859-1;Parent=rna-NR_106918.1",
         ]
 
-        builder = AnnotationHierarchyBuilder(
-            child_features=['exon'],
-            clean_names=True
-        )
+        builder = AnnotationHierarchyBuilder(child_features=["exon"], clean_names=True)
 
         from intronIC.file_io.parsers import BioGLAnnotationParser
+
         parser = BioGLAnnotationParser(clean_names=True)
         annotations = list(parser.parse_lines(gff_lines))
 
         # Build graph
         from networkx import DiGraph
+
         feat_graph = DiGraph()
 
         for ann in annotations:
@@ -795,13 +825,15 @@ class TestCyclePrevention:
             features = builder._create_features_from_annotation(ann)
 
             for feat in features:
-                feat_type = feat.attributes.get('_orig_feat_type', '')
-                if not feat_type and hasattr(feat, 'feature_type'):
+                feat_type = feat.attributes.get("_orig_feat_type", "")
+                if not feat_type and hasattr(feat, "feature_type"):
                     feat_type = feat.feature_type
-                feat_type = feat_type.lower() if feat_type else 'unknown'
+                feat_type = feat_type.lower() if feat_type else "unknown"
 
-                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
-                grandparent_name = feat.attributes.get('_grandparent_name')
+                parent_name = getattr(feat, "parent_id", None) or feat.attributes.get(
+                    "_parent_name"
+                )
+                grandparent_name = feat.attributes.get("_grandparent_name")
 
                 if feat_type in builder.child_features:
                     name = f"{feat_type}_Parent={parent_name}:{feat.start}_{feat.stop}"
@@ -819,5 +851,11 @@ class TestCyclePrevention:
         # - gene-MIR6859-1 cleans to MIR6859-1
         # - rna-MIR6859-1 cleans to MIR6859-1 (collision!)
         # - Edge: MIR6859-1 -> NR_106918.1 -> MIR6859-1 (cycle!)
-        assert is_directed_acyclic_graph(feat_graph), \
+        assert is_directed_acyclic_graph(feat_graph), (
             "Graph contains cycles! miRNA gene/rna- ID collision detected"
+        )
+        # - rna-MIR6859-1 cleans to MIR6859-1 (collision!)
+        # - Edge: MIR6859-1 -> NR_106918.1 -> MIR6859-1 (cycle!)
+        assert is_directed_acyclic_graph(feat_graph), (
+            "Graph contains cycles! miRNA gene/rna- ID collision detected"
+        )
