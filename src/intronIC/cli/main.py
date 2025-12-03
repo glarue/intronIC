@@ -1788,6 +1788,18 @@ def extract_introns_streaming(
         config.scoring.scoring_regions.three_end,
     )
 
+    # Get contig lengths for length-weighted progress reporting
+    from intronIC.file_io.indexed_genome import get_contig_lengths
+    import numpy as np
+
+    assert config.input.genome is not None, "Genome path required"
+    contig_lengths = get_contig_lengths(config.input.genome)
+
+    # Prepare length-weighted progress tracking
+    contig_length_list = [contig_lengths[c] for c in contigs]
+    cumulative_lengths = np.cumsum(contig_length_list)
+    total_length = cumulative_lengths[-1]
+
     # Determine parallelization
     n_processes = config.performance.processes
     use_parallel = n_processes > 1 and len(contigs) > 1
@@ -1823,9 +1835,11 @@ def extract_introns_streaming(
             for contig in contigs
         ]
 
-        # Process contigs in parallel
+        # Process contigs in parallel with progress bar
         completed = 0
-        last_reported_percent = 0
+
+        # Create progress bar
+        progress = reporter.create_progress()
 
         with Pool(
             processes=n_processes,
@@ -1840,7 +1854,13 @@ def extract_introns_streaming(
                 bp_coords,
                 three_coords,
             ),
-        ) as pool:
+        ) as pool, progress:
+            # Add task with total = total genome length for smooth progress
+            task = progress.add_task(
+                "[cyan]Extracting sequences (parallel streaming)...",
+                total=total_length
+            )
+
             try:
                 for lightweight_introns, seqs_stored, corrections in pool.starmap(
                     _process_contig_streaming_worker, worker_inputs
@@ -1850,16 +1870,9 @@ def extract_introns_streaming(
                     total_sequences_stored += seqs_stored
                     total_corrected += corrections
 
-                    # Log progress every 10%
-                    current_percent = int((completed / len(contigs)) * 100)
-                    if (
-                        current_percent // 10 > last_reported_percent // 10
-                    ) or completed == len(contigs):
-                        messenger.info(
-                            f"Progress: {completed}/{len(contigs)} contigs ({current_percent}%) - "
-                            f"{total_sequences_stored:,} sequences stored"
-                        )
-                        last_reported_percent = current_percent
+                    # Update progress bar based on genome length processed
+                    completed_length = cumulative_lengths[completed - 1]
+                    progress.update(task, completed=completed_length)
             except Exception as e:
                 messenger.error(
                     f"Parallel streaming extraction failed after {completed}/{len(contigs)} contigs"
@@ -3133,6 +3146,19 @@ def classify_streaming_per_contig(
     from intronIC.extraction.filters import FilterStats
     accumulated_filter_stats = FilterStats()
 
+    # Get contig lengths for length-weighted progress reporting
+    from intronIC.file_io.indexed_genome import get_contig_lengths
+    import numpy as np
+
+    assert config.input.genome is not None, "Genome path required"
+    contig_lengths = get_contig_lengths(config.input.genome)
+
+    # Prepare length-weighted progress tracking
+    contig_names = [contig for contig, _ in contigs_with_counts]
+    contig_length_list = [contig_lengths[c] for c in contig_names]
+    cumulative_lengths = np.cumsum(contig_length_list)
+    total_length = cumulative_lengths[-1]
+
     # Determine parallelization
     n_processes = config.performance.processes
     use_parallel = n_processes > 1 and len(contigs_with_counts) > 1
@@ -3172,10 +3198,12 @@ def classify_streaming_per_contig(
             (contig, count) for contig, count in contigs_with_counts
         ]
 
-        # Process contigs in parallel
+        # Process contigs in parallel with progress bar
         all_classified_introns = []
         completed = 0
-        last_reported_percent = 0
+
+        # Create progress bar
+        progress = reporter.create_progress()
 
         with Pool(
             processes=n_processes,
@@ -3188,7 +3216,13 @@ def classify_streaming_per_contig(
                 pwm_sets,
                 worker_config,
             ),
-        ) as pool:
+        ) as pool, progress:
+            # Add task with total = total genome length for smooth progress
+            task = progress.add_task(
+                "[cyan]Classifying introns (parallel streaming)...",
+                total=total_length
+            )
+
             try:
                 for classified_introns, stats in pool.starmap(
                     _process_contig_streaming_classify_worker, worker_inputs
@@ -3215,16 +3249,9 @@ def classify_streaming_per_contig(
                     accumulated_filter_stats.total_introns += filter_stats.total_introns
                     accumulated_filter_stats.kept_introns += filter_stats.kept_introns
 
-                    # Log progress every 10%
-                    current_percent = int((completed / len(contigs_with_counts)) * 100)
-                    if (
-                        current_percent // 10 > last_reported_percent // 10
-                    ) or completed == len(contigs_with_counts):
-                        messenger.info(
-                            f"Progress: {completed}/{len(contigs_with_counts)} contigs "
-                            f"({current_percent}%) - {total_classified:,} introns classified"
-                        )
-                        last_reported_percent = current_percent
+                    # Update progress bar based on genome length processed
+                    completed_length = cumulative_lengths[completed - 1]
+                    progress.update(task, completed=completed_length)
             except Exception as e:
                 messenger.error(
                     f"Parallel streaming classification failed after "
