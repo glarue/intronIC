@@ -322,7 +322,7 @@ class IntronFilter:
             # Check if this intron's transcript is the "longest" (first seen) for its gene
             longest_transcript = self.longest_isoforms[grandparent]
             intron.metadata.longest_isoform = (parent == longest_transcript)
-            # Add dynamic tag for non-longest isoforms
+            # Add dynamic tag for alternative isoforms
             if not intron.metadata.longest_isoform:
                 intron.metadata.dynamic_tags.add('[i]')
         else:

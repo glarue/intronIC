@@ -413,7 +413,7 @@ class UnifiedMessenger:
             short: Number too short for scoring
             ambiguous: Number with ambiguous bases in scoring regions
             noncanonical: Number with non-canonical splice sites
-            isoform: Number from non-longest isoforms
+            isoform: Number from alternative isoforms
             overlap: Number with overlapping coordinates
             duplicates: Number with duplicate coordinates
             kept: Number retained for scoring
@@ -431,9 +431,9 @@ class UnifiedMessenger:
             if count == 0:
                 return ("0", "0")
             if is_excluded:
-                return ("", f"{count:,}")
+                return ("0", f"{count:,}")
             else:
-                return (f"{count:,}", "")
+                return (f"{count:,}", "0")
 
         # Determine which column each category goes in
         # Always excluded: short, ambiguous
@@ -478,7 +478,7 @@ class UnifiedMessenger:
             table.add_row("  Ambiguous bases", ambig_inc, ambig_exc)
             table.add_row("  Non-canonical", nc_inc, nc_exc)
             table.add_row("  Overlapping", overlap_inc, overlap_exc)
-            table.add_row("  Non-longest isoform", iso_inc, iso_exc)
+            table.add_row("  Alternative isoform", iso_inc, iso_exc)
 
             # Separator and totals
             table.add_section()
@@ -535,7 +535,7 @@ class UnifiedMessenger:
             f"│   Overlapping              │ {pad(overlap_inc)} │ {pad(overlap_exc)} │"
         )
         self.log_console.print(
-            f"│   Non-longest isoform      │ {pad(iso_inc)} │ {pad(iso_exc)} │"
+            f"│   Alternative isoform      │ {pad(iso_inc)} │ {pad(iso_exc)} │"
         )
 
         self.log_console.print(
