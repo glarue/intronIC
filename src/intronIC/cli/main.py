@@ -4,47 +4,60 @@ Main CLI entry point for intronIC.
 Orchestrates the complete intron classification pipeline.
 """
 
-import sys
-import logging
-import json
-import time
+from __future__ import annotations
+
 import gc
+import json
+import logging
+import sys
+import time
+from dataclasses import replace
+from multiprocessing import Pool
+from pathlib import Path
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
 import joblib
 import numpy as np
-from pathlib import Path
-from typing import List, Tuple, Optional, Dict
-from multiprocessing import Pool
-from itertools import repeat
-from dataclasses import replace
+from smart_open import open as smart_open  # type: ignore[import-unresolved]
+
+from intronIC.classification.classifier import IntronClassifier
+
+# Import pipeline components
+from intronIC.core.intron import Intron, IntronSequences, OmissionReason
+from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+from intronIC.extraction.filters import IntronFilter, prefilter_introns
+from intronIC.extraction.intronator import IntronGenerator
+from intronIC.extraction.sequences import SequenceExtractor
+from intronIC.file_io.genome import GenomeReader
+from intronIC.file_io.parsers import BEDParser, SequenceParser
+from intronIC.file_io.writers import BEDWriter, MetaWriter, ScoreWriter, SequenceWriter
+from intronIC.scoring.normalizer import ScoreNormalizer
+from intronIC.scoring.scorer import IntronScorer
+from intronIC.utils.coordinates import GenomicCoordinate
+from intronIC.utils.metadata import (
+    generate_pretrained_metadata,
+    generate_training_metadata,
+    write_metadata,
+)
+from intronIC.visualization.plots import plot_classification_results
 
 from .args import IntronICArgumentParser
 from .config import IntronICConfig, ScoringRegions
 from .progress import IntronICProgressReporter
 
-# Import pipeline components
-from intronIC.core.intron import Intron, IntronSequences, OmissionReason
-from intronIC.utils.coordinates import GenomicCoordinate
-from intronIC.file_io.genome import GenomeReader
-from intronIC.file_io.parsers import AnnotationParser, BEDParser, SequenceParser
-from intronIC.file_io.writers import BEDWriter, MetaWriter, SequenceWriter, ScoreWriter, MappingWriter
-from intronIC.extraction.annotator import AnnotationHierarchyBuilder
-from intronIC.extraction.intronator import IntronGenerator
-from intronIC.extraction.sequences import SequenceExtractor
-from intronIC.extraction.filters import IntronFilter, prefilter_introns
-from intronIC.scoring.pwm import PWMLoader
-from intronIC.scoring.scorer import IntronScorer
-from intronIC.scoring.normalizer import ScoreNormalizer
-from intronIC.classification.classifier import IntronClassifier
-from intronIC.visualization.plots import plot_classification_results
-from smart_open import open as smart_open
-from intronIC.utils.metadata import generate_training_metadata, generate_pretrained_metadata, write_metadata
+if TYPE_CHECKING:
+    from rich.console import Console
 
+    from intronIC.classification.trainer import SVMEnsemble
+    from intronIC.cli.messenger import UnifiedMessenger
+    from intronIC.scoring.pwm import PWMSet
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
-def get_pwm_file(config: 'IntronICConfig') -> Path:
+
+def get_pwm_file(config: "IntronICConfig") -> Path:
     """
     Get PWM file path from config or use default.
 
@@ -71,9 +84,8 @@ def get_pwm_file(config: 'IntronICConfig') -> Path:
 
 
 def merge_pwm_sets(
-    default_pwms: Dict[str, 'PWMSet'],
-    custom_pwms: Dict[str, 'PWMSet']
-) -> Dict[str, 'PWMSet']:
+    default_pwms: Dict[str, "PWMSet"], custom_pwms: Dict[str, "PWMSet"]
+) -> Dict[str, "PWMSet"]:
     """
     Merge custom PWM matrices into defaults (custom overwrites defaults).
 
@@ -84,7 +96,7 @@ def merge_pwm_sets(
     Returns:
         Merged PWM sets (modifies default_pwms in place and returns it)
     """
-    for region in ['five', 'bp', 'three']:
+    for region in ["five", "bp", "three"]:
         if region in custom_pwms and region in default_pwms:
             custom_matrices = custom_pwms[region].matrices
             default_matrices = default_pwms[region].matrices
@@ -96,7 +108,9 @@ def merge_pwm_sets(
     return default_pwms
 
 
-def load_pwms_with_fallback(config: 'IntronICConfig', messenger: 'UnifiedMessenger') -> Dict[str, 'PWMSet']:
+def load_pwms_with_fallback(
+    config: "IntronICConfig", messenger: "UnifiedMessenger"
+) -> Dict[str, "PWMSet"]:
     """
     Load PWM matrices with fallback to defaults for missing matrices.
 
@@ -122,8 +136,7 @@ def load_pwms_with_fallback(config: 'IntronICConfig', messenger: 'UnifiedMesseng
 
     # Load default matrices
     default_pwms = PWMLoader.load_from_file(
-        default_pwm_file,
-        pseudocount=config.scoring.pseudocount
+        default_pwm_file, pseudocount=config.scoring.pseudocount
     )
 
     # If no custom file, return defaults
@@ -136,8 +149,7 @@ def load_pwms_with_fallback(config: 'IntronICConfig', messenger: 'UnifiedMesseng
         raise FileNotFoundError(f"Custom PWM file not found: {custom_pwm_file}")
 
     custom_pwms = PWMLoader.load_from_file(
-        custom_pwm_file,
-        pseudocount=config.scoring.pseudocount
+        custom_pwm_file, pseudocount=config.scoring.pseudocount
     )
 
     # Merge custom into defaults
@@ -145,7 +157,7 @@ def load_pwms_with_fallback(config: 'IntronICConfig', messenger: 'UnifiedMesseng
 
     # Log which matrices were customized
     custom_keys = []
-    for region in ['five', 'bp', 'three']:
+    for region in ["five", "bp", "three"]:
         if region in custom_pwms:
             for key in custom_pwms[region].matrices.keys():
                 custom_keys.append(f"{region}:{'-'.join(str(k) for k in key)}")
@@ -173,7 +185,7 @@ def _init_worker(
     bp_coords: Tuple[int, int],
     three_coords: Tuple[int, int],
     ignore_nc_dnts: bool,
-    pseudocount: float
+    pseudocount: float,
 ):
     """
     Initialize worker process with PWMs and scorer.
@@ -190,8 +202,8 @@ def _init_worker(
     """
     global _worker_pwm_sets, _worker_scorer
 
-    from intronIC.scoring.scorer import IntronScorer
     from intronIC.scoring.pwm import PWMLoader
+    from intronIC.scoring.scorer import IntronScorer
 
     # Load default PWMs
     pwm_sets = PWMLoader.load_from_file(default_pwm_file, pseudocount=pseudocount)
@@ -210,7 +222,7 @@ def _init_worker(
         five_coords=five_coords,
         bp_coords=bp_coords,
         three_coords=three_coords,
-        ignore_nc_dnts=ignore_nc_dnts
+        ignore_nc_dnts=ignore_nc_dnts,
     )
 
 
@@ -221,7 +233,7 @@ def _score_intron_worker_unpack(args):
     return seq_idx, result, error
 
 
-def _score_intron_worker(intron: 'Intron') -> Tuple[Optional['Intron'], Optional[str]]:
+def _score_intron_worker(intron: "Intron") -> Tuple[Optional["Intron"], Optional[str]]:
     """
     Worker function for parallel intron scoring.
 
@@ -240,17 +252,20 @@ def _score_intron_worker(intron: 'Intron') -> Tuple[Optional['Intron'], Optional
 
     try:
         # Use scorer initialized once for this worker process
+        assert _worker_scorer is not None, "Worker scorer not initialized"
         scored = _worker_scorer.score_intron(intron)
         return (scored, None)
 
     except Exception as e:
         # Return error instead of crashing worker
         # Include intron ID in error message for debugging
-        intron_id = intron.intron_id if hasattr(intron, 'intron_id') else 'unknown'
+        intron_id = intron.intron_id if hasattr(intron, "intron_id") else "unknown"
         return (None, f"{intron_id}: {str(e)}")
 
 
-def log_data_block(logger: logging.Logger, header: str, lines: List[str], use_separator: bool = True):
+def log_data_block(
+    logger: logging.Logger, header: str, lines: List[str], use_separator: bool = True
+):
     """
     Log a block of data with a header as a single multi-line message.
 
@@ -285,7 +300,7 @@ def log_data_block(logger: logging.Logger, header: str, lines: List[str], use_se
     parts.extend(lines)
 
     # Log as single multi-line message (only first line gets timestamp)
-    logger.info('\n'.join(parts))
+    logger.info("\n".join(parts))
 
 
 def clear_large_sequences_for_classification(introns: List[Intron]) -> List[Intron]:
@@ -334,7 +349,7 @@ def clear_large_sequences_for_classification(introns: List[Intron]) -> List[Intr
         # Uses functional style - returns new object, original unchanged
         new_sequences = replace(
             intron.sequences,
-            seq=None  # Only clear the big one (~500 bytes avg)
+            seq=None,  # Only clear the big one (~500 bytes avg)
         )
         cleared_intron = replace(intron, sequences=new_sequences)
         cleared.append(cleared_intron)
@@ -365,7 +380,7 @@ def format_count_with_percentage(count: int, total: int) -> str:
     return f"{count:,} ({percentage:.2f}%)"
 
 
-def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
+def log_ensemble_coefficients(ensemble, messenger: "UnifiedMessenger"):
     """
     Extract and log learned coefficients from trained ensemble with detailed hyperparameters.
 
@@ -374,22 +389,22 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
         messenger: UnifiedMessenger for logging
     """
     # Define feature names (matching BothEndsStrongTransformer canonical order)
-    base_features = ['s5', 'sBP', 's3']
+    base_features = ["s5", "sBP", "s3"]
     composite_features_map = {
-        'min_5_bp': 'min_5_bp',
-        'min_5_3': 'min_5_3',
-        'min_all': 'min_all',
-        'neg_absdiff_5_bp': 'neg_absdiff_5_bp',
-        'neg_absdiff_5_3': 'neg_absdiff_5_3',
-        'neg_absdiff_bp_3': 'neg_absdiff_bp_3',
-        'max_5_bp': 'max_5_bp',
-        'max_5_3': 'max_5_3'
+        "min_5_bp": "min_5_bp",
+        "min_5_3": "min_5_3",
+        "min_all": "min_all",
+        "neg_absdiff_5_bp": "neg_absdiff_5_bp",
+        "neg_absdiff_5_3": "neg_absdiff_5_3",
+        "neg_absdiff_bp_3": "neg_absdiff_bp_3",
+        "max_5_bp": "max_5_bp",
+        "max_5_3": "max_5_3",
     }
 
     messenger.log_only("")
-    messenger.log_only("="*80)
+    messenger.log_only("=" * 80)
     messenger.log_only("MODEL DETAILS AND LEARNED COEFFICIENTS")
-    messenger.log_only("="*80)
+    messenger.log_only("=" * 80)
 
     all_coefficients = []
     all_intercepts = []
@@ -403,42 +418,58 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
         # Extract coefficients from CalibratedClassifierCV -> Pipeline -> LinearSVC
         try:
             # Navigate nested structure
-            if hasattr(model, 'calibrated_classifiers_'):
+            if hasattr(model, "calibrated_classifiers_"):
                 calibrated_clf = model.calibrated_classifiers_[0]
                 fitted_estimator = calibrated_clf.estimator
 
                 # Get calibration method
-                calib_method = getattr(model, 'method', 'unknown')
+                calib_method = getattr(model, "method", "unknown")
 
                 # Get LinearSVC from pipeline
                 linear_svc = None
-                if hasattr(fitted_estimator, 'named_steps'):
-                    for step_name in ['svc', 'linearsvc', 'classifier']:
+                if hasattr(fitted_estimator, "named_steps"):
+                    for step_name in ["svc", "linearsvc", "classifier"]:
                         if step_name in fitted_estimator.named_steps:
                             linear_svc = fitted_estimator.named_steps[step_name]
                             break
 
-                if linear_svc is not None and hasattr(linear_svc, 'coef_'):
+                if linear_svc is not None and hasattr(linear_svc, "coef_"):
                     coef = linear_svc.coef_[0]  # Shape (1, n_features)
-                    intercept = linear_svc.intercept_[0] if hasattr(linear_svc, 'intercept_') else 0.0
+                    intercept = (
+                        linear_svc.intercept_[0]
+                        if hasattr(linear_svc, "intercept_")
+                        else 0.0
+                    )
 
                     # Extract hyperparameters
-                    C_param = getattr(linear_svc, 'C', 'unknown')
-                    penalty = getattr(linear_svc, 'penalty', 'unknown')
-                    loss = getattr(linear_svc, 'loss', 'unknown')
+                    C_param = getattr(linear_svc, "C", "unknown")
+                    penalty = getattr(linear_svc, "penalty", "unknown")
+                    loss = getattr(linear_svc, "loss", "unknown")
 
                     # Try to extract class_weight_multiplier if stored
-                    class_weight_mult = 'unknown'
-                    if hasattr(linear_svc, 'class_weight') and linear_svc.class_weight is not None:
-                        if isinstance(linear_svc.class_weight, dict) and 1 in linear_svc.class_weight:
+                    class_weight_mult = "unknown"
+                    if (
+                        hasattr(linear_svc, "class_weight")
+                        and linear_svc.class_weight is not None
+                    ):
+                        if (
+                            isinstance(linear_svc.class_weight, dict)
+                            and 1 in linear_svc.class_weight
+                        ):
                             # Approximate multiplier from ratio (assuming balanced base)
                             class_weight_mult = f"~{linear_svc.class_weight[1]:.2f}"
 
-                    model_hyperparams.append((C_param, penalty, loss, calib_method, class_weight_mult))
+                    model_hyperparams.append(
+                        (C_param, penalty, loss, calib_method, class_weight_mult)
+                    )
 
                     # Get feature list from transformer
-                    transformer = fitted_estimator.named_steps.get('transform')
-                    if transformer and hasattr(transformer, 'features') and transformer.features is not None:
+                    transformer = fitted_estimator.named_steps.get("transform")
+                    if (
+                        transformer
+                        and hasattr(transformer, "features")
+                        and transformer.features is not None
+                    ):
                         # Build feature names list - use transformer features directly
                         feature_names = base_features.copy()
                         for feat in transformer.features:
@@ -457,33 +488,46 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
                             all_feature_names = base_features
                         else:
                             # Create generic names for composite features
-                            all_feature_names = base_features + [f'feature_{j}' for j in range(3, n_features)]
+                            all_feature_names = base_features + [
+                                f"feature_{j}" for j in range(3, n_features)
+                            ]
 
                     all_coefficients.append(coef)
                     all_intercepts.append(intercept)
 
                     # Store model details for grouped logging
-                    model_details.append({
-                        'index': i,
-                        'hyperparams': (C_param, penalty, loss, calib_method, class_weight_mult),
-                        'intercept': intercept,
-                        'coefficients': coef,
-                        'feature_names': all_feature_names
-                    })
+                    model_details.append(
+                        {
+                            "index": i,
+                            "hyperparams": (
+                                C_param,
+                                penalty,
+                                loss,
+                                calib_method,
+                                class_weight_mult,
+                            ),
+                            "intercept": intercept,
+                            "coefficients": coef,
+                            "feature_names": all_feature_names,
+                        }
+                    )
         except Exception as e:
-            messenger.log_only(f"Warning: Could not extract coefficients from model {i+1}: {e}")
+            messenger.log_only(
+                f"Warning: Could not extract coefficients from model {i + 1}: {e}"
+            )
 
     # Group models by identical hyperparameters and log details
     if model_details:
         from collections import defaultdict
+
         grouped = defaultdict(list)
         for detail in model_details:
-            grouped[detail['hyperparams']].append(detail)
+            grouped[detail["hyperparams"]].append(detail)
 
         # Helper function to format model indices into ranges
         def format_model_indices(models):
             """Format list of model indices into compact range notation."""
-            indices = sorted([m['index'] + 1 for m in models])  # 1-based for display
+            indices = sorted([m["index"] + 1 for m in models])  # 1-based for display
             if len(indices) == 1:
                 return str(indices[0])
 
@@ -515,16 +559,24 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
 
             # Header showing which models share these hyperparameters
             model_range = format_model_indices(models)
-            messenger.log_only(f"\nModel(s) {model_range} (x{len(models)}) - Shared Hyperparameters:")
+            messenger.log_only(
+                f"\nModel(s) {model_range} (x{len(models)}) - Shared Hyperparameters:"
+            )
             messenger.log_only(f"  C={C_param:.6f}, penalty={penalty}, loss={loss}")
-            messenger.log_only(f"  Calibration={calib_method}, class_weight_mult={class_weight_mult}")
+            messenger.log_only(
+                f"  Calibration={calib_method}, class_weight_mult={class_weight_mult}"
+            )
 
             # Show individual model coefficients
             for model in models:
-                messenger.log_only(f"\n  Model {model['index']+1}/{len(ensemble.models)}:")
+                messenger.log_only(
+                    f"\n  Model {model['index'] + 1}/{len(ensemble.models)}:"
+                )
                 messenger.log_only(f"    Intercept: {model['intercept']:+.6f}")
-                messenger.log_only(f"    Coefficients:")
-                for feat_name, coef_val in zip(model['feature_names'], model['coefficients']):
+                messenger.log_only("    Coefficients:")
+                for feat_name, coef_val in zip(
+                    model["feature_names"], model["coefficients"]
+                ):
                     messenger.log_only(f"      {feat_name:20s}: {coef_val:+.6f}")
 
     # Compute and log ensemble statistics
@@ -537,22 +589,24 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
         std_intercept = intercept_array.std()
 
         # Log hyperparameter summary
-        messenger.log_only("\n" + "="*80)
+        messenger.log_only("\n" + "=" * 80)
         messenger.log_only("ENSEMBLE HYPERPARAMETERS SUMMARY")
-        messenger.log_only("="*80)
+        messenger.log_only("=" * 80)
 
         if model_hyperparams:
             # Extract unique values
-            C_values = [hp[0] for hp in model_hyperparams if hp[0] != 'unknown']
-            penalties = [hp[1] for hp in model_hyperparams if hp[1] != 'unknown']
-            losses = [hp[2] for hp in model_hyperparams if hp[2] != 'unknown']
-            calibs = [hp[3] for hp in model_hyperparams if hp[3] != 'unknown']
+            C_values = [hp[0] for hp in model_hyperparams if hp[0] != "unknown"]
+            penalties = [hp[1] for hp in model_hyperparams if hp[1] != "unknown"]
+            losses = [hp[2] for hp in model_hyperparams if hp[2] != "unknown"]
+            calibs = [hp[3] for hp in model_hyperparams if hp[3] != "unknown"]
 
             if C_values:
                 C_mean = np.mean(C_values)
                 C_std = np.std(C_values)
                 C_range = [min(C_values), max(C_values)]
-                messenger.log_only(f"C parameter: mean={C_mean:.6f}, std={C_std:.6f}, range={C_range}")
+                messenger.log_only(
+                    f"C parameter: mean={C_mean:.6f}, std={C_std:.6f}, range={C_range}"
+                )
 
             if penalties:
                 unique_penalties = list(set(penalties))
@@ -564,34 +618,43 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
 
             if calibs:
                 from collections import Counter
+
                 calib_counts = Counter(calibs)
                 messenger.log_only(f"Calibration methods: {dict(calib_counts)}")
 
-        messenger.log_only("\n" + "="*80)
+        messenger.log_only("\n" + "=" * 80)
         messenger.log_only("ENSEMBLE COEFFICIENT STATISTICS")
-        messenger.log_only("="*80)
+        messenger.log_only("=" * 80)
         messenger.log_only(f"Ensemble size: {len(all_coefficients)} models")
+        # all_feature_names is guaranteed to be set at this point if all_coefficients is truthy
+        assert all_feature_names is not None, "Feature names not extracted from models"
         messenger.log_only(f"Feature dimensions: {len(all_feature_names)}")
 
         # Feature list
         if all_feature_names:
-            messenger.log_only(f"\nFeatures used:")
+            messenger.log_only("\nFeatures used:")
             messenger.log_only(f"  Base features: {', '.join(base_features)}")
             composite_feats = [f for f in all_feature_names if f not in base_features]
             if composite_feats:
-                messenger.log_only(f"  Composite features: {', '.join(composite_feats)}")
+                messenger.log_only(
+                    f"  Composite features: {', '.join(composite_feats)}"
+                )
             else:
-                messenger.log_only(f"  Composite features: none")
+                messenger.log_only("  Composite features: none")
 
-        messenger.log_only(f"\nIntercept Statistics:")
+        messenger.log_only("\nIntercept Statistics:")
         messenger.log_only(f"  Mean: {mean_intercept:+.6f}")
         messenger.log_only(f"  Std:  {std_intercept:.6f}")
-        messenger.log_only(f"  Range: [{intercept_array.min():+.6f}, {intercept_array.max():+.6f}]")
+        messenger.log_only(
+            f"  Range: [{intercept_array.min():+.6f}, {intercept_array.max():+.6f}]"
+        )
 
-        messenger.log_only(f"\nCoefficient Statistics:")
-        messenger.log_only("-"*80)
-        messenger.log_only(f"{'Feature':<20s}  {'Mean':>12s}  {'Std':>12s}  {'Range':>24s}")
-        messenger.log_only("-"*80)
+        messenger.log_only("\nCoefficient Statistics:")
+        messenger.log_only("-" * 80)
+        messenger.log_only(
+            f"{'Feature':<20s}  {'Mean':>12s}  {'Std':>12s}  {'Range':>24s}"
+        )
+        messenger.log_only("-" * 80)
 
         for feat_name, mean_val, std_val in zip(all_feature_names, mean_coef, std_coef):
             feat_min = coef_array[:, all_feature_names.index(feat_name)].min()
@@ -603,24 +666,35 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
 
         # Feature importance ranking (by absolute mean coefficient)
         messenger.log_only("\nFeature Importance Ranking (by |mean coefficient|):")
-        messenger.log_only("-"*80)
-        importance_list = [(name, abs(mean)) for name, mean in zip(all_feature_names, mean_coef)]
+        messenger.log_only("-" * 80)
+        importance_list = [
+            (name, abs(mean)) for name, mean in zip(all_feature_names, mean_coef)
+        ]
         importance_list.sort(key=lambda x: x[1], reverse=True)
         for rank, (name, abs_coef) in enumerate(importance_list, 1):
             actual_coef = mean_coef[all_feature_names.index(name)]
-            messenger.log_only(f"  {rank}. {name:20s}: {abs_coef:.6f} (actual: {actual_coef:+.6f})")
+            messenger.log_only(
+                f"  {rank}. {name:20s}: {abs_coef:.6f} (actual: {actual_coef:+.6f})"
+            )
 
         # Identify features with near-zero coefficients (L1-like sparsity)
         messenger.log_only("")
         threshold = 0.001
-        near_zero = [(name, mean) for name, mean in zip(all_feature_names, mean_coef)
-                     if abs(mean) < threshold]
+        near_zero = [
+            (name, mean)
+            for name, mean in zip(all_feature_names, mean_coef)
+            if abs(mean) < threshold
+        ]
         if near_zero:
-            messenger.log_only(f"Features with near-zero coefficients (|mean| < {threshold}):")
+            messenger.log_only(
+                f"Features with near-zero coefficients (|mean| < {threshold}):"
+            )
             for name, mean in near_zero:
                 messenger.log_only(f"  {name}: {mean:+.6f}")
         else:
-            messenger.log_only(f"All features have non-zero coefficients (|mean| >= {threshold})")
+            messenger.log_only(
+                f"All features have non-zero coefficients (|mean| >= {threshold})"
+            )
     else:
         messenger.log_only("Warning: Could not extract coefficients from any models")
 
@@ -630,7 +704,7 @@ def log_ensemble_coefficients(ensemble, messenger: 'UnifiedMessenger'):
 def merge_scored_and_omitted_introns(
     scored_introns: List[Intron],
     all_introns: List[Intron],
-    messenger: 'UnifiedMessenger'
+    messenger: "UnifiedMessenger",
 ) -> List[Intron]:
     """
     Merge scored introns with unique omitted introns for complete meta output.
@@ -655,7 +729,8 @@ def merge_scored_and_omitted_introns(
     # Find omitted introns that aren't duplicates
     # These should have metadata.omitted set and NOT be duplicates
     omitted_introns = [
-        intron for intron in all_introns
+        intron
+        for intron in all_introns
         if id(intron) not in scored_ids
         and intron.metadata
         and intron.metadata.omitted != OmissionReason.NONE
@@ -676,8 +751,7 @@ def merge_scored_and_omitted_introns(
 
 
 def calculate_minimum_intron_length(
-    scoring_regions: ScoringRegions,
-    bp_matrix_length: int
+    scoring_regions: ScoringRegions, bp_matrix_length: int
 ) -> int:
     """Calculate minimum intron length needed for scoring.
 
@@ -719,7 +793,7 @@ def calculate_minimum_intron_length(
     return minimum_length
 
 
-def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
+def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, "Console"]:
     """Setup logging configuration with ANSI color support.
 
     Args:
@@ -731,7 +805,7 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
     from rich.console import Console
     from rich.logging import RichHandler
 
-    log_file = config.output.get_output_path('.log')
+    log_file = config.output.get_output_path(".log")
 
     # Configure logging level based on flags
     # Both console and log file will use the same level for consistency
@@ -743,7 +817,7 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
         log_level = logging.INFO
 
     # Setup logger
-    logger = logging.getLogger('intronIC')
+    logger = logging.getLogger("intronIC")
     logger.setLevel(log_level)  # Logger level controls what gets through to handlers
 
     # Clear any existing handlers
@@ -753,11 +827,11 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
     # force_terminal=True ensures ANSI codes are written even to files
     # highlight=False disables automatic syntax highlighting to avoid false matches (e.g. "PUT" in "OUTPUT")
     log_console = Console(
-        file=open(log_file, 'w', encoding='utf-8'),
+        file=open(log_file, "w", encoding="utf-8"),
         force_terminal=True,
         width=120,
         legacy_windows=False,
-        highlight=False
+        highlight=False,
     )
 
     # File handler using Rich - preserves colors and formatting
@@ -772,7 +846,7 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
         markup=True,  # Enable Rich markup interpretation for proper ANSI formatting
         rich_tracebacks=True,
         tracebacks_show_locals=config.output.debug,
-        level=log_level  # Match logger level - file and console output are consistent
+        level=log_level,  # Match logger level - file and console output are consistent
     )
     logger.addHandler(file_handler)
 
@@ -781,7 +855,11 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, 'Console']:
     return logger, log_console
 
 
-def load_reference_sequences(filepath: Path, max_count: int = None, messenger: 'UnifiedMessenger' = None) -> List[Intron]:
+def load_reference_sequences(
+    filepath: Path,
+    max_count: Optional[int] = None,
+    messenger: Optional["UnifiedMessenger"] = None,
+) -> List[Intron]:
     """
     Load reference intron sequences from .iic.gz file.
 
@@ -809,14 +887,14 @@ def load_reference_sequences(filepath: Path, max_count: int = None, messenger: '
     """
     introns = []
 
-    with smart_open(filepath, 'rt') as f:
+    with smart_open(filepath, "rt") as f:
         for line_num, line in enumerate(f, 1):
             # Skip comments
-            if line.startswith('#'):
+            if line.startswith("#"):
                 continue
 
             # Parse line
-            fields = line.strip().split('\t')
+            fields = line.strip().split("\t")
             if len(fields) < 5:
                 continue
 
@@ -831,7 +909,7 @@ def load_reference_sequences(filepath: Path, max_count: int = None, messenger: '
                 start=1,
                 stop=len(intron_seq),
                 strand="+",
-                system="1-based"
+                system="1-based",
             )
 
             # Extract terminal dinucleotides
@@ -844,15 +922,11 @@ def load_reference_sequences(filepath: Path, max_count: int = None, messenger: '
                 upstream_flank=upstream_flank,
                 downstream_flank=downstream_flank,
                 five_prime_dnt=five_dnt,
-                three_prime_dnt=three_dnt
+                three_prime_dnt=three_dnt,
             )
 
             # Create Intron (no length filtering - done later via omit_check)
-            intron = Intron(
-                intron_id=intron_id,
-                coordinates=coord,
-                sequences=sequences
-            )
+            intron = Intron(intron_id=intron_id, coordinates=coord, sequences=sequences)
             introns.append(intron)
 
             # Check max count
@@ -860,12 +934,14 @@ def load_reference_sequences(filepath: Path, max_count: int = None, messenger: '
                 break
 
     if messenger:
-        messenger.log_only(f"Loaded {len(introns)} reference sequences from {filepath.name}")
+        messenger.log_only(
+            f"Loaded {len(introns)} reference sequences from {filepath.name}"
+        )
 
     return introns
 
 
-def load_genome(config: IntronICConfig, messenger: 'UnifiedMessenger') -> GenomeReader:
+def load_genome(config: IntronICConfig, messenger: "UnifiedMessenger") -> GenomeReader:
     """Load genome file.
 
     Args:
@@ -875,6 +951,7 @@ def load_genome(config: IntronICConfig, messenger: 'UnifiedMessenger') -> Genome
     Returns:
         GenomeReader instance
     """
+    assert config.input.genome is not None, "Genome path required"
     messenger.info(f"Loading genome: {config.input.genome}")
     # Use cached mode for faster repeated access
     reader = GenomeReader(config.input.genome, cached=True)
@@ -884,10 +961,7 @@ def load_genome(config: IntronICConfig, messenger: 'UnifiedMessenger') -> Genome
 
 
 def _process_contig_worker(
-    contig_name: str,
-    contig_introns: List[Intron],
-    flank_len: int,
-    u12_correction: bool
+    contig_name: str, contig_introns: List[Intron], flank_len: int, u12_correction: bool
 ) -> List[Intron]:
     """
     Worker function for parallel contig processing.
@@ -917,52 +991,51 @@ def _process_contig_worker(
         indexed_genome = get_worker_genome()
 
         # Create extractor using indexed genome
+        # Note: Using __new__ to inject custom genome reader; type ignores are needed
         extractor = SequenceExtractor.__new__(SequenceExtractor)
-        extractor.genome_file = None
-        extractor.genome_reader = indexed_genome
+        extractor.genome_file = None  # type: ignore[assignment]
+        extractor.genome_reader = indexed_genome  # type: ignore[assignment]
         extractor.use_cache = False  # No cache needed - using indexed access
 
         # Extract sequences with deduplication (per-contig deduplication)
-        contig_with_seqs = list(extractor.extract_sequences_with_deduplication(
-            contig_introns,
-            flank_size=flank_len
-        ))
+        contig_with_seqs = list(
+            extractor.extract_sequences_with_deduplication(
+                contig_introns, flank_size=flank_len
+            )
+        )
     except Exception as e:
-        import traceback
         import sys
-        print(f"\n[ERROR] Worker failed on contig '{contig_name}': {e}", file=sys.stderr)
+        import traceback
+
+        print(
+            f"\n[ERROR] Worker failed on contig '{contig_name}': {e}", file=sys.stderr
+        )
         print(f"Contig had {len(contig_introns)} introns", file=sys.stderr)
         traceback.print_exc()
         raise
 
     # Apply U12 corrections if enabled
+    # Note: Call correct_intron_if_needed() on ALL introns - it handles the
+    # noncanonical check internally via metadata.noncanonical flag.
     if u12_correction:
         from intronIC.extraction.boundary_correction import correct_intron_if_needed
+
         corrected_introns = []
 
         for intron in contig_with_seqs:
-            is_noncanonical = False
-            if intron.sequences and intron.sequences.terminal_dinucleotides:
-                dnts = intron.sequences.terminal_dinucleotides
-                is_noncanonical = dnts not in ['GT-AG', 'GC-AG', 'AT-AC']
-
-            if is_noncanonical:
-                corrected_intron, was_corrected = correct_intron_if_needed(
-                    intron,
-                    correction_enabled=True,
-                    use_strict_motif=True
-                )
-                if was_corrected:
-                    # Re-extract with new coordinates
-                    corrected_with_seq = list(extractor.extract_sequences(
-                        [corrected_intron],
-                        flank_size=flank_len
-                    ))[0]
-                    corrected_introns.append(corrected_with_seq)
-                else:
-                    corrected_introns.append(corrected_intron)
+            corrected_intron, was_corrected = correct_intron_if_needed(
+                intron, correction_enabled=True, use_strict_motif=True
+            )
+            if was_corrected:
+                # Re-extract with new coordinates
+                corrected_with_seq = list(
+                    extractor.extract_sequences(
+                        [corrected_intron], flank_size=flank_len
+                    )
+                )[0]
+                corrected_introns.append(corrected_with_seq)
             else:
-                corrected_introns.append(intron)
+                corrected_introns.append(corrected_intron)
 
         contig_with_seqs = corrected_introns
 
@@ -971,8 +1044,8 @@ def _process_contig_worker(
 
 def extract_introns_from_annotation(
     config: IntronICConfig,
-    messenger: 'UnifiedMessenger',
-    reporter: IntronICProgressReporter
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
 ) -> List[Intron]:
     """
     Extract introns contig-by-contig with pre-filtering and deduplication.
@@ -1004,25 +1077,29 @@ def extract_introns_from_annotation(
     """
     messenger.info(f"Parsing annotation: {config.input.annotation}")
 
-    # Build annotation hierarchy (standard approach)
-    # Note: Streaming was attempted but doesn't provide memory benefits for annotation
-    # parsing since we need all introns anyway. Real memory savings come from:
-    # 1. Pre-filtering before sequence extraction (85% reduction)
-    # 2. Contig-by-contig sequence extraction (already implemented)
+    # Build annotation hierarchy
+    assert config.input.annotation is not None, "Annotation path required"
     builder = AnnotationHierarchyBuilder(
-        child_features=['cds', 'exon'],
+        child_features=["cds", "exon"],
         clean_names=config.output.clean_names,
-        messenger=messenger
+        messenger=messenger,
     )
-    genes = builder.build_from_file(config.input.annotation)
+    genes = builder.build_from_file(str(config.input.annotation))
 
     # Report annotation statistics
-    from intronIC.extraction.annotator import Gene, Transcript, Exon
+    from intronIC.extraction.annotator import Exon, Transcript
+
     n_genes = len(genes)
-    n_transcripts = sum(1 for f in builder.feature_index.values() if isinstance(f, Transcript))
+    n_transcripts = sum(
+        1 for f in builder.feature_index.values() if isinstance(f, Transcript)
+    )
     n_exons = sum(1 for f in builder.feature_index.values() if isinstance(f, Exon))
-    n_cds = sum(1 for f in builder.feature_index.values()
-                if isinstance(f, Exon) and f.attributes.get('_orig_feat_type', '').lower() == 'cds')
+    n_cds = sum(
+        1
+        for f in builder.feature_index.values()
+        if isinstance(f, Exon)
+        and f.attributes.get("_orig_feat_type", "").lower() == "cds"
+    )
 
     messenger.info(
         f"Parsed annotation: {n_genes:,} genes, {n_transcripts:,} transcripts, "
@@ -1044,11 +1121,19 @@ def extract_introns_from_annotation(
         )
 
     # Filter by feature type (cds/exon/both)
-    if config.extraction.feature_type == 'cds':
-        introns_list = [i for i in introns_all if i.metadata.defined_by == 'cds']
+    if config.extraction.feature_type == "cds":
+        introns_list = [
+            i
+            for i in introns_all
+            if i.metadata is not None and i.metadata.defined_by == "cds"
+        ]
         messenger.log_only(f"Filtered to {len(introns_list):,} CDS-defined introns")
-    elif config.extraction.feature_type == 'exon':
-        introns_list = [i for i in introns_all if i.metadata.defined_by == 'exon']
+    elif config.extraction.feature_type == "exon":
+        introns_list = [
+            i
+            for i in introns_all
+            if i.metadata is not None and i.metadata.defined_by == "exon"
+        ]
         messenger.log_only(f"Filtered to {len(introns_list):,} exon-defined introns")
     else:
         introns_list = introns_all
@@ -1068,7 +1153,7 @@ def extract_introns_from_annotation(
         introns=introns_list,
         min_length=config.extraction.min_intron_len,
         longest_only=not config.extraction.allow_multiple_isoforms,  # Inverse logic
-        include_duplicates=config.extraction.include_duplicates
+        include_duplicates=config.extraction.include_duplicates,
     )
 
     extract_list = prefilter_result.extract_list
@@ -1076,16 +1161,48 @@ def extract_introns_from_annotation(
 
     messenger.log_only(
         f"Pre-filter results: "
-        f"extracting sequences for {len(extract_list):,} ({len(extract_list)/len(introns_list)*100:.1f}%), "
-        f"skipping {len(skip_list):,} ({len(skip_list)/len(introns_list)*100:.1f}%)"
+        f"extracting sequences for {len(extract_list):,} ({len(extract_list) / len(introns_list) * 100:.1f}%), "
+        f"skipping {len(skip_list):,} ({len(skip_list) / len(introns_list) * 100:.1f}%)"
     )
 
     # Free original list
     del introns_list
     gc.collect()
 
-    # Step 4: Group introns by contig for contig-by-contig processing
+    # Step 4: Extract sequences (delegate to helper for code reuse)
+    all_introns = _extract_sequences_for_introns(
+        extract_list, skip_list, config, messenger, reporter
+    )
+
+    return all_introns
+
+
+def _extract_sequences_for_introns(
+    extract_list: List[Intron],
+    skip_list: List[Intron],
+    config: IntronICConfig,
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
+) -> List[Intron]:
+    """
+    Helper function to extract sequences for introns.
+
+    This is shared by both standard and streaming extraction modes.
+
+    Args:
+        extract_list: Introns that need sequences extracted
+        skip_list: Introns to include without sequences
+        config: Pipeline configuration
+        messenger: Unified messenger
+        reporter: Progress reporter
+
+    Returns:
+        All introns (extracted + skipped)
+    """
+
+    # Group introns by contig for contig-by-contig processing
     from collections import defaultdict
+
     introns_by_contig = defaultdict(list)
     for intron in extract_list:
         introns_by_contig[intron.coordinates.chromosome].append(intron)
@@ -1094,14 +1211,14 @@ def extract_introns_from_annotation(
 
     # Load PWM matrices (for minimum length calculation)
     pwm_sets = load_pwms_with_fallback(config, messenger)
-    bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
+    bp_matrix_length = next(iter(pwm_sets["bp"].matrices.values())).length
 
-    # Calculate minimum length
+    # Calculate minimum length (validated during pre-filtering)
     calculated_min = calculate_minimum_intron_length(
-        config.scoring.scoring_regions,
-        bp_matrix_length
+        config.scoring.scoring_regions, bp_matrix_length
     )
-    actual_min_length = max(config.extraction.min_intron_len, calculated_min)
+    # Note: actual_min_length is for logging; min_intron_len is enforced in pre-filter
+    _ = max(config.extraction.min_intron_len, calculated_min)  # noqa: F841
 
     # Accumulator for all introns
     all_introns = []
@@ -1119,24 +1236,29 @@ def extract_introns_from_annotation(
     else:
         messenger.info(f"Loading genome: {config.input.genome}")
         sequence_extractor = SequenceExtractor(
-            genome_file=str(config.input.genome),
-            use_cache=True
+            genome_file=str(config.input.genome), use_cache=True
         )
         if sequence_extractor.genome_reader.cache:
-            messenger.info(f"Loaded {len(sequence_extractor.genome_reader.cache)} sequences into memory")
+            messenger.info(
+                f"Loaded {len(sequence_extractor.genome_reader.cache)} sequences into memory"
+            )
 
     if use_parallel:
         # Parallel mode: Process multiple contigs concurrently using indexed FASTA
-        messenger.info(f"Extracting sequences for {len(contigs)} contigs in parallel using {n_processes} processes")
+        messenger.info(
+            f"Extracting sequences for {len(contigs)} contigs in parallel using {n_processes} processes"
+        )
 
         # Check if index exists before creating it
         import os
-        index_path = str(config.input.genome) + '.fxi'
+
+        index_path = str(config.input.genome) + ".fxi"
         index_existed = os.path.exists(index_path)
 
         # IMPORTANT: pyfastx requires the index to be created in the main process
         # before workers can access it. Create a temporary reader to ensure index exists.
         from intronIC.file_io.indexed_genome import IndexedGenomeReader
+
         _temp_reader = IndexedGenomeReader(str(config.input.genome), use_cache=False)
         # Access .fasta to trigger index creation if needed
         _ = _temp_reader.fasta
@@ -1146,25 +1268,27 @@ def extract_introns_from_annotation(
         if index_existed:
             index_size = os.path.getsize(index_path)
             if index_size < 1024**2:
-                size_str = f"{index_size/1024:.1f} KB"
+                size_str = f"{index_size / 1024:.1f} KB"
             elif index_size < 1024**3:
-                size_str = f"{index_size/(1024**2):.1f} MB"
+                size_str = f"{index_size / (1024**2):.1f} MB"
             else:
-                size_str = f"{index_size/(1024**3):.1f} GB"
+                size_str = f"{index_size / (1024**3):.1f} GB"
             messenger.info(f"Using existing genome index ({size_str})")
         else:
             # Index was just created
             index_size = os.path.getsize(index_path)
             if index_size < 1024**2:
-                size_str = f"{index_size/1024:.1f} KB"
+                size_str = f"{index_size / 1024:.1f} KB"
             elif index_size < 1024**3:
-                size_str = f"{index_size/(1024**2):.1f} MB"
+                size_str = f"{index_size / (1024**2):.1f} MB"
             else:
-                size_str = f"{index_size/(1024**3):.1f} GB"
+                size_str = f"{index_size / (1024**3):.1f} GB"
             messenger.info(f"Created genome index ({size_str})")
 
         # Get contig lengths for length-weighted progress reporting
         from intronIC.file_io.indexed_genome import get_contig_lengths
+
+        assert config.input.genome is not None, "Genome path required"
         contig_lengths = get_contig_lengths(config.input.genome)
 
         # Prepare length-weighted progress tracking
@@ -1174,17 +1298,21 @@ def extract_introns_from_annotation(
 
         # Report total genome size
         if total_length < 1e6:
-            size_str = f"{total_length/1e3:.1f} Kb"
+            size_str = f"{total_length / 1e3:.1f} Kb"
         elif total_length < 1e9:
-            size_str = f"{total_length/1e6:.1f} Mb"
+            size_str = f"{total_length / 1e6:.1f} Mb"
         else:
-            size_str = f"{total_length/1e9:.2f} Gb"
+            size_str = f"{total_length / 1e9:.2f} Gb"
         messenger.info(f"Total genome size: {total_length:,} bp ({size_str})")
 
         # Prepare inputs for worker processes (no genome cache - workers use indexed FASTA!)
         worker_inputs = [
-            (contig, introns_by_contig[contig],
-             config.extraction.flank_len, config.extraction.u12_boundary_correction)
+            (
+                contig,
+                introns_by_contig[contig],
+                config.extraction.flank_len,
+                config.extraction.u12_boundary_correction,
+            )
             for contig in contigs
         ]
 
@@ -1199,11 +1327,13 @@ def extract_introns_from_annotation(
         with Pool(
             processes=n_processes,
             initializer=init_worker_genome,
-            initargs=(str(config.input.genome),)
+            initargs=(str(config.input.genome),),
         ) as pool:
             # Use starmap to process all contigs
             try:
-                for contig_introns_with_seqs in pool.starmap(_process_contig_worker, worker_inputs):
+                for contig_introns_with_seqs in pool.starmap(
+                    _process_contig_worker, worker_inputs
+                ):
                     completed += 1
                     introns_count = len(contig_introns_with_seqs)
                     total_introns_extracted += introns_count
@@ -1218,34 +1348,53 @@ def extract_introns_from_annotation(
                     all_introns.extend(contig_introns_with_seqs)
 
                     # Log progress every 10% or on completion (length-weighted)
-                    completed_length = cumulative_lengths[completed - 1]  # -1 because completed is 1-indexed
+                    completed_length = cumulative_lengths[
+                        completed - 1
+                    ]  # -1 because completed is 1-indexed
                     current_percent = int((completed_length / total_length) * 100)
                     # Report when we cross a 10% boundary or complete
-                    if (current_percent // 10 > last_reported_percent // 10) or completed == len(contigs):
+                    if (
+                        current_percent // 10 > last_reported_percent // 10
+                    ) or completed == len(contigs):
                         messenger.info(
                             f"Progress: {completed}/{len(contigs)} contigs ({current_percent}% of genome) - "
                             f"{total_introns_extracted:,} sequences extracted"
                         )
                         last_reported_percent = current_percent
             except Exception as e:
-                messenger.error(f"Parallel processing failed after {completed}/{len(contigs)} contigs")
+                messenger.error(
+                    f"Parallel processing failed after {completed}/{len(contigs)} contigs"
+                )
                 messenger.error(f"Error: {e}")
 
                 # Check if it's a pyfastx concurrency issue
                 if "Fasta" in str(e) or "get seq count" in str(e):
-                    messenger.error("This appears to be a pyfastx concurrency issue with this genome file")
-                    messenger.error("pyfastx may not support concurrent access for some files")
-                    messenger.error("Try running in sequential mode (remove -p flag) as a workaround")
+                    messenger.error(
+                        "This appears to be a pyfastx concurrency issue with this genome file"
+                    )
+                    messenger.error(
+                        "pyfastx may not support concurrent access for some files"
+                    )
+                    messenger.error(
+                        "Try running in sequential mode (remove -p flag) as a workaround"
+                    )
 
                 import traceback
+
                 traceback.print_exc()
                 raise
 
-        messenger.info(f"Parallel processing complete: {len(contigs)} contigs processed")
+        messenger.info(
+            f"Parallel processing complete: {len(contigs)} contigs processed"
+        )
 
     else:
         # Sequential mode: Process one contig at a time (no parallelization)
-        mode = "sequentially" if not use_parallel else f"using 1 process (n_processes={n_processes})"
+        mode = (
+            "sequentially"
+            if not use_parallel
+            else f"using 1 process (n_processes={n_processes})"
+        )
         messenger.info(f"Extracting sequences for {len(contigs)} contigs {mode}")
 
         for contig_idx, contig in enumerate(contigs, 1):
@@ -1256,45 +1405,46 @@ def extract_introns_from_annotation(
             )
 
             # 5a: Extract sequences with deduplication
-            contig_with_seqs = list(sequence_extractor.extract_sequences_with_deduplication(
-                contig_introns,
-                flank_size=config.extraction.flank_len
-            ))
+            assert sequence_extractor is not None, "Sequence extractor not initialized"
+            contig_with_seqs = list(
+                sequence_extractor.extract_sequences_with_deduplication(
+                    contig_introns, flank_size=config.extraction.flank_len
+                )
+            )
 
             # 5b: Apply U12 corrections if enabled
+            # Note: Call correct_intron_if_needed() on ALL introns - it handles the
+            # noncanonical check internally via metadata.noncanonical flag.
             if config.extraction.u12_boundary_correction:
-                from intronIC.extraction.boundary_correction import correct_intron_if_needed
+                from intronIC.extraction.boundary_correction import (
+                    correct_intron_if_needed,
+                )
+
                 corrected_count = 0
                 corrected_contig_introns = []
 
                 for intron in contig_with_seqs:
-                    is_noncanonical = False
-                    if intron.sequences and intron.sequences.terminal_dinucleotides:
-                        dnts = intron.sequences.terminal_dinucleotides
-                        is_noncanonical = dnts not in ['GT-AG', 'GC-AG', 'AT-AC']
-
-                    if is_noncanonical:
-                        corrected_intron, was_corrected = correct_intron_if_needed(
-                            intron,
-                            correction_enabled=True,
-                            use_strict_motif=True
-                        )
-                        if was_corrected:
-                            # Re-extract with new coordinates
-                            corrected_with_seq = list(sequence_extractor.extract_sequences(
+                    corrected_intron, was_corrected = correct_intron_if_needed(
+                        intron, correction_enabled=True, use_strict_motif=True
+                    )
+                    if was_corrected:
+                        # Re-extract with new coordinates
+                        corrected_with_seq = list(
+                            sequence_extractor.extract_sequences(
                                 [corrected_intron],
-                                flank_size=config.extraction.flank_len
-                            ))[0]
-                            corrected_contig_introns.append(corrected_with_seq)
-                            corrected_count += 1
-                        else:
-                            corrected_contig_introns.append(corrected_intron)
+                                flank_size=config.extraction.flank_len,
+                            )
+                        )[0]
+                        corrected_contig_introns.append(corrected_with_seq)
+                        corrected_count += 1
                     else:
-                        corrected_contig_introns.append(intron)
+                        corrected_contig_introns.append(corrected_intron)
 
                 contig_with_seqs = corrected_contig_introns
                 if corrected_count > 0:
-                    messenger.log_only(f"  Applied U12 corrections to {corrected_count} introns")
+                    messenger.log_only(
+                        f"  Applied U12 corrections to {corrected_count} introns"
+                    )
 
             # 5c: Add to accumulator (WITH sequences - needed for scoring)
             all_introns.extend(contig_with_seqs)
@@ -1312,11 +1462,293 @@ def extract_introns_from_annotation(
     return all_introns
 
 
+def extract_introns_streaming(
+    config: IntronICConfig,
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
+) -> Tuple[List[Intron], Path]:
+    """
+    Extract introns in streaming mode (~85% memory savings).
+
+    This mode processes introns contig-by-contig and:
+    1. Writes full sequences to SQLite for later output (preserving insertion order)
+    2. Extracts minimal scoring motifs and clears full sequences from memory
+    3. Returns lightweight introns with only motifs (for scoring)
+
+    The SQLite database path is returned so main_classify() can read sequences
+    back after scoring to write the final .introns.iic file with scores.
+
+    Args:
+        config: Pipeline configuration
+        messenger: Unified messenger for output
+        reporter: Progress reporter
+
+    Returns:
+        Tuple of (introns_with_motifs, db_path) where:
+        - introns_with_motifs: List of Intron objects with motifs only (no full sequences)
+        - db_path: Path to SQLite database containing full sequences
+    """
+    from collections import defaultdict
+
+    from intronIC.extraction.filters import prefilter_introns
+    from intronIC.extraction.intronator import IntronGenerator
+    from intronIC.file_io.parsers import BioGLAnnotationParser
+    from intronIC.file_io.sequence_store import StreamingSequenceStore
+
+    messenger.info(f"Parsing annotation: {config.input.annotation}")
+    messenger.info("Using streaming mode (~85% memory savings)")
+
+    # Parse annotation and group by contig
+    messenger.log_only("Parsing annotation and grouping by contig")
+    assert config.input.annotation is not None, "Annotation path required"
+    parser = BioGLAnnotationParser(clean_names=config.output.clean_names)
+    annotations_by_contig = defaultdict(list)
+
+    for ann_line in parser.parse_file(str(config.input.annotation)):
+        annotations_by_contig[ann_line.region].append(ann_line)
+
+    contigs = sorted(annotations_by_contig.keys())
+    messenger.log_only(f"Found {len(contigs)} contigs")
+
+    # Generate introns contig-by-contig for memory efficiency
+    all_introns_no_seq = []
+    total_genes = 0
+    total_introns_generated = 0
+
+    for contig_idx, contig in enumerate(contigs, 1):
+        contig_annotations = annotations_by_contig[contig]
+
+        if not contig_annotations or all(
+            a.feat_type == "region" for a in contig_annotations
+        ):
+            continue
+
+        if len(contig_annotations) > 10:
+            messenger.log_only(
+                f"Processing contig {contig_idx}/{len(contigs)}: {contig} ({len(contig_annotations)} features)"
+            )
+
+        builder = AnnotationHierarchyBuilder(
+            child_features=["cds", "exon"],
+            clean_names=config.output.clean_names,
+            messenger=messenger,
+        )
+
+        try:
+            contig_genes = builder.build_from_annotations(contig_annotations)
+        except ValueError as e:
+            if "Could not establish parent-child relationships" in str(e):
+                continue
+            raise
+
+        if not contig_genes:
+            continue
+
+        generator = IntronGenerator(debug=config.output.debug, messenger=messenger)
+        contig_introns = list(
+            generator.generate_from_genes(contig_genes, builder.feature_index)
+        )
+
+        # Filter by feature type
+        if config.extraction.feature_type == "cds":
+            contig_introns = [
+                i
+                for i in contig_introns
+                if i.metadata is not None and i.metadata.defined_by == "cds"
+            ]
+        elif config.extraction.feature_type == "exon":
+            contig_introns = [
+                i
+                for i in contig_introns
+                if i.metadata is not None and i.metadata.defined_by == "exon"
+            ]
+
+        total_genes += len(contig_genes)
+        total_introns_generated += len(contig_introns)
+        all_introns_no_seq.extend(contig_introns)
+
+        del contig_genes
+        del builder
+        del contig_introns
+        gc.collect()
+
+    del annotations_by_contig
+    gc.collect()
+
+    messenger.info(
+        f"Processed {total_genes:,} genes from {len(contigs)} contigs, "
+        f"generated {total_introns_generated:,} introns"
+    )
+
+    # Pre-filter before extraction
+    messenger.log_only("Pre-filtering introns before sequence extraction")
+    prefilter_result = prefilter_introns(
+        introns=all_introns_no_seq,
+        min_length=config.extraction.min_intron_len,
+        longest_only=not config.extraction.allow_multiple_isoforms,
+        include_duplicates=config.extraction.include_duplicates,
+    )
+
+    extract_list = prefilter_result.extract_list
+    skip_list = prefilter_result.skip_list
+
+    messenger.log_only(
+        f"Pre-filter results: "
+        f"extracting sequences for {len(extract_list):,}, skipping {len(skip_list):,}"
+    )
+
+    del all_introns_no_seq
+    gc.collect()
+
+    # Create SQLite store for sequences
+    db_path = config.output.output_dir / f".{config.output.base_filename}.sequences.db"
+    if db_path.exists():
+        db_path.unlink()  # Clean up any leftover from previous run
+    store = StreamingSequenceStore.create(db_path)
+
+    # Group introns by contig for extraction
+    introns_by_contig = defaultdict(list)
+    for intron in extract_list:
+        introns_by_contig[intron.coordinates.chromosome].append(intron)
+
+    contigs = sorted(introns_by_contig.keys())
+
+    # Get scoring region coordinates
+    five_coords = (
+        config.scoring.scoring_regions.five_start,
+        config.scoring.scoring_regions.five_end,
+    )
+    bp_coords = (
+        config.scoring.scoring_regions.bp_start,
+        config.scoring.scoring_regions.bp_end,
+    )
+    three_coords = (
+        config.scoring.scoring_regions.three_start,
+        config.scoring.scoring_regions.three_end,
+    )
+
+    # Initialize sequence extractor (sequential for streaming)
+    messenger.info(f"Loading genome: {config.input.genome}")
+    sequence_extractor = SequenceExtractor(
+        genome_file=str(config.input.genome), use_cache=True
+    )
+    if sequence_extractor.genome_reader.cache:
+        messenger.info(
+            f"Loaded {len(sequence_extractor.genome_reader.cache)} sequences into memory"
+        )
+
+    # Accumulators
+    all_introns_with_motifs = []
+    all_introns_with_motifs.extend(skip_list)  # Skipped introns (no sequences)
+    total_sequences_stored = 0
+    total_corrected = 0
+
+    # Process each contig: extract sequences, apply U12 correction, store in SQLite, extract motifs
+    for contig_idx, contig in enumerate(contigs, 1):
+        contig_introns = introns_by_contig[contig]
+        messenger.log_only(
+            f"[{contig_idx}/{len(contigs)}] Processing {contig}: {len(contig_introns):,} introns"
+        )
+
+        # Extract sequences
+        contig_with_seqs = list(
+            sequence_extractor.extract_sequences_with_deduplication(
+                contig_introns, flank_size=config.extraction.flank_len
+            )
+        )
+
+        # Apply U12 corrections if enabled (BEFORE storing in SQLite)
+        # Note: Call correct_intron_if_needed() on ALL introns - it handles the
+        # noncanonical check internally via metadata.noncanonical flag.
+        # This matches standard mode behavior.
+        if config.extraction.u12_boundary_correction:
+            from intronIC.extraction.boundary_correction import correct_intron_if_needed
+
+            corrected_count = 0
+            corrected_contig_introns = []
+
+            for intron in contig_with_seqs:
+                corrected_intron, was_corrected = correct_intron_if_needed(
+                    intron, correction_enabled=True, use_strict_motif=True
+                )
+                if was_corrected:
+                    corrected_with_seq = list(
+                        sequence_extractor.extract_sequences(
+                            [corrected_intron], flank_size=config.extraction.flank_len
+                        )
+                    )[0]
+                    corrected_contig_introns.append(corrected_with_seq)
+                    corrected_count += 1
+                else:
+                    corrected_contig_introns.append(corrected_intron)
+
+            contig_with_seqs = corrected_contig_introns
+            total_corrected += corrected_count
+            if corrected_count > 0:
+                messenger.log_only(
+                    f"  Applied U12 corrections to {corrected_count} introns"
+                )
+
+        # Filter introns with valid sequences for storage
+        storable_introns = [i for i in contig_with_seqs if i.has_sequences]
+
+        # Store full sequences in SQLite (preserves insertion order)
+        # Generate formatted names matching standard output format
+        if storable_introns:
+            from intronIC.file_io.writers import generate_intron_name
+
+            formatted_names = [
+                generate_intron_name(
+                    intron,
+                    species_name=config.output.species_name,
+                    simple_name=config.output.uninformative_naming,
+                    no_abbreviate=config.output.no_abbreviate,
+                )
+                for intron in storable_introns
+            ]
+            store.insert_batch(storable_introns, formatted_names=formatted_names)
+            total_sequences_stored += len(storable_introns)
+
+        # Extract minimal scoring motifs and create lightweight introns
+        for intron in contig_with_seqs:
+            if intron.has_sequences:
+                # Extract motifs, clearing full sequences
+                lightweight_intron = intron.extract_scoring_motifs(
+                    five_coords=five_coords,
+                    bp_coords=bp_coords,
+                    three_coords=three_coords,
+                )
+                all_introns_with_motifs.append(lightweight_intron)
+            else:
+                # Keep intron as-is if no sequences (will be omitted later)
+                all_introns_with_motifs.append(intron)
+
+        del contig_introns
+        del contig_with_seqs
+        gc.collect()
+
+    # Close store (we'll reopen after scoring to read sequences)
+    store.close()
+
+    # Free extraction resources
+    del introns_by_contig
+    del extract_list
+    del sequence_extractor
+    gc.collect()
+
+    messenger.info(
+        f"Streaming extraction complete: {total_sequences_stored:,} sequences stored, "
+        f"{total_corrected:,} U12 corrections applied"
+    )
+
+    return all_introns_with_motifs, db_path
+
+
 def extract_introns_from_bed(
     config: IntronICConfig,
     genome_reader: GenomeReader,
-    messenger: 'UnifiedMessenger',
-    reporter: IntronICProgressReporter
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
 ) -> List[Intron]:
     """Extract introns from BED file.
 
@@ -1332,19 +1764,36 @@ def extract_introns_from_bed(
     messenger.info(f"Reading BED file: {config.input.bed}")
 
     # Parse BED file
+    assert config.input.bed is not None, "BED file path required"
     parser = BEDParser()
-    introns_no_seq = list(parser.parse_file(config.input.bed))
-    messenger.log_only(f"Parsed {len(introns_no_seq)} introns from BED")
+    bed_lines = list(parser.parse_file(str(config.input.bed)))
+    messenger.log_only(f"Parsed {len(bed_lines)} introns from BED")
+
+    # Convert BEDLine objects to Intron objects with GenomicCoordinate
+    # BED format uses 0-based half-open coordinates, convert to 1-based
+    from intronIC.utils.coordinates import bed_to_internal
+
+    introns_no_seq: List[Intron] = []
+    for i, bed_line in enumerate(bed_lines):
+        coord = bed_to_internal(
+            chrom=bed_line.chrom,
+            start=bed_line.start,
+            stop=bed_line.stop,
+            strand=bed_line.strand if bed_line.strand in ("+", "-") else "+",
+        )
+        # Use BED name if provided, otherwise just the index number
+        # (output formatting adds "i" prefix, so "intron_" is redundant)
+        intron_id = bed_line.name if bed_line.name != "." else str(i + 1)
+        intron = Intron(intron_id=intron_id, coordinates=coord)
+        introns_no_seq.append(intron)
 
     # Extract sequences
     messenger.info("Extracting sequences from genome")
     sequence_extractor = SequenceExtractor(
-        genome_file=str(config.input.genome),
-        use_cache=True
+        genome_file=str(config.input.genome), use_cache=True
     )
     introns_with_seq = sequence_extractor.extract_sequences(
-        introns_no_seq,
-        flank_size=config.extraction.flank_len
+        introns_no_seq, flank_size=config.extraction.flank_len
     )
     # Materialize generator to list
     introns_all = list(introns_with_seq)
@@ -1358,21 +1807,20 @@ def extract_introns_from_bed(
     if config.extraction.u12_boundary_correction:
         from intronIC.extraction.boundary_correction import correct_intron_if_needed
 
-        messenger.info("Checking non-canonical introns for U12-type boundary corrections")
+        messenger.info(
+            "Checking non-canonical introns for U12-type boundary corrections"
+        )
         corrected_count = 0
         corrected_introns = []
 
         for intron in introns_all:
             corrected_intron, was_corrected = correct_intron_if_needed(
-                intron,
-                correction_enabled=True,
-                use_strict_motif=True
+                intron, correction_enabled=True, use_strict_motif=True
             )
 
             if was_corrected:
                 corrected_with_seq = sequence_extractor.extract_sequences(
-                    [corrected_intron],
-                    flank_size=config.extraction.flank_len
+                    [corrected_intron], flank_size=config.extraction.flank_len
                 )
                 corrected_intron = list(corrected_with_seq)[0]
                 corrected_count += 1
@@ -1391,14 +1839,13 @@ def extract_introns_from_bed(
     # Port from: intronIC.py:4591-4592
     pwm_sets = load_pwms_with_fallback(config, messenger)
     # Get any U12 BP matrix to determine length (all should be same length)
-    bp_matrix_length = next(iter(pwm_sets['bp'].matrices.values())).length
+    bp_matrix_length = next(iter(pwm_sets["bp"].matrices.values())).length
     messenger.log_only(f"BP matrix length: {bp_matrix_length}bp", level="debug")
 
     # Calculate actual minimum length needed for scoring regions
     # Port from: intronIC.py:4600-4617
     calculated_min = calculate_minimum_intron_length(
-        config.scoring.scoring_regions,
-        bp_matrix_length
+        config.scoring.scoring_regions, bp_matrix_length
     )
     actual_min_length = max(config.extraction.min_intron_len, calculated_min)
 
@@ -1416,16 +1863,19 @@ def extract_introns_from_bed(
     introns = introns_all
 
     if config.scoring.sequences_only:
-        messenger.log_only("Sequences-only mode: all introns will be output regardless of length")
+        messenger.log_only(
+            "Sequences-only mode: all introns will be output regardless of length"
+        )
     else:
-        messenger.log_only(f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)")
+        messenger.log_only(
+            f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)"
+        )
 
     return introns
 
 
 def load_introns_from_sequences(
-    config: IntronICConfig,
-    messenger: 'UnifiedMessenger'
+    config: IntronICConfig, messenger: "UnifiedMessenger"
 ) -> List[Intron]:
     """Load introns from pre-extracted sequences.
 
@@ -1436,21 +1886,101 @@ def load_introns_from_sequences(
     Returns:
         List of introns with sequences
     """
+    from intronIC.core.intron import (
+        Intron,
+        IntronFlags,
+        IntronMetadata,
+        IntronScores,
+        IntronSequences,
+    )
+    from intronIC.utils.coordinates import GenomicCoordinate
+
     messenger.info(f"Loading sequences: {config.input.sequence_file}")
 
     # Parse sequence file
+    assert config.input.sequence_file is not None, "Sequence file path required"
     parser = SequenceParser()
-    introns = list(parser.parse_file(config.input.sequence_file))
-    messenger.log_only(f"Loaded {len(introns)} introns from sequence file")
+    sequence_lines = list(parser.parse_file(str(config.input.sequence_file)))
+    messenger.log_only(f"Loaded {len(sequence_lines)} sequences from file")
 
+    # Convert SequenceLine objects to Intron objects
+    introns = []
+    for seq_line in sequence_lines:
+        # Create minimal genomic coordinate (placeholder - we don't have real coords from sequence file)
+        # These are not used for anything meaningful, just required by the Intron dataclass
+        # The SEQUENCE_ONLY flag in metadata signals to skip coordinate-based operations
+        coord = GenomicCoordinate(
+            chromosome="",
+            start=1,
+            stop=len(seq_line.sequence) + 1 if seq_line.sequence else 1,
+            strand="+",  # Placeholder (validation requires + or -)
+            system="1-based",
+        )
+
+        # Extract terminal dinucleotides for sequences
+        seq = seq_line.sequence
+        five_prime_dnt = seq[:2] if seq and len(seq) >= 4 else None
+        three_prime_dnt = seq[-2:] if seq and len(seq) >= 4 else None
+
+        # Create IntronSequences with the loaded data
+        # Populate five_seq and three_seq to satisfy has_sequences() check
+        # These are approximations since we don't know exact scoring regions,
+        # but the scorer will extract the proper regions during scoring
+        sequences = IntronSequences(
+            seq=seq_line.sequence,
+            upstream_flank=seq_line.upstream_flank,
+            downstream_flank=seq_line.downstream_flank,
+            # Populate with dummy values to pass has_sequences() check
+            # The actual values used for scoring are extracted on-the-fly
+            five_seq=seq[:10] if seq and len(seq) >= 10 else seq,
+            three_seq=seq[-10:] if seq and len(seq) >= 10 else seq,
+            bp_seq=None,  # Will be found during scoring
+            bp_region_seq=None,  # Will be extracted during scoring
+            five_prime_dnt=five_prime_dnt,
+            three_prime_dnt=three_prime_dnt,
+        )
+
+        # Create IntronScores if score is present
+        scores = None
+        if seq_line.score is not None:
+            scores = IntronScores(svm_score=seq_line.score)
+
+        # Create minimal metadata with defaults to avoid None errors in filters
+        # But leave parent/grandparent as None so generate_intron_name() falls back
+        # to using intron_id directly (line 256-258 in writers.py), preserving
+        # the original name from the input file
+        metadata = IntronMetadata(
+            parent=None,
+            grandparent=None,
+            index=None,
+            family_size=None,
+            parent_length=None,
+            line_number=None,
+            defined_by=None,
+            # Mark as sequence-only input (no real genomic coordinates)
+            # This signals to skip duplicate detection and BED output
+            flags=IntronFlags.SEQUENCE_ONLY | IntronFlags.LONGEST_ISOFORM,
+        )
+
+        # Create Intron object
+        intron = Intron(
+            intron_id=seq_line.name,
+            coordinates=coord,
+            sequences=sequences,
+            scores=scores,
+            metadata=metadata,
+        )
+        introns.append(intron)
+
+    messenger.log_only(f"Converted {len(introns)} sequences to Intron objects")
     return introns
 
 
 def score_introns(
     introns: List[Intron],
     config: IntronICConfig,
-    messenger: 'UnifiedMessenger',
-    reporter: IntronICProgressReporter
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
 ) -> List[Intron]:
     """Score introns with PWM matrices (parallel or sequential).
 
@@ -1474,15 +2004,15 @@ def score_introns(
     # Extract scoring configuration
     five_coords = (
         config.scoring.scoring_regions.five_start,
-        config.scoring.scoring_regions.five_end
+        config.scoring.scoring_regions.five_end,
     )
     bp_coords = (
         config.scoring.scoring_regions.bp_start,
-        config.scoring.scoring_regions.bp_end
+        config.scoring.scoring_regions.bp_end,
     )
     three_coords = (
         config.scoring.scoring_regions.three_start,
-        config.scoring.scoring_regions.three_end
+        config.scoring.scoring_regions.three_end,
     )
     ignore_nc_dnts = config.scoring.ignore_nc_dnts
     n_workers = config.performance.processes
@@ -1503,10 +2033,7 @@ def score_introns(
         failed_count = 0
 
         with progress:
-            task = progress.add_task(
-                "[cyan]Scoring introns...",
-                total=len(introns)
-            )
+            task = progress.add_task("[cyan]Scoring introns...", total=len(introns))
 
             # Use initializer to load PWMs once per worker process (not per intron)
             with Pool(
@@ -1519,8 +2046,8 @@ def score_introns(
                     bp_coords,
                     three_coords,
                     ignore_nc_dnts,
-                    config.scoring.pseudocount
-                )
+                    config.scoring.pseudocount,
+                ),
             ) as pool:
                 try:
                     # Use imap_unordered with chunking for smooth progress updates
@@ -1536,9 +2063,9 @@ def score_introns(
                         _score_intron_worker_unpack,
                         zip(
                             range(len(introns)),  # Add sequence index
-                            introns
+                            introns,
                         ),
-                        chunksize=chunksize
+                        chunksize=chunksize,
                     )
 
                     # Collect results with their sequence indices
@@ -1554,7 +2081,9 @@ def score_introns(
                         progress.update(task, advance=1)
 
                     # Restore original order by sorting by sequence index
-                    scored_introns = [results_dict[i] for i in sorted(results_dict.keys())]
+                    scored_introns = [
+                        results_dict[i] for i in sorted(results_dict.keys())
+                    ]
 
                 except KeyboardInterrupt:
                     messenger.warning("User interrupt - terminating workers")
@@ -1577,7 +2106,7 @@ def score_introns(
             five_coords=five_coords,
             bp_coords=bp_coords,
             three_coords=three_coords,
-            ignore_nc_dnts=ignore_nc_dnts
+            ignore_nc_dnts=ignore_nc_dnts,
         )
 
         # Score introns sequentially with error handling
@@ -1586,10 +2115,7 @@ def score_introns(
         failed_count = 0
 
         with progress:
-            task = progress.add_task(
-                "[cyan]Scoring introns...",
-                total=len(introns)
-            )
+            task = progress.add_task("[cyan]Scoring introns...", total=len(introns))
 
             for intron in introns:
                 try:
@@ -1623,9 +2149,9 @@ def score_introns(
 def normalize_scores(
     introns: List[Intron],
     config: IntronICConfig,
-    messenger: 'UnifiedMessenger',
-    reporter: IntronICProgressReporter
-) -> Tuple[List[Intron], List[Intron], List[Intron], 'ScoreNormalizer']:
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
+) -> Tuple[List[Intron], List[Intron], List[Intron], "ScoreNormalizer"]:
     """Normalize intron scores using z-score transformation.
 
     Args:
@@ -1660,7 +2186,9 @@ def normalize_scores(
     u12_reference = load_reference_sequences(u12_file, messenger=messenger)
     u2_reference = load_reference_sequences(u2_file, messenger=messenger)
 
-    messenger.log_only(f"Loaded {len(u12_reference)} U12-type and {len(u2_reference)} U2-type reference introns")
+    messenger.log_only(
+        f"Loaded {len(u12_reference)} U12-type and {len(u2_reference)} U2-type reference introns"
+    )
 
     # Score reference introns
     messenger.info("Scoring reference sequences")
@@ -1670,10 +2198,19 @@ def normalize_scores(
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
-        five_coords=(config.scoring.scoring_regions.five_start, config.scoring.scoring_regions.five_end),
-        bp_coords=(config.scoring.scoring_regions.bp_start, config.scoring.scoring_regions.bp_end),
-        three_coords=(config.scoring.scoring_regions.three_start, config.scoring.scoring_regions.three_end),
-        ignore_nc_dnts=config.scoring.ignore_nc_dnts
+        five_coords=(
+            config.scoring.scoring_regions.five_start,
+            config.scoring.scoring_regions.five_end,
+        ),
+        bp_coords=(
+            config.scoring.scoring_regions.bp_start,
+            config.scoring.scoring_regions.bp_end,
+        ),
+        three_coords=(
+            config.scoring.scoring_regions.three_start,
+            config.scoring.scoring_regions.three_end,
+        ),
+        ignore_nc_dnts=config.scoring.ignore_nc_dnts,
     )
 
     # Score reference introns
@@ -1686,27 +2223,31 @@ def normalize_scores(
     messenger.log_only("Fitting normalizer on reference data")
 
     normalizer = ScoreNormalizer()
-    normalizer.fit(reference_introns, dataset_type='reference')
+    normalizer.fit(reference_introns, dataset_type="reference")
 
     # Transform reference introns (needed for classification)
     # Note: transform() takes an iterable and returns an iterator, so we materialize with list()
-    u12_normalized = list(normalizer.transform(u12_scored, dataset_type='reference'))
-    u2_normalized = list(normalizer.transform(u2_scored, dataset_type='reference'))
+    u12_normalized = list(normalizer.transform(u12_scored, dataset_type="reference"))
+    u2_normalized = list(normalizer.transform(u2_scored, dataset_type="reference"))
 
     # Transform experimental introns
-    normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
+    normalized_introns = list(
+        normalizer.transform(introns, dataset_type="experimental")
+    )
 
     messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
-    messenger.log_only(f"Normalized {len(u12_normalized)} U12-type and {len(u2_normalized)} U2-type reference introns")
+    messenger.log_only(
+        f"Normalized {len(u12_normalized)} U12-type and {len(u2_normalized)} U2-type reference introns"
+    )
     return normalized_introns, u12_normalized, u2_normalized, normalizer
 
 
 def _apply_margin_alignment(
     classified_introns: List[Intron],
-    ensemble: 'SVMEnsemble',
+    ensemble: "SVMEnsemble",
     human_margin_stats: dict,
     threshold: float,
-    messenger: 'UnifiedMessenger'
+    messenger: "UnifiedMessenger",
 ) -> List[Intron]:
     """
     Apply margin-space alignment to classified introns (post-processing approach).
@@ -1729,12 +2270,14 @@ def _apply_margin_alignment(
         This is mathematically equivalent to modifying the predictor, but simpler
         to implement as a post-processing step.
     """
+    from dataclasses import replace
+
+    from scipy.special import expit as sigmoid
+
     from intronIC.scoring.margin_alignment import (
         compute_margin_alignment,
-        fold_alignment_into_platt
+        fold_alignment_into_platt,
     )
-    from dataclasses import replace
-    from scipy.special import expit as sigmoid
 
     messenger.log_only("Computing margin alignment parameters...")
 
@@ -1743,15 +2286,18 @@ def _apply_margin_alignment(
     # Alternative: Re-compute margins from features
     # We'll use the second approach for accuracy
 
-    # Extract features from introns
-    features = np.array([
-        [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
-        for i in classified_introns
-    ])
+    # Extract features from introns (require scores to be present)
+    features = np.array(
+        [
+            [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+            for i in classified_introns
+            if i.scores is not None
+        ]
+    )
 
     # Get first model's base pipeline (for margin computation)
     first_model = ensemble.models[0].model
-    if hasattr(first_model, 'calibrated_classifiers_'):
+    if hasattr(first_model, "calibrated_classifiers_"):
         base_pipeline = first_model.calibrated_classifiers_[0].estimator
     else:
         base_pipeline = first_model
@@ -1762,21 +2308,21 @@ def _apply_margin_alignment(
     # Step 2: Compute alignment parameters
     scale, shift, align_stats = compute_margin_alignment(
         target_margins=target_margins,
-        human_median=human_margin_stats['margin_median'],
-        human_iqr=human_margin_stats['margin_iqr'],
-        human_n=human_margin_stats['n_samples']
+        human_median=human_margin_stats["margin_median"],
+        human_iqr=human_margin_stats["margin_iqr"],
+        human_n=human_margin_stats["n_samples"],
     )
 
     # Log diagnostics
     messenger.log_only(align_stats.format_summary())
 
     # Step 3: Check calibration method and apply alignment
-    if hasattr(first_model, 'calibrated_classifiers_'):
+    if hasattr(first_model, "calibrated_classifiers_"):
         # For CalibratedClassifierCV with cv='prefit', there's one calibrated classifier
         calibrator = first_model.calibrated_classifiers_[0].calibrators[0]
 
         # Check if it's Platt (sigmoid) or isotonic calibration
-        if hasattr(calibrator, 'a_'):
+        if hasattr(calibrator, "a_"):
             # Platt/sigmoid calibration - can fold alignment into parameters
             A = calibrator.a_
             B = calibrator.b_
@@ -1789,10 +2335,14 @@ def _apply_margin_alignment(
 
             # Step 5: Re-calibrate probabilities with aligned parameters
             # p_new = sigmoid(A_new * margin + B_new)
-            probs_new = sigmoid(A_new * target_margins + B_new) * 100.0  # Convert to 0-100
+            probs_new = (
+                sigmoid(A_new * target_margins + B_new) * 100.0
+            )  # Convert to 0-100
         else:
             # Isotonic regression - cannot fold alignment, apply transform then re-calibrate
-            messenger.log_only("Model uses isotonic calibration - applying alignment then re-calibrating")
+            messenger.log_only(
+                "Model uses isotonic calibration - applying alignment then re-calibrating"
+            )
 
             # Transform margins
             aligned_margins = scale * target_margins + shift
@@ -1801,27 +2351,41 @@ def _apply_margin_alignment(
             probs_new = calibrator.predict(aligned_margins) * 100.0  # Convert to 0-100
     else:
         # Shouldn't happen, but fallback
-        messenger.warning("Could not extract calibration parameters - skipping alignment")
+        messenger.warning(
+            "Could not extract calibration parameters - skipping alignment"
+        )
         return classified_introns
 
     # Step 6: Update introns with new probabilities
     updated_introns = []
     for intron, new_prob in zip(classified_introns, probs_new):
+        if intron.scores is None or intron.metadata is None:
+            # Skip introns without scores/metadata (shouldn't happen but be defensive)
+            updated_introns.append(intron)
+            continue
         # Update scores object
         new_scores = replace(intron.scores, svm_score=float(new_prob))
         # Reclassify based on new probability
-        new_type_id = 'u12' if new_prob >= threshold else 'u2'
+        new_type_id = "u12" if new_prob >= threshold else "u2"
         new_metadata = replace(intron.metadata, type_id=new_type_id)
         # Update intron
         new_intron = replace(intron, scores=new_scores, metadata=new_metadata)
         updated_introns.append(new_intron)
 
     # Log effect
-    n_u12_before = sum(1 for i in classified_introns if i.metadata.type_id == 'u12')
-    n_u12_after = sum(1 for i in updated_introns if i.metadata.type_id == 'u12')
+    n_u12_before = sum(
+        1
+        for i in classified_introns
+        if i.metadata is not None and i.metadata.type_id == "u12"
+    )
+    n_u12_after = sum(
+        1
+        for i in updated_introns
+        if i.metadata is not None and i.metadata.type_id == "u12"
+    )
     messenger.log_only(
         f"Margin alignment effect: {n_u12_before} → {n_u12_after} U12 predictions "
-        f"({100*n_u12_after/len(updated_introns):.3f}%)"
+        f"({100 * n_u12_after / len(updated_introns):.3f}%)"
     )
 
     return updated_introns
@@ -1832,7 +2396,7 @@ def _apply_prior_adjustment(
     training_prior: float,
     target_prior: float,
     threshold: float,
-    messenger: 'UnifiedMessenger'
+    messenger: "UnifiedMessenger",
 ) -> List[Intron]:
     """
     Apply Bayesian prior adjustment to classification probabilities.
@@ -1856,43 +2420,57 @@ def _apply_prior_adjustment(
         This is independent of margin alignment and can be applied separately or
         in combination.
     """
-    from intronIC.scoring.prior_adjustment import (
-        adjust_probabilities_for_prior,
-        compute_prior_adjustment_diagnostics
-    )
     from dataclasses import replace
 
-    messenger.log_only(f"Adjusting probabilities: training π={training_prior:.2e} → target π={target_prior:.2e}")
+    from intronIC.scoring.prior_adjustment import (
+        adjust_probabilities_for_prior,
+        compute_prior_adjustment_diagnostics,
+    )
+
+    messenger.log_only(
+        f"Adjusting probabilities: training π={training_prior:.2e} → target π={target_prior:.2e}"
+    )
 
     # Step 1: Extract probabilities (convert from 0-100 to 0-1)
-    probs = np.array([i.scores.svm_score / 100.0 for i in classified_introns])
+    # Filter introns that have valid scores
+    probs = np.array(
+        [
+            i.scores.svm_score / 100.0
+            for i in classified_introns
+            if i.scores is not None and i.scores.svm_score is not None
+        ]
+    )
 
     # Step 2: Apply prior adjustment
     probs_adj = adjust_probabilities_for_prior(
-        probabilities=probs,
-        training_prior=training_prior,
-        target_prior=target_prior
+        probabilities=probs, training_prior=training_prior, target_prior=target_prior
     )
 
     # Step 3: Convert back to 0-100 scale
-    probs_adj_scaled = probs_adj * 100.0
+    # Ensure probs_adj is an array (adjust_probabilities_for_prior should return ndarray)
+    probs_adj_array = np.asarray(probs_adj)
+    probs_adj_scaled = probs_adj_array * 100.0
 
     # Step 4: Compute diagnostics
     diag = compute_prior_adjustment_diagnostics(
         probabilities=probs,
-        adjusted_probabilities=probs_adj,
+        adjusted_probabilities=probs_adj_array,
         training_prior=training_prior,
         target_prior=target_prior,
-        threshold=threshold / 100.0  # Convert threshold to 0-1 scale
+        threshold=threshold / 100.0,  # Convert threshold to 0-1 scale
     )
 
     # Step 5: Update introns with adjusted probabilities
     updated_introns = []
     for intron, new_prob in zip(classified_introns, probs_adj_scaled):
+        if intron.scores is None or intron.metadata is None:
+            # Skip introns without scores/metadata
+            updated_introns.append(intron)
+            continue
         # Update scores object
         new_scores = replace(intron.scores, svm_score=float(new_prob))
         # Reclassify based on new probability
-        new_type_id = 'u12' if new_prob >= threshold else 'u2'
+        new_type_id = "u12" if new_prob >= threshold else "u2"
         new_metadata = replace(intron.metadata, type_id=new_type_id)
         # Update intron
         new_intron = replace(intron, scores=new_scores, metadata=new_metadata)
@@ -1901,24 +2479,425 @@ def _apply_prior_adjustment(
     # Log effect
     messenger.log_only(
         f"Prior adjustment effect: {diag['n_u12_before']} → {diag['n_u12_after']} U12 predictions "
-        f"({100*diag['frac_u12_after']:.3f}%)"
+        f"({100 * diag['frac_u12_after']:.3f}%)"
     )
     messenger.log_only(
         f"Mean probability: {diag['mean_prob_before']:.4f} → {diag['mean_prob_after']:.4f}"
     )
-    messenger.log_only(
-        f"Odds ratio: {diag['odds_ratio']:.4e}"
-    )
+    messenger.log_only(f"Odds ratio: {diag['odds_ratio']:.4e}")
 
     return updated_introns
+
+
+def classify_streaming_per_contig(
+    config: IntronICConfig,
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
+) -> Tuple[int, dict]:
+    """True streaming classification - processes one contig at a time.
+
+    This function provides ~90% memory savings compared to standard mode by:
+    1. Processing introns per-contig instead of accumulating all in memory
+    2. Using pre-trained model's frozen scaler (no fitting needed)
+    3. Writing outputs immediately after classification
+    4. Freeing memory after each contig
+
+    Peak memory: O(largest_chromosome) instead of O(all_introns)
+
+    REQUIREMENTS:
+    - Only works with pre-trained models (--pretrained-model required)
+    - Only works in annotation mode (not BED or sequences input)
+
+    Args:
+        config: Pipeline configuration
+        messenger: Unified messenger for console and log output
+        reporter: Progress reporter
+
+    Returns:
+        Tuple of (total_classified, classification_summary_dict)
+
+    Raises:
+        ValueError: If pretrained model not specified
+        ValueError: If not in annotation mode
+    """
+    from collections import Counter
+
+    from intronIC.classification.predictor import classify_introns_batch
+    from intronIC.extraction.intronator import IntronGenerator
+    from intronIC.file_io.annotation_store import StreamingAnnotationStore
+    from intronIC.file_io.indexed_genome import IndexedGenomeReader
+    from intronIC.file_io.parsers import BioGLAnnotationParser
+    from intronIC.file_io.writers import StreamingOutputWriter
+    from intronIC.scoring.scorer import score_and_normalize_batch
+
+    # Validate requirements
+    if config.training.pretrained_model_path is None:
+        raise ValueError(
+            "True streaming mode requires a pre-trained model. "
+            "Use --pretrained-model to specify the model file."
+        )
+
+    if config.input.mode != "annotation":
+        raise ValueError(
+            "True streaming mode currently only supports annotation input mode. "
+            "Use standard mode for BED or sequence inputs."
+        )
+
+    messenger.info("Streaming mode: processing per-contig")
+
+    # Load pre-trained model and extract components
+    messenger.info(
+        f"Loading pretrained model from {config.training.pretrained_model_path}"
+    )
+    model_data = joblib.load(config.training.pretrained_model_path)
+
+    # Handle both old and new model format
+    if isinstance(model_data, dict):
+        ensemble = model_data["ensemble"]
+        saved_normalizer = model_data.get("normalizer", None)
+    else:
+        ensemble = model_data
+        saved_normalizer = None
+
+    messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
+
+    # Extract frozen scaler from normalizer
+    if saved_normalizer is None:
+        raise ValueError(
+            "Model bundle does not contain a normalizer. "
+            "Cannot use true streaming mode without frozen scaler. "
+            "Use standard --streaming mode instead."
+        )
+
+    scaler = saved_normalizer.get_frozen_scaler()
+    messenger.log_only("Extracted frozen scaler from model normalizer")
+
+    # Load PWM matrices
+    messenger.info("Loading PWM matrices")
+    pwm_sets = load_pwms_with_fallback(config, messenger)
+
+    # Configure scorer
+    five_coords = (
+        config.scoring.scoring_regions.five_start,
+        config.scoring.scoring_regions.five_end,
+    )
+    bp_coords = (
+        config.scoring.scoring_regions.bp_start,
+        config.scoring.scoring_regions.bp_end,
+    )
+    three_coords = (
+        config.scoring.scoring_regions.three_start,
+        config.scoring.scoring_regions.three_end,
+    )
+
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=five_coords,
+        bp_coords=bp_coords,
+        three_coords=three_coords,
+        ignore_nc_dnts=config.scoring.ignore_nc_dnts,
+    )
+
+    # =========================================================================
+    # MEMORY OPTIMIZATION 1: Parse annotations into SQLite (single pass)
+    # This avoids loading all annotations into memory at once
+    # =========================================================================
+    messenger.info(f"Indexing annotation: {config.input.annotation}")
+    assert config.input.annotation is not None, "Annotation path required"
+
+    annotation_db_path = (
+        config.output.output_dir / f".{config.output.base_filename}.annotations.db"
+    )
+    if annotation_db_path.exists():
+        annotation_db_path.unlink()  # Clean up from previous run
+
+    parser = BioGLAnnotationParser(clean_names=config.output.clean_names)
+    annotation_store = StreamingAnnotationStore.create_from_file(
+        annotation_path=config.input.annotation,
+        db_path=annotation_db_path,
+        parser=parser,
+    )
+
+    contigs_with_counts = annotation_store.get_contigs_with_counts()
+    total_annotations = annotation_store.get_total_annotations()
+    messenger.log_only(
+        f"Indexed {total_annotations:,} annotations across {len(contigs_with_counts)} contigs"
+    )
+
+    # =========================================================================
+    # MEMORY OPTIMIZATION 2: Indexed genome access
+    # Use pyfastx for efficient random access without loading entire genome
+    # =========================================================================
+    messenger.info(f"Using indexed genome access: {config.input.genome}")
+    genome_reader = IndexedGenomeReader(str(config.input.genome), use_cache=False)
+
+    # Initialize output writer
+    output_writer = StreamingOutputWriter(
+        output_dir=config.output.output_dir,
+        base_name=config.output.base_filename,
+        species_name=config.output.species_name,
+        simple_name=config.output.uninformative_naming,
+        no_abbreviate=config.output.no_abbreviate,
+        write_bed=True,
+        write_sequences=True,
+        write_scores=True,
+        no_headers=config.output.no_headers,
+    )
+    output_writer.threshold = config.scoring.threshold
+
+    # Statistics tracking
+    total_genes = 0
+    total_introns_generated = 0
+    total_scored = 0
+    total_classified = 0
+    boundaries_u12: Counter = Counter()
+    boundaries_u2: Counter = Counter()
+
+    # Create IntronFilter for per-contig filtering
+    intron_filter = IntronFilter(
+        min_length=config.extraction.min_intron_len,
+        bp_matrix_length=7,
+        scoring_regions=["five", "three"],
+        allow_noncanonical=not config.scoring.exclude_noncanonical,
+        allow_overlap=not config.extraction.no_intron_overlap,
+        longest_only=True,
+        include_duplicates=config.extraction.include_duplicates,
+    )
+
+    # Process each contig, tracking progress by annotations for accurate ETA
+    # (annotations are a better proxy for work than contigs, since chr1 has
+    # thousands of annotations while small scaffolds may have only a few)
+    progress = reporter.create_progress()
+
+    with output_writer, progress:
+        task = progress.add_task(
+            "[cyan]Processing annotations...", total=total_annotations
+        )
+
+        for contig_idx, (contig, contig_annotation_count) in enumerate(
+            contigs_with_counts, 1
+        ):
+            # =========================================================================
+            # MEMORY OPTIMIZATION 3: Load only current contig's data
+            # =========================================================================
+
+            # Get annotations for this contig from SQLite
+            contig_annotations = annotation_store.get_annotations_for_contig(contig)
+
+            # Skip empty contigs or region-only contigs
+            if not contig_annotations or all(
+                a.feat_type == "region" for a in contig_annotations
+            ):
+                progress.update(task, advance=contig_annotation_count)
+                continue
+
+            # Build gene hierarchy for this contig
+            builder = AnnotationHierarchyBuilder(
+                child_features=["cds", "exon"],
+                clean_names=config.output.clean_names,
+                messenger=messenger,
+            )
+
+            try:
+                contig_genes = builder.build_from_annotations(contig_annotations)
+            except ValueError as e:
+                if "Could not establish parent-child relationships" in str(e):
+                    progress.update(task, advance=contig_annotation_count)
+                    continue
+                raise
+
+            # Free annotation memory for this contig (no longer needed)
+            del contig_annotations
+
+            if not contig_genes:
+                progress.update(task, advance=contig_annotation_count)
+                continue
+
+            total_genes += len(contig_genes)
+
+            # Generate introns for this contig
+            generator = IntronGenerator(debug=config.output.debug, messenger=messenger)
+            contig_introns = list(
+                generator.generate_from_genes(contig_genes, builder.feature_index)
+            )
+
+            # Filter by feature type
+            if config.extraction.feature_type == "cds":
+                contig_introns = [
+                    i
+                    for i in contig_introns
+                    if i.metadata is not None and i.metadata.defined_by == "cds"
+                ]
+            elif config.extraction.feature_type == "exon":
+                contig_introns = [
+                    i
+                    for i in contig_introns
+                    if i.metadata is not None and i.metadata.defined_by == "exon"
+                ]
+
+            total_introns_generated += len(contig_introns)
+
+            if not contig_introns:
+                progress.update(task, advance=contig_annotation_count)
+                del contig_genes, builder
+                gc.collect()
+                continue
+
+            # Create sequence extractor using indexed genome reader
+            sequence_extractor = SequenceExtractor.from_indexed_reader(
+                str(config.input.genome), genome_reader
+            )
+
+            # Extract sequences
+            contig_with_seqs = list(
+                sequence_extractor.extract_sequences_with_deduplication(
+                    contig_introns, flank_size=config.extraction.flank_len
+                )
+            )
+
+            # Apply U12 corrections if enabled
+            if config.extraction.u12_boundary_correction:
+                from intronIC.extraction.boundary_correction import (
+                    correct_intron_if_needed,
+                )
+
+                corrected_contig_introns = []
+                for intron in contig_with_seqs:
+                    corrected_intron, was_corrected = correct_intron_if_needed(
+                        intron, correction_enabled=True, use_strict_motif=True
+                    )
+                    if was_corrected:
+                        corrected_with_seq = list(
+                            sequence_extractor.extract_sequences(
+                                [corrected_intron],
+                                flank_size=config.extraction.flank_len,
+                            )
+                        )[0]
+                        corrected_contig_introns.append(corrected_with_seq)
+                    else:
+                        corrected_contig_introns.append(corrected_intron)
+                contig_with_seqs = corrected_contig_introns
+
+            # Filter introns (duplicates, short, noncanonical, etc.)
+            filtered_introns = intron_filter.filter_introns(contig_with_seqs)
+
+            # Filter to only scorable introns (have sequences and aren't omitted)
+            scorable = [
+                i
+                for i in filtered_introns
+                if i.has_sequences
+                and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
+            ]
+
+            if not scorable:
+                progress.update(task, advance=contig_annotation_count)
+                del (
+                    contig_genes,
+                    builder,
+                    contig_introns,
+                    contig_with_seqs,
+                    filtered_introns,
+                )
+                gc.collect()
+                continue
+
+            # Score and normalize using frozen scaler
+            scored_introns = score_and_normalize_batch(scorable, scorer, scaler)
+            total_scored += len(scored_introns)
+
+            # Classify
+            classified_introns = classify_introns_batch(
+                scored_introns,
+                ensemble,
+                threshold=config.scoring.threshold,
+            )
+            total_classified += len(classified_introns)
+
+            # Write outputs and track statistics
+            for intron in classified_introns:
+                output_writer.write_intron(intron)
+
+                # Track boundary statistics
+                if (
+                    intron.metadata
+                    and intron.sequences
+                    and intron.sequences.terminal_dinucleotides
+                ):
+                    dnts = intron.sequences.terminal_dinucleotides
+                    if (
+                        intron.scores
+                        and intron.scores.svm_score is not None
+                        and intron.scores.svm_score >= config.scoring.threshold
+                    ):
+                        boundaries_u12[dnts] += 1
+                    else:
+                        boundaries_u2[dnts] += 1
+
+            # Free contig memory
+            del contig_genes, builder, contig_introns, contig_with_seqs
+            del filtered_introns, scorable, scored_introns, classified_introns
+            gc.collect()
+
+            progress.update(task, advance=contig_annotation_count)
+
+    # Free global resources and cleanup temp files
+    annotation_store.cleanup()  # Delete SQLite annotation database
+    del genome_reader
+    gc.collect()
+
+    # Build summary
+    summary = output_writer.get_summary()
+    summary.update(
+        {
+            "total_genes": total_genes,
+            "total_introns_generated": total_introns_generated,
+            "total_scored": total_scored,
+            "pretrained": True,
+            "model_path": str(config.training.pretrained_model_path),
+            "streaming_mode": "per_contig",
+            "u12_boundaries": dict(boundaries_u12.most_common(20)),
+            "u2_boundaries": dict(boundaries_u2.most_common(20)),
+        }
+    )
+
+    messenger.info(
+        f"Streaming classification complete: {total_classified:,} introns classified"
+    )
+    messenger.log_only(
+        f"Total genes: {total_genes:,}, introns generated: {total_introns_generated:,}"
+    )
+
+    # Display classification summary
+    messenger.print_classification_results(
+        total=total_classified,
+        u12_count=output_writer.high_confidence_u12,
+        u2_count=total_classified - output_writer.high_confidence_u12,
+        atac_count=boundaries_u12.get("AT-AC", 0),
+        threshold=config.scoring.threshold,
+    )
+
+    # Display boundary statistics
+    if boundaries_u12:
+        sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))
+        messenger.print_dinucleotide_boundaries(
+            intron_type="U12-type", boundaries=sorted_boundaries, top_n=20
+        )
+
+    if boundaries_u2:
+        sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))
+        messenger.print_dinucleotide_boundaries(
+            intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
+        )
+
+    return total_classified, summary
 
 
 def classify_with_pretrained_model(
     introns: List[Intron],
     model_path: Path,
     config: IntronICConfig,
-    messenger: 'UnifiedMessenger',
-    reporter: IntronICProgressReporter
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
 ) -> Tuple[List[Intron], dict]:
     """Classify introns using a pretrained model with cross-species domain adaptation.
 
@@ -1945,6 +2924,15 @@ def classify_with_pretrained_model(
     """
     import joblib
 
+    # Handle empty introns list
+    if not introns:
+        messenger.warning("No introns to classify")
+        return [], {
+            "pretrained": True,
+            "model_path": str(model_path),
+            "n_classified": 0,
+        }
+
     messenger.info(f"Loading pretrained model from {model_path}")
 
     # Load model bundle
@@ -1956,33 +2944,35 @@ def classify_with_pretrained_model(
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
         # New format: {'ensemble': ..., 'normalizer': ..., 'threshold': ...}
-        ensemble = model_data['ensemble']
-        saved_normalizer = model_data.get('normalizer', None)
-        saved_threshold = model_data.get('threshold', config.scoring.threshold)
+        ensemble = model_data["ensemble"]
+        saved_normalizer = model_data.get("normalizer", None)
+        _saved_threshold = model_data.get("threshold", config.scoring.threshold)  # noqa: F841
         messenger.log_only("Loaded model bundle (dict format)")
     else:
         # Old format: SVMEnsemble directly (backward compatibility)
         ensemble = model_data
         saved_normalizer = None
-        saved_threshold = config.scoring.threshold
-        messenger.log_only("Loaded model ensemble (legacy format - backward compatibility)")
+        _saved_threshold = config.scoring.threshold  # Reserved for future use
+        messenger.log_only(
+            "Loaded model ensemble (legacy format - backward compatibility)"
+        )
 
     messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
     messenger.log_only(f"Using threshold: {config.scoring.threshold}")
 
     # Determine normalizer mode
     normalizer_mode = config.scoring.normalizer_mode
-    if normalizer_mode == 'auto':
+    if normalizer_mode == "auto":
         # Use human scaler if available, otherwise adaptive
         if saved_normalizer is not None:
-            normalizer_mode = 'human'
+            normalizer_mode = "human"
             messenger.log_only("Auto mode: Using saved human scaler (recommended)")
         else:
-            normalizer_mode = 'adaptive'
+            normalizer_mode = "adaptive"
             messenger.log_only("Auto mode: Falling back to adaptive (no saved scaler)")
 
     # Apply normalizer strategy
-    if normalizer_mode == 'human':
+    if normalizer_mode == "human":
         if saved_normalizer is None:
             raise ValueError(
                 "Normalizer mode 'human' requested but model has no saved scaler. "
@@ -1994,34 +2984,45 @@ def classify_with_pretrained_model(
     else:  # adaptive
         # Check if user wants to load a saved normalizer
         if config.scoring.load_normalizer is not None:
-            messenger.info(f"Loading saved normalizer from {config.scoring.load_normalizer}")
+            messenger.info(
+                f"Loading saved normalizer from {config.scoring.load_normalizer}"
+            )
             normalizer = joblib.load(config.scoring.load_normalizer)
             messenger.log_only("Using saved normalizer for reproducible normalization")
         else:
             # Fit normalizer on experimental data (feature re-scaling)
-            messenger.info("Fitting normalizer on experimental data (domain adaptation)")
+            messenger.info(
+                "Fitting normalizer on experimental data (domain adaptation)"
+            )
             messenger.log_only("Re-normalizing features to target species distribution")
-            messenger.log_only(f"Fitting normalizer on {len(introns)} experimental introns")
+            messenger.log_only(
+                f"Fitting normalizer on {len(introns)} experimental introns"
+            )
             normalizer = ScoreNormalizer()
-            normalizer.fit(introns, dataset_type='unlabeled')
+            normalizer.fit(introns, dataset_type="unlabeled")
 
             # Save normalizer if requested
             if config.scoring.save_normalizer:
-                normalizer_path = config.output.get_output_path('.normalizer.pkl')
+                normalizer_path = config.output.get_output_path(".normalizer.pkl")
                 messenger.info(f"Saving fitted normalizer to {normalizer_path}")
                 joblib.dump(normalizer, normalizer_path, compress=3)
-                messenger.log_only("Future runs can reuse this normalizer with --load-normalizer")
+                messenger.log_only(
+                    "Future runs can reuse this normalizer with --load-normalizer"
+                )
 
-    normalized_introns = list(normalizer.transform(introns, dataset_type='experimental'))
+    normalized_introns = list(
+        normalizer.transform(introns, dataset_type="experimental")
+    )
     messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
 
     # Classify using loaded ensemble
     messenger.info("Classifying with pretrained model")
 
     from intronIC.classification.predictor import SVMPredictor
+
     predictor = SVMPredictor(
         threshold=config.scoring.threshold,  # Use config threshold (can override saved)
-        n_jobs=config.performance.processes
+        n_jobs=config.performance.processes,
     )
 
     classified_introns = list(predictor.predict(ensemble, normalized_introns))
@@ -2029,37 +3030,40 @@ def classify_with_pretrained_model(
 
     # Apply prior adjustment if species-specific prior was provided
     if config.scoring.species_prior is not None:
-        training_prior = model_data.get('training_prior')
+        training_prior = model_data.get("training_prior")
         if training_prior is not None:
-            messenger.info(f"Applying prior adjustment for target species (π={config.scoring.species_prior:.2e})")
+            messenger.info(
+                f"Applying prior adjustment for target species (π={config.scoring.species_prior:.2e})"
+            )
             classified_introns = _apply_prior_adjustment(
                 classified_introns=classified_introns,
                 training_prior=training_prior,
                 target_prior=config.scoring.species_prior,
                 threshold=config.scoring.threshold,
-                messenger=messenger
+                messenger=messenger,
             )
         else:
             messenger.warning(
                 "Cannot apply prior adjustment: model lacks training prior information"
             )
-            messenger.warning("Retrain model with current version to enable this feature")
+            messenger.warning(
+                "Retrain model with current version to enable this feature"
+            )
 
     # Create metrics (limited since we skipped training)
     metrics = {
-        'optimized_C': 'N/A (pretrained)',
-        'cv_score': 'N/A (pretrained)',
-        'n_models': len(ensemble.models),
-        'pretrained': True,
-        'model_path': str(model_path)
+        "optimized_C": "N/A (pretrained)",
+        "cv_score": "N/A (pretrained)",
+        "n_models": len(ensemble.models),
+        "pretrained": True,
+        "model_path": str(model_path),
     }
 
     # Generate metadata for pretrained model usage
-    run_metadata_path = config.output.get_output_path('.run_metadata.json')
-    messenger.log_only(f"Recording pretrained model usage")
+    run_metadata_path = config.output.get_output_path(".run_metadata.json")
+    messenger.log_only("Recording pretrained model usage")
     run_metadata = generate_pretrained_metadata(
-        model_path=model_path,
-        threshold=config.scoring.threshold
+        model_path=model_path, threshold=config.scoring.threshold
     )
     write_metadata(run_metadata, run_metadata_path)
     messenger.log_only(f"Run metadata saved to {run_metadata_path}")
@@ -2071,10 +3075,10 @@ def classify_introns(
     introns: List[Intron],
     u12_reference: List[Intron],
     u2_reference: List[Intron],
-    normalizer: 'ScoreNormalizer',
+    normalizer: "ScoreNormalizer",
     config: IntronICConfig,
-    messenger: 'UnifiedMessenger',
-    reporter: IntronICProgressReporter
+    messenger: "UnifiedMessenger",
+    reporter: IntronICProgressReporter,
 ) -> Tuple[List[Intron], dict]:
     """Classify introns as U2 or U12 type.
 
@@ -2112,109 +3116,133 @@ def classify_introns(
     # Load unified configuration file
     # Auto-discovers from standard paths if not explicitly specified
     # Priority: --config arg > ./.intronIC.yaml > ~/.config/intronIC/config.yaml > built-in
-    from intronIC.classification.config_loader import load_config, find_config
+    from intronIC.utils.config_loader import find_config, load_config
 
     try:
         # Load config (auto-discovers if config_path is None)
-        yaml_config = load_config(config.training.config_path)
+        config_path_str = (
+            str(config.training.config_path) if config.training.config_path else None
+        )
+        yaml_config = load_config(config_path_str)
 
         # Log which config file was loaded
         if yaml_config:
-            config_path = find_config(config.training.config_path)
+            config_path = find_config(config_path_str)
             if config_path:
                 messenger.log_only(f"Loaded configuration from: {config_path}")
 
             # Extract sections from unified config
-            optimizer_cfg = yaml_config.get('optimizer', {})
-            training_cfg = yaml_config.get('training', {})
-            ensemble_cfg = training_cfg.get('ensemble', {})
-            param_grid_override = yaml_config.get('param_grid', {})
+            optimizer_cfg = yaml_config.get("optimizer", {})
+            training_cfg = yaml_config.get("training", {})
+            ensemble_cfg = training_cfg.get("ensemble", {})
+            param_grid_override = yaml_config.get("param_grid", {})
 
             # Extract optimizer settings
-            optimizer_n_rounds = optimizer_cfg.get('n_rounds', 5)
-            optimizer_cv_folds = optimizer_cfg.get('cv_folds', 7)
-            optimizer_cv_processes = optimizer_cfg.get('n_jobs', -1)
-            optimizer_max_iter = optimizer_cfg.get('max_iter', 60000)
-            optimizer_n_points_initial = optimizer_cfg.get('n_points_initial', 13)
+            optimizer_n_rounds = optimizer_cfg.get("n_rounds", 5)
+            optimizer_cv_folds = optimizer_cfg.get("cv_folds", 7)
+            optimizer_cv_processes = optimizer_cfg.get("n_jobs", -1)
+            optimizer_max_iter = optimizer_cfg.get("max_iter", 60000)
+            optimizer_n_points_initial = optimizer_cfg.get("n_points_initial", 13)
 
             # Extract new robustness parameters
-            scoring_metric = optimizer_cfg.get('scoring_metric', 'balanced_accuracy')
-            penalty_options = optimizer_cfg.get('penalty_options', ['l2'])
-            loss_options = optimizer_cfg.get('loss_options', ['squared_hinge'])
-            class_weight_multipliers = optimizer_cfg.get('class_weight_multipliers', [1.0])
-            use_multiplier_tiebreaker = optimizer_cfg.get('use_multiplier_tiebreaker', True)
+            scoring_metric = optimizer_cfg.get("scoring_metric", "balanced_accuracy")
+            penalty_options = optimizer_cfg.get("penalty_options", ["l2"])
+            loss_options = optimizer_cfg.get("loss_options", ["squared_hinge"])
+            class_weight_multipliers = optimizer_cfg.get(
+                "class_weight_multipliers", [1.0]
+            )
+            use_multiplier_tiebreaker = optimizer_cfg.get(
+                "use_multiplier_tiebreaker", True
+            )
 
             # Extract feature transformation settings
-            feature_transform_cfg = optimizer_cfg.get('feature_transform', {})
-            features_list = feature_transform_cfg.get('features', None)
+            feature_transform_cfg = optimizer_cfg.get("feature_transform", {})
+            features_list = feature_transform_cfg.get("features", None)
 
             # Extract gamma scaling options
-            gamma_imbalance_options = optimizer_cfg.get('gamma_imbalance_options', None)
+            gamma_imbalance_options = optimizer_cfg.get("gamma_imbalance_options", None)
 
             # Extract C bounds (if specified)
-            c_bounds = optimizer_cfg.get('c_bounds', {})
-            eff_C_pos_range = tuple(c_bounds.get('eff_C_pos_range', [1e-3, 1e3]))
-            eff_C_neg_max = c_bounds.get('eff_C_neg_max', None)
+            c_bounds = optimizer_cfg.get("c_bounds", {})
+            eff_C_pos_range = tuple(c_bounds.get("eff_C_pos_range", [1e-3, 1e3]))
+            eff_C_neg_max = c_bounds.get("eff_C_neg_max", None)
 
             # Extract ensemble/training settings
-            yaml_n_models = ensemble_cfg.get('n_models')
-            yaml_subsample_u2 = ensemble_cfg.get('subsample_u2')
-            yaml_subsample_ratio = ensemble_cfg.get('subsample_ratio')
-            yaml_training_max_iter = ensemble_cfg.get('max_iter')
-            yaml_training_random_state = ensemble_cfg.get('random_state')
+            yaml_n_models = ensemble_cfg.get("n_models")
+            yaml_subsample_u2 = ensemble_cfg.get("subsample_u2")
+            yaml_subsample_ratio = ensemble_cfg.get("subsample_ratio")
+            yaml_training_max_iter = ensemble_cfg.get("max_iter")
+            yaml_training_random_state = ensemble_cfg.get("random_state")
 
             # Extract fold-averaged params setting
-            yaml_use_fold_averaged = training_cfg.get('use_fold_averaged_params')
+            yaml_use_fold_averaged = training_cfg.get("use_fold_averaged_params")
 
             # Update config if ensemble settings provided
             if yaml_n_models is not None:
                 config = replace(
-                    config,
-                    training=replace(config.training, n_models=yaml_n_models)
+                    config, training=replace(config.training, n_models=yaml_n_models)
                 )
                 messenger.log_only(f"  Ensemble models: {yaml_n_models} (from config)")
             if yaml_subsample_u2 is not None:
                 messenger.log_only(f"  Subsample U2: {yaml_subsample_u2} (from config)")
             if yaml_subsample_ratio is not None:
-                messenger.log_only(f"  Subsample ratio: {yaml_subsample_ratio} (from config)")
+                messenger.log_only(
+                    f"  Subsample ratio: {yaml_subsample_ratio} (from config)"
+                )
             if yaml_training_max_iter is not None:
-                messenger.log_only(f"  Training max_iter: {yaml_training_max_iter} (from config)")
+                messenger.log_only(
+                    f"  Training max_iter: {yaml_training_max_iter} (from config)"
+                )
             if yaml_training_random_state is not None:
-                messenger.log_only(f"  Training random_state: {yaml_training_random_state} (from config)")
+                messenger.log_only(
+                    f"  Training random_state: {yaml_training_random_state} (from config)"
+                )
 
             # Log optimizer settings
             if optimizer_cfg:
-                messenger.log_only(f"Loaded optimizer configuration:")
+                messenger.log_only("Loaded optimizer configuration:")
                 messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
-                messenger.log_only(f"  Initial grid points: {optimizer_n_points_initial}")
+                messenger.log_only(
+                    f"  Initial grid points: {optimizer_n_points_initial}"
+                )
                 messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
                 messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
                 messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
                 messenger.log_only(f"  Scoring metric: {scoring_metric}")
                 messenger.log_only(f"  Penalty options: {penalty_options}")
                 messenger.log_only(f"  Loss options: {loss_options}")
-                messenger.log_only(f"  Class weight multipliers: {class_weight_multipliers}")
+                messenger.log_only(
+                    f"  Class weight multipliers: {class_weight_multipliers}"
+                )
                 if features_list:
                     messenger.log_only(f"  Feature transform: {features_list}")
                 else:
-                    messenger.log_only(f"  Feature transform: default (7D)")
+                    messenger.log_only("  Feature transform: default (7D)")
                 if gamma_imbalance_options:
-                    messenger.log_only(f"  Gamma imbalance options: {gamma_imbalance_options}")
+                    messenger.log_only(
+                        f"  Gamma imbalance options: {gamma_imbalance_options}"
+                    )
                 if param_grid_override:
-                    messenger.log_only(f"  Parameter grid: {len(param_grid_override)} hyperparameter sets")
+                    messenger.log_only(
+                        f"  Parameter grid: {len(param_grid_override)} hyperparameter sets"
+                    )
                 if c_bounds:
-                    messenger.log_only(f"  C bounds: eff_C_pos_range={eff_C_pos_range}, eff_C_neg_max={eff_C_neg_max}")
+                    messenger.log_only(
+                        f"  C bounds: eff_C_pos_range={eff_C_pos_range}, eff_C_neg_max={eff_C_neg_max}"
+                    )
         else:
             # No config found - use CLI defaults
             messenger.log_only("No configuration file found - using CLI defaults")
             optimizer_n_rounds = config.training.n_optimization_rounds
             optimizer_cv_folds = config.training.n_cv_folds
-            optimizer_cv_processes = config.performance.cv_processes or config.performance.processes
+            optimizer_cv_processes = (
+                config.performance.cv_processes or config.performance.processes
+            )
             optimizer_max_iter = config.training.max_iter
             optimizer_n_points_initial = 13
-            scoring_metric = 'balanced_accuracy'
-            penalty_options = ['l2']
-            loss_options = ['squared_hinge']
+            scoring_metric = "balanced_accuracy"
+            penalty_options = ["l2"]
+            loss_options = ["squared_hinge"]
             class_weight_multipliers = [1.0]
             use_multiplier_tiebreaker = True
             features_list = None
@@ -2232,19 +3260,21 @@ def classify_introns(
     except FileNotFoundError as e:
         messenger.error(f"Config file not found: {e}")
         messenger.error("Use --config to specify a valid config file path")
-        return 1
+        raise SystemExit(1)
     except Exception as e:
         messenger.warning(f"Failed to load config: {e}")
         messenger.warning("Continuing with CLI defaults...")
         # Use CLI defaults if config loading fails
         optimizer_n_rounds = config.training.n_optimization_rounds
         optimizer_cv_folds = config.training.n_cv_folds
-        optimizer_cv_processes = config.performance.cv_processes or config.performance.processes
+        optimizer_cv_processes = (
+            config.performance.cv_processes or config.performance.processes
+        )
         optimizer_max_iter = config.training.max_iter
         optimizer_n_points_initial = 13
-        scoring_metric = 'balanced_accuracy'
-        penalty_options = ['l2']
-        loss_options = ['squared_hinge']
+        scoring_metric = "balanced_accuracy"
+        penalty_options = ["l2"]
+        loss_options = ["squared_hinge"]
         class_weight_multipliers = [1.0]
         use_multiplier_tiebreaker = True
         features_list = None
@@ -2274,9 +3304,19 @@ def classify_introns(
 
     # Use YAML training settings if available, otherwise use CLI defaults
     ensemble_subsample_u2 = yaml_subsample_u2 if yaml_subsample_u2 is not None else True
-    ensemble_subsample_ratio = yaml_subsample_ratio if yaml_subsample_ratio is not None else 0.8
-    ensemble_max_iter = yaml_training_max_iter if yaml_training_max_iter is not None else optimizer_max_iter
-    ensemble_random_state = yaml_training_random_state if yaml_training_random_state is not None else config.training.seed
+    ensemble_subsample_ratio = (
+        yaml_subsample_ratio if yaml_subsample_ratio is not None else 0.8
+    )
+    ensemble_max_iter = (
+        yaml_training_max_iter
+        if yaml_training_max_iter is not None
+        else optimizer_max_iter
+    )
+    ensemble_random_state = (
+        yaml_training_random_state
+        if yaml_training_random_state is not None
+        else config.training.seed
+    )
 
     # Get use_fold_averaged_params: CLI arg takes precedence over config
     # Priority: CLI arg (if explicitly set) > config value > default (False)
@@ -2317,63 +3357,68 @@ def classify_introns(
         n_points_initial=optimizer_n_points_initial,
         eff_C_pos_range=eff_C_pos_range,
         eff_C_neg_max=eff_C_neg_max,
-        use_fold_averaged_params=use_fold_averaged_params
+        use_fold_averaged_params=use_fold_averaged_params,
     )
 
     # Run complete classification pipeline (optimize + train + classify)
     messenger.log_only(f"Running classification on {len(introns)} experimental introns")
-    messenger.log_only(f"Reference data: {len(u12_reference)} U12-type, {len(u2_reference)} U2-type")
+    messenger.log_only(
+        f"Reference data: {len(u12_reference)} U12-type, {len(u2_reference)} U2-type"
+    )
 
     result = classifier.classify(
-        u12_reference=u12_reference,
-        u2_reference=u2_reference,
-        experimental=introns
+        u12_reference=u12_reference, u2_reference=u2_reference, experimental=introns
     )
 
     # Extract metrics from result
     metrics = {
-        'optimized_C': result.parameters.C,
-        'cv_score': result.parameters.cv_score,
-        'n_models': len(result.ensemble.models)
+        "optimized_C": result.parameters.C,
+        "cv_score": result.parameters.cv_score,
+        "n_models": len(result.ensemble.models),
     }
 
     # Add evaluation metrics if nested CV or split eval was performed
     if result.eval_result is not None:
         # Check if it's NestedCVResult (has mean_f1) or SplitEvalResult (has f1_score)
-        if hasattr(result.eval_result, 'mean_f1'):
+        if hasattr(result.eval_result, "mean_f1"):
             # Nested CV result
-            metrics['mean_f1'] = result.eval_result.mean_f1
-            metrics['std_f1'] = result.eval_result.std_f1
-            metrics['mean_pr_auc'] = result.eval_result.mean_pr_auc
-            metrics['std_pr_auc'] = result.eval_result.std_pr_auc
-            metrics['n_cv_folds'] = result.eval_result.n_folds
-        elif hasattr(result.eval_result, 'f1_score'):
+            metrics["mean_f1"] = result.eval_result.mean_f1
+            metrics["std_f1"] = result.eval_result.std_f1
+            metrics["mean_pr_auc"] = result.eval_result.mean_pr_auc
+            metrics["std_pr_auc"] = result.eval_result.std_pr_auc
+            metrics["n_cv_folds"] = result.eval_result.n_folds
+        elif hasattr(result.eval_result, "f1_score"):
             # Split evaluation result
-            metrics['f1'] = result.eval_result.f1_score
-            metrics['pr_auc'] = result.eval_result.pr_auc
+            metrics["f1"] = result.eval_result.f1_score
+            metrics["pr_auc"] = result.eval_result.pr_auc
 
-    messenger.log_only(f"Classification complete")
+    messenger.log_only("Classification complete")
     messenger.log_only(f"  Optimized C: {metrics['optimized_C']:.6e}")
     messenger.log_only(f"  Models trained: {metrics['n_models']}")
 
     # Log evaluation metrics if available
-    if 'mean_f1' in metrics:
+    if "mean_f1" in metrics:
         messenger.log_only(f"  Nested CV results ({metrics['n_cv_folds']} folds):")
-        messenger.log_only(f"    Mean F1: {metrics['mean_f1']:.4f} ± {metrics['std_f1']:.4f}")
-        messenger.log_only(f"    Mean PR-AUC: {metrics['mean_pr_auc']:.4f} ± {metrics['std_pr_auc']:.4f}")
+        messenger.log_only(
+            f"    Mean F1: {metrics['mean_f1']:.4f} ± {metrics['std_f1']:.4f}"
+        )
+        messenger.log_only(
+            f"    Mean PR-AUC: {metrics['mean_pr_auc']:.4f} ± {metrics['std_pr_auc']:.4f}"
+        )
 
         # Add per-fold results table to log
-        if hasattr(result.eval_result, 'fold_results'):
+        eval_result = result.eval_result
+        if eval_result is not None and hasattr(eval_result, "fold_results"):
             messenger.print_nested_cv_results(
-                n_folds=result.eval_result.n_folds,
-                mean_f1=result.eval_result.mean_f1,
-                std_f1=result.eval_result.std_f1,
-                mean_pr_auc=result.eval_result.mean_pr_auc,
-                std_pr_auc=result.eval_result.std_pr_auc,
-                fold_results=result.eval_result.fold_results
+                n_folds=eval_result.n_folds,
+                mean_f1=eval_result.mean_f1,
+                std_f1=eval_result.std_f1,
+                mean_pr_auc=eval_result.mean_pr_auc,
+                std_pr_auc=eval_result.std_pr_auc,
+                fold_results=eval_result.fold_results,
             )
-    elif 'f1' in metrics:
-        messenger.log_only(f"  Test set evaluation:")
+    elif "f1" in metrics:
+        messenger.log_only("  Test set evaluation:")
         messenger.log_only(f"    F1: {metrics['f1']:.4f}")
         messenger.log_only(f"    PR-AUC: {metrics['pr_auc']:.4f}")
 
@@ -2384,19 +3429,27 @@ def classify_introns(
             from intronIC.visualization.plots import plot_training_results
 
             # Extract normalized z-scores from reference introns
-            u2_scores = np.array([
-                [i.scores.five_z_score, i.scores.bp_z_score]
-                for i in u2_reference
-                if i.scores and i.scores.five_z_score is not None and i.scores.bp_z_score is not None
-            ])
-            u12_scores = np.array([
-                [i.scores.five_z_score, i.scores.bp_z_score]
-                for i in u12_reference
-                if i.scores and i.scores.five_z_score is not None and i.scores.bp_z_score is not None
-            ])
+            u2_scores = np.array(
+                [
+                    [i.scores.five_z_score, i.scores.bp_z_score]
+                    for i in u2_reference
+                    if i.scores
+                    and i.scores.five_z_score is not None
+                    and i.scores.bp_z_score is not None
+                ]
+            )
+            u12_scores = np.array(
+                [
+                    [i.scores.five_z_score, i.scores.bp_z_score]
+                    for i in u12_reference
+                    if i.scores
+                    and i.scores.five_z_score is not None
+                    and i.scores.bp_z_score is not None
+                ]
+            )
 
             # Get PR curves and AUC based on evaluation type
-            if hasattr(result.eval_result, 'mean_f1'):
+            if hasattr(result.eval_result, "mean_f1"):
                 # Nested CV - multiple curves
                 pr_curves = result.eval_result.pr_curves
                 pr_auc = result.eval_result.mean_pr_auc
@@ -2412,7 +3465,7 @@ def classify_introns(
                 pr_auc=pr_auc,
                 output_dir=config.output.output_dir,
                 species_name=config.output.base_filename,
-                fig_dpi=300
+                fig_dpi=300,
             )
             messenger.log_only("Successfully generated training reference plots")
         except Exception as plot_error:
@@ -2423,7 +3476,7 @@ def classify_introns(
     log_ensemble_coefficients(result.ensemble, messenger)
 
     # Save trained model with human-trained normalizer for cross-species classification
-    model_path = config.output.get_output_path('.model.pkl')
+    model_path = config.output.get_output_path(".model.pkl")
     messenger.log_only(f"Saving trained model to {model_path}")
 
     # Compute human U2 margin statistics for margin alignment in adaptive mode
@@ -2433,10 +3486,13 @@ def classify_introns(
     first_model = first_model_obj.model  # This is the sklearn Pipeline
 
     # Extract features from U2 reference introns
-    u2_features = np.array([
-        [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
-        for i in u2_reference
-    ])
+    u2_features = np.array(
+        [
+            [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+            for i in u2_reference
+            if i.scores is not None
+        ]
+    )
 
     # Get the transformer and base estimator from the Pipeline
     # Pipeline structure: scale -> transform -> svc -> calibration
@@ -2444,7 +3500,7 @@ def classify_introns(
     try:
         # Transform features through the pipeline up to (but not including) calibration
         # The pipeline has: scale, transform, svc, and CalibratedClassifierCV wraps the whole thing
-        if hasattr(first_model, 'calibrated_classifiers_'):
+        if hasattr(first_model, "calibrated_classifiers_"):
             # Model is CalibratedClassifierCV - get the base pipeline
             base_pipeline = first_model.calibrated_classifiers_[0].estimator
         else:
@@ -2460,12 +3516,14 @@ def classify_introns(
         q25, q75 = np.percentile(u2_margins, [25, 75])
         sigma_u2 = float(q75 - q25)  # IQR
 
-        messenger.log_only(f"  U2 margin stats: median={mu_u2:.3f}, IQR={sigma_u2:.3f}, N={len(u2_margins):,}")
+        messenger.log_only(
+            f"  U2 margin stats: median={mu_u2:.3f}, IQR={sigma_u2:.3f}, N={len(u2_margins):,}"
+        )
 
         human_negative_stats = {
-            'margin_median': mu_u2,
-            'margin_iqr': sigma_u2,
-            'n_samples': len(u2_margins)
+            "margin_median": mu_u2,
+            "margin_iqr": sigma_u2,
+            "n_samples": len(u2_margins),
         }
     except Exception as e:
         messenger.warning(f"Failed to compute margin statistics: {e}")
@@ -2476,22 +3534,26 @@ def classify_introns(
     n_u12 = len(u12_reference)
     n_u2 = len(u2_reference)
     training_prior = n_u12 / (n_u12 + n_u2)
-    messenger.log_only(f"  Training U12 prior: {training_prior:.4f} ({n_u12}/{n_u12+n_u2})")
+    messenger.log_only(
+        f"  Training U12 prior: {training_prior:.4f} ({n_u12}/{n_u12 + n_u2})"
+    )
 
     # Build model bundle
     model_bundle = {
-        'ensemble': result.ensemble,
-        'normalizer': normalizer,  # Save human-trained scaler for cross-species use
-        'threshold': config.scoring.threshold,
-        'human_negative_stats': human_negative_stats,  # For margin alignment (NEW)
-        'training_prior': training_prior  # For prior adjustment (NEW)
+        "ensemble": result.ensemble,
+        "normalizer": normalizer,  # Save human-trained scaler for cross-species use
+        "threshold": config.scoring.threshold,
+        "human_negative_stats": human_negative_stats,  # For margin alignment (NEW)
+        "training_prior": training_prior,  # For prior adjustment (NEW)
     }
     joblib.dump(model_bundle, model_path, compress=3)
-    messenger.log_only(f"Model saved successfully with cross-species adaptation statistics")
+    messenger.log_only(
+        "Model saved successfully with cross-species adaptation statistics"
+    )
 
     # Generate and save training metadata
-    metadata_path = model_path.with_suffix('.metadata.json')
-    messenger.log_only(f"Generating training metadata")
+    metadata_path = model_path.with_suffix(".metadata.json")
+    messenger.log_only("Generating training metadata")
     metadata = generate_training_metadata(
         model_name=model_path.stem,
         u12_reference_path=config.scoring.reference_u12s,
@@ -2505,8 +3567,8 @@ def classify_introns(
         threshold=config.scoring.threshold,
         eval_result=result.eval_result,
         max_iter=config.training.max_iter,
-        kernel='linear',
-        seed=config.training.seed
+        kernel="linear",
+        seed=config.training.seed,
     )
     write_metadata(metadata, metadata_path)
     messenger.log_only(f"Training metadata saved to {metadata_path}")
@@ -2517,10 +3579,10 @@ def classify_introns(
 def write_outputs(
     introns: List[Intron],
     config: IntronICConfig,
-    messenger: 'UnifiedMessenger',
+    messenger: "UnifiedMessenger",
     reporter: IntronICProgressReporter,
     scored_only: Optional[List[Intron]] = None,
-    skip_sequences: bool = False
+    skip_sequences: bool = False,
 ):
     """Write output files.
 
@@ -2556,7 +3618,9 @@ def write_outputs(
         introns = [i for i in introns if not (i.metadata and i.metadata.duplicate)]
         filtered_count = original_count - len(introns)
         if filtered_count > 0:
-            messenger.log_only(f"Filtered out {filtered_count} duplicate introns (use -d to include)")
+            messenger.log_only(
+                f"Filtered out {filtered_count} duplicate introns (use -d to include)"
+            )
 
     output_dir = config.output.output_dir
     base_name = config.output.base_filename
@@ -2565,14 +3629,34 @@ def write_outputs(
     no_abbreviate = config.output.no_abbreviate
 
     # Write BED file (scored + omitted non-duplicates)
+    # Skip BED output for sequence-only introns (no real genomic coordinates)
     # Port from: intronIC.py:4823-4835 (omitted) + 5232-5237 (scored)
-    bed_path = output_dir / f"{base_name}.bed.iic"
-    messenger.log_only(f"Writing BED file: {bed_path}")
-    bed_writer = BEDWriter(bed_path)
-    with bed_writer:
-        for intron in introns:
-            bed_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
-    messenger.log_only(f"Wrote {len(introns)} introns to BED file")
+    from intronIC.core.intron import IntronFlags
+
+    has_real_coordinates = any(
+        intron.metadata is not None
+        and IntronFlags.SEQUENCE_ONLY not in intron.metadata.flags
+        for intron in introns
+    )
+
+    if has_real_coordinates:
+        bed_path = output_dir / f"{base_name}.bed.iic"
+        messenger.log_only(f"Writing BED file: {bed_path}")
+        bed_writer = BEDWriter(bed_path)
+        with bed_writer:
+            for intron in introns:
+                bed_writer.write_intron(
+                    intron,
+                    species_name=species_name,
+                    simple_name=simple_name,
+                    no_abbreviate=no_abbreviate,
+                )
+        messenger.log_only(f"Wrote {len(introns)} introns to BED file")
+    else:
+        messenger.log_only(
+            "Skipping BED file (sequence-only input has no genomic coordinates)"
+        )
+        bed_path = None
 
     # Write metadata file (scored + omitted non-duplicates)
     # Port from: intronIC.py:4823-4835 (omitted) + 5240, 5262-5264 (scored)
@@ -2580,8 +3664,15 @@ def write_outputs(
     messenger.log_only(f"Writing metadata file: {meta_path}")
     meta_writer = MetaWriter(meta_path)
     with meta_writer:
+        if not config.output.no_headers:
+            meta_writer.write_header()
         for intron in introns:
-            meta_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+            meta_writer.write_intron(
+                intron,
+                species_name=species_name,
+                simple_name=simple_name,
+                no_abbreviate=no_abbreviate,
+            )
     messenger.log_only(f"Wrote metadata for {len(introns)} introns")
 
     # Write sequences file (all introns except duplicates, unless -d)
@@ -2592,10 +3683,17 @@ def write_outputs(
         seq_writer = SequenceWriter(seq_path)
         with seq_writer:
             for intron in introns:
-                seq_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+                seq_writer.write_intron(
+                    intron,
+                    species_name=species_name,
+                    simple_name=simple_name,
+                    no_abbreviate=no_abbreviate,
+                )
         messenger.log_only(f"Wrote sequences for {len(introns)} introns")
     else:
-        messenger.log_only(f"Sequences already written during scoring phase: {seq_path}")
+        messenger.log_only(
+            f"Sequences already written during scoring phase: {seq_path}"
+        )
 
     # Write score info file (ONLY scored introns, no omitted)
     # Port from: intronIC.py:5239-5261
@@ -2605,17 +3703,27 @@ def write_outputs(
     messenger.log_only(f"Writing score info file: {score_path}")
     score_writer = ScoreWriter(score_path)
     with score_writer:
+        if not config.output.no_headers:
+            score_writer.write_header()
         for intron in score_introns:
-            score_writer.write_intron(intron, species_name=species_name, simple_name=simple_name, no_abbreviate=no_abbreviate)
+            score_writer.write_intron(
+                intron,
+                species_name=species_name,
+                simple_name=simple_name,
+                no_abbreviate=no_abbreviate,
+            )
     messenger.log_only(f"Wrote score info for {len(score_introns)} introns")
 
-    output_files = {
-        "Metadata": meta_path,
-        "BED": bed_path,
-        "Sequences": seq_path,
-        "Scores": score_path,
-        "Log": config.output.get_output_path('.log'),
+    output_files: dict[str, str] = {
+        "Metadata": str(meta_path),
+        "Sequences": str(seq_path),
+        "Scores": str(score_path),
+        "Log": str(config.output.get_output_path(".log")),
     }
+
+    # Only include BED file if we wrote one (requires real genomic coordinates)
+    if bed_path:
+        output_files["BED"] = str(bed_path)
 
     messenger.print_file_tree(output_files)
     messenger.success("All output files written successfully")
@@ -2644,11 +3752,12 @@ def main_train(config: IntronICConfig):
     reporter = IntronICProgressReporter(quiet=config.output.quiet)
 
     from .messenger import UnifiedMessenger
+
     messenger = UnifiedMessenger(
         console=reporter.console,
         log_console=log_console,
         logger=logger,
-        quiet=config.output.quiet
+        quiet=config.output.quiet,
     )
 
     # Print header
@@ -2666,9 +3775,10 @@ def main_train(config: IntronICConfig):
 
     # Log command and config for reproducibility
     import sys
-    messenger.log_only("="*80)
+
+    messenger.log_only("=" * 80)
     messenger.log_only("COMMAND AND CONFIGURATION")
-    messenger.log_only("="*80)
+    messenger.log_only("=" * 80)
 
     # Format command for easy copy/paste (one line, let terminal wrap)
     messenger.log_only(f"Command: {' '.join(sys.argv)}")
@@ -2678,18 +3788,24 @@ def main_train(config: IntronICConfig):
     # Log reference input files with full paths
     messenger.log_only("Input Files:")
     if config.scoring.reference_u12s:
-        messenger.log_only(f"  U12 reference: {config.scoring.reference_u12s.absolute()}")
+        messenger.log_only(
+            f"  U12 reference: {config.scoring.reference_u12s.absolute()}"
+        )
     if config.scoring.reference_u2s:
         messenger.log_only(f"  U2 reference: {config.scoring.reference_u2s.absolute()}")
     messenger.log_only("")
 
     # Load yaml config for detailed logging
-    from intronIC.classification.config_loader import load_config, find_config
+    from intronIC.utils.config_loader import find_config, load_config
+
     yaml_config = None
     try:
-        yaml_config = load_config(config.training.config_path)
+        config_path_str = (
+            str(config.training.config_path) if config.training.config_path else None
+        )
+        yaml_config = load_config(config_path_str)
         if yaml_config:
-            config_path = find_config(config.training.config_path)
+            config_path = find_config(config_path_str)
             if config_path:
                 messenger.log_only(f"Config file: {config_path.absolute()}")
                 messenger.log_only("")
@@ -2711,53 +3827,57 @@ def main_train(config: IntronICConfig):
     if config.training.fixed_C:
         messenger.log_only(f"  C: {config.training.fixed_C:.6e} (fixed)")
     else:
-        messenger.log_only(f"  C: optimized via grid search")
-        messenger.log_only(f"  n_optimization_rounds: {config.training.n_optimization_rounds}")
+        messenger.log_only("  C: optimized via grid search")
+        messenger.log_only(
+            f"  n_optimization_rounds: {config.training.n_optimization_rounds}"
+        )
         messenger.log_only(f"  n_cv_folds: {config.training.n_cv_folds}")
     messenger.log_only("")
 
     # Log optimizer-specific config if present
-    if yaml_config and 'optimizer' in yaml_config:
-        opt_cfg = yaml_config['optimizer']
+    if yaml_config and "optimizer" in yaml_config:
+        opt_cfg = yaml_config["optimizer"]
         messenger.log_only("Optimizer:")
 
         # Penalty options
-        if 'penalty_options' in opt_cfg:
+        if "penalty_options" in opt_cfg:
             messenger.log_only(f"  penalty_options: {opt_cfg['penalty_options']}")
 
         # Feature transform
-        if 'feature_transform' in opt_cfg:
-            ft = opt_cfg['feature_transform']
+        if "feature_transform" in opt_cfg:
+            ft = opt_cfg["feature_transform"]
             # Extract features list from feature_transform dict
-            features_list = ft.get('features', None)
+            features_list = ft.get("features", None)
             if features_list:
-                features_str = ', '.join(features_list)
+                features_str = ", ".join(features_list)
                 messenger.log_only(f"  features: [{features_str}]")
             else:
-                messenger.log_only(f"  features: default (7D)")
+                messenger.log_only("  features: default (7D)")
         else:
             # No feature_transform section
-            messenger.log_only(f"  features: default (7D)")
+            messenger.log_only("  features: default (7D)")
 
         # Gamma scaling
-        if 'gamma_imbalance_options' in opt_cfg:
-            messenger.log_only(f"  gamma_imbalance_options: {opt_cfg['gamma_imbalance_options']}")
+        if "gamma_imbalance_options" in opt_cfg:
+            messenger.log_only(
+                f"  gamma_imbalance_options: {opt_cfg['gamma_imbalance_options']}"
+            )
 
         # Class weight multipliers
-        if 'class_weight_multipliers' in opt_cfg:
-            cwm = opt_cfg['class_weight_multipliers']
+        if "class_weight_multipliers" in opt_cfg:
+            cwm = opt_cfg["class_weight_multipliers"]
             messenger.log_only(f"  class_weight_multipliers: {cwm}")
 
         messenger.log_only("")
 
-    messenger.log_only("="*80)
+    messenger.log_only("=" * 80)
     messenger.log_only("")
 
     pipeline_steps = [
         "Load reference data",
         "Score reference sequences",
         "Normalize scores",
-        "Train classifier"
+        "Train classifier",
     ]
     messenger.console_only("")
     reporter.print_pipeline_steps(pipeline_steps)
@@ -2772,16 +3892,24 @@ def main_train(config: IntronICConfig):
         # This duplicates some logic from normalize_scores() but avoids issues with empty experimental introns
         data_dir = Path(__file__).parent.parent / "data"
 
-        u12_file = config.scoring.reference_u12s or (data_dir / "u12_reference.introns.iic.gz")
-        u2_file = config.scoring.reference_u2s or (data_dir / "u2_reference.introns.iic.gz")
+        u12_file = config.scoring.reference_u12s or (
+            data_dir / "u12_reference.introns.iic.gz"
+        )
+        u2_file = config.scoring.reference_u2s or (
+            data_dir / "u2_reference.introns.iic.gz"
+        )
 
         if not u12_file.exists() or not u2_file.exists():
-            raise FileNotFoundError(f"Reference data not found. U12: {u12_file}, U2: {u2_file}")
+            raise FileNotFoundError(
+                f"Reference data not found. U12: {u12_file}, U2: {u2_file}"
+            )
 
         messenger.log_only("Loading reference sequences")
         u12_reference = load_reference_sequences(u12_file, messenger=messenger)
         u2_reference = load_reference_sequences(u2_file, messenger=messenger)
-        messenger.log_only(f"Loaded {len(u12_reference)} U12 and {len(u2_reference)} U2 reference introns")
+        messenger.log_only(
+            f"Loaded {len(u12_reference)} U12 and {len(u2_reference)} U2 reference introns"
+        )
 
         # Score reference introns
         messenger.log_only("Scoring reference sequences")
@@ -2789,17 +3917,18 @@ def main_train(config: IntronICConfig):
         scored_reference = score_introns(all_reference, config, messenger, reporter)
 
         # Split back into U12 and U2
-        u12_scored = scored_reference[:len(u12_reference)]
-        u2_scored = scored_reference[len(u12_reference):]
+        u12_scored = scored_reference[: len(u12_reference)]
+        u2_scored = scored_reference[len(u12_reference) :]
 
         # Normalize scores
         messenger.log_only("Normalizing scores with z-score transformation")
         from intronIC.scoring.normalizer import ScoreNormalizer
-        normalizer = ScoreNormalizer()
-        normalizer.fit(scored_reference, dataset_type='reference')
 
-        u12_ref_norm = list(normalizer.transform(u12_scored, dataset_type='reference'))
-        u2_ref_norm = list(normalizer.transform(u2_scored, dataset_type='reference'))
+        normalizer = ScoreNormalizer()
+        normalizer.fit(scored_reference, dataset_type="reference")
+
+        u12_ref_norm = list(normalizer.transform(u12_scored, dataset_type="reference"))
+        u2_ref_norm = list(normalizer.transform(u2_scored, dataset_type="reference"))
 
         messenger.success(
             f"Loaded, scored, and normalized {len(u12_ref_norm)} U12 and {len(u2_ref_norm)} U2 reference introns"
@@ -2816,7 +3945,7 @@ def main_train(config: IntronICConfig):
             normalizer=normalizer,
             config=config,
             messenger=messenger,
-            reporter=reporter
+            reporter=reporter,
         )
         messenger.success("Model trained and saved")
 
@@ -2865,28 +3994,40 @@ def main_classify(config: IntronICConfig):
     # Create unified messenger for synchronized console + log output
     # Both destinations get Rich formatting with ANSI colors
     from .messenger import UnifiedMessenger
+
     messenger = UnifiedMessenger(
         console=reporter.console,
         log_console=log_console,
         logger=logger,
-        quiet=config.output.quiet
+        quiet=config.output.quiet,
     )
 
     # Print unified startup banner (both console and log)
     # Convert paths to absolute for logging
     import sys
+
     messenger.print_startup_banner(
         species_name=config.output.species_name,
         input_mode=config.input.mode,
-        output_dir=config.output.output_dir.absolute(),
+        output_dir=str(config.output.output_dir.absolute()),
         threshold=config.scoring.threshold,
-        command=' '.join(sys.argv),
+        command=" ".join(sys.argv),
         working_dir=str(Path.cwd()),
-        model_path=config.training.pretrained_model_path.absolute() if config.training.pretrained_model_path else None,
-        genome_path=config.input.genome.absolute() if config.input.mode in ['annotation', 'bed'] and config.input.genome else None,
-        annotation_path=config.input.annotation.absolute() if config.input.mode == 'annotation' and config.input.annotation else None,
-        bed_path=config.input.bed.absolute() if config.input.mode == 'bed' and config.input.bed else None,
-        sequences_path=config.input.sequences.absolute() if config.input.mode == 'sequences' and config.input.sequences else None
+        model_path=str(config.training.pretrained_model_path.absolute())
+        if config.training.pretrained_model_path
+        else None,
+        genome_path=str(config.input.genome.absolute())
+        if config.input.mode in ["annotation", "bed"] and config.input.genome
+        else None,
+        annotation_path=str(config.input.annotation.absolute())
+        if config.input.mode == "annotation" and config.input.annotation
+        else None,
+        bed_path=str(config.input.bed.absolute())
+        if config.input.mode == "bed" and config.input.bed
+        else None,
+        sequences_path=str(config.input.sequence_file.absolute())
+        if config.input.mode == "sequences" and config.input.sequence_file
+        else None,
     )
 
     # Define pipeline steps
@@ -2895,25 +4036,74 @@ def main_classify(config: IntronICConfig):
         "Score introns with PWMs",
         "Normalize scores",
         "Train and apply classifier",
-        "Write output files"
+        "Write output files",
     ]
 
     try:
+        # TRUE STREAMING MODE: Per-contig processing with immediate output
+        # This mode provides ~90% memory savings but requires:
+        # 1. Pre-trained model (has frozen scaler)
+        # 2. Annotation input mode
+        # The function handles extraction, scoring, classification, and output internally.
+        if (
+            config.performance.streaming
+            and config.training.pretrained_model_path
+            and config.input.mode == "annotation"
+            and not config.scoring.sequences_only
+        ):
+            total_classified, summary = classify_streaming_per_contig(
+                config, messenger, reporter
+            )
+
+            # Save classification metrics
+            metrics_path = config.output.get_output_path(".metrics.json")
+            messenger.log_only(f"Saving classification metrics to {metrics_path}")
+            with open(metrics_path, "w") as f:
+                json.dump(summary, f, indent=2)
+
+            # Generate visualization plots
+            # Note: In true streaming mode, we don't have all introns in memory
+            # so we skip plot generation (or could read from output files)
+            messenger.log_only("Skipping plots (true streaming mode)")
+
+            # Calculate and log total runtime
+            elapsed_seconds = time.time() - start_time
+            hours, remainder = divmod(int(elapsed_seconds), 3600)
+            minutes, seconds = divmod(remainder, 60)
+
+            if hours > 0:
+                runtime_str = f"{hours}h {minutes}m {seconds}s"
+            elif minutes > 0:
+                runtime_str = f"{minutes}m {seconds}s"
+            else:
+                runtime_str = f"{seconds}s"
+
+            messenger.success(f"Pipeline complete! (Runtime: {runtime_str})")
+            return
+
         # Step 1: Load and extract introns
         messenger.step(1, "Load and Extract Introns", pipeline_steps)
 
-        if config.input.mode == 'annotation':
+        # Track streaming mode state for later sequence output
+        streaming_db_path = None
+
+        if config.input.mode == "annotation":
             # Don't load genome here - extraction handles it internally
             # (parallel mode uses indexed access, sequential uses cache)
-            introns = extract_introns_from_annotation(
-                config, messenger, reporter
-            )
-        elif config.input.mode == 'bed':
+            if config.performance.streaming:
+                # Streaming mode: ~85% memory savings, stores sequences in SQLite
+                introns, streaming_db_path = extract_introns_streaming(
+                    config, messenger, reporter
+                )
+            else:
+                # Standard processing: faster but uses more memory
+                introns = extract_introns_from_annotation(config, messenger, reporter)
+        elif config.input.mode == "bed":
             genome_reader = load_genome(config, messenger)
             introns = extract_introns_from_bed(
                 config, genome_reader, messenger, reporter
             )
-        elif config.input.mode == 'sequences':
+        elif config.input.mode == "sequences":
             introns = load_introns_from_sequences(config, messenger)
         else:
             raise ValueError(f"Unknown input mode: {config.input.mode}")
@@ -2925,7 +4115,14 @@ def main_classify(config: IntronICConfig):
             # This means .score_info.iic will be empty or contain all introns (but they have no scores)
             # Original behavior: writes all to .bed/.meta/.seqs, exits before .score_info is created
             # Sequences already written during extraction (streaming mode)
-            write_outputs(introns, config, messenger, reporter, scored_only=[], skip_sequences=True)
+            write_outputs(
+                introns,
+                config,
+                messenger,
+                reporter,
+                scored_only=[],
+                skip_sequences=True,
+            )
             messenger.success("Pipeline complete!")
             return
 
@@ -2940,14 +4137,17 @@ def main_classify(config: IntronICConfig):
         # - min_length: Filter short introns
         # - allow_noncanonical: Based on exclude_noncanonical flag
         # - allow_overlap: Based on no_intron_overlap flag
+        # Note: For sequence file inputs, all introns have unique placeholder coordinates
+        # and no grandparent/parent metadata, so longest_only and duplicate filtering
+        # effectively become no-ops (all pass through as "longest isoform")
         intron_filter = IntronFilter(
             min_length=config.extraction.min_intron_len,
             bp_matrix_length=7,  # Default from original
-            scoring_regions=['five', 'three'],  # Check these for ambiguous bases
+            scoring_regions=["five", "three"],  # Check these for ambiguous bases
             allow_noncanonical=not config.scoring.exclude_noncanonical,
             allow_overlap=not config.extraction.no_intron_overlap,
-            longest_only=True,  # ALWAYS filter to longest isoform for scoring
-            include_duplicates=False  # ALWAYS filter duplicates for scoring
+            longest_only=True,  # For sequences: no-op (no grandparent info)
+            include_duplicates=False,  # For sequences: no-op (unique coords)
         )
 
         filtered_introns = intron_filter.filter_introns(introns)
@@ -2958,12 +4158,22 @@ def main_classify(config: IntronICConfig):
 
         # Calculate removal statistics
         total_removed = total - stats.kept_introns
-        total_omitted = stats.omitted_short + stats.omitted_ambiguous + stats.omitted_noncanonical + stats.omitted_isoform + stats.omitted_overlap
+        total_omitted = (
+            stats.omitted_short
+            + stats.omitted_ambiguous
+            + stats.omitted_noncanonical
+            + stats.omitted_isoform
+            + stats.omitted_overlap
+        )
 
         # Calculate breakdown: duplicates can also be omitted, so categories overlap
         # Removed = Omitted ∪ Duplicates
         duplicates_also_omitted = total_omitted + stats.duplicates - total_removed
-        duplicates_only = stats.duplicates - duplicates_also_omitted if duplicates_also_omitted <= stats.duplicates else 0
+        duplicates_only = (
+            stats.duplicates - duplicates_also_omitted
+            if duplicates_also_omitted <= stats.duplicates
+            else 0
+        )
 
         # Report filtering results using unified method (console + log)
         messenger.print_filtering_summary(
@@ -2976,12 +4186,14 @@ def main_classify(config: IntronICConfig):
             duplicates=stats.duplicates,
             duplicates_only=duplicates_only,
             total_removed=total_removed,
-            kept=stats.kept_introns
+            kept=stats.kept_introns,
         )
 
         # Show note if there are duplicates that were also omitted
         if duplicates_also_omitted > 0 and stats.duplicates > 0:
-            messenger.log_only(f"Note: {format_count_with_percentage(duplicates_also_omitted, stats.duplicates)} of {stats.duplicates:,} total duplicates were also omitted for other reasons")
+            messenger.log_only(
+                f"Note: {format_count_with_percentage(duplicates_also_omitted, stats.duplicates)} of {stats.duplicates:,} total duplicates were also omitted for other reasons"
+            )
             messenger.log_only("")
 
         messenger.success(f"Processed {len(introns):,} introns from annotation")
@@ -2992,84 +4204,77 @@ def main_classify(config: IntronICConfig):
 
         # Step 2: Score introns
         messenger.step(2, "Score Introns with PWMs", pipeline_steps)
+
         scored_introns = score_introns(introns_for_scoring, config, messenger, reporter)
 
-        # MEMORY OPTIMIZATION: Write sequences to file now (while in memory)
-        # Then clear large sequences before classification to save ~10-15 GB
-        messenger.info("Writing intron sequences to file")
-        seq_output_path = config.output.output_dir / f"{config.output.base_filename}.introns.iic"
-        seq_writer = SequenceWriter(seq_output_path)
-
-        # Write ALL introns including omitted ones (matches v1.5.1 behavior)
-        # However, only write introns that have sequences extracted
-        # (some introns may not have sequences due to extraction failures, ambiguous nucleotides, etc.)
-        # Duplicates will be filtered if not -d flag
-        introns_written = 0
-        with seq_writer:
-            for intron in introns:
-                # Filter duplicates if not -d flag (matches write_outputs line 1536-1544)
-                if not config.extraction.include_duplicates:
-                    if intron.metadata and intron.metadata.duplicate:
-                        continue
-
-                # Skip introns without sequences (extraction failed or not attempted)
-                if not intron.has_sequences:
-                    continue
-
-                # Write all introns with sequences, including omitted ones
-                # This matches v1.5.1 behavior where all extracted introns are written to introns.iic
-                seq_writer.write_intron(
-                    intron,
-                    species_name=config.output.species_name,
-                    simple_name=config.output.uninformative_naming,
-                    no_abbreviate=config.output.no_abbreviate,
-                    include_score=True  # Include SVM score (matches v1.5.1 format)
-                )
-                introns_written += 1
-        messenger.log_only(f"Wrote sequences for {introns_written} introns to {seq_output_path.name}")
-
-        # Clear large sequences to reduce memory before classification
-        # IMPORTANT: Clear BOTH scored_introns AND the full introns list
-        # The full list includes omitted introns which still have sequences in memory
-        scored_introns = clear_large_sequences_for_classification(scored_introns)
-        introns = clear_large_sequences_for_classification(introns)  # Clear full list too!
-        gc.collect()
+        # Defer sequence writing until AFTER classification for both modes
+        # so we can include SVM scores. Sequences remain in memory for standard mode
+        # until writing is complete (uses more memory but produces correct output).
+        # Streaming mode: Sequences are in SQLite, nothing to clear yet.
+        if streaming_db_path is None:
+            messenger.log_only(
+                "Standard mode: sequences will be written after classification"
+            )
+        else:
+            messenger.log_only(
+                "Streaming mode: sequences will be written from SQLite after classification"
+            )
 
         # Check if using pretrained model
         if config.training.pretrained_model_path:
             # Skip normalization/training - use pretrained model
             messenger.step(3, "Classify with Pretrained Model", pipeline_steps)
             classified_introns, metrics = classify_with_pretrained_model(
-                scored_introns, config.training.pretrained_model_path, config, messenger, reporter
+                scored_introns,
+                config.training.pretrained_model_path,
+                config,
+                messenger,
+                reporter,
             )
         else:
             # Normal flow: normalize + train + classify
             # Step 3: Normalize scores
             messenger.step(3, "Normalize Scores", pipeline_steps)
-            normalized_introns, u12_reference, u2_reference, normalizer = normalize_scores(
-                scored_introns, config, messenger, reporter
+            normalized_introns, u12_reference, u2_reference, normalizer = (
+                normalize_scores(scored_introns, config, messenger, reporter)
             )
             messenger.success("Scores normalized")
 
             # Step 4: Train and apply classifier
             messenger.step(4, "Train and Apply Classifier", pipeline_steps)
             classified_introns, metrics = classify_introns(
-                normalized_introns, u12_reference, u2_reference, normalizer, config, messenger, reporter
+                normalized_introns,
+                u12_reference,
+                u2_reference,
+                normalizer,
+                config,
+                messenger,
+                reporter,
             )
 
         # Count classifications based on threshold (for reporting "high confidence" U12s)
         # Note: type_id is based on raw classifier (>50%), but reporting uses threshold
+        threshold = config.scoring.threshold
         u12_count = sum(
-            1 for i in classified_introns
-            if i.scores and i.scores.svm_score >= config.scoring.threshold
+            1
+            for i in classified_introns
+            if i.scores is not None
+            and i.scores.svm_score is not None
+            and i.scores.svm_score >= threshold
         )
         u2_count = len(classified_introns) - u12_count
 
         # Count AT-AC introns among high-confidence U12s (score >= threshold)
         atac_count = sum(
-            1 for i in classified_introns
-            if (i.scores and i.scores.svm_score >= config.scoring.threshold and
-                i.sequences and i.sequences.terminal_dinucleotides == 'AT-AC')
+            1
+            for i in classified_introns
+            if (
+                i.scores is not None
+                and i.scores.svm_score is not None
+                and i.scores.svm_score >= config.scoring.threshold
+                and i.sequences
+                and i.sequences.terminal_dinucleotides == "AT-AC"
+            )
         )
 
         # Display classification summary with unified formatting
@@ -3079,20 +4284,29 @@ def main_classify(config: IntronICConfig):
             u12_count=u12_count,
             u2_count=u2_count,
             atac_count=atac_count,
-            threshold=config.scoring.threshold
+            threshold=config.scoring.threshold,
         )
 
         # Collect and log splice site boundary statistics (separate by U12/U2)
         from collections import Counter
+
         boundaries_u12 = Counter()
         boundaries_u2 = Counter()
 
         for intron in classified_introns:
             # Count all boundaries (canonical and non-canonical) by type
             # Use threshold to match the main counts, not raw classifier type_id
-            if intron.metadata and intron.sequences and intron.sequences.terminal_dinucleotides:
+            if (
+                intron.metadata
+                and intron.sequences
+                and intron.sequences.terminal_dinucleotides
+            ):
                 dnts = intron.sequences.terminal_dinucleotides
-                if intron.scores and intron.scores.svm_score >= config.scoring.threshold:
+                if (
+                    intron.scores is not None
+                    and intron.scores.svm_score is not None
+                    and intron.scores.svm_score >= config.scoring.threshold
+                ):
                     boundaries_u12[dnts] += 1
                 else:
                     boundaries_u2[dnts] += 1
@@ -3100,28 +4314,28 @@ def main_classify(config: IntronICConfig):
         # Display U12 boundary statistics with unified formatting
         if boundaries_u12:
             # Sort by count (descending), then alphabetically by dinucleotide
-            sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))
+            sorted_boundaries = sorted(
+                boundaries_u12.items(), key=lambda x: (-x[1], x[0])
+            )
             messenger.print_dinucleotide_boundaries(
-                intron_type="U12-type",
-                boundaries=sorted_boundaries,
-                top_n=20
+                intron_type="U12-type", boundaries=sorted_boundaries, top_n=20
             )
 
         # Display U2 boundary statistics with unified formatting
         if boundaries_u2:
             # Sort by count (descending), then alphabetically by dinucleotide
-            sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))
+            sorted_boundaries = sorted(
+                boundaries_u2.items(), key=lambda x: (-x[1], x[0])
+            )
             messenger.print_dinucleotide_boundaries(
-                intron_type="U2-type",
-                boundaries=sorted_boundaries,
-                top_n=20
+                intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
             )
 
         # Save classification metrics to JSON file
         if metrics:
-            metrics_path = config.output.get_output_path('.metrics.json')
+            metrics_path = config.output.get_output_path(".metrics.json")
             messenger.log_only(f"Saving classification metrics to {metrics_path}")
-            with open(metrics_path, 'w') as f:
+            with open(metrics_path, "w") as f:
                 json.dump(metrics, f, indent=2)
 
         # Generate visualization plots
@@ -3132,7 +4346,7 @@ def main_classify(config: IntronICConfig):
                 output_dir=config.output.output_dir,
                 species_name=config.output.base_filename,
                 threshold=config.scoring.threshold,
-                fig_dpi=300
+                fig_dpi=300,
             )
             messenger.log_only("Successfully generated classification plots")
         except Exception as plot_error:
@@ -3142,12 +4356,112 @@ def main_classify(config: IntronICConfig):
         # Step 5: Write outputs
         messenger.step(5, "Write Output Files", pipeline_steps)
 
+        # STREAMING MODE: Write sequences from SQLite with SVM scores now that classification is done
+        if streaming_db_path is not None:
+            messenger.info("Writing intron sequences to file (from SQLite)")
+            from intronIC.file_io.sequence_store import StreamingSequenceStore
+
+            seq_output_path = (
+                config.output.output_dir / f"{config.output.base_filename}.introns.iic"
+            )
+            seq_writer = SequenceWriter(seq_output_path)
+
+            # Build lookup of intron_id -> svm_score from classified introns
+            score_lookup = {}
+            for intron in classified_introns:
+                if intron.scores and intron.scores.svm_score is not None:
+                    score_lookup[intron.intron_id] = intron.scores.svm_score
+
+            # Build set of duplicate intron_ids to filter (matches standard mode behavior)
+            # The metadata is preserved in the lightweight intron objects
+            duplicate_ids = set()
+            if not config.extraction.include_duplicates:
+                for intron in introns:
+                    if intron.metadata and intron.metadata.duplicate:
+                        duplicate_ids.add(intron.intron_id)
+
+            store = StreamingSequenceStore(streaming_db_path)
+            introns_written = 0
+            duplicates_skipped = 0
+
+            with seq_writer:
+                for row in store.iter_all():
+                    # Skip duplicates if not -d flag (matches standard mode)
+                    if row.intron_id in duplicate_ids:
+                        duplicates_skipped += 1
+                        continue
+
+                    # Get score if available (None for omitted introns)
+                    svm_score = score_lookup.get(row.intron_id)
+
+                    # Write using raw sequence data from SQLite
+                    # Use the pre-computed formatted_name from SQLite
+                    seq_writer.write_from_row(
+                        intron_id=row.intron_id,
+                        formatted_name=row.formatted_name,
+                        upstream_flank=row.upstream_flank,
+                        seq=row.seq,
+                        downstream_flank=row.downstream_flank,
+                        terminal_dnts=row.terminal_dnts,
+                        svm_score=svm_score,
+                    )
+                    introns_written += 1
+
+            store.cleanup()  # Delete SQLite database
+            if duplicates_skipped > 0:
+                messenger.log_only(f"Skipped {duplicates_skipped} duplicate introns")
+            messenger.log_only(
+                f"Wrote sequences for {introns_written} introns to {seq_output_path.name} (from SQLite)"
+            )
+
         # Merge classified introns with omitted introns for complete meta output
         # This matches original intronIC behavior where .meta.iic includes all introns
         # (scored + omitted), not just the ones that went through classification
         all_introns_for_output = merge_scored_and_omitted_introns(
             classified_introns, introns, messenger
         )
+
+        # STANDARD MODE: Write sequences with SVM scores now that classification is done
+        if streaming_db_path is None:
+            messenger.info("Writing intron sequences to file")
+            seq_output_path = (
+                config.output.output_dir / f"{config.output.base_filename}.introns.iic"
+            )
+            seq_writer = SequenceWriter(seq_output_path)
+
+            # Write from all_introns_for_output to include omitted introns
+            # Omitted introns have sequences but no scores
+            introns_to_write = all_introns_for_output
+            introns_written = 0
+            with seq_writer:
+                for intron in introns_to_write:
+                    # Filter duplicates if not -d flag
+                    if not config.extraction.include_duplicates:
+                        if intron.metadata and intron.metadata.duplicate:
+                            continue
+
+                    # Skip introns without sequences (extraction failed or not attempted)
+                    if not intron.has_sequences:
+                        continue
+
+                    seq_writer.write_intron(
+                        intron,
+                        species_name=config.output.species_name,
+                        simple_name=config.output.uninformative_naming,
+                        no_abbreviate=config.output.no_abbreviate,
+                        include_score=True,  # Include SVM score (now available after classification)
+                    )
+                    introns_written += 1
+            messenger.log_only(
+                f"Wrote sequences for {introns_written} introns to {seq_output_path.name}"
+            )
+
+            # Now clear sequences to free memory
+            all_introns_for_output = clear_large_sequences_for_classification(
+                all_introns_for_output
+            )
+            introns = clear_large_sequences_for_classification(introns)
+            gc.collect()
 
         # Write outputs with different intron sets for different files:
         # - all_introns_for_output: for .bed.iic, .meta.iic, .introns.iic (scored + omitted)
@@ -3159,7 +4473,7 @@ def main_classify(config: IntronICConfig):
             messenger,
             reporter,
             scored_only=classified_introns,
-            skip_sequences=True  # Sequences already written during extraction (streaming mode)
+            skip_sequences=True,  # Sequences already written (standard mode) or just above (streaming mode)
         )
 
         # Calculate and log total runtime
@@ -3197,40 +4511,37 @@ def main(args=None):
         parsed_args = parser.parse_args(args)
 
         # Handle --generate-config
-        if getattr(parsed_args, 'generate_config', False):
-            from .config_loader import generate_config_file
-            generate_config_file()
+        if getattr(parsed_args, "generate_config", False):
+            import shutil
+            from pathlib import Path
+
+            # Copy the built-in config to current directory
+            install_dir = Path(__file__).parent.parent.parent.parent
+            source_config = install_dir / "config" / "config.yaml"
+            dest_config = Path(".intronIC.yaml")
+
+            if dest_config.exists():
+                print(f"Config file already exists: {dest_config}")
+                print("Remove it first if you want to regenerate.")
+                return 1
+
+            shutil.copy(source_config, dest_config)
+            print(f"Generated configuration file: {dest_config}")
+            print("Edit this file to customize your intronIC settings.")
             return 0
 
-        # Load and merge configuration file (if exists)
-        from .config_loader import ConfigLoader
-
-        config_path = ConfigLoader.find_config(
-            custom_path=getattr(parsed_args, 'config', None)
-        )
-
-        if config_path:
-            try:
-                config_data = ConfigLoader.load_config(config_path)
-                ConfigLoader.merge_with_args(config_data, parsed_args)
-                print(f"Loaded configuration from: {config_path}")
-            except ImportError as e:
-                print(f"Warning: Could not load config file: {e}", file=sys.stderr)
-                print("Install tomli for config file support: pip install tomli", file=sys.stderr)
-            except Exception as e:
-                print(f"Warning: Error loading config file {config_path}: {e}", file=sys.stderr)
-                print("Continuing with CLI arguments only...", file=sys.stderr)
-
-        # Create configuration
-        config = IntronICConfig.from_args(parsed_args)
+        # Create unified configuration from YAML config + CLI args
+        # CLI args take precedence over YAML values
+        # This creates a single source of truth for the entire run
+        config = IntronICConfig.from_yaml_and_args(parsed_args)
 
         # Route to appropriate entry point based on command
-        command = getattr(parsed_args, 'command', 'classify')
+        command = getattr(parsed_args, "command", "classify")
 
-        if command == 'train':
+        if command == "train":
             # Train mode: No genome/annotation needed
             main_train(config)
-        elif command == 'classify':
+        elif command == "classify":
             # Classify mode: Standard pipeline
             main_classify(config)
         else:
@@ -3247,5 +4558,11 @@ def main(args=None):
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+if __name__ == "__main__":
     sys.exit(main())

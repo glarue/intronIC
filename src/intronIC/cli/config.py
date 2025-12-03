@@ -16,7 +16,9 @@ def get_default_pretrained_model_path() -> Optional[Path]:
         Path to default pretrained model if it exists, None otherwise
     """
     # Path relative to this file: cli/config.py -> data/default_pretrained.model.pkl
-    default_path = Path(__file__).parent.parent / "data" / "default_pretrained.model.pkl"
+    default_path = (
+        Path(__file__).parent.parent / "data" / "default_pretrained.model.pkl"
+    )
     if default_path.exists():
         return default_path
     return None
@@ -25,6 +27,7 @@ def get_default_pretrained_model_path() -> Optional[Path]:
 @dataclass(frozen=True, slots=True)
 class ScoringRegions:
     """Coordinates for scoring regions."""
+
     five_start: int
     five_end: int
     bp_start: int
@@ -36,6 +39,7 @@ class ScoringRegions:
 @dataclass(frozen=True, slots=True)
 class InputConfig:
     """Input file configuration."""
+
     genome: Optional[Path] = None
     annotation: Optional[Path] = None
     bed: Optional[Path] = None
@@ -49,11 +53,11 @@ class InputConfig:
             One of: 'annotation', 'bed', 'sequences'
         """
         if self.sequence_file:
-            return 'sequences'
+            return "sequences"
         elif self.bed:
-            return 'bed'
+            return "bed"
         elif self.annotation:
-            return 'annotation'
+            return "annotation"
         else:
             raise ValueError("No valid input source specified")
 
@@ -61,9 +65,12 @@ class InputConfig:
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     """Configuration for intron extraction."""
-    feature_type: str = 'both'  # 'cds', 'exon', or 'both'
+
+    feature_type: str = "both"  # 'cds', 'exon', or 'both'
     min_intron_len: int = 30
-    flank_len: int = 100  # Length of flanking sequence to extract (upstream and downstream)
+    flank_len: int = (
+        100  # Length of flanking sequence to extract (upstream and downstream)
+    )
     allow_multiple_isoforms: bool = False
     no_intron_overlap: bool = False
     include_duplicates: bool = False
@@ -73,54 +80,74 @@ class ExtractionConfig:
 @dataclass(frozen=True, slots=True)
 class ScoringConfig:
     """Configuration for scoring and classification."""
+
     sequences_only: bool = False
     threshold: float = 90.0
     exclude_noncanonical: bool = False
-    scoring_regions: ScoringRegions = field(default_factory=lambda: ScoringRegions(
-        five_start=-3, five_end=9,
-        bp_start=-55, bp_end=-5,
-        three_start=-6, three_end=4
-    ))
+    scoring_regions: ScoringRegions = field(
+        default_factory=lambda: ScoringRegions(
+            five_start=-3,
+            five_end=9,
+            bp_start=-55,
+            bp_end=-5,
+            three_start=-6,
+            three_end=4,
+        )
+    )
     pwm_file: Optional[Path] = None
     reference_u12s: Optional[Path] = None
     reference_u2s: Optional[Path] = None
     generate_u2_bps_pwm: bool = False
     pseudocount: float = 0.0001
-    ignore_nc_dnts: bool = True  # Ignore terminal dinucleotides for NC introns by default
-    normalizer_mode: str = 'auto'  # 'human', 'adaptive', or 'auto'
+    ignore_nc_dnts: bool = (
+        True  # Ignore terminal dinucleotides for NC introns by default
+    )
+    normalizer_mode: str = "auto"  # 'human', 'adaptive', or 'auto'
     species_prior: Optional[float] = None  # Expected U12 prior for target species
-    load_normalizer: Optional[Path] = None  # Load saved normalizer for reproducible normalization
+    load_normalizer: Optional[Path] = (
+        None  # Load saved normalizer for reproducible normalization
+    )
     save_normalizer: bool = False  # Save fitted normalizer for future runs
 
 
 @dataclass(frozen=True, slots=True)
 class TrainingConfig:
     """Configuration for SVM training."""
+
     fixed_C: Optional[float] = None
     n_models: int = 1
     recursive: bool = False
     recursive_subset: Optional[int] = None
     seed: int = 42
     max_iter: int = 50000
-    eval_mode: str = 'nested_cv'
+    eval_mode: str = "nested_cv"
     n_cv_folds: int = 7
     test_fraction: float = 0.2
     n_optimization_rounds: int = 5
     pretrained_model_path: Optional[Path] = None
-    config_path: Optional[Path] = None  # Path to unified config file (auto-loads if None)
-    use_fold_averaged_params: bool = False  # Use fold-averaged hyperparameters (better cross-species)
+    config_path: Optional[Path] = (
+        None  # Path to unified config file (auto-loads if None)
+    )
+    use_fold_averaged_params: bool = (
+        False  # Use fold-averaged hyperparameters (better cross-species)
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class PerformanceConfig:
     """Configuration for performance settings."""
+
     processes: int = 1
     cv_processes: int = 1
+    streaming: bool = (
+        False  # Streaming mode: ~85% memory savings, stores sequences in temp SQLite
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class OutputConfig:
     """Configuration for output."""
+
     output_dir: Path
     species_name: str
     clean_names: bool = True
@@ -129,6 +156,7 @@ class OutputConfig:
     uninformative_naming: bool = False  # Use simple naming (species-i_ID)
     no_abbreviate: bool = False  # Use full species name in output (not abbreviated)
     abbreviate_filenames: bool = False  # Use abbreviated species name in filenames
+    no_headers: bool = False  # Omit column headers from output files
 
     @property
     def base_filename(self) -> str:
@@ -140,6 +168,7 @@ class OutputConfig:
         if self.abbreviate_filenames:
             # Abbreviate for filenames (3+3 format)
             from intronIC.file_io.writers import generate_species_abbreviation
+
             return generate_species_abbreviation(self.species_name)
         return self.species_name
 
@@ -158,6 +187,7 @@ class OutputConfig:
 @dataclass(frozen=True, slots=True)
 class IntronICConfig:
     """Complete intronIC pipeline configuration."""
+
     input: InputConfig
     extraction: ExtractionConfig
     scoring: ScoringConfig
@@ -166,7 +196,97 @@ class IntronICConfig:
     output: OutputConfig
 
     @classmethod
-    def from_args(cls, args) -> 'IntronICConfig':
+    def from_yaml_and_args(cls, args, yaml_config: dict = None) -> "IntronICConfig":
+        """Create configuration from YAML config and CLI arguments.
+
+        CLI arguments take precedence over YAML config values.
+        This is the primary entry point - creates a unified config from both sources.
+
+        Args:
+            args: Parsed argument namespace from CLI
+            yaml_config: Optional YAML config dict (if None, will auto-load)
+
+        Returns:
+            IntronICConfig instance
+        """
+        # Load YAML config if not provided
+        if yaml_config is None:
+            from intronIC.utils.config_loader import load_config
+
+            config_path = getattr(args, "config", None)
+            yaml_config = load_config(config_path) or {}
+
+        # Merge YAML into args (CLI args take precedence)
+        # Only set arg from YAML if it wasn't explicitly set on CLI
+        merged_args = cls._merge_yaml_into_args(args, yaml_config)
+
+        # Now create config from merged args using existing logic
+        return cls.from_args(merged_args)
+
+    @staticmethod
+    def _merge_yaml_into_args(args, yaml_config: dict):
+        """Merge YAML config into argparse namespace.
+
+        Only updates args that have their default values (weren't explicitly set on CLI).
+
+        Args:
+            args: Argparse namespace
+            yaml_config: YAML config dictionary
+
+        Returns:
+            Updated args namespace
+        """
+        # Map YAML paths to arg attributes
+        # Format: (yaml_path, arg_attr, converter, default_value)
+        # yaml_path uses dots for nesting: "scoring.threshold"
+        mappings = [
+            # Scoring
+            ("scoring.threshold", "threshold", float, 90.0),
+            ("scoring.feature_type", "feature", str, "both"),
+            ("scoring.exclude_noncanonical", "no_nc", bool, False),
+            ("scoring.pseudocount", "pseudocount", float, 0.0001),
+            ("scoring.normalizer_mode", "normalizer_mode", str, "human"),
+            # Extraction
+            ("extraction.flank_length", "flank_len", int, 100),
+            ("extraction.min_intron_length", "min_intron_len", int, 10),
+            # Performance
+            ("performance.processes", "processes", int, 1),
+            ("performance.cv_processes", "cv_processes", int, None),
+            # Training
+            ("training.n_models", "n_models", int, 15),
+            ("training.max_iterations", "max_iter", int, 50000),
+            ("training.eval_mode", "eval_mode", str, "nested_cv"),
+            ("training.n_cv_folds", "n_cv_folds", int, 6),
+            ("training.fixed_C", "C", float, None),
+            # Advanced
+            ("advanced.random_seed", "seed", int, 42),
+        ]
+
+        for yaml_path, arg_attr, converter, default in mappings:
+            # Get value from YAML (handle nested paths)
+            yaml_value = yaml_config
+            for key in yaml_path.split("."):
+                if isinstance(yaml_value, dict):
+                    yaml_value = yaml_value.get(key)
+                else:
+                    yaml_value = None
+                    break
+
+            if yaml_value is None:
+                continue
+
+            # Only apply if arg still has default value
+            current_value = getattr(args, arg_attr, default)
+            if current_value == default:
+                try:
+                    setattr(args, arg_attr, converter(yaml_value))
+                except (ValueError, TypeError):
+                    pass  # Silently skip invalid values
+
+        return args
+
+    @classmethod
+    def from_args(cls, args) -> "IntronICConfig":
         """Create configuration from parsed arguments.
 
         Args:
@@ -180,7 +300,7 @@ class IntronICConfig:
             genome=args.genome,
             annotation=args.annotation,
             bed=args.bed,
-            sequence_file=args.sequence_file
+            sequence_file=args.sequence_file,
         )
 
         # Extraction configuration
@@ -191,7 +311,7 @@ class IntronICConfig:
             allow_multiple_isoforms=args.allow_multiple_isoforms,
             no_intron_overlap=args.no_intron_overlap,
             include_duplicates=args.include_duplicates,
-            u12_boundary_correction=not args.no_nc_ss_adjustment
+            u12_boundary_correction=not args.no_nc_ss_adjustment,
         )
 
         # Scoring regions
@@ -201,7 +321,7 @@ class IntronICConfig:
             bp_start=args.bp_region_coords[0],
             bp_end=args.bp_region_coords[1],
             three_start=args.three_score_coords[0],
-            three_end=args.three_score_coords[1]
+            three_end=args.three_score_coords[1],
         )
 
         # Scoring configuration
@@ -213,18 +333,20 @@ class IntronICConfig:
             pwm_file=args.pwms,
             reference_u12s=args.reference_u12s,
             reference_u2s=args.reference_u2s,
-            generate_u2_bps_pwm=getattr(args, 'generate_u2_bps_pwm', False),  # Not currently implemented
+            generate_u2_bps_pwm=getattr(
+                args, "generate_u2_bps_pwm", False
+            ),  # Not currently implemented
             pseudocount=args.pseudocount,
             ignore_nc_dnts=not args.no_ignore_nc_dnts,
             normalizer_mode=args.normalizer_mode,
-            species_prior=getattr(args, 'species_prior', None),
-            load_normalizer=getattr(args, 'load_normalizer', None),
-            save_normalizer=getattr(args, 'save_normalizer', False)
+            species_prior=getattr(args, "species_prior", None),
+            load_normalizer=getattr(args, "load_normalizer", None),
+            save_normalizer=getattr(args, "save_normalizer", False),
         )
 
         # Training configuration
         recursive_subset = None
-        recursive_arg = getattr(args, 'recursive', None)  # Not currently implemented
+        recursive_arg = getattr(args, "recursive", None)  # Not currently implemented
         if recursive_arg and isinstance(recursive_arg, str):
             try:
                 recursive_subset = int(recursive_arg)
@@ -241,9 +363,8 @@ class IntronICConfig:
         # Check for training mode:
         # - args.command == 'train': train subcommand (no genome needed)
         # - args.train: classify --train flag (train on-the-fly during classification)
-        is_training = (
-            getattr(args, 'command', None) == 'train' or
-            getattr(args, 'train', False)
+        is_training = getattr(args, "command", None) == "train" or getattr(
+            args, "train", False
         )
 
         if is_training:
@@ -276,14 +397,17 @@ class IntronICConfig:
             test_fraction=args.test_fraction,
             n_optimization_rounds=args.n_optimization_rounds,
             pretrained_model_path=pretrained_model_path,
-            config_path=getattr(args, 'config_path', None),
-            use_fold_averaged_params=getattr(args, 'use_fold_averaged_params', False)
+            config_path=getattr(args, "config_path", None),
+            use_fold_averaged_params=getattr(args, "use_fold_averaged_params", False),
         )
 
         # Performance configuration
+        streaming = getattr(args, "streaming", False)
+
         performance_config = PerformanceConfig(
             processes=args.processes,
-            cv_processes=args.cv_processes
+            cv_processes=args.cv_processes,
+            streaming=streaming,
         )
 
         # Output configuration
@@ -295,7 +419,8 @@ class IntronICConfig:
             debug=args.debug,
             uninformative_naming=args.uninformative_naming,
             no_abbreviate=args.no_abbreviate,
-            abbreviate_filenames=args.abbreviate_filenames
+            abbreviate_filenames=args.abbreviate_filenames,
+            no_headers=getattr(args, "no_headers", False),
         )
 
         return cls(
@@ -304,5 +429,5 @@ class IntronICConfig:
             scoring=scoring_config,
             training=training_config,
             performance=performance_config,
-            output=output_config
+            output=output_config,
         )
