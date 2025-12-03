@@ -6,12 +6,18 @@ parent-child relationships between genes, transcripts, and exons/CDS features.
 """
 
 from collections import defaultdict
-from typing import List, Dict, Set, Tuple, Optional, Iterable
-from networkx import DiGraph, find_cycle, lexicographical_topological_sort, is_directed_acyclic_graph
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from intronIC.core.models import Gene, Transcript, Exon
-from intronIC.file_io.parsers import BioGLAnnotationParser, AnnotationLine
-from intronIC.utils.coordinates import GenomicCoordinate, CoordinateSystem
+from networkx import (
+    DiGraph,
+    find_cycle,
+    is_directed_acyclic_graph,
+    lexicographical_topological_sort,
+)
+
+from intronIC.core.models import Exon, Gene, Transcript
+from intronIC.file_io.parsers import AnnotationLine, BioGLAnnotationParser
+from intronIC.utils.coordinates import CoordinateSystem, GenomicCoordinate
 
 
 class AnnotationHierarchyBuilder:
@@ -32,7 +38,9 @@ class AnnotationHierarchyBuilder:
         parent_class_map: Maps feature types to their parent/grandparent classes
     """
 
-    def __init__(self, child_features: List[str], clean_names: bool = True, messenger=None):
+    def __init__(
+        self, child_features: List[str], clean_names: bool = True, messenger=None
+    ):
         """
         Initialize the hierarchy builder.
 
@@ -49,18 +57,18 @@ class AnnotationHierarchyBuilder:
 
         # Maps feature types to expected parent classes
         self.parent_class_map = {
-            'parent': {
-                'exon': Transcript,
-                'cds': Transcript,
-                'transcript': Gene,
-                'gene': None
+            "parent": {
+                "exon": Transcript,
+                "cds": Transcript,
+                "transcript": Gene,
+                "gene": None,
             },
-            'grandparent': {
-                'exon': Gene,
-                'cds': Gene,
-                'transcript': None,
-                'gene': None
-            }
+            "grandparent": {
+                "exon": Gene,
+                "cds": Gene,
+                "transcript": None,
+                "gene": None,
+            },
         }
 
         # Feature index - populated after building hierarchy
@@ -82,7 +90,7 @@ class AnnotationHierarchyBuilder:
             start=ann.start,
             stop=ann.stop,
             strand=ann.strand,
-            system='1-based'  # GFF3/GTF are 1-based
+            system="1-based",  # GFF3/GTF are 1-based
         )
 
     def build_from_file(self, annotation_file: str) -> List[Gene]:
@@ -107,6 +115,41 @@ class AnnotationHierarchyBuilder:
 
         # Build hierarchy from iterator (processes as it goes)
         return self.build_from_annotations(annotations_iter)
+
+    def build_from_chromosome(
+        self, annotation_file: str, chromosome: str
+    ) -> List[Gene]:
+        """
+        Build gene hierarchy for a single contig only.
+
+        This enables contig-by-contig processing for memory optimization.
+        Only genes on the specified contig are returned.
+
+        Args:
+            annotation_file: Path to GFF3/GTF annotation file
+            chromosome: Contig/chromosome name to filter for
+
+        Returns:
+            List of Gene objects for the specified contig
+
+        Examples:
+            >>> builder = AnnotationHierarchyBuilder(['exon'])
+            >>> chr1_genes = builder.build_from_chromosome('genome.gff3', 'chr1')
+            >>> print(f"Chr1 has {len(chr1_genes)} genes")
+
+        Note:
+            This is more memory-efficient than build_from_file() for large genomes
+            because it only processes features from one contig at a time.
+        """
+        from intronIC.file_io.parsers import filter_annotation_lines_by_chromosome
+
+        # Get contig-filtered annotation lines (streaming)
+        chr_annotations = filter_annotation_lines_by_chromosome(
+            annotation_file, chromosome
+        )
+
+        # Build hierarchy from filtered annotations
+        return self.build_from_annotations(chr_annotations)
 
     def build_from_lines(self, lines: List[str]) -> List[Gene]:
         """
@@ -143,7 +186,9 @@ class AnnotationHierarchyBuilder:
         # Build hierarchy
         return self.build_from_annotations(annotations)
 
-    def build_from_annotations(self, annotations: Iterable[AnnotationLine]) -> List[Gene]:
+    def build_from_annotations(
+        self, annotations: Iterable[AnnotationLine]
+    ) -> List[Gene]:
         """
         Build gene hierarchy from parsed annotation lines.
 
@@ -172,14 +217,16 @@ class AnnotationHierarchyBuilder:
 
             for feat in features:
                 # Get feature type - use stored value from attributes
-                feat_type = feat.attributes.get('_orig_feat_type', '')
-                if not feat_type and hasattr(feat, 'feature_type'):
+                feat_type = feat.attributes.get("_orig_feat_type", "")
+                if not feat_type and hasattr(feat, "feature_type"):
                     # For Gene/Transcript which have feature_type property
                     feat_type = feat.feature_type
-                feat_type = feat_type.lower() if feat_type else 'unknown'
+                feat_type = feat_type.lower() if feat_type else "unknown"
 
-                parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
-                grandparent_name = feat.attributes.get('_grandparent_name')
+                parent_name = getattr(feat, "parent_id", None) or feat.attributes.get(
+                    "_parent_name"
+                )
+                grandparent_name = feat.attributes.get("_grandparent_name")
 
                 # For child features (exon/cds), create unique name per parent
                 # This handles cases where the same exon is shared across multiple transcripts
@@ -206,41 +253,47 @@ class AnnotationHierarchyBuilder:
                     feat_graph.add_edge(parent_name, name)
 
                     # Ensure parent exists in index
-                    parent_class = self.parent_class_map['parent'].get(feat_type)
+                    parent_class = self.parent_class_map["parent"].get(feat_type)
                     if parent_class and parent_name not in feat_index:
                         # Create minimal placeholder parent with dummy coordinates
                         dummy_coord = GenomicCoordinate(
-                            chromosome='unknown',
+                            chromosome="unknown",
                             start=1,
                             stop=2,  # stop must be > start
-                            strand='+',
-                            system='1-based'
+                            strand="+",
+                            system="1-based",
                         )
                         if parent_class == Gene:
-                            feat_index[parent_name] = Gene(feature_id=parent_name, coordinates=dummy_coord)
+                            feat_index[parent_name] = Gene(
+                                feature_id=parent_name, coordinates=dummy_coord
+                            )
                         else:
                             # For placeholder transcripts without a parent gene,
                             # set parent_id to own ID (matches original intronIC behavior)
                             feat_index[parent_name] = Transcript(
                                 feature_id=parent_name,
                                 coordinates=dummy_coord,
-                                parent_id=parent_name  # Use self as parent when gene is missing
+                                parent_id=parent_name,  # Use self as parent when gene is missing
                             )
 
                     # Ensure grandparent exists if specified
                     if grandparent_name is not None:
                         feat_graph.add_edge(grandparent_name, parent_name)
-                        grandparent_class = self.parent_class_map['grandparent'].get(feat_type)
+                        grandparent_class = self.parent_class_map["grandparent"].get(
+                            feat_type
+                        )
                         if grandparent_class and grandparent_name not in feat_index:
                             # Create minimal placeholder grandparent
                             dummy_coord = GenomicCoordinate(
-                                chromosome='unknown',
+                                chromosome="unknown",
                                 start=1,
                                 stop=2,  # stop must be > start
-                                strand='+',
-                                system='1-based'
+                                strand="+",
+                                system="1-based",
                             )
-                            feat_index[grandparent_name] = Gene(feature_id=grandparent_name, coordinates=dummy_coord)
+                            feat_index[grandparent_name] = Gene(
+                                feature_id=grandparent_name, coordinates=dummy_coord
+                            )
 
         # Step 2: Remove cycles if any
         self._remove_cycles(feat_graph)
@@ -251,15 +304,21 @@ class AnnotationHierarchyBuilder:
         # Step 4: Extract top-level features (genes)
         top_level = [feat_index[name] for name in top_level_names if name in feat_index]
 
-        if not top_level:
+        # For per-contig processing, empty contigs are valid (e.g., scaffolds with no genes)
+        # Only raise error if we received annotations but couldn't build any hierarchy
+        if not top_level and feat_index:
             raise ValueError(
                 "Could not establish parent-child relationships. "
                 "Check annotation file format."
             )
+        elif not top_level:
+            # Empty contig (no features) - return empty list
+            return []
 
         # Step 5: Wrap orphan transcripts in genes (for annotations missing gene features)
         # When gene features are missing, transcripts become top-level but need Gene wrappers
         from dataclasses import replace
+
         wrapped_top_level = []
         for feature in top_level:
             if isinstance(feature, Transcript):
@@ -270,7 +329,7 @@ class AnnotationHierarchyBuilder:
                     gene = Gene(
                         feature_id=gene_id,
                         coordinates=feature.coordinates,
-                        attributes={'_orig_feat_type': 'gene', '_synthetic': True}
+                        attributes={"_orig_feat_type": "gene", "_synthetic": True},
                     )
                     # Create updated transcript with parent_id pointing to gene
                     updated_transcript = replace(feature, parent_id=gene_id)
@@ -307,8 +366,7 @@ class AnnotationHierarchyBuilder:
         return top_level
 
     def _create_features_from_annotation(
-        self,
-        ann: AnnotationLine
+        self, ann: AnnotationLine
     ) -> List[Gene | Transcript | Exon]:
         """
         Create feature objects from an annotation line.
@@ -326,11 +384,11 @@ class AnnotationHierarchyBuilder:
 
         # Map feature types to classes
         feature_class_map = {
-            'gene': Gene,
-            'transcript': Transcript,
-            'mrna': Transcript,  # Common alias
-            'exon': Exon,
-            'cds': Exon
+            "gene": Gene,
+            "transcript": Transcript,
+            "mrna": Transcript,  # Common alias
+            "exon": Exon,
+            "cds": Exon,
         }
 
         # Default to Transcript for unknown types
@@ -351,17 +409,17 @@ class AnnotationHierarchyBuilder:
 
             # Create attributes dict with metadata needed during hierarchy building
             attributes = {
-                '_parent_name': parent,  # Temporary for graph building
-                '_grandparent_name': grandparent,  # Temporary for graph building
-                '_line_number': ann.line_number,  # Temporary for ordering
-                '_orig_feat_type': feat_type  # Store original feature type
+                "_parent_name": parent,  # Temporary for graph building
+                "_grandparent_name": grandparent,  # Temporary for graph building
+                "_line_number": ann.line_number,  # Temporary for ordering
+                "_orig_feat_type": feat_type,  # Store original feature type
             }
 
             # Create feature instance
             if feature_class == Exon:
                 # Parse phase
                 phase = None
-                if ann.phase is not None and ann.phase != '.':
+                if ann.phase is not None and ann.phase != ".":
                     try:
                         phase = int(ann.phase)
                     except (ValueError, TypeError):
@@ -373,20 +431,18 @@ class AnnotationHierarchyBuilder:
                     parent_id=parent,
                     attributes=attributes,
                     phase=phase,
-                    is_coding=(feat_type == 'cds')
+                    is_coding=(feat_type == "cds"),
                 )
             elif feature_class == Transcript:
                 feat = Transcript(
                     feature_id=ann.name,
                     coordinates=coord,
                     parent_id=parent,
-                    attributes=attributes
+                    attributes=attributes,
                 )
             else:  # Gene
                 feat = Gene(
-                    feature_id=ann.name,
-                    coordinates=coord,
-                    attributes=attributes
+                    feature_id=ann.name, coordinates=coord, attributes=attributes
                 )
 
             features.append(feat)
@@ -444,7 +500,9 @@ class AnnotationHierarchyBuilder:
                 cycle_details.append(f"  Edge removed: {parent} -> {child}")
 
             debug_msg = "Cycle details:\n" + "\n".join(cycle_details)
-            debug_msg += f"\nFeatures involved in cycles ({len(features_in_cycles)} total):\n"
+            debug_msg += (
+                f"\nFeatures involved in cycles ({len(features_in_cycles)} total):\n"
+            )
             debug_msg += "\n".join(f"  {f}" for f in sorted(features_in_cycles))
 
             if self.messenger:
@@ -454,9 +512,7 @@ class AnnotationHierarchyBuilder:
                 print(f"[!] {debug_msg}")
 
     def _build_relationships(
-        self,
-        graph: DiGraph,
-        feat_index: Dict[str, Gene | Transcript | Exon]
+        self, graph: DiGraph, feat_index: Dict[str, Gene | Transcript | Exon]
     ) -> Set[str]:
         """
         Build parent-child relationships using topological sort.
@@ -487,26 +543,33 @@ class AnnotationHierarchyBuilder:
                 continue
 
             # Fix missing grandparent for child features
-            feat_type = feat.attributes.get('_orig_feat_type', '')
-            if not feat_type and hasattr(feat, 'feature_type'):
+            feat_type = feat.attributes.get("_orig_feat_type", "")
+            if not feat_type and hasattr(feat, "feature_type"):
                 feat_type = feat.feature_type
-            feat_type = feat_type.lower() if feat_type else 'unknown'
+            feat_type = feat_type.lower() if feat_type else "unknown"
 
-            grandparent_name = feat.attributes.get('_grandparent_name')
-            parent_name = getattr(feat, 'parent_id', None) or feat.attributes.get('_parent_name')
+            grandparent_name = feat.attributes.get("_grandparent_name")
+            parent_name = getattr(feat, "parent_id", None) or feat.attributes.get(
+                "_parent_name"
+            )
 
-            if (feat_type in self.child_features and
-                grandparent_name is None and
-                parent_name and parent_name in feat_index):
+            if (
+                feat_type in self.child_features
+                and grandparent_name is None
+                and parent_name
+                and parent_name in feat_index
+            ):
                 parent_feat = feat_index[parent_name]
-                gp_name = getattr(parent_feat, 'parent_id', None) or parent_feat.attributes.get('_parent_name')
+                gp_name = getattr(
+                    parent_feat, "parent_id", None
+                ) or parent_feat.attributes.get("_parent_name")
                 if gp_name is None:
                     # When grandparent is missing (e.g., no gene features in annotation),
                     # use parent ID as grandparent ID (matches original intronIC behavior)
                     gp_name = parent_name
                 # Update grandparent in attributes dict (which is mutable even though Exon is frozen)
-                if hasattr(feat, 'attributes') and isinstance(feat.attributes, dict):
-                    feat.attributes['_grandparent_name'] = gp_name
+                if hasattr(feat, "attributes") and isinstance(feat.attributes, dict):
+                    feat.attributes["_grandparent_name"] = gp_name
 
             # Add this feature to its parents' children lists
             # Use 'name' (the unique name from the graph) not feat.feature_id
@@ -520,8 +583,7 @@ class AnnotationHierarchyBuilder:
 
 
 def build_annotation_hierarchy(
-    annotation_file: str,
-    child_features: List[str]
+    annotation_file: str, child_features: List[str]
 ) -> List[Gene]:
     """
     Convenience function to build gene hierarchy from an annotation file.

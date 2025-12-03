@@ -22,15 +22,16 @@ Pipeline stages:
 Port from: intronIC.py:5038-5900 (main pipeline)
 """
 
-from typing import Sequence, Optional, Tuple, Any
-from dataclasses import dataclass
 from collections import Counter
+from dataclasses import dataclass
+from typing import Any, Optional, Sequence, Tuple
+
 import numpy as np
 
-from intronIC.core.intron import Intron
 from intronIC.classification.optimizer import SVMOptimizer, SVMParameters
-from intronIC.classification.trainer import SVMTrainer, SVMEnsemble
 from intronIC.classification.predictor import SVMPredictor
+from intronIC.classification.trainer import SVMEnsemble, SVMTrainer
+from intronIC.core.intron import Intron
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +68,13 @@ class ClassificationResult:
             Introns with metadata.type_id == 'u12' and svm_score >= threshold
         """
         return [
-            i for i in self.classified_introns
-            if i.metadata and i.metadata.type_id == 'u12'
-            and i.scores and i.scores.svm_score and i.scores.svm_score >= threshold
+            i
+            for i in self.classified_introns
+            if i.metadata
+            and i.metadata.type_id == "u12"
+            and i.scores
+            and i.scores.svm_score
+            and i.scores.svm_score >= threshold
         ]
 
     def get_u2_predictions(self, threshold: float = 90.0) -> Sequence[Intron]:
@@ -83,9 +88,13 @@ class ClassificationResult:
             Introns with metadata.type_id == 'u2' and svm_score < threshold
         """
         return [
-            i for i in self.classified_introns
-            if i.metadata and i.metadata.type_id == 'u2'
-            and i.scores and i.scores.svm_score and i.scores.svm_score < threshold
+            i
+            for i in self.classified_introns
+            if i.metadata
+            and i.metadata.type_id == "u2"
+            and i.scores
+            and i.scores.svm_score
+            and i.scores.svm_score < threshold
         ]
 
 
@@ -130,21 +139,21 @@ class IntronClassifier:
         cv_processes: int = 1,
         classification_processes: int = 1,
         max_iter: int = 20000,
-        eval_mode: str = 'nested_cv',
+        eval_mode: str = "nested_cv",
         n_cv_folds: int = 5,
         test_fraction: float = 0.2,
         param_grid_override: Optional[dict] = None,
         n_points_initial: int = 13,
-        eff_C_pos_range: tuple = (3e-4, 1e+2),  # Tightened to reduce FPR
+        eff_C_pos_range: tuple = (3e-4, 1e2),  # Tightened to reduce FPR
         eff_C_neg_max: Optional[float] = None,
         use_fold_averaged_params: bool = False,
-        scoring_metric: str = 'balanced_accuracy',
+        scoring_metric: str = "balanced_accuracy",
         penalty_options: Optional[list] = None,
         loss_options: Optional[list] = None,
         class_weight_multipliers: Optional[list] = None,
         use_multiplier_tiebreaker: bool = True,
         features_list: Optional[list] = None,
-        gamma_imbalance_options: Optional[list] = None
+        gamma_imbalance_options: Optional[list] = None,
     ):
         """
         Initialize classifier.
@@ -217,16 +226,26 @@ class IntronClassifier:
         self.eff_C_neg_max = eff_C_neg_max
         self.use_fold_averaged_params = use_fold_averaged_params
         self.scoring_metric = scoring_metric
-        self.penalty_options = penalty_options if penalty_options is not None else ['l2']
-        self.loss_options = loss_options if loss_options is not None else ['squared_hinge']
-        self.class_weight_multipliers = class_weight_multipliers if class_weight_multipliers is not None else [1.0]
+        self.penalty_options = (
+            penalty_options if penalty_options is not None else ["l2"]
+        )
+        self.loss_options = (
+            loss_options if loss_options is not None else ["squared_hinge"]
+        )
+        self.class_weight_multipliers = (
+            class_weight_multipliers if class_weight_multipliers is not None else [1.0]
+        )
         self.use_multiplier_tiebreaker = use_multiplier_tiebreaker
         self.features_list = features_list
-        self.gamma_imbalance_options = gamma_imbalance_options if gamma_imbalance_options is not None else [1.0]
+        self.gamma_imbalance_options = (
+            gamma_imbalance_options if gamma_imbalance_options is not None else [1.0]
+        )
 
         # Debug: Log features being used
         if features_list is not None:
-            print(f"IntronClassifier initialized with explicit feature list: {features_list}")
+            print(
+                f"IntronClassifier initialized with explicit feature list: {features_list}"
+            )
         else:
             print(f"IntronClassifier initialized with default 7D feature set")
 
@@ -234,10 +253,12 @@ class IntronClassifier:
         # Rationale: When C is pre-specified, evaluation metrics aren't useful
         # since we're not comparing different hyperparameters
         if not optimize_c and fixed_c is not None:
-            if eval_mode != 'none':
-                print(f"Using fixed C={fixed_c:.6e} - automatically skipping evaluation phase")
+            if eval_mode != "none":
+                print(
+                    f"Using fixed C={fixed_c:.6e} - automatically skipping evaluation phase"
+                )
                 print("(Override with --eval-mode if you want to evaluate performance)")
-            self.eval_mode = 'none'
+            self.eval_mode = "none"
         else:
             self.eval_mode = eval_mode
 
@@ -248,7 +269,7 @@ class IntronClassifier:
             )
         if not optimize_c and fixed_c is None:
             raise ValueError("Must provide fixed_c if optimize_c is False")
-        if eval_mode not in ['nested_cv', 'split', 'none']:
+        if eval_mode not in ["nested_cv", "split", "none"]:
             raise ValueError(
                 f"eval_mode must be 'nested_cv', 'split', or 'none', got {eval_mode}"
             )
@@ -292,7 +313,9 @@ class IntronClassifier:
         print(f"  Geometric mean C: {geometric_mean_C:.6e}")
         print(f"  Fold-specific calibration: {calibration_methods}")
         print(f"  Majority-vote calibration: {majority_calibration}")
-        print(f"  Rationale: Using conservative fold-averaged params for better cross-species generalization")
+        print(
+            f"  Rationale: Using conservative fold-averaged params for better cross-species generalization"
+        )
 
         # Get fixed parameters from first fold's result (these don't vary across folds)
         # Note: FoldResult doesn't store penalty/loss/class_weight_multiplier yet
@@ -304,20 +327,20 @@ class IntronClassifier:
             saturate_enabled=False,  # Corrected arch: no saturation
             include_max=False,  # Corrected arch: no max features
             include_pairwise_mins=False,  # Corrected arch: no pairwise mins
-            penalty='l2',  # Default: L2 (most common in search space)
+            penalty="l2",  # Default: L2 (most common in search space)
             class_weight_multiplier=1.0,  # Default: balanced (middle of search range)
-            loss='squared_hinge',  # Fixed: only valid option for dual=False
+            loss="squared_hinge",  # Fixed: only valid option for dual=False
             dual=False,  # Corrected arch: primal formulation
             intercept_scaling=1.0,  # Corrected arch: fixed
             cv_score=nested_cv_result.mean_f1,  # Use mean F1 from nested CV
-            round_found=-1  # -1 indicates fold-averaged (not from specific round)
+            round_found=-1,  # -1 indicates fold-averaged (not from specific round)
         )
 
     def classify(
         self,
         u12_reference: Sequence[Intron],
         u2_reference: Sequence[Intron],
-        experimental: Sequence[Intron]
+        experimental: Sequence[Intron],
     ) -> ClassificationResult:
         """
         Run complete classification pipeline.
@@ -347,13 +370,14 @@ class IntronClassifier:
 
         # Initialize global progress tracker
         from intronIC.classification.progress_tracker import ProgressTracker
-        skip_final_opt = self.use_fold_averaged_params and self.eval_mode == 'nested_cv'
+
+        skip_final_opt = self.use_fold_averaged_params and self.eval_mode == "nested_cv"
         total_steps = ProgressTracker.calculate_total_steps(
             eval_mode=self.eval_mode,
             n_cv_folds=self.n_cv_folds,
             n_optimization_rounds=self.n_optimization_rounds,
             n_ensemble_models=self.n_ensemble_models,
-            skip_final_optimization=skip_final_opt
+            skip_final_optimization=skip_final_opt,
         )
         progress_tracker = ProgressTracker(total_steps=total_steps, verbose=True)
         print(f"\n[Starting training pipeline]\n")
@@ -363,7 +387,7 @@ class IntronClassifier:
         # ====================================================================
         eval_result = None
 
-        if self.eval_mode == 'nested_cv':
+        if self.eval_mode == "nested_cv":
             from intronIC.classification.nested_cv import NestedCVEvaluator
 
             evaluator = NestedCVEvaluator(
@@ -388,11 +412,11 @@ class IntronClassifier:
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
-                progress_tracker=progress_tracker
+                progress_tracker=progress_tracker,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
-        elif self.eval_mode == 'split':
+        elif self.eval_mode == "split":
             from intronIC.classification.split_eval import SplitEvaluator
 
             evaluator = SplitEvaluator(
@@ -418,7 +442,7 @@ class IntronClassifier:
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
-                progress_tracker=progress_tracker
+                progress_tracker=progress_tracker,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -427,40 +451,54 @@ class IntronClassifier:
         # ====================================================================
         # PHASE 2: PRODUCTION MODEL (Train on ALL reference data)
         # ====================================================================
-        if self.eval_mode != 'none':
-            print("\n" + "="*80)
+        if self.eval_mode != "none":
+            print("\n" + "=" * 80)
             print("Production Model Training (all reference data)")
-            print("="*80)
+            print("=" * 80)
 
         # Stage 1: Hyperparameter Optimization
         # Choose between fold-averaged params (conservative) or re-optimization (aggressive)
         print("\n=== Stage 1: Hyperparameter Optimization ===")
 
         # Check if we should use fold-averaged parameters from nested CV
-        if (self.use_fold_averaged_params and
-            self.eval_mode == 'nested_cv' and
-            eval_result is not None):
+        if (
+            self.use_fold_averaged_params
+            and self.eval_mode == "nested_cv"
+            and eval_result is not None
+        ):
             # Use fold-averaged hyperparameters (better cross-species generalization)
             print("Using fold-averaged hyperparameters from nested CV")
-            print("(Skipping re-optimization on full dataset for better cross-species generalization)")
+            print(
+                "(Skipping re-optimization on full dataset for better cross-species generalization)"
+            )
             parameters = self._compute_fold_averaged_params(eval_result)
         else:
             # Standard approach: re-optimize on full dataset
-            if self.use_fold_averaged_params and self.eval_mode == 'nested_cv':
-                print("Note: use_fold_averaged_params=True but nested CV result not available")
+            if self.use_fold_averaged_params and self.eval_mode == "nested_cv":
+                print(
+                    "Note: use_fold_averaged_params=True but nested CV result not available"
+                )
                 print("Falling back to re-optimization on full dataset")
             elif self.use_fold_averaged_params:
-                print("Note: use_fold_averaged_params=True but eval_mode is not 'nested_cv'")
+                print(
+                    "Note: use_fold_averaged_params=True but eval_mode is not 'nested_cv'"
+                )
                 print("Falling back to re-optimization on full dataset")
 
             # If C is fixed, constrain the grid to that single value
-            param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+            param_grid = (
+                self.param_grid_override.copy() if self.param_grid_override else {}
+            )
             if not self.optimize_c:
                 # Force C to the fixed value, but still search other parameters
-                param_grid['estimator__svc__C'] = [self.fixed_c]
-                print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+                param_grid["svc__C"] = [self.fixed_c]
+                print(
+                    f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method"
+                )
             else:
-                print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
+                print(
+                    "Optimizing C, include_max, dual, intercept_scaling, and calibration_method"
+                )
 
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
@@ -476,15 +514,17 @@ class IntronClassifier:
                 features_list=self.features_list,
                 gamma_imbalance_options=self.gamma_imbalance_options,
                 param_grid_override=param_grid if param_grid else None,
-                progress_tracker=progress_tracker
+                progress_tracker=progress_tracker,
             )
             parameters = optimizer.optimize(
                 u12_reference,
                 u2_reference,
                 eff_C_pos_range=self.eff_C_pos_range,
-                eff_C_neg_max=self.eff_C_neg_max
+                eff_C_neg_max=self.eff_C_neg_max,
             )
-            print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
+            print(
+                f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}"
+            )
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -494,19 +534,20 @@ class IntronClassifier:
             max_iter=self.max_iter,
             features_list=self.features_list,
             gamma_imbalance_options=self.gamma_imbalance_options,
-            progress_tracker=progress_tracker
+            progress_tracker=progress_tracker,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
             u2_reference,
             parameters,
             subsample_u2=self.subsample_u2,
-            subsample_ratio=self.subsample_ratio
+            subsample_ratio=self.subsample_ratio,
         )
         print(f"Ensemble trained: {len(ensemble.models)} models")
 
         # Sanity check: Verify imbalance penalty weights are negative
         from intronIC.classification.model_inspector import inspect_ensemble_weights
+
         warnings = inspect_ensemble_weights(ensemble, verbose=True)
         if warnings:
             print("\n⚠️  WARNING: Model coefficients may not be working as expected!")
@@ -521,19 +562,18 @@ class IntronClassifier:
         else:
             predictor = SVMPredictor(
                 threshold=self.classification_threshold,
-                n_jobs=self.classification_processes
+                n_jobs=self.classification_processes,
             )
             classified = predictor.predict(ensemble, experimental)
 
             # Count classifications
             n_u12 = sum(
-                1 for i in classified
-                if i.metadata and i.metadata.type_id == 'u12'
+                1 for i in classified if i.metadata and i.metadata.type_id == "u12"
             )
             n_u2 = len(classified) - n_u12
             print(f"Classification complete:")
-            print(f"  U12: {n_u12} ({100*n_u12/len(classified):.1f}%)")
-            print(f"  U2: {n_u2} ({100*n_u2/len(classified):.1f}%)")
+            print(f"  U12: {n_u12} ({100 * n_u12 / len(classified):.1f}%)")
+            print(f"  U2: {n_u2} ({100 * n_u2 / len(classified):.1f}%)")
 
         return ClassificationResult(
             classified_introns=classified,
@@ -541,7 +581,7 @@ class IntronClassifier:
             parameters=parameters,
             n_u12_reference=len(u12_reference),
             n_u2_reference=len(u2_reference),
-            eval_result=eval_result
+            eval_result=eval_result,
         )
 
     def classify_batch(
@@ -549,7 +589,7 @@ class IntronClassifier:
         u12_reference: Sequence[Intron],
         u2_reference: Sequence[Intron],
         experimental: Sequence[Intron],
-        batch_size: int = 10000
+        batch_size: int = 10000,
     ) -> ClassificationResult:
         """
         Run classification pipeline with batch processing.
@@ -575,12 +615,26 @@ class IntronClassifier:
         print(f"  Experimental: {len(experimental)} introns")
         print(f"  Batch size: {batch_size}")
 
+        # Initialize global progress tracker
+        from intronIC.classification.progress_tracker import ProgressTracker
+
+        skip_final_opt = self.use_fold_averaged_params and self.eval_mode == "nested_cv"
+        total_steps = ProgressTracker.calculate_total_steps(
+            eval_mode=self.eval_mode,
+            n_cv_folds=self.n_cv_folds,
+            n_optimization_rounds=self.n_optimization_rounds,
+            n_ensemble_models=self.n_ensemble_models,
+            skip_final_optimization=skip_final_opt,
+        )
+        progress_tracker = ProgressTracker(total_steps=total_steps, verbose=True)
+        print(f"\n[Starting training pipeline (batch mode)]\n")
+
         # ====================================================================
         # PHASE 1: EVALUATION (Honest Performance Assessment)
         # ====================================================================
         eval_result = None
 
-        if self.eval_mode == 'nested_cv':
+        if self.eval_mode == "nested_cv":
             from intronIC.classification.nested_cv import NestedCVEvaluator
 
             evaluator = NestedCVEvaluator(
@@ -605,11 +659,11 @@ class IntronClassifier:
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
-                progress_tracker=progress_tracker
+                progress_tracker=progress_tracker,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
-        elif self.eval_mode == 'split':
+        elif self.eval_mode == "split":
             from intronIC.classification.split_eval import SplitEvaluator
 
             evaluator = SplitEvaluator(
@@ -635,7 +689,7 @@ class IntronClassifier:
                 param_grid_override=self.param_grid_override,
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
-                progress_tracker=progress_tracker
+                progress_tracker=progress_tracker,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -644,40 +698,54 @@ class IntronClassifier:
         # ====================================================================
         # PHASE 2: PRODUCTION MODEL (Train on ALL reference data)
         # ====================================================================
-        if self.eval_mode != 'none':
-            print("\n" + "="*80)
+        if self.eval_mode != "none":
+            print("\n" + "=" * 80)
             print("Production Model Training (all reference data)")
-            print("="*80)
+            print("=" * 80)
 
         # Stage 1: Hyperparameter Optimization
         # Choose between fold-averaged params (conservative) or re-optimization (aggressive)
         print("\n=== Stage 1: Hyperparameter Optimization ===")
 
         # Check if we should use fold-averaged parameters from nested CV
-        if (self.use_fold_averaged_params and
-            self.eval_mode == 'nested_cv' and
-            eval_result is not None):
+        if (
+            self.use_fold_averaged_params
+            and self.eval_mode == "nested_cv"
+            and eval_result is not None
+        ):
             # Use fold-averaged hyperparameters (better cross-species generalization)
             print("Using fold-averaged hyperparameters from nested CV")
-            print("(Skipping re-optimization on full dataset for better cross-species generalization)")
+            print(
+                "(Skipping re-optimization on full dataset for better cross-species generalization)"
+            )
             parameters = self._compute_fold_averaged_params(eval_result)
         else:
             # Standard approach: re-optimize on full dataset
-            if self.use_fold_averaged_params and self.eval_mode == 'nested_cv':
-                print("Note: use_fold_averaged_params=True but nested CV result not available")
+            if self.use_fold_averaged_params and self.eval_mode == "nested_cv":
+                print(
+                    "Note: use_fold_averaged_params=True but nested CV result not available"
+                )
                 print("Falling back to re-optimization on full dataset")
             elif self.use_fold_averaged_params:
-                print("Note: use_fold_averaged_params=True but eval_mode is not 'nested_cv'")
+                print(
+                    "Note: use_fold_averaged_params=True but eval_mode is not 'nested_cv'"
+                )
                 print("Falling back to re-optimization on full dataset")
 
             # If C is fixed, constrain the grid to that single value
-            param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
+            param_grid = (
+                self.param_grid_override.copy() if self.param_grid_override else {}
+            )
             if not self.optimize_c:
                 # Force C to the fixed value, but still search other parameters
-                param_grid['estimator__svc__C'] = [self.fixed_c]
-                print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+                param_grid["svc__C"] = [self.fixed_c]
+                print(
+                    f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method"
+                )
             else:
-                print("Optimizing C, include_max, dual, intercept_scaling, and calibration_method")
+                print(
+                    "Optimizing C, include_max, dual, intercept_scaling, and calibration_method"
+                )
 
             optimizer = SVMOptimizer(
                 n_rounds=self.n_optimization_rounds,
@@ -693,15 +761,17 @@ class IntronClassifier:
                 features_list=self.features_list,
                 gamma_imbalance_options=self.gamma_imbalance_options,
                 param_grid_override=param_grid if param_grid else None,
-                progress_tracker=progress_tracker
+                progress_tracker=progress_tracker,
             )
             parameters = optimizer.optimize(
                 u12_reference,
                 u2_reference,
                 eff_C_pos_range=self.eff_C_pos_range,
-                eff_C_neg_max=self.eff_C_neg_max
+                eff_C_neg_max=self.eff_C_neg_max,
             )
-            print(f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}")
+            print(
+                f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}"
+            )
 
         # Stage 2: Train ensemble
         print("\n=== Stage 2: Ensemble Training ===")
@@ -711,19 +781,20 @@ class IntronClassifier:
             max_iter=self.max_iter,
             features_list=self.features_list,
             gamma_imbalance_options=self.gamma_imbalance_options,
-            progress_tracker=progress_tracker
+            progress_tracker=progress_tracker,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
             u2_reference,
             parameters,
             subsample_u2=self.subsample_u2,
-            subsample_ratio=self.subsample_ratio
+            subsample_ratio=self.subsample_ratio,
         )
         print(f"Ensemble trained: {len(ensemble.models)} models")
 
         # Sanity check: Verify imbalance penalty weights are negative
         from intronIC.classification.model_inspector import inspect_ensemble_weights
+
         warnings = inspect_ensemble_weights(ensemble, verbose=True)
         if warnings:
             print("\n⚠️  WARNING: Model coefficients may not be working as expected!")
@@ -738,18 +809,17 @@ class IntronClassifier:
         else:
             predictor = SVMPredictor(
                 threshold=self.classification_threshold,
-                n_jobs=self.classification_processes
+                n_jobs=self.classification_processes,
             )
             classified = predictor.predict_batch(ensemble, experimental, batch_size)
 
             n_u12 = sum(
-                1 for i in classified
-                if i.metadata and i.metadata.type_id == 'u12'
+                1 for i in classified if i.metadata and i.metadata.type_id == "u12"
             )
             n_u2 = len(classified) - n_u12
             print(f"Classification complete:")
-            print(f"  U12: {n_u12} ({100*n_u12/len(classified):.1f}%)")
-            print(f"  U2: {n_u2} ({100*n_u2/len(classified):.1f}%)")
+            print(f"  U12: {n_u12} ({100 * n_u12 / len(classified):.1f}%)")
+            print(f"  U2: {n_u2} ({100 * n_u2 / len(classified):.1f}%)")
 
         return ClassificationResult(
             classified_introns=classified,
@@ -757,13 +827,11 @@ class IntronClassifier:
             parameters=parameters,
             n_u12_reference=len(u12_reference),
             n_u2_reference=len(u2_reference),
-            eval_result=eval_result
+            eval_result=eval_result,
         )
 
     def _validate_introns_have_zscores(
-        self,
-        introns: Sequence[Intron],
-        dataset_name: str
+        self, introns: Sequence[Intron], dataset_name: str
     ) -> None:
         """
         Validate that all introns have z-scores.
@@ -785,9 +853,11 @@ class IntronClassifier:
                     f"No scores object. Run scoring pipeline first."
                 )
 
-            if (intron.scores.five_z_score is None or
-                intron.scores.bp_z_score is None or
-                intron.scores.three_z_score is None):
+            if (
+                intron.scores.five_z_score is None
+                or intron.scores.bp_z_score is None
+                or intron.scores.three_z_score is None
+            ):
                 raise ValueError(
                     f"{dataset_name}[{i}] ({intron.intron_id}): "
                     f"Missing z-scores. Must compute z-scores from reference "

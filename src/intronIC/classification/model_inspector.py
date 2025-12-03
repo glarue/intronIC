@@ -15,14 +15,13 @@ Usage:
 """
 
 from typing import List, Optional
+
 import numpy as np
+
 from intronIC.classification.trainer import SVMEnsemble
 
 
-def inspect_ensemble_weights(
-    ensemble: SVMEnsemble,
-    verbose: bool = True
-) -> List[str]:
+def inspect_ensemble_weights(ensemble: SVMEnsemble, verbose: bool = True) -> List[str]:
     """
     Inspect learned SVM coefficients for BothEndsStrong features.
 
@@ -49,48 +48,59 @@ def inspect_ensemble_weights(
         first_model = ensemble.models[0]
         print("\nShared Hyperparameters (all models):")
         print(f"  Optimal C:                   {first_model.parameters.C}")
-        print(f"  Calibration method:          {first_model.parameters.calibration_method}")
+        print(
+            f"  Calibration method:          {first_model.parameters.calibration_method}"
+        )
         print(f"  include_max:                 {first_model.parameters.include_max}")
-        print(f"  include_pairwise_mins:       {first_model.parameters.include_pairwise_mins}")
+        print(
+            f"  include_pairwise_mins:       {first_model.parameters.include_pairwise_mins}"
+        )
         print("\nEnsemble Diversity:")
         print(f"  Number of models:            {len(ensemble.models)}")
-        print(f"  U2 subsampling:              {'Yes' if len(ensemble.models) > 1 else 'No'}")
+        print(
+            f"  U2 subsampling:              {'Yes' if len(ensemble.models) > 1 else 'No'}"
+        )
         if len(ensemble.models) > 1:
             subsample_pct = int(ensemble.subsample_ratio * 100)
-            print(f"  U2 subsample variation:      Different random {subsample_pct}% per model")
+            print(
+                f"  U2 subsample variation:      Different random {subsample_pct}% per model"
+            )
         print("\n" + "-" * 70)
 
     for i, model in enumerate(ensemble.models):
         if verbose:
-            print(f"\nModel {i+1}/{len(ensemble.models)} - Learned Coefficients:")
-            print(f"  Training set size: {model.train_size} introns ({model.u12_count} U12, {model.u2_count} U2)")
+            print(f"\nModel {i + 1}/{len(ensemble.models)} - Learned Coefficients:")
+            print(
+                f"  Training set size: {model.train_size} introns ({model.u12_count} U12, {model.u2_count} U2)"
+            )
 
         # Extract SVC from calibrated classifier
         # model.model is CalibratedClassifierCV
-        # calibrated_classifiers_[0].estimator is Pipeline(RobustScaler -> BothEndsStrong -> LinearSVC)
+        # calibrated_classifiers_[0].estimator is Pipeline(BothEndsStrong -> LinearSVC)
+        # NOTE: Scaling happens EXTERNALLY via ScoreNormalizer, NOT inside the pipeline
         # We need to get the LinearSVC from the end of the pipeline
         pipeline = model.model.calibrated_classifiers_[0].estimator
-        svc = pipeline.named_steps['svc']  # Get the LinearSVC from pipeline
+        svc = pipeline.named_steps["svc"]  # Get the LinearSVC from pipeline
         coefs = svc.coef_[0]
         intercept = svc.intercept_[0]
 
         if verbose:
             # Get feature names (Phase 1: no augment step, Phase 2+: augment step exists)
-            if 'augment' in pipeline.named_steps:
-                transformer = pipeline.named_steps['augment']
+            if "augment" in pipeline.named_steps:
+                transformer = pipeline.named_steps["augment"]
                 feature_names = transformer.get_feature_names_out()
-            elif 'transform' in pipeline.named_steps:
+            elif "transform" in pipeline.named_steps:
                 # Get feature names from BothEndsStrongTransformer
-                transformer = pipeline.named_steps['transform']
+                transformer = pipeline.named_steps["transform"]
                 feature_names = transformer.get_feature_names_out()
             else:
                 # Phase 1: Only base features (3D)
-                feature_names = ['five_z_score', 'bp_z_score', 'three_z_score']
+                feature_names = ["five_z_score", "bp_z_score", "three_z_score"]
 
             # Print all features with coefficients
             for idx, (name, coef) in enumerate(zip(feature_names, coefs)):
                 # Highlight min/max features
-                if 'min' in name or 'max' in name:
+                if "min" in name or "max" in name:
                     print(f"    {name:25s}: {coef:+.6f}  ← Augmented feature")
                 else:
                     print(f"    {name:25s}: {coef:+.6f}")
@@ -106,7 +116,9 @@ def inspect_ensemble_weights(
         if not warnings:
             print("✓ All sanity checks passed!")
         else:
-            print(f"⚠️  {len(warnings)} warning(s) found. Model may not work as intended.")
+            print(
+                f"⚠️  {len(warnings)} warning(s) found. Model may not work as intended."
+            )
         print("=" * 70 + "\n")
 
     return warnings
@@ -125,18 +137,18 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     # Get feature names from the first model's transformer (or default for Phase 1)
     first_model = ensemble.models[0]
     pipeline = first_model.model.calibrated_classifiers_[0].estimator
-    if 'augment' in pipeline.named_steps:
-        transformer = pipeline.named_steps['augment']
+    if "augment" in pipeline.named_steps:
+        transformer = pipeline.named_steps["augment"]
         feature_names = transformer.get_feature_names_out()
     else:
         # Phase 1: Only base features (3D)
-        feature_names = ['five_z_score', 'bp_z_score', 'three_z_score']
+        feature_names = ["five_z_score", "bp_z_score", "three_z_score"]
 
     # Collect coefficients from all models
     all_coefs = []
     for model in ensemble.models:
         pipeline = model.model.calibrated_classifiers_[0].estimator
-        svc = pipeline.named_steps['svc']  # Get LinearSVC from pipeline
+        svc = pipeline.named_steps["svc"]  # Get LinearSVC from pipeline
         all_coefs.append(svc.coef_[0])
 
     all_coefs = np.array(all_coefs)  # Shape: (n_models, n_features)
@@ -145,10 +157,10 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     summary = {}
     for i, name in enumerate(feature_names):
         summary[name] = {
-            'mean': float(np.mean(all_coefs[:, i])),
-            'std': float(np.std(all_coefs[:, i])),
-            'min': float(np.min(all_coefs[:, i])),
-            'max': float(np.max(all_coefs[:, i]))
+            "mean": float(np.mean(all_coefs[:, i])),
+            "std": float(np.std(all_coefs[:, i])),
+            "min": float(np.min(all_coefs[:, i])),
+            "max": float(np.max(all_coefs[:, i])),
         }
 
     return summary
@@ -170,9 +182,13 @@ def print_coefficient_summary(ensemble: SVMEnsemble) -> None:
 
     for name, stats in summary.items():
         # Highlight BothEndsStrong features
-        marker = "  *" if 'min' in name or 'max' in name else "   "
-        print(f"{name:<15}{marker} {stats['mean']:+12.6f} {stats['std']:12.6f} "
-              f"{stats['min']:+12.6f} {stats['max']:+12.6f}")
+        marker = "  *" if "min" in name or "max" in name else "   "
+        print(
+            f"{name:<15}{marker} {stats['mean']:+12.6f} {stats['std']:12.6f} "
+            f"{stats['min']:+12.6f} {stats['max']:+12.6f}"
+        )
 
+    print("=" * 70)
+    print("* = BothEndsStrong augmented features (min/max)\n")
     print("=" * 70)
     print("* = BothEndsStrong augmented features (min/max)\n")

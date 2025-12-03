@@ -18,12 +18,12 @@ Design:
 """
 
 import math
-from typing import Dict, Tuple, Iterator, Optional, Set
 from dataclasses import replace
+from typing import Dict, Iterator, Optional, Set, Tuple
 
-from intronIC.scoring.pwm import PWMSet
-from intronIC.scoring.branch_point import BranchPointScorer, BranchPointMatch
 from intronIC.core.intron import Intron, IntronScores, IntronSequences
+from intronIC.scoring.branch_point import BranchPointMatch, BranchPointScorer
+from intronIC.scoring.pwm import PWMSet
 
 
 class IntronScorer:
@@ -50,7 +50,7 @@ class IntronScorer:
         five_coords: Tuple[int, int] = (-3, 9),
         bp_coords: Tuple[int, int] = (-55, -5),
         three_coords: Tuple[int, int] = (-6, 4),
-        ignore_nc_dnts: bool = True
+        ignore_nc_dnts: bool = True,
     ):
         """
         Initialize scoring pipeline.
@@ -76,10 +76,7 @@ class IntronScorer:
         # Branch point scorer will be created with appropriate PWMs per intron
         # No longer storing a single scorer instance
 
-    def score_introns(
-        self,
-        introns: Iterator[Intron]
-    ) -> Iterator[Intron]:
+    def score_introns(self, introns: Iterator[Intron]) -> Iterator[Intron]:
         """
         Score multiple introns (generator).
 
@@ -111,6 +108,10 @@ class IntronScorer:
         4. Calculates log ratios for each region
         5. Returns intron with scores populated
 
+        Supports two modes:
+        - Default mode: Uses full sequences (intron.sequences)
+        - Streaming mode: Uses pre-extracted motifs (intron.motifs)
+
         Args:
             intron: Intron to score
 
@@ -118,13 +119,18 @@ class IntronScorer:
             New intron with scores populated
 
         Raises:
-            ValueError: If intron lacks required sequences
+            ValueError: If intron lacks required sequences or motifs
         """
-        # Validate intron has sequences
-        if intron.sequences is None or intron.sequences.seq is None:
+        # Validate intron has sequences OR motifs (streaming mode)
+        has_sequences = (
+            intron.sequences is not None and intron.sequences.seq is not None
+        )
+        has_motifs = intron.motifs is not None
+
+        if not has_sequences and not has_motifs:
             raise ValueError(
-                f"Intron {intron.intron_id} has no sequence. "
-                "Cannot score without sequence data."
+                f"Intron {intron.intron_id} has no sequence data. "
+                "Cannot score without sequences or motifs."
             )
 
         # Determine which positions to ignore based on canonical status
@@ -133,8 +139,7 @@ class IntronScorer:
         # Score 5' splice site
         # Port from: intronIC.py:3055-3072 (calls multi_matrix_score)
         five_u12_score, five_u2_score = self._score_five_site(
-            intron,
-            ignore_positions=ignore_five
+            intron, ignore_positions=ignore_five
         )
 
         # Score branch point
@@ -143,8 +148,7 @@ class IntronScorer:
 
         # Score 3' splice site
         three_u12_score, three_u2_score = self._score_three_site(
-            intron,
-            ignore_positions=ignore_three
+            intron, ignore_positions=ignore_three
         )
 
         # Calculate log ratios
@@ -168,7 +172,7 @@ class IntronScorer:
             intron.scores if intron.scores else IntronScores(),
             five_raw_score=five_raw_score,
             bp_raw_score=bp_raw_score,
-            three_raw_score=three_raw_score
+            three_raw_score=three_raw_score,
         )
 
         # Update sequences with BP information if match was found
@@ -179,13 +183,18 @@ class IntronScorer:
                 intron.sequences,
                 bp_seq=bp_u12_match.sequence,
                 bp_seq_u2=bp_u12_match.sequence_u2,
-                bp_relative_coords=(bp_u12_match.start_in_region, bp_u12_match.stop_in_region),
-                bp_region_seq=bp_u12_match.search_region  # Store the actual searched sequence
+                bp_relative_coords=(
+                    bp_u12_match.start_in_region,
+                    bp_u12_match.stop_in_region,
+                ),
+                bp_region_seq=bp_u12_match.search_region,  # Store the actual searched sequence
             )
 
         return replace(intron, scores=updated_scores, sequences=updated_sequences)
 
-    def _get_ignore_positions(self, intron: Intron) -> Tuple[Optional[Set[int]], Optional[Set[int]]]:
+    def _get_ignore_positions(
+        self, intron: Intron
+    ) -> Tuple[Optional[Set[int]], Optional[Set[int]]]:
         """
         Determine which positions to ignore for non-canonical introns.
 
@@ -204,10 +213,7 @@ class IntronScorer:
             return None, None
 
         # Check if intron is non-canonical
-        is_noncanonical = (
-            intron.metadata and
-            intron.metadata.noncanonical is True
-        )
+        is_noncanonical = intron.metadata and intron.metadata.noncanonical is True
 
         if not is_noncanonical:
             return None, None
@@ -220,10 +226,37 @@ class IntronScorer:
 
         return ignore_five, ignore_three
 
+    def _get_terminal_dinucleotides(self, intron: Intron) -> str:
+        """
+        Get terminal dinucleotides for PWM selection.
+
+        Supports both default mode (from sequences) and streaming mode (from motifs).
+
+        Args:
+            intron: Intron to get dinucleotides from
+
+        Returns:
+            Lowercase dinucleotide string (e.g., 'gtag', 'gcag', 'atac')
+        """
+        # Streaming mode: use motifs.terminal_dnts (format: 'GT-AG')
+        if intron.motifs and intron.motifs.terminal_dnts:
+            return intron.motifs.terminal_dnts.replace("-", "").lower()
+
+        # Default mode: get from sequences
+        if (
+            intron.sequences
+            and intron.sequences.five_prime_dnt
+            and intron.sequences.three_prime_dnt
+        ):
+            return (
+                intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt
+            ).lower()
+
+        # Fallback to GT-AG
+        return "gtag"
+
     def _score_five_site(
-        self,
-        intron: Intron,
-        ignore_positions: Optional[Set[int]] = None
+        self, intron: Intron, ignore_positions: Optional[Set[int]] = None
     ) -> Tuple[float, float]:
         """
         Score 5' splice site with U12 and U2 PWMs.
@@ -243,17 +276,13 @@ class IntronScorer:
         # Extract 5' region
         five_region = self._extract_five_region(intron)
 
-        # Get dinucleotides and select appropriate PWMs
-        # Combine five_prime_dnt and three_prime_dnt (e.g., 'GT' + 'AG' = 'gtag')
-        if intron.sequences and intron.sequences.five_prime_dnt and intron.sequences.three_prime_dnt:
-            dnts = (intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt).lower()
-        else:
-            dnts = 'gtag'  # Default to GT-AG
+        # Get dinucleotides for PWM selection (handles both default and streaming modes)
+        dnts = self._get_terminal_dinucleotides(intron)
 
         # Get all available PWM versions
         # Port from: intronIC.py:2915-2942 (multi_matrix_score tries all versions)
-        u12_pwms = self.pwm_sets['five'].get_all_versions('u12', dnts)
-        u2_pwms = self.pwm_sets['five'].get_all_versions('u2', dnts)
+        u12_pwms = self.pwm_sets["five"].get_all_versions("u12", dnts)
+        u2_pwms = self.pwm_sets["five"].get_all_versions("u2", dnts)
 
         # Pass the starting position of the 5' region (first coordinate)
         seq_start_pos = self.five_coords[0]  # e.g., -3
@@ -261,23 +290,29 @@ class IntronScorer:
         # Try all U12 PWM versions and keep the best score
         best_u12_score = 0.0
         for u12_pwm in u12_pwms:
-            score = u12_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            score = u12_pwm.score_sequence(
+                five_region,
+                seq_start_position=seq_start_pos,
+                ignore_positions=ignore_positions,
+            )
             if score > best_u12_score:
                 best_u12_score = score
 
         # Try all U2 PWM versions and keep the best score
         best_u2_score = 0.0
         for u2_pwm in u2_pwms:
-            score = u2_pwm.score_sequence(five_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            score = u2_pwm.score_sequence(
+                five_region,
+                seq_start_position=seq_start_pos,
+                ignore_positions=ignore_positions,
+            )
             if score > best_u2_score:
                 best_u2_score = score
 
         return best_u12_score, best_u2_score
 
     def _score_three_site(
-        self,
-        intron: Intron,
-        ignore_positions: Optional[Set[int]] = None
+        self, intron: Intron, ignore_positions: Optional[Set[int]] = None
     ) -> Tuple[float, float]:
         """
         Score 3' splice site with U12 and U2 PWMs.
@@ -297,17 +332,13 @@ class IntronScorer:
         # Extract 3' region
         three_region = self._extract_three_region(intron)
 
-        # Get dinucleotides and select appropriate PWMs
-        # Combine five_prime_dnt and three_prime_dnt (e.g., 'GT' + 'AG' = 'gtag')
-        if intron.sequences and intron.sequences.five_prime_dnt and intron.sequences.three_prime_dnt:
-            dnts = (intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt).lower()
-        else:
-            dnts = 'gtag'  # Default to GT-AG
+        # Get dinucleotides for PWM selection (handles both default and streaming modes)
+        dnts = self._get_terminal_dinucleotides(intron)
 
         # Get all available PWM versions
         # Port from: intronIC.py:2915-2942 (multi_matrix_score tries all versions)
-        u12_pwms = self.pwm_sets['three'].get_all_versions('u12', dnts)
-        u2_pwms = self.pwm_sets['three'].get_all_versions('u2', dnts)
+        u12_pwms = self.pwm_sets["three"].get_all_versions("u12", dnts)
+        u2_pwms = self.pwm_sets["three"].get_all_versions("u2", dnts)
 
         # Pass the starting position of the 3' region (first coordinate)
         seq_start_pos = self.three_coords[0]  # e.g., -6
@@ -315,20 +346,30 @@ class IntronScorer:
         # Try all U12 PWM versions and keep the best score
         best_u12_score = 0.0
         for u12_pwm in u12_pwms:
-            score = u12_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            score = u12_pwm.score_sequence(
+                three_region,
+                seq_start_position=seq_start_pos,
+                ignore_positions=ignore_positions,
+            )
             if score > best_u12_score:
                 best_u12_score = score
 
         # Try all U2 PWM versions and keep the best score
         best_u2_score = 0.0
         for u2_pwm in u2_pwms:
-            score = u2_pwm.score_sequence(three_region, seq_start_position=seq_start_pos, ignore_positions=ignore_positions)
+            score = u2_pwm.score_sequence(
+                three_region,
+                seq_start_position=seq_start_pos,
+                ignore_positions=ignore_positions,
+            )
             if score > best_u2_score:
                 best_u2_score = score
 
         return best_u12_score, best_u2_score
 
-    def _score_branch_point(self, intron: Intron) -> Tuple[BranchPointMatch | None, float]:
+    def _score_branch_point(
+        self, intron: Intron
+    ) -> Tuple[BranchPointMatch | None, float]:
         """
         Find and score branch point with both U12 and U2 PWMs.
 
@@ -351,17 +392,13 @@ class IntronScorer:
             Tuple of (u12_match, u2_score). u12_match will be None if the
             search window is too small for the PWM.
         """
-        # Get dinucleotides and select appropriate PWMs
-        # Combine five_prime_dnt and three_prime_dnt (e.g., 'GT' + 'AG' = 'gtag')
-        if intron.sequences and intron.sequences.five_prime_dnt and intron.sequences.three_prime_dnt:
-            dnts = (intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt).lower()
-        else:
-            dnts = 'gtag'  # Default to GT-AG
+        # Get dinucleotides for PWM selection (handles both default and streaming modes)
+        dnts = self._get_terminal_dinucleotides(intron)
 
         # Get all available PWM versions for U12 and U2
         # Port from: intronIC.py:2915-2942 (multi_matrix_score tries all versions)
-        u12_pwms = self.pwm_sets['bp'].get_all_versions('u12', dnts)
-        u2_pwms = self.pwm_sets['bp'].get_all_versions('u2', dnts)
+        u12_pwms = self.pwm_sets["bp"].get_all_versions("u12", dnts)
+        u2_pwms = self.pwm_sets["bp"].get_all_versions("u2", dnts)
 
         # Try all U12 PWM versions and select the highest-scoring one
         # Port from: intronIC.py:2934-2942 (keeps best score per matrix_category)
@@ -379,7 +416,7 @@ class IntronScorer:
                     intron,
                     search_window=self.bp_coords,
                     five_coords=self.five_coords,
-                    three_coords=self.three_coords
+                    three_coords=self.three_coords,
                 )
 
                 # If match is None (window too small), use pseudocount
@@ -409,6 +446,10 @@ class IntronScorer:
         """
         Extract 5' splice site region for scoring.
 
+        Supports two modes:
+        - Streaming mode: Uses pre-extracted motifs (intron.motifs.five_region)
+        - Default mode: Extracts from full sequences (intron.sequences)
+
         The 5' coordinates are relative to the intron start. Negative values
         require upstream flanking sequence.
 
@@ -424,6 +465,14 @@ class IntronScorer:
             - Need 3bp upstream flank + 5bp intron sequence
             - Returns: upstream[-3:] + intron.seq[:5]
         """
+        # Streaming mode: use pre-extracted motif
+        if intron.motifs is not None and intron.motifs.five_region:
+            return intron.motifs.five_region
+
+        # Default mode: extract from full sequences
+        if intron.sequences is None or intron.sequences.seq is None:
+            raise ValueError(f"Intron {intron.intron_id} has no sequence data")
+
         start, stop = self.five_coords
 
         # Calculate how much we need from upstream flank vs intron
@@ -431,7 +480,11 @@ class IntronScorer:
             # Need upstream flank
             upstream = intron.sequences.upstream_flank or ""
             upstream_needed = abs(start)
-            upstream_part = upstream[-upstream_needed:] if len(upstream) >= upstream_needed else "N" * upstream_needed
+            upstream_part = (
+                upstream[-upstream_needed:]
+                if len(upstream) >= upstream_needed
+                else "N" * upstream_needed
+            )
 
             # Intron part (from position 0 to stop)
             if stop <= 0:
@@ -449,6 +502,10 @@ class IntronScorer:
         """
         Extract 3' splice site region for scoring.
 
+        Supports two modes:
+        - Streaming mode: Uses pre-extracted motifs (intron.motifs.three_region)
+        - Default mode: Extracts from full sequences (intron.sequences)
+
         The 3' coordinates are relative to the intron end. Negative values
         are positions before the end, positive values require downstream flank.
 
@@ -464,6 +521,14 @@ class IntronScorer:
             - Need 6bp before end + 2bp downstream
             - Returns: intron.seq[-6:] + downstream[:2]
         """
+        # Streaming mode: use pre-extracted motif
+        if intron.motifs is not None and intron.motifs.three_region:
+            return intron.motifs.three_region
+
+        # Default mode: extract from full sequences
+        if intron.sequences is None or intron.sequences.seq is None:
+            raise ValueError(f"Intron {intron.intron_id} has no sequence data")
+
         start, stop = self.three_coords
         intron_length = len(intron.sequences.seq)
 
@@ -490,7 +555,9 @@ class IntronScorer:
         # If stop > 0, need downstream flank
         if stop > 0:
             downstream = intron.sequences.downstream_flank or ""
-            downstream_part = downstream[:stop] if len(downstream) >= stop else "N" * stop
+            downstream_part = (
+                downstream[:stop] if len(downstream) >= stop else "N" * stop
+            )
             return intron_part + downstream_part
         else:
             # All from intron
@@ -518,3 +585,133 @@ class IntronScorer:
             2.0  # log2(4) = 2.0
         """
         return math.log2(u12_score / u2_score)
+
+
+def score_and_normalize_introns(
+    introns: Iterator[Intron],
+    scorer: IntronScorer,
+    scaler: "RobustScaler",
+) -> Iterator[Intron]:
+    """Score introns and normalize using pre-fitted scaler.
+
+    This is the core streaming function for memory-efficient classification.
+    It yields introns one at a time with both raw and z-scores populated,
+    without accumulating results in memory.
+
+    Used in true streaming mode with pre-trained models where the scaler
+    is already fitted on reference data.
+
+    Args:
+        introns: Iterator of introns to score (with sequences or motifs populated)
+        scorer: IntronScorer configured with PWM matrices
+        scaler: Pre-fitted sklearn RobustScaler from the model bundle
+                (obtained via ScoreNormalizer.get_frozen_scaler())
+
+    Yields:
+        Introns with both raw_score and z_score fields populated
+
+    Example:
+        >>> # Extract scaler from pre-trained model
+        >>> normalizer = model_bundle['normalizer']
+        >>> scaler = normalizer.get_frozen_scaler()
+        >>>
+        >>> # Score and normalize in single pass
+        >>> for intron in score_and_normalize_introns(introns, scorer, scaler):
+        ...     # Intron has both raw and z-scores
+        ...     print(intron.scores.five_z_score)
+        ...     # Memory freed after processing each intron
+
+    Note:
+        The scaler expects features in order: [five, bp, three]
+        This matches the training order in ScoreNormalizer.
+    """
+    import numpy as np
+
+    for intron in introns:
+        # Score with PWMs (populates raw scores)
+        scored = scorer.score_intron(intron)
+
+        # Extract raw scores as numpy array for scaler
+        # Order: [five, bp, three] - matches ScoreNormalizer training
+        raw_scores = np.array(
+            [
+                [
+                    scored.scores.five_raw_score,
+                    scored.scores.bp_raw_score,
+                    scored.scores.three_raw_score,
+                ]
+            ]
+        )
+
+        # Transform using frozen scaler (no fitting!)
+        z_scores = scaler.transform(raw_scores)
+
+        # Update intron with z-scores
+        updated_scores = replace(
+            scored.scores,
+            five_z_score=float(z_scores[0, 0]),
+            bp_z_score=float(z_scores[0, 1]),
+            three_z_score=float(z_scores[0, 2]),
+        )
+
+        yield replace(scored, scores=updated_scores)
+
+
+def score_and_normalize_batch(
+    introns: list[Intron],
+    scorer: IntronScorer,
+    scaler: "RobustScaler",
+) -> list[Intron]:
+    """Score and normalize a batch of introns efficiently.
+
+    Vectorized version of score_and_normalize_introns for better performance
+    when processing batches (e.g., all introns from a chromosome).
+
+    Args:
+        introns: List of introns to score
+        scorer: IntronScorer configured with PWM matrices
+        scaler: Pre-fitted sklearn RobustScaler from the model bundle
+
+    Returns:
+        List of introns with both raw and z-scores populated
+
+    Example:
+        >>> # Process one chromosome's worth of introns
+        >>> chromosome_introns = list(generate_introns(chromosome_genes))
+        >>> scored_introns = score_and_normalize_batch(chromosome_introns, scorer, scaler)
+    """
+    import numpy as np
+
+    if not introns:
+        return []
+
+    # Score all introns (collect raw scores)
+    scored_introns = [scorer.score_intron(intron) for intron in introns]
+
+    # Extract all raw scores as matrix
+    raw_scores = np.array(
+        [
+            [
+                intron.scores.five_raw_score,
+                intron.scores.bp_raw_score,
+                intron.scores.three_raw_score,
+            ]
+            for intron in scored_introns
+        ]
+    )
+
+    # Vectorized transform
+    z_scores = scaler.transform(raw_scores)
+
+    # Update introns with z-scores
+    result = []
+    for i, intron in enumerate(scored_introns):
+        updated_scores = replace(
+            intron.scores,
+            five_z_score=float(z_scores[i, 0]),
+            bp_z_score=float(z_scores[i, 1]),
+            three_z_score=float(z_scores[i, 2]),
+        )
+        result.append(replace(intron, scores=updated_scores))
+
+    return result

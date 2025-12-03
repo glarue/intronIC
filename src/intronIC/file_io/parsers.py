@@ -478,12 +478,13 @@ class SequenceParser:
 
     Format:
     - Tab-delimited
-    - 4-5 columns: name, upstream_flank, sequence, downstream_flank, [score]
+    - 4-5 columns: name, [score], upstream_flank, sequence, downstream_flank
     - No header
+    - Score can be a number or "NA" (parsed as None)
 
     Examples:
         >>> parser = SequenceParser()
-        >>> # seq = parser.parse_line("intron1\\tAGGCT\\tGTAAGT...TTTAG\\tCATGG\\t95.5")
+        >>> # seq = parser.parse_line("intron1\\t95.5\\tAGGCT\\tGTAAGT...TTTAG\\tCATGG")
         >>> # seq.score
         >>> # 95.5
     """
@@ -505,16 +506,28 @@ class SequenceParser:
 
         fields = line.split('\t')
 
-        # Need at least 4 fields
+        # Need at least 4 fields (name + 3 sequence fields)
+        # Can have 5 fields if score is included
         if len(fields) < 4:
             return None
 
         try:
             name = fields[0]
-            upstream_flank = fields[1]
-            sequence = fields[2]
-            downstream_flank = fields[3]
-            score = float(fields[4]) if len(fields) > 4 else None
+
+            # Determine if we have score or not
+            if len(fields) == 5:
+                # Format: name, score, upstream, sequence, downstream
+                score_str = fields[1]
+                score = None if score_str == "NA" else float(score_str)
+                upstream_flank = fields[2]
+                sequence = fields[3]
+                downstream_flank = fields[4]
+            else:
+                # Format: name, upstream, sequence, downstream (no score)
+                score = None
+                upstream_flank = fields[1]
+                sequence = fields[2]
+                downstream_flank = fields[3]
 
             return SequenceLine(
                 name=name,
@@ -543,6 +556,81 @@ class SequenceParser:
                 parsed = self.parse_line(line)
                 if parsed is not None:
                     yield parsed
+
+
+# ============================================================================
+# Chromosome extraction utilities for per-chromosome processing
+# ============================================================================
+
+def get_chromosomes_from_annotation(annotation_file: Union[str, Path]) -> List[str]:
+    """
+    Extract list of unique chromosomes from annotation file.
+
+    This is used for per-chromosome processing to reduce memory usage.
+
+    Args:
+        annotation_file: Path to GFF3/GTF annotation file
+
+    Returns:
+        Sorted list of unique chromosome names
+
+    Examples:
+        >>> chroms = get_chromosomes_from_annotation('genome.gff3')
+        >>> print(chroms)
+        ['chr1', 'chr2', 'chr3', ...]
+
+    Note:
+        This does a single fast pass through the annotation file,
+        extracting only the chromosome column.
+    """
+    from biogl import flex_open
+
+    chromosomes = set()
+    with flex_open(str(annotation_file)) as f:
+        for line in f:
+            # Skip comments and headers
+            if line.startswith('#'):
+                continue
+
+            # Parse chromosome from first column
+            fields = line.strip().split('\t')
+            if len(fields) >= 9:  # Valid GFF3/GTF line
+                chromosomes.add(fields[0])
+
+    return sorted(chromosomes)
+
+
+def filter_annotation_lines_by_chromosome(
+    annotation_file: Union[str, Path],
+    chromosome: str
+) -> Iterator[AnnotationLine]:
+    """
+    Parse annotation file but only return lines for a specific contig.
+
+    This enables per-contig processing without loading the entire
+    annotation into memory at once.
+
+    Args:
+        annotation_file: Path to GFF3/GTF annotation file
+        chromosome: Contig/chromosome name to filter for
+
+    Yields:
+        AnnotationLine objects for the specified contig
+
+    Examples:
+        >>> parser = BioGLAnnotationParser()
+        >>> chr1_lines = filter_annotation_lines_by_chromosome('genome.gff3', 'chr1')
+        >>> chr1_genes = builder.build_from_annotations(chr1_lines)
+
+    Note:
+        This is memory-efficient because it yields lines one at a time
+        instead of loading all lines into memory.
+    """
+    parser = BioGLAnnotationParser()
+
+    for ann_line in parser.parse_file(annotation_file):
+        if ann_line.region == chromosome:
+            yield ann_line
 
 
 if __name__ == "__main__":

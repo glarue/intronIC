@@ -19,8 +19,8 @@ Date: 2025-11-02
 """
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
 from enum import IntEnum, IntFlag
+from typing import Literal, Optional
 
 from intronIC.utils.coordinates import GenomicCoordinate
 
@@ -42,25 +42,26 @@ class OmissionReason(IntEnum):
         >>> reason.name   # 'SHORT'
         >>> reason.verbose  # 'omitted_short'
     """
-    NONE = 0          # Not omitted (default)
-    SHORT = 1         # 's' - Too short
-    AMBIGUOUS = 2     # 'a' - Contains ambiguous bases
+
+    NONE = 0  # Not omitted (default)
+    SHORT = 1  # 's' - Too short
+    AMBIGUOUS = 2  # 'a' - Contains ambiguous bases
     NONCANONICAL = 3  # 'n' - Non-canonical splice sites
-    ISOFORM = 4       # 'i' - Not from longest isoform
-    OVERLAP = 5       # 'v' - Overlapping coordinates
-    DUPLICATE = 6     # 'd' - Duplicate coordinates
+    ISOFORM = 4  # 'i' - Not from longest isoform
+    OVERLAP = 5  # 'v' - Overlapping coordinates
+    DUPLICATE = 6  # 'd' - Duplicate coordinates
 
     @property
     def code(self) -> str:
         """Get single-character code for backward compatibility."""
         _CODE_MAP = {
-            OmissionReason.NONE: '',
-            OmissionReason.SHORT: 's',
-            OmissionReason.AMBIGUOUS: 'a',
-            OmissionReason.NONCANONICAL: 'n',
-            OmissionReason.ISOFORM: 'i',
-            OmissionReason.OVERLAP: 'v',
-            OmissionReason.DUPLICATE: 'd',
+            OmissionReason.NONE: "",
+            OmissionReason.SHORT: "s",
+            OmissionReason.AMBIGUOUS: "a",
+            OmissionReason.NONCANONICAL: "n",
+            OmissionReason.ISOFORM: "i",
+            OmissionReason.OVERLAP: "v",
+            OmissionReason.DUPLICATE: "d",
         }
         return _CODE_MAP[self]
 
@@ -68,26 +69,26 @@ class OmissionReason(IntEnum):
     def verbose(self) -> str:
         """Get verbose name for output files."""
         _VERBOSE_MAP = {
-            OmissionReason.NONE: '',
-            OmissionReason.SHORT: 'omitted_short',
-            OmissionReason.AMBIGUOUS: 'omitted_ambiguous',
-            OmissionReason.NONCANONICAL: 'omitted_noncanonical',
-            OmissionReason.ISOFORM: 'omitted_not_longest_isoform',
-            OmissionReason.OVERLAP: 'omitted_overlap',
-            OmissionReason.DUPLICATE: 'duplicate',
+            OmissionReason.NONE: "",
+            OmissionReason.SHORT: "omitted_short",
+            OmissionReason.AMBIGUOUS: "omitted_ambiguous",
+            OmissionReason.NONCANONICAL: "omitted_noncanonical",
+            OmissionReason.ISOFORM: "omitted_not_longest_isoform",
+            OmissionReason.OVERLAP: "omitted_overlap",
+            OmissionReason.DUPLICATE: "duplicate",
         }
         return _VERBOSE_MAP[self]
 
     @classmethod
-    def from_code(cls, code: str) -> 'OmissionReason':
+    def from_code(cls, code: str) -> "OmissionReason":
         """Create from single-character code."""
         _REVERSE_MAP = {
-            's': cls.SHORT,
-            'a': cls.AMBIGUOUS,
-            'n': cls.NONCANONICAL,
-            'i': cls.ISOFORM,
-            'v': cls.OVERLAP,
-            'd': cls.DUPLICATE,
+            "s": cls.SHORT,
+            "a": cls.AMBIGUOUS,
+            "n": cls.NONCANONICAL,
+            "i": cls.ISOFORM,
+            "v": cls.OVERLAP,
+            "d": cls.DUPLICATE,
         }
         return _REVERSE_MAP.get(code, cls.NONE)
 
@@ -104,12 +105,14 @@ class IntronFlags(IntFlag):
         >>> IntronFlags.NONCANONICAL in flags  # True
         >>> IntronFlags.LONGEST_ISOFORM in flags  # False
     """
+
     NONE = 0
-    NONCANONICAL = 1 << 0     # 0x001 - Non-standard splice sites
+    NONCANONICAL = 1 << 0  # 0x001 - Non-standard splice sites
     LONGEST_ISOFORM = 1 << 1  # 0x002 - From longest transcript
-    CORRECTED = 1 << 2        # 0x004 - Boundaries were adjusted
-    DUPLICATE = 1 << 3        # 0x008 - Duplicate coordinates
-    EDGE_CASE = 1 << 4        # 0x010 - Edge case marker
+    CORRECTED = 1 << 2  # 0x004 - Boundaries were adjusted
+    DUPLICATE = 1 << 3  # 0x008 - Duplicate coordinates
+    EDGE_CASE = 1 << 4  # 0x010 - Edge case marker
+    SEQUENCE_ONLY = 1 << 5  # 0x020 - Loaded from sequence file (no real coordinates)
 
 
 # Type alias for backward compatibility
@@ -299,6 +302,67 @@ class IntronSequences:
         return "IntronSequences(no sequence)"
 
 
+@dataclass(frozen=True, slots=True)
+class ScoringMotifs:
+    """
+    Minimal sequence data needed for PWM scoring.
+
+    This dataclass stores only the short sequence regions required for scoring,
+    enabling memory-efficient streaming mode where full sequences are written
+    to disk and only these motifs are kept in RAM.
+
+    Memory comparison (per intron):
+    - Full IntronSequences: ~1-10 KB (depends on intron length)
+    - ScoringMotifs: ~100-150 bytes (fixed size)
+
+    For human genome (~250k introns):
+    - Full sequences in memory: ~500 MB - 2 GB
+    - Motifs only: ~25-40 MB
+
+    Attributes:
+        five_region: 5' splice site region for PWM scoring
+                     Default coords (-3, 9): 12bp (3bp exon + 9bp intron)
+        three_region: 3' splice site region for PWM scoring
+                      Default coords (-6, 4): 10bp (6bp intron + 4bp exon)
+        bp_region: Branch point search region for PWM scoring
+                   Default coords (-55, -5): 50bp from intron 3' end
+        terminal_dnts: Terminal dinucleotides (e.g., 'GT-AG') for matrix selection
+        upstream_flank: Upstream exonic flank (kept for final output formatting)
+        downstream_flank: Downstream exonic flank (kept for final output formatting)
+
+    Usage:
+        # Extract motifs from full sequences before clearing them
+        motifs = intron.extract_scoring_motifs(five_coords, bp_coords, three_coords)
+
+        # In IntronScorer, use motifs if available
+        if intron.motifs:
+            five_region = intron.motifs.five_region
+        else:
+            five_region = extract_from_full_sequence(intron.sequences)
+
+    Note:
+        This is used in streaming mode (--streaming flag) where sequences are
+        written to a temporary SQLite database during extraction, then merged
+        with scores after classification to produce the final .introns.iic file.
+    """
+
+    five_region: str
+    three_region: str
+    bp_region: str
+    terminal_dnts: str
+    upstream_flank: Optional[str] = None
+    downstream_flank: Optional[str] = None
+
+    def __str__(self) -> str:
+        """Human-readable string representation."""
+        return (
+            f"ScoringMotifs(5'={len(self.five_region)}bp, "
+            f"BP={len(self.bp_region)}bp, "
+            f"3'={len(self.three_region)}bp, "
+            f"dnts={self.terminal_dnts})"
+        )
+
+
 @dataclass(slots=True)
 class IntronMetadata:
     """
@@ -338,17 +402,25 @@ class IntronMetadata:
     index: Optional[int] = None
     family_size: Optional[int] = None
     parent_length: Optional[int] = None
-    line_number: Optional[int] = None  # Annotation line number for hierarchical sort tiebreaker
+    line_number: Optional[int] = (
+        None  # Annotation line number for hierarchical sort tiebreaker
+    )
     type_id: IntronType = "unknown"
-    omitted: OmissionReason = OmissionReason.NONE  # Integer enum (4 bytes vs ~50 bytes for str)
+    omitted: OmissionReason = (
+        OmissionReason.NONE
+    )  # Integer enum (4 bytes vs ~50 bytes for str)
     duplicate: Optional[str] = None
     overlap: Optional[str] = None
     flags: IntronFlags = IntronFlags.NONE  # Bit flags for boolean properties
     phase: Optional[int] = None
-    defined_by: Optional[str] = None  # 'cds' or 'exon' - which feature type defined this intron
+    defined_by: Optional[str] = (
+        None  # 'cds' or 'exon' - which feature type defined this intron
+    )
     upstream_exon_id: Optional[str] = None  # ID of exon/CDS upstream of this intron
     downstream_exon_id: Optional[str] = None  # ID of exon/CDS downstream of this intron
-    fractional_position: Optional[float] = None  # Actual position in transcript (0.0-1.0)
+    fractional_position: Optional[float] = (
+        None  # Actual position in transcript (0.0-1.0)
+    )
     # Dynamic tagging system for special cases (rarely used, so overhead acceptable)
     dynamic_tags: set[str] = field(default_factory=set)
     correction_distance: Optional[int] = None
@@ -436,11 +508,12 @@ class Intron:
     """
     Main Intron class using composition pattern.
 
-    Composes three main components:
+    Composes four main components:
     - coordinates: GenomicCoordinate (location)
     - scores: IntronScores (classification data)
-    - sequences: IntronSequences (sequence data)
+    - sequences: IntronSequences (full sequence data)
     - metadata: IntronMetadata (parent, tags, etc.)
+    - motifs: ScoringMotifs (minimal sequence data for scoring, streaming mode)
 
     This design separates concerns and makes it easy to:
     - Create introns with partial data (e.g., coordinates only)
@@ -448,12 +521,19 @@ class Intron:
     - Test components independently
     - Maintain clear boundaries between pipeline stages
 
+    Streaming mode optimization:
+        In streaming mode (--streaming flag), full sequences are written to
+        a temporary SQLite database during extraction. Only the minimal
+        scoring motifs (ScoringMotifs) are kept in memory, reducing RAM
+        usage by ~85% for large genomes.
+
     Attributes:
         intron_id: Unique identifier
         coordinates: Genomic location
         scores: Scoring data (optional)
-        sequences: Sequence data (optional)
+        sequences: Full sequence data (optional, cleared in streaming mode)
         metadata: Metadata (optional)
+        motifs: Minimal scoring motifs (optional, used in streaming mode)
 
     Examples:
         >>> from utils.coordinates import GenomicCoordinate
@@ -469,6 +549,12 @@ class Intron:
         >>> intron2 = Intron("intron_2", coord, sequences=seqs)
         >>> intron2.has_sequences
         True
+
+        >>> # In streaming mode, extract motifs before clearing sequences
+        >>> motifs = intron2.extract_scoring_motifs((-3, 9), (-55, -5), (-6, 4))
+        >>> intron3 = replace(motifs, sequences=None)  # Clear full sequences
+        >>> intron3.motifs.five_region  # Still available for scoring
+        'CAGGTAAGT...'
     """
 
     intron_id: str
@@ -476,6 +562,7 @@ class Intron:
     scores: Optional[IntronScores] = None
     sequences: Optional[IntronSequences] = None
     metadata: Optional[IntronMetadata] = None
+    motifs: Optional[ScoringMotifs] = None
 
     def __post_init__(self) -> None:
         """Validate intron after initialization."""
@@ -655,14 +742,15 @@ class Intron:
             scores=scores,
             sequences=self.sequences,
             metadata=self.metadata,
+            motifs=self.motifs,
         )
 
-    def with_sequences(self, sequences: IntronSequences) -> "Intron":
+    def with_sequences(self, sequences: Optional[IntronSequences]) -> "Intron":
         """
         Create a new Intron with updated sequences.
 
         Args:
-            sequences: IntronSequences object
+            sequences: IntronSequences object (or None to clear)
 
         Returns:
             New Intron with updated sequences
@@ -673,6 +761,7 @@ class Intron:
             scores=self.scores,
             sequences=sequences,
             metadata=self.metadata,
+            motifs=self.motifs,
         )
 
     def with_metadata(self, metadata: IntronMetadata) -> "Intron":
@@ -691,6 +780,7 @@ class Intron:
             scores=self.scores,
             sequences=self.sequences,
             metadata=metadata,
+            motifs=self.motifs,
         )
 
     def clear_sequences(self) -> "Intron":
@@ -772,6 +862,154 @@ class Intron:
 
         return self.with_sequences(None)
 
+    def with_motifs(self, motifs: ScoringMotifs) -> "Intron":
+        """
+        Create a new Intron with scoring motifs.
+
+        Args:
+            motifs: ScoringMotifs object
+
+        Returns:
+            New Intron with motifs set
+        """
+        return Intron(
+            intron_id=self.intron_id,
+            coordinates=self.coordinates,
+            scores=self.scores,
+            sequences=self.sequences,
+            metadata=self.metadata,
+            motifs=motifs,
+        )
+
+    def extract_scoring_motifs(
+        self,
+        five_coords: tuple[int, int],
+        bp_coords: tuple[int, int],
+        three_coords: tuple[int, int],
+    ) -> "Intron":
+        """
+        Extract minimal scoring motifs from full sequences.
+
+        This extracts only the short sequence regions needed for PWM scoring,
+        enabling streaming mode where full sequences are written to disk and
+        only these motifs are kept in RAM.
+
+        The extraction logic matches IntronScorer._extract_*_region methods
+        to ensure scoring produces identical results.
+
+        Args:
+            five_coords: (start, stop) for 5' region relative to intron start
+                         e.g., (-3, 9) means 3bp upstream + 9bp into intron
+            bp_coords: (start, stop) for BP region relative to intron 3' end
+                       e.g., (-55, -5) means positions -55 to -5 from end
+            three_coords: (start, stop) for 3' region relative to intron end
+                          e.g., (-6, 4) means 6bp from intron + 4bp downstream
+
+        Returns:
+            New Intron with motifs populated (sequences unchanged)
+
+        Raises:
+            ValueError: If sequences are not available
+
+        Example:
+            >>> intron_with_motifs = intron.extract_scoring_motifs(
+            ...     five_coords=(-3, 9),
+            ...     bp_coords=(-55, -5),
+            ...     three_coords=(-6, 4)
+            ... )
+            >>> # Now safe to clear full sequences
+            >>> lightweight = intron_with_motifs.with_sequences(None)
+            >>> lightweight.motifs.five_region  # Still available for scoring
+        """
+        if self.sequences is None or self.sequences.seq is None:
+            raise ValueError(
+                f"Cannot extract scoring motifs from intron {self.intron_id}: "
+                "no sequences available"
+            )
+
+        seq = self.sequences.seq
+        upstream_flank = self.sequences.upstream_flank or ""
+        downstream_flank = self.sequences.downstream_flank or ""
+
+        # Extract 5' region (matching IntronScorer._extract_five_region)
+        five_start, five_stop = five_coords
+        if five_start < 0:
+            # Need upstream flank
+            upstream_needed = abs(five_start)
+            if len(upstream_flank) >= upstream_needed:
+                upstream_part = upstream_flank[-upstream_needed:]
+            else:
+                upstream_part = "N" * upstream_needed
+            intron_part = seq[:five_stop] if five_stop > 0 else ""
+            five_region = upstream_part + intron_part
+        else:
+            five_region = seq[five_start:five_stop]
+
+        # Extract 3' region (matching IntronScorer._extract_three_region)
+        three_start, three_stop = three_coords
+        intron_length = len(seq)
+
+        if three_start < 0:
+            intron_start_idx = intron_length + three_start
+        else:
+            intron_start_idx = intron_length
+
+        if three_stop <= 0:
+            intron_stop_idx = intron_length + three_stop
+        else:
+            intron_stop_idx = intron_length
+
+        if intron_start_idx < intron_stop_idx:
+            intron_part = seq[intron_start_idx:intron_stop_idx]
+        else:
+            intron_part = ""
+
+        if three_stop > 0:
+            if len(downstream_flank) >= three_stop:
+                downstream_part = downstream_flank[:three_stop]
+            else:
+                downstream_part = "N" * three_stop
+            three_region = intron_part + downstream_part
+        else:
+            three_region = intron_part
+
+        # Extract BP region (matching IntronScorer/BranchPointScorer._extract_search_region)
+        bp_start, bp_stop = bp_coords
+        # BP coords are relative to intron end (negative values)
+        bp_start_idx = intron_length + bp_start
+        bp_stop_idx = intron_length + bp_stop
+
+        # Clamp to valid range, EXCLUDING the 5' splice site scoring region
+        # This matches BranchPointScorer._extract_search_region() which does:
+        #   start_pos = max(start_pos, five_end)
+        # where five_end is the end position of the 5' scoring region.
+        # This prevents the BP search from overlapping with the 5' splice site,
+        # which is critical for short introns.
+        five_end = five_coords[1]  # e.g., 9 for (-3, 9) - end of 5' region
+        bp_start_idx = max(bp_start_idx, five_end)
+        bp_stop_idx = max(0, min(intron_length, bp_stop_idx))
+
+        bp_region = seq[bp_start_idx:bp_stop_idx] if bp_start_idx < bp_stop_idx else ""
+
+        # Get terminal dinucleotides
+        terminal_dnts = self.sequences.terminal_dinucleotides or ""
+
+        motifs = ScoringMotifs(
+            five_region=five_region,
+            three_region=three_region,
+            bp_region=bp_region,
+            terminal_dnts=terminal_dnts,
+            upstream_flank=upstream_flank,
+            downstream_flank=downstream_flank,
+        )
+
+        return self.with_motifs(motifs)
+
+    @property
+    def has_motifs(self) -> bool:
+        """Check if scoring motifs are available."""
+        return self.motifs is not None
+
     def __str__(self) -> str:
         """Human-readable string representation."""
         parts = [f"Intron:{self.intron_id}"]
@@ -779,6 +1017,8 @@ class Intron:
 
         if self.sequences:
             parts.append(str(self.sequences))
+        elif self.motifs:
+            parts.append(str(self.motifs))
 
         if self.scores:
             parts.append(str(self.scores))

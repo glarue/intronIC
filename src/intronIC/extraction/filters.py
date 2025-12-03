@@ -284,8 +284,14 @@ class IntronFilter:
 
         region_idx = self.intron_index[region_id]
 
-        # Check for duplicate
-        if coord_key not in region_idx:
+        # Check for duplicate (skip for sequence-only introns without real coordinates)
+        from intronIC.core.intron import IntronFlags
+        is_sequence_only = IntronFlags.SEQUENCE_ONLY in intron.metadata.flags
+
+        if is_sequence_only:
+            # Skip duplicate detection for sequence-only introns (no real coordinates)
+            intron.metadata.duplicate = None
+        elif coord_key not in region_idx:
             # First occurrence of these coordinates
             intron.metadata.duplicate = None
             region_idx[coord_key] = {

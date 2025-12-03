@@ -5,20 +5,20 @@ This module handles extracting intron sequences, flanking exonic sequences,
 and scoring region sequences (5'ss, BP, 3'ss) from genome FASTA files.
 """
 
-from typing import Iterator, Dict, List, Tuple, Optional
 from collections import defaultdict
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from intronIC.core.intron import Intron, IntronSequences
 from intronIC.file_io.genome import GenomeReader
 from intronIC.utils.sequences import reverse_complement
 
-
 # Canonical splice site dinucleotides
-CANONICAL_FIVE_PRIME = {'GT', 'GC'}
-CANONICAL_THREE_PRIME = {'AG'}
+CANONICAL_FIVE_PRIME = {"GT", "GC"}
+CANONICAL_THREE_PRIME = {"AG"}
 CANONICAL_PAIRS = {
-    ('GT', 'AG'), ('GC', 'AG'),  # Major spliceosome
-    ('AT', 'AC')                  # U12-type
+    ("GT", "AG"),
+    ("GC", "AG"),  # Major spliceosome
+    ("AT", "AC"),  # U12-type
 }
 
 
@@ -39,11 +39,7 @@ class SequenceExtractor:
         ...     print(f"{intron.name}: {len(intron.sequences.seq)} bp")
     """
 
-    def __init__(
-        self,
-        genome_file: str,
-        use_cache: bool = True
-    ):
+    def __init__(self, genome_file: str, use_cache: bool = True):
         """
         Initialize the sequence extractor.
 
@@ -55,13 +51,36 @@ class SequenceExtractor:
         self.genome_reader = GenomeReader(genome_file, cached=use_cache)
         self.use_cache = use_cache
 
+    @classmethod
+    def from_indexed_reader(
+        cls, genome_file: str, indexed_reader
+    ) -> "SequenceExtractor":
+        """
+        Create a SequenceExtractor using an IndexedGenomeReader.
+
+        This is useful for streaming mode where we want to use indexed
+        random access instead of loading entire chromosomes.
+
+        Args:
+            genome_file: Path to genome FASTA file (for reference)
+            indexed_reader: An IndexedGenomeReader instance with fetch() method
+
+        Returns:
+            SequenceExtractor configured for indexed access
+        """
+        instance = cls.__new__(cls)
+        instance.genome_file = genome_file
+        instance.genome_reader = indexed_reader
+        instance.use_cache = False  # Use fetch() mode
+        return instance
+
     def extract_sequences(
         self,
         introns: List[Intron],
         flank_size: int | Tuple[int, int] = 200,
         five_score_coords: Tuple[int, int] = (-3, 9),
         three_score_coords: Tuple[int, int] = (-6, 4),
-        bp_coords: Tuple[int, int] = (-55, -5)
+        bp_coords: Tuple[int, int] = (-55, -5),
     ) -> Iterator[Intron]:
         """
         Extract sequences for a list of introns.
@@ -94,7 +113,9 @@ class SequenceExtractor:
                 try:
                     region_seq = self.genome_reader.get_sequence(region_name).upper()
                 except KeyError:
-                    print(f"[!] Warning: Region '{region_name}' not found in genome, skipping")
+                    print(
+                        f"[!] Warning: Region '{region_name}' not found in genome, skipping"
+                    )
                     continue
 
             # Process each intron in this region
@@ -106,7 +127,7 @@ class SequenceExtractor:
                     flank_size,
                     five_score_coords,
                     three_score_coords,
-                    bp_coords
+                    bp_coords,
                 )
 
                 yield intron
@@ -117,7 +138,7 @@ class SequenceExtractor:
         flank_size: int | Tuple[int, int] = 200,
         five_score_coords: Tuple[int, int] = (-3, 9),
         three_score_coords: Tuple[int, int] = (-6, 4),
-        bp_coords: Tuple[int, int] = (-55, -5)
+        bp_coords: Tuple[int, int] = (-55, -5),
     ) -> Iterator[Intron]:
         """
         Extract sequences with deduplication - reuse sequences for duplicate coordinates.
@@ -154,7 +175,9 @@ class SequenceExtractor:
             try:
                 region_seq = self.genome_reader.get_sequence(region_name).upper()
             except KeyError:
-                print(f"[!] Warning: Region '{region_name}' not found in genome, skipping")
+                print(
+                    f"[!] Warning: Region '{region_name}' not found in genome, skipping"
+                )
                 continue
 
             # Group introns by coordinates within this region
@@ -165,7 +188,7 @@ class SequenceExtractor:
                 coord_key = (
                     intron.coordinates.start,
                     intron.coordinates.stop,
-                    intron.coordinates.strand
+                    intron.coordinates.strand,
                 )
                 coord_groups[coord_key].append(intron)
 
@@ -179,7 +202,7 @@ class SequenceExtractor:
                     flank_size,
                     five_score_coords,
                     three_score_coords,
-                    bp_coords
+                    bp_coords,
                 )
 
                 # Yield first intron with extracted sequences
@@ -188,9 +211,23 @@ class SequenceExtractor:
                 # For remaining introns (duplicates), reuse the sequences
                 if len(duplicate_introns) > 1:
                     shared_sequences = first_with_seqs.sequences
+                    # Get noncanonical status from first intron to propagate to duplicates
+                    is_noncanonical = (
+                        first_with_seqs.metadata.noncanonical
+                        if first_with_seqs.metadata
+                        else False
+                    )
                     for dup_intron in duplicate_introns[1:]:
                         # Attach same sequences object to duplicate intron
                         dup_with_seqs = dup_intron.with_sequences(shared_sequences)
+                        # Propagate noncanonical flag to duplicate's metadata
+                        if dup_with_seqs.metadata:
+                            dup_with_seqs.metadata.noncanonical = is_noncanonical
+                            # Also propagate dynamic tag for non-canonical
+                            if is_noncanonical:
+                                dup_with_seqs.metadata.dynamic_tags.add("[n]")
+                            else:
+                                dup_with_seqs.metadata.dynamic_tags.discard("[n]")
                         yield dup_with_seqs
 
     def _group_by_region(self, introns: List[Intron]) -> Dict[str, List[Intron]]:
@@ -215,7 +252,7 @@ class SequenceExtractor:
         flank_size: int | Tuple[int, int],
         five_score_coords: Tuple[int, int],
         three_score_coords: Tuple[int, int],
-        bp_coords: Tuple[int, int]
+        bp_coords: Tuple[int, int],
     ) -> Intron:
         """
         Extract all sequences for a single intron.
@@ -266,16 +303,16 @@ class SequenceExtractor:
 
             # Fetch from indexed genome (handles coordinate conversion internally)
             full_seq = self.genome_reader.fetch(
-                coord.chromosome,
-                fetch_start,
-                fetch_stop
+                coord.chromosome, fetch_start, fetch_stop
             ).upper()
 
             # For indexed mode, calculate offset differently
             # fetch_start is the actual start position in 1-based coords
             # full_seq starts at fetch_start
             actual_upstream_size = coord.start - fetch_start
-            intron_length = coord.stop - coord.start + 1  # +1 because both are inclusive
+            intron_length = (
+                coord.stop - coord.start + 1
+            )  # +1 because both are inclusive
 
             intron_start_in_full = actual_upstream_size
             intron_stop_in_full = intron_start_in_full + intron_length
@@ -286,7 +323,7 @@ class SequenceExtractor:
         downstream_flank = full_seq[intron_stop_in_full:]
 
         # Handle reverse complement for negative strand
-        if coord.strand == '-':
+        if coord.strand == "-":
             upstream_flank = reverse_complement(upstream_flank)
             intron_seq = reverse_complement(intron_seq)
             downstream_flank = reverse_complement(downstream_flank)
@@ -317,9 +354,9 @@ class SequenceExtractor:
         # BP coords are relative to 3' splice site (acceptor)
         # Adjust to be 0-based and relative to intron end
         bp_start_rel = bp_coords[0]  # Negative value (e.g., -55)
-        bp_end_rel = bp_coords[1]    # Negative value (e.g., -5)
+        bp_end_rel = bp_coords[1]  # Negative value (e.g., -5)
 
-        if coord.strand == '+':
+        if coord.strand == "+":
             # For + strand: 3' splice site is at coord.stop
             # bp_start_rel is more negative (e.g., -55), so further upstream
             # bp_end_rel is less negative (e.g., -5), so closer to 3'ss
@@ -331,7 +368,7 @@ class SequenceExtractor:
             # in genomic coords (higher position), so we swap start/end
             # This matches v1.5.1: bpc = (bp_stop, bp_start) for reverse strand
             bp_end_abs = coord.start - bp_start_rel - 1  # Note: assigned to end
-            bp_start_abs = coord.start - bp_end_rel - 1   # Note: assigned to start
+            bp_start_abs = coord.start - bp_end_rel - 1  # Note: assigned to start
 
         # Extract BP region (different handling for cached vs indexed mode)
         if region_seq is not None:
@@ -346,12 +383,10 @@ class SequenceExtractor:
             bp_fetch_stop = bp_end_abs + 1
 
             bp_region_seq = self.genome_reader.fetch(
-                coord.chromosome,
-                bp_fetch_start,
-                bp_fetch_stop
+                coord.chromosome, bp_fetch_start, bp_fetch_stop
             ).upper()
 
-        if coord.strand == '-':
+        if coord.strand == "-":
             bp_region_seq = reverse_complement(bp_region_seq)
 
         # Identify terminal dinucleotides
@@ -364,12 +399,20 @@ class SequenceExtractor:
         # Display sequences for motif schematic (following original implementation)
         # five_display_seq: first 10bp of intron for 5' boundary display
         five_display_length = 10
-        five_display_seq = intron_seq[:five_display_length] if len(intron_seq) >= five_display_length else intron_seq
+        five_display_seq = (
+            intron_seq[:five_display_length]
+            if len(intron_seq) >= five_display_length
+            else intron_seq
+        )
 
         # three_display_seq: from bp search region end to intron end
         # bp_coords[1] is relative to 3' end (e.g., -5 means 5bp from end)
         # This will be used for 3' boundary display in motif schematic
-        three_display_seq = intron_seq[bp_coords[1]:] if len(intron_seq) >= abs(bp_coords[1]) else intron_seq
+        three_display_seq = (
+            intron_seq[bp_coords[1] :]
+            if len(intron_seq) >= abs(bp_coords[1])
+            else intron_seq
+        )
 
         # Create sequences object
         sequences = IntronSequences(
@@ -382,7 +425,7 @@ class SequenceExtractor:
             five_prime_dnt=five_prime_dnt,
             three_prime_dnt=three_prime_dnt,
             five_display_seq=five_display_seq,
-            three_display_seq=three_display_seq
+            three_display_seq=three_display_seq,
             # bp_seq_u2 and bp_relative_coords populated during PWM scoring
         )
 
@@ -391,10 +434,10 @@ class SequenceExtractor:
 
         # Update dynamic tag for non-canonical introns
         if intron.metadata.noncanonical:
-            intron.metadata.dynamic_tags.add('[n]')
+            intron.metadata.dynamic_tags.add("[n]")
         else:
             # Remove [n] tag if intron is canonical (e.g., after correction)
-            intron.metadata.dynamic_tags.discard('[n]')
+            intron.metadata.dynamic_tags.discard("[n]")
 
         # Return intron with sequences
         return intron.with_sequences(sequences)
@@ -442,7 +485,7 @@ def extract_sequences_for_introns(
     flank_size: int = 200,
     five_score_coords: Tuple[int, int] = (-3, 9),
     three_score_coords: Tuple[int, int] = (-6, 4),
-    bp_coords: Tuple[int, int] = (-55, -5)
+    bp_coords: Tuple[int, int] = (-55, -5),
 ) -> Iterator[Intron]:
     """
     Convenience function to extract sequences for introns.
@@ -468,9 +511,5 @@ def extract_sequences_for_introns(
     """
     with SequenceExtractor(genome_file) as extractor:
         yield from extractor.extract_sequences(
-            introns,
-            flank_size,
-            five_score_coords,
-            three_score_coords,
-            bp_coords
+            introns, flank_size, five_score_coords, three_score_coords, bp_coords
         )

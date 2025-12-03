@@ -104,8 +104,12 @@ class BranchPointScorer:
 
         Port from: intronIC.py:2143-2178 (bp_score), 2944 (None handling)
 
+        Supports two modes:
+        - Default mode: Extracts BP region from full sequences (intron.sequences)
+        - Streaming mode: Uses pre-extracted BP region (intron.motifs.bp_region)
+
         Args:
-            intron: Intron object with sequence
+            intron: Intron object with sequence or motifs
             search_window: Tuple of (start, stop) positions relative to 3' end
                           Default: (-55, -5) matches original intronIC
             five_coords: 5' splice site scoring region coordinates (start, stop)
@@ -120,7 +124,7 @@ class BranchPointScorer:
             if the search window is too small for the PWM length.
 
         Raises:
-            ValueError: If intron has no sequence
+            ValueError: If intron has no sequence or motifs
 
         Example:
             >>> scorer = BranchPointScorer(u12_pwm, u2_pwm)
@@ -129,15 +133,26 @@ class BranchPointScorer:
             ...     print(f"Found {match.sequence} at position {match.position}")
             Found TACTAAC at position -30
         """
-        # Validate intron has sequence
-        if intron.sequences is None or intron.sequences.seq is None:
+        # Check for streaming mode: use pre-extracted bp_region
+        if intron.motifs is not None and intron.motifs.bp_region:
+            search_region = intron.motifs.bp_region
+            # In streaming mode, we use the search_window start as the actual position
+            # since the bp_region was extracted with those exact coordinates
+            actual_start_pos = search_window[0]  # Will be adjusted below for intron_length
+            # For position calculation, we need an estimated intron length
+            # We can infer it from the bp_region: if extracted with (-55, -5), region is 50bp
+            # and actual intron_length would make position = actual_start_pos + match.start - intron_length
+            # But in streaming mode, we store search_window[0] directly and it's already relative to 3' end
+            use_streaming_mode = True
+        elif intron.sequences is not None and intron.sequences.seq is not None:
+            # Default mode: extract from full sequences
+            search_region, actual_start_pos = self._extract_search_region(intron, search_window, five_coords, three_coords)
+            use_streaming_mode = False
+        else:
             raise ValueError(
-                f"Intron {intron.intron_id} has no sequence. "
-                "Cannot search for branch point."
+                f"Intron {intron.intron_id} has no sequence data. "
+                "Cannot search for branch point without sequences or motifs."
             )
-
-        # Extract search region from intron and get its actual start position
-        search_region, actual_start_pos = self._extract_search_region(intron, search_window, five_coords, three_coords)
 
         # Check if search region is long enough for PWM
         # Port from: intronIC.py:2944 - returns None for too-short sequences
@@ -152,13 +167,20 @@ class BranchPointScorer:
         u12_match = self._find_best_in_sequence(search_region, self.u12_pwm, search_window_start=search_window[0])
 
         # Calculate position relative to 3' end
-        # actual_start_pos is the absolute position in the intron where search region starts (after clamping)
-        # u12_match.start_in_region is offset into the search region
-        # absolute position in intron = actual_start_pos + u12_match.start_in_region
-        # position relative to 3' end = absolute_position - intron_length
-        intron_length = len(intron.sequences.seq)
-        absolute_position = actual_start_pos + u12_match.start_in_region
-        position = absolute_position - intron_length
+        if use_streaming_mode:
+            # In streaming mode, search_window coordinates are already relative to 3' end
+            # So position = search_window[0] + match.start_in_region
+            # e.g., search_window=(-55, -5), match at position 10 in region = -55 + 10 = -45
+            position = search_window[0] + u12_match.start_in_region
+        else:
+            # Default mode: calculate from absolute positions
+            # actual_start_pos is the absolute position in the intron where search region starts (after clamping)
+            # u12_match.start_in_region is offset into the search region
+            # absolute position in intron = actual_start_pos + u12_match.start_in_region
+            # position relative to 3' end = absolute_position - intron_length
+            intron_length = len(intron.sequences.seq)
+            absolute_position = actual_start_pos + u12_match.start_in_region
+            position = absolute_position - intron_length
 
         # Score the SAME sequence (U12's best match) with the U2 PWM
         # Port from: intronIC.py:3086-3095 (log_ratio using same bp_region_seq)
