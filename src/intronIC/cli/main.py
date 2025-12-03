@@ -2797,6 +2797,7 @@ def _process_contig_streaming_classify_worker(
     pwm_sets = _streaming_classify_worker_pwm_sets
 
     # Statistics for this contig
+    from intronIC.extraction.filters import FilterStats
     stats = {
         "genes": 0,
         "introns_generated": 0,
@@ -2804,6 +2805,7 @@ def _process_contig_streaming_classify_worker(
         "classified": 0,
         "boundaries_u12": Counter(),
         "boundaries_u2": Counter(),
+        "filter_stats": FilterStats(),  # Initialize empty, will be updated if filtering occurs
     }
 
     # Open annotation store (read-only, each worker gets own connection)
@@ -2907,6 +2909,9 @@ def _process_contig_streaming_classify_worker(
 
     # Filter introns
     filtered_introns = intron_filter.filter_introns(contig_with_seqs)
+
+    # Capture filter statistics
+    stats["filter_stats"] = intron_filter.stats
 
     # Filter to only scorable introns
     scorable = [
@@ -3124,6 +3129,10 @@ def classify_streaming_per_contig(
     boundaries_u12: Counter = Counter()
     boundaries_u2: Counter = Counter()
 
+    # Accumulated filter statistics
+    from intronIC.extraction.filters import FilterStats
+    accumulated_filter_stats = FilterStats()
+
     # Determine parallelization
     n_processes = config.performance.processes
     use_parallel = n_processes > 1 and len(contigs_with_counts) > 1
@@ -3194,6 +3203,17 @@ def classify_streaming_per_contig(
                     total_classified += stats["classified"]
                     boundaries_u12.update(stats["boundaries_u12"])
                     boundaries_u2.update(stats["boundaries_u2"])
+
+                    # Accumulate filter statistics
+                    filter_stats = stats["filter_stats"]
+                    accumulated_filter_stats.duplicates += filter_stats.duplicates
+                    accumulated_filter_stats.short += filter_stats.short
+                    accumulated_filter_stats.ambiguous += filter_stats.ambiguous
+                    accumulated_filter_stats.noncanonical += filter_stats.noncanonical
+                    accumulated_filter_stats.overlap += filter_stats.overlap
+                    accumulated_filter_stats.isoform += filter_stats.isoform
+                    accumulated_filter_stats.total_introns += filter_stats.total_introns
+                    accumulated_filter_stats.kept_introns += filter_stats.kept_introns
 
                     # Log progress every 10%
                     current_percent = int((completed / len(contigs_with_counts)) * 100)
@@ -3355,6 +3375,16 @@ def classify_streaming_per_contig(
                 # Filter introns (duplicates, short, noncanonical, etc.)
                 filtered_introns = intron_filter.filter_introns(contig_with_seqs)
 
+                # Accumulate filter statistics from this contig
+                accumulated_filter_stats.duplicates += intron_filter.stats.duplicates
+                accumulated_filter_stats.short += intron_filter.stats.short
+                accumulated_filter_stats.ambiguous += intron_filter.stats.ambiguous
+                accumulated_filter_stats.noncanonical += intron_filter.stats.noncanonical
+                accumulated_filter_stats.overlap += intron_filter.stats.overlap
+                accumulated_filter_stats.isoform += intron_filter.stats.isoform
+                accumulated_filter_stats.total_introns += intron_filter.stats.total_introns
+                accumulated_filter_stats.kept_introns += intron_filter.stats.kept_introns
+
                 # Filter to only scorable introns (have sequences and aren't omitted)
                 scorable = [
                     i
@@ -3441,6 +3471,22 @@ def classify_streaming_per_contig(
     )
     messenger.log_only(
         f"Total genes: {total_genes:,}, introns generated: {total_introns_generated:,}"
+    )
+
+    # Display filtering summary
+    messenger.print_filtering_summary(
+        total=accumulated_filter_stats.total_introns,
+        short=accumulated_filter_stats.short,
+        ambiguous=accumulated_filter_stats.ambiguous,
+        noncanonical=accumulated_filter_stats.noncanonical,
+        isoform=accumulated_filter_stats.isoform,
+        overlap=accumulated_filter_stats.overlap,
+        duplicates=accumulated_filter_stats.duplicates,
+        kept=accumulated_filter_stats.kept_introns,
+        include_duplicates=config.extraction.include_duplicates,
+        include_isoforms=False,  # Streaming always uses longest_only=True
+        exclude_noncanonical=config.scoring.exclude_noncanonical,
+        exclude_overlap=config.extraction.no_intron_overlap,
     )
 
     # Display classification summary
@@ -4545,6 +4591,178 @@ def main_train(config: IntronICConfig):
         raise
 
 
+def main_extract(config: IntronICConfig):
+    """Extract intron sequences without classification.
+
+    This workflow extracts introns and writes sequence files but does not
+    perform scoring or classification. Useful for:
+    1. Creating custom reference sets for training
+    2. Extracting introns for external analysis
+    3. Preparing data for manual curation
+
+    Workflow:
+    1. Load genome and annotation/BED
+    2. Extract introns
+    3. Filter introns
+    4. Write sequence outputs (no scores or classification)
+
+    Args:
+        config: Pipeline configuration
+    """
+    # Track start time
+    start_time = time.time()
+
+    # Setup logging
+    logger, log_console = setup_logging(config)
+    reporter = IntronICProgressReporter(quiet=config.output.quiet)
+
+    from .messenger import UnifiedMessenger
+
+    messenger = UnifiedMessenger(
+        console=reporter.console,
+        log_console=log_console,
+        logger=logger,
+        quiet=config.output.quiet,
+    )
+
+    # Print startup banner
+    import sys
+
+    messenger.print_startup_banner(
+        species_name=config.output.species_name,
+        input_mode=config.input.mode,
+        output_dir=str(config.output.output_dir.absolute()),
+        threshold=None,  # No threshold for extract mode
+        command=" ".join(sys.argv),
+        working_dir=str(Path.cwd()),
+        model_path=None,  # No model for extract mode
+        genome_path=str(config.input.genome.absolute())
+        if config.input.mode in ["annotation", "bed"] and config.input.genome
+        else None,
+        annotation_path=str(config.input.annotation.absolute())
+        if config.input.mode == "annotation" and config.input.annotation
+        else None,
+        bed_path=str(config.input.bed.absolute())
+        if config.input.mode == "bed" and config.input.bed
+        else None,
+        sequences_path=None,
+    )
+
+    # Note: Extract mode only supports annotation and bed modes (not pre-extracted sequences)
+    if config.input.mode not in ["annotation", "bed"]:
+        messenger.error(
+            f"Extract mode only supports annotation or BED input, not '{config.input.mode}'"
+        )
+        raise ValueError(
+            f"Extract mode requires genome + annotation or genome + BED, got mode: {config.input.mode}"
+        )
+
+    # Extract introns (this includes filtering)
+    messenger.info("=" * 80)
+    messenger.info("EXTRACTION MODE - Extracting intron sequences")
+    messenger.info("=" * 80)
+
+    # Load genome
+    messenger.info(f"Loading genome: {config.input.genome}")
+    genome_reader = GenomeReader(str(config.input.genome))
+
+    # Count sequences (simple count, no caching)
+    seq_count = sum(1 for _ in genome_reader.stream())
+    messenger.success(f"Genome loaded: {seq_count:,} sequences")
+
+    # Extract based on input mode
+    if config.input.mode == "annotation":
+        if config.performance.streaming:
+            # Streaming extraction
+            introns, db_path = extract_introns_streaming(config, messenger, reporter)
+            messenger.success(f"Extracted {len(introns):,} introns (streaming mode)")
+        else:
+            # Standard extraction
+            introns = extract_introns_from_annotation(config, messenger, reporter)
+            messenger.success(f"Extracted {len(introns):,} introns")
+    elif config.input.mode == "bed":
+        # BED extraction
+        introns = extract_introns_from_bed(config, genome_reader, messenger, reporter)
+        messenger.success(f"Extracted {len(introns):,} introns from BED")
+
+    # Write outputs (sequences only, no scores/classification)
+    messenger.info("=" * 80)
+    messenger.info("Writing output files")
+    messenger.info("=" * 80)
+
+    # Write intron sequences
+    seq_path = config.output.get_output_path(".introns.iic")
+    meta_path = config.output.get_output_path(".meta.iic")
+    bed_path = config.output.get_output_path(".bed.iic")
+
+    from intronIC.file_io.writers import (
+        BEDWriter,
+        MetaWriter,
+        SequenceWriter,
+    )
+
+    # If streaming mode, read sequences from SQLite
+    if config.performance.streaming and config.input.mode == "annotation":
+        messenger.info(f"Writing sequences from SQLite: {seq_path}")
+        from intronIC.file_io.sequence_store import StreamingSequenceStore
+
+        store = StreamingSequenceStore(db_path)
+        with open(seq_path, "w") as f:
+            for name, seq in store.iterate_sequences():
+                f.write(f">{name}\n{seq}\n")
+        store.close()
+    else:
+        # Standard mode - write from memory
+        # Filter introns with sequences
+        introns_with_seqs = [i for i in introns if i.has_sequences]
+        messenger.info(f"Writing sequences: {seq_path} ({len(introns_with_seqs):,} introns with sequences)")
+        seq_writer = SequenceWriter(seq_path)
+        with seq_writer:
+            seq_writer.write_introns(
+                introns_with_seqs,
+                species_name=config.output.species_name,
+                simple_name=not config.output.no_abbreviate,
+                no_abbreviate=config.output.no_abbreviate,
+                include_score=False,  # No scores in extract mode
+            )
+
+    # Write metadata
+    messenger.info(f"Writing metadata: {meta_path}")
+    meta_writer = MetaWriter(meta_path)
+    with meta_writer:
+        meta_writer.write_introns(
+            introns,
+            species_name=config.output.species_name,
+            simple_name=not config.output.no_abbreviate,
+        )
+
+    # Write BED
+    messenger.info(f"Writing BED: {bed_path}")
+    bed_writer = BEDWriter(bed_path)
+    with bed_writer:
+        bed_writer.write_introns(
+            introns,
+            species_name=config.output.species_name,
+            simple_name=not config.output.no_abbreviate,
+            no_abbreviate=config.output.no_abbreviate,
+        )
+
+    # Calculate runtime
+    elapsed_seconds = time.time() - start_time
+    hours, remainder = divmod(int(elapsed_seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours > 0:
+        runtime_str = f"{hours}h {minutes}m {seconds}s"
+    elif minutes > 0:
+        runtime_str = f"{minutes}m {seconds}s"
+    else:
+        runtime_str = f"{seconds}s"
+
+    messenger.success(f"Extraction complete! (Runtime: {runtime_str})")
+    messenger.info(f"Output files written to: {config.output.output_dir}")
+
+
 def main_classify(config: IntronICConfig):
     """Run the complete intronIC classification pipeline.
 
@@ -5092,10 +5310,13 @@ def main(args=None):
         command = getattr(parsed_args, "command", "classify")
 
         if command == "train":
-            # Train mode: No genome/annotation needed
+            # Train mode: Train model on reference sequences
             main_train(config)
+        elif command == "extract":
+            # Extract mode: Extract intron sequences without classification
+            main_extract(config)
         elif command == "classify":
-            # Classify mode: Standard pipeline
+            # Classify mode: Standard classification pipeline
             main_classify(config)
         else:
             raise ValueError(f"Unknown command: {command}")

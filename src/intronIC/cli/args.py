@@ -64,7 +64,7 @@ class IntronICArgumentParser:
         subcommand_idx = None
 
         for idx, arg in enumerate(args):
-            if arg in ("train", "classify"):
+            if arg in ("train", "classify", "extract"):
                 subcommand_idx = idx
                 break
 
@@ -199,6 +199,33 @@ Classify mode examples:
         self._add_classify_arguments(classify_parser)
 
         # ===================================================================
+        # EXTRACT SUBCOMMAND
+        # ===================================================================
+        extract_parser = subparsers.add_parser(
+            "extract",
+            help="Extract intron sequences without classification",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Extract mode examples:
+  # Extract introns from annotation
+  intronIC extract -g genome.fa -a annotation.gff -n species
+
+  # Extract with streaming mode (memory efficient)
+  intronIC extract -g genome.fa -a annotation.gff -n species --streaming
+
+  # Extract from BED file
+  intronIC extract -g genome.fa -b introns.bed -n species
+
+  # Extract with custom flanking length
+  intronIC extract -g genome.fa -a annotation.gff -n species --flank-len 20
+
+Note: This command extracts intron sequences but does not perform classification.
+      Use 'intronIC classify' with a pretrained model to classify extracted introns.
+""",
+        )
+        self._add_extract_arguments(extract_parser)
+
+        # ===================================================================
         # BACKWARD COMPATIBILITY
         # ===================================================================
         # Add all classify arguments to main parser for old CLI compatibility
@@ -227,6 +254,138 @@ Classify mode examples:
             type=Path,
             default=Path.cwd(),
             help="Output directory (default: current directory)",
+        )
+
+    def _add_extract_arguments(self, parser: argparse.ArgumentParser):
+        """Add arguments specific to extract subcommand.
+
+        Extract mode extracts intron sequences without classification.
+        It takes similar arguments to classify but without model/training/scoring params.
+        """
+        # Common arguments (species name and output dir)
+        self._add_common_arguments(parser)
+
+        # === Input Selection ===
+        input_group = parser.add_argument_group(
+            "input selection",
+            "Choose one mode: (1) -g + -a for annotation, or (2) -g + -b for BED",
+        )
+        input_group.add_argument(
+            "-g",
+            "--genome",
+            type=Path,
+            required=True,
+            help="Path to genome FASTA file (required)",
+        )
+        input_group.add_argument(
+            "-a",
+            "--annotation",
+            type=Path,
+            help="Path to GFF3/GTF annotation file (requires -g)",
+        )
+        input_group.add_argument(
+            "-b",
+            "--bed",
+            type=Path,
+            help="Path to BED file with intron coordinates (requires -g)",
+        )
+
+        # === Extraction Parameters ===
+        extraction = parser.add_argument_group("extraction parameters")
+        extraction.add_argument(
+            "-f",
+            "--feature",
+            choices=["cds", "exon", "both"],
+            default="both",
+            help="Feature type to extract from (default: both)",
+        )
+        extraction.add_argument(
+            "--min-intron-len",
+            "--min_intron_len",
+            type=int,
+            default=30,
+            help="Minimum intron length (default: 30)",
+        )
+        extraction.add_argument(
+            "-i",
+            "--allow-multiple-isoforms",
+            "--allow_multiple_isoforms",
+            action="store_true",
+            help="Include non-longest isoforms",
+        )
+        extraction.add_argument(
+            "-v",
+            "--no-intron-overlap",
+            "--no_intron_overlap",
+            action="store_true",
+            help="Exclude overlapping introns",
+        )
+        extraction.add_argument(
+            "-d",
+            "--include-duplicates",
+            "--include_duplicates",
+            action="store_true",
+            help="Include duplicate coordinate introns",
+        )
+        extraction.add_argument(
+            "--flank-len",
+            "--flank_len",
+            type=int,
+            default=100,
+            help="Exonic flank length (default: 100)",
+        )
+
+        # === Performance Parameters ===
+        performance = parser.add_argument_group("performance parameters")
+        performance.add_argument(
+            "-p",
+            "--processes",
+            type=int,
+            default=1,
+            help="Number of parallel processes (default: 1)",
+        )
+        performance.add_argument(
+            "--streaming",
+            action="store_true",
+            help="Use streaming mode for memory efficiency (~85%% savings)",
+        )
+
+        # === Output Parameters ===
+        output = parser.add_argument_group("output parameters")
+        output.add_argument(
+            "--clean-names",
+            action="store_true",
+            help="Remove version numbers and special characters from gene/transcript names",
+        )
+        output.add_argument(
+            "--no-clean-names",
+            action="store_true",
+            help="Keep original names (overrides config file)",
+        )
+        output.add_argument(
+            "-u",
+            "--no-abbreviate",
+            "--no_abbreviate",
+            action="store_true",
+            help="Use full gene/transcript names (no abbreviation)",
+        )
+        output.add_argument(
+            "--abbreviate-filenames",
+            "--abbreviate_filenames",
+            action="store_true",
+            help="Use species abbreviation in filenames",
+        )
+        output.add_argument(
+            "--no-headers",
+            "--no_headers",
+            action="store_true",
+            help="Omit headers from output files",
+        )
+        output.add_argument(
+            "--seed",
+            type=int,
+            default=42,
+            help="Random seed for reproducibility (default: 42)",
         )
 
     def _add_train_arguments(self, parser: argparse.ArgumentParser):
@@ -813,6 +972,44 @@ Classify mode examples:
                 )
 
         # ===============================================================
+        # EXTRACT MODE VALIDATION
+        # ===============================================================
+        elif command == "extract":
+            # Species name required
+            if not args.species_name:
+                self.parser.error("extract: -n/--species_name is required")
+
+            # Genome required
+            if not args.genome:
+                self.parser.error("extract: genome file (-g) is required")
+
+            # Input validation
+            has_annotation = args.annotation is not None
+            has_bed = args.bed is not None
+
+            # Must have either annotation or bed
+            if not has_annotation and not has_bed:
+                self.parser.error(
+                    "extract: must specify input:\n"
+                    "  Annotation: -a ANNOTATION\n"
+                    "  BED: -b BED"
+                )
+
+            # Can't have both
+            if has_annotation and has_bed:
+                self.parser.error(
+                    "extract: specify only one: -a (annotation) or -b (BED)"
+                )
+
+            # Validate file paths exist
+            if args.genome and not args.genome.exists():
+                self.parser.error(f"extract: genome file not found: {args.genome}")
+            if has_annotation and not args.annotation.exists():
+                self.parser.error(f"extract: annotation file not found: {args.annotation}")
+            if has_bed and not args.bed.exists():
+                self.parser.error(f"extract: BED file not found: {args.bed}")
+
+        # ===============================================================
         # CLASSIFY MODE VALIDATION
         # ===============================================================
         elif command == "classify":
@@ -857,6 +1054,20 @@ Classify mode examples:
             if not args.sequences_only:
                 has_model = hasattr(args, "model") and args.model is not None
                 has_train = hasattr(args, "train") and args.train
+
+                # DEPRECATION WARNING for --train flag
+                if has_train:
+                    import sys
+                    print("\n" + "=" * 80, file=sys.stderr)
+                    print("⚠️  DEPRECATION WARNING", file=sys.stderr)
+                    print("=" * 80, file=sys.stderr)
+                    print("The --train flag is deprecated and will be removed in v3.0.0", file=sys.stderr)
+                    print("\nPlease use the new two-step workflow:", file=sys.stderr)
+                    print("  1. intronIC train -n species_name", file=sys.stderr)
+                    print("  2. intronIC classify -g genome.fa -a annotation.gff --model species_name.model.pkl", file=sys.stderr)
+                    print("\nThis separates model training (on reference sequences) from", file=sys.stderr)
+                    print("classification (on genomic data), providing better modularity.", file=sys.stderr)
+                    print("=" * 80 + "\n", file=sys.stderr)
 
                 if not has_model and not has_train:
                     # Try to use default pretrained model if available
