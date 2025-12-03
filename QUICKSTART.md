@@ -26,7 +26,7 @@ intronIC --help
 intronIC \
   --genome genome.fa.gz \
   --annotation annotation.gff3.gz \
-  --species_name homo_sapiens \
+  --species-name homo_sapiens \
   --processes 8
 ```
 
@@ -37,13 +37,13 @@ intronIC -g genome.fa.gz -a annotation.gff3.gz -n homo_sapiens -p 8
 
 ### 3. Extract Sequences Only (No Classification)
 ```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name --sequences_only
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name --sequences-only
 ```
 
 ### 4. Use Pretrained Model
 ```bash
 intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
-  --pretrained_model homo_sapiens.model.pkl
+  --model homo_sapiens.model.pkl
 ```
 
 ## Key Options
@@ -52,11 +52,11 @@ intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
 |--------|-------|-------------|
 | `--genome` | `-g` | Genome FASTA file (required) |
 | `--annotation` | `-a` | GFF3/GTF annotation (required) |
-| `--species_name` | `-n` | Output prefix (required) |
+| `--species-name` | `-n` | Output prefix (required) |
 | `--processes` | `-p` | Number of CPU cores (default: 1) |
-| `--sequences_only` | `-s` | Skip classification |
+| `--sequences-only` | `-s` | Skip classification |
 | `--threshold` | `-t` | U12 probability threshold (default: 90) |
-| `--pretrained_model` | | Use existing model |
+| `--model` | | Use existing model |
 | `--recursive` | | Recursive training for distant species |
 
 ## Output Files
@@ -86,8 +86,8 @@ intronIC \
   -g genome.fa.gz \
   -a annotation.gff3.gz \
   -n species_seqs \
-  --sequences_only \
-  --allow_multiple_isoforms
+  --sequences-only \
+  --allow-multiple-isoforms
 ```
 
 ### Strict Threshold

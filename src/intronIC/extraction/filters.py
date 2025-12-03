@@ -15,13 +15,20 @@ from intronIC.utils.sequences import is_valid_dna, has_ambiguous_bases
 
 @dataclass
 class FilterStats:
-    """Statistics from filtering operations."""
-    omitted_short: int = 0
-    omitted_ambiguous: int = 0
-    omitted_noncanonical: int = 0
-    omitted_overlap: int = 0
-    omitted_isoform: int = 0
+    """Statistics from filtering operations.
+
+    Tracks counts for each exclusion category. Categories are mutually exclusive
+    with duplicates taking priority (most specific reason for exclusion).
+    """
+    # Counts by category (mutually exclusive)
     duplicates: int = 0
+    short: int = 0
+    ambiguous: int = 0
+    noncanonical: int = 0
+    overlap: int = 0
+    isoform: int = 0
+
+    # Totals
     total_introns: int = 0
     kept_introns: int = 0
 
@@ -367,23 +374,36 @@ class IntronFilter:
         """
         Update filtering statistics.
 
+        Tracks how many introns fall into each category based on their properties
+        (not just omission status). This allows reporting "found X, excluded Y"
+        even when user options include a category.
+
+        Categories are mutually exclusive with duplicates taking priority
+        (most specific reason for exclusion).
+
         Args:
             intron: Intron object
         """
+        # Count duplicates first (highest priority - most specific reason)
         if intron.metadata.duplicate:
             self.stats.duplicates += 1
+            return
 
+        # For non-duplicates, count by property/category
+        # Check omission reason first (always accurate for short/ambiguous)
         omitted = intron.metadata.omitted
         if omitted == OmissionReason.SHORT:
-            self.stats.omitted_short += 1
+            self.stats.short += 1
         elif omitted == OmissionReason.AMBIGUOUS:
-            self.stats.omitted_ambiguous += 1
-        elif omitted == OmissionReason.NONCANONICAL:
-            self.stats.omitted_noncanonical += 1
-        elif omitted == OmissionReason.OVERLAP:
-            self.stats.omitted_overlap += 1
-        elif omitted == OmissionReason.ISOFORM:
-            self.stats.omitted_isoform += 1
+            self.stats.ambiguous += 1
+        # For optional categories, check the property itself (not just omission)
+        # This way we count them even when user includes them
+        elif intron.metadata.noncanonical:
+            self.stats.noncanonical += 1
+        elif intron.metadata.overlap:
+            self.stats.overlap += 1
+        elif intron.metadata.longest_isoform is False:
+            self.stats.isoform += 1
 
     def _should_keep(self, intron: Intron) -> bool:
         """

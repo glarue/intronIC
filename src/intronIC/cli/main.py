@@ -4154,47 +4154,24 @@ def main_classify(config: IntronICConfig):
 
         # Report comprehensive filtering statistics (combines pre-filter + post-extraction)
         stats = intron_filter.stats
-        total = stats.total_introns
-
-        # Calculate removal statistics
-        total_removed = total - stats.kept_introns
-        total_omitted = (
-            stats.omitted_short
-            + stats.omitted_ambiguous
-            + stats.omitted_noncanonical
-            + stats.omitted_isoform
-            + stats.omitted_overlap
-        )
-
-        # Calculate breakdown: duplicates can also be omitted, so categories overlap
-        # Removed = Omitted ∪ Duplicates
-        duplicates_also_omitted = total_omitted + stats.duplicates - total_removed
-        duplicates_only = (
-            stats.duplicates - duplicates_also_omitted
-            if duplicates_also_omitted <= stats.duplicates
-            else 0
-        )
 
         # Report filtering results using unified method (console + log)
+        # Pass counts and user options so messenger can show in correct column
         messenger.print_filtering_summary(
-            total=total,
-            omitted_short=stats.omitted_short,
-            omitted_ambiguous=stats.omitted_ambiguous,
-            omitted_noncanonical=stats.omitted_noncanonical,
-            omitted_isoform=stats.omitted_isoform,
-            omitted_overlap=stats.omitted_overlap,
+            total=stats.total_introns,
+            short=stats.short,
+            ambiguous=stats.ambiguous,
+            noncanonical=stats.noncanonical,
+            isoform=stats.isoform,
+            overlap=stats.overlap,
             duplicates=stats.duplicates,
-            duplicates_only=duplicates_only,
-            total_removed=total_removed,
             kept=stats.kept_introns,
+            # User options that affect which column counts appear in
+            include_duplicates=config.extraction.include_duplicates,
+            include_isoforms=config.extraction.allow_multiple_isoforms,
+            exclude_noncanonical=config.scoring.exclude_noncanonical,
+            exclude_overlap=config.extraction.no_intron_overlap,
         )
-
-        # Show note if there are duplicates that were also omitted
-        if duplicates_also_omitted > 0 and stats.duplicates > 0:
-            messenger.log_only(
-                f"Note: {format_count_with_percentage(duplicates_also_omitted, stats.duplicates)} of {stats.duplicates:,} total duplicates were also omitted for other reasons"
-            )
-            messenger.log_only("")
 
         messenger.success(f"Processed {len(introns):,} introns from annotation")
 

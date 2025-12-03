@@ -389,40 +389,70 @@ class UnifiedMessenger:
     def print_filtering_summary(
         self,
         total: int,
-        omitted_short: int = 0,
-        omitted_ambiguous: int = 0,
-        omitted_noncanonical: int = 0,
-        omitted_isoform: int = 0,
-        omitted_overlap: int = 0,
+        short: int = 0,
+        ambiguous: int = 0,
+        noncanonical: int = 0,
+        isoform: int = 0,
+        overlap: int = 0,
         duplicates: int = 0,
-        duplicates_only: int = 0,
-        total_removed: int = 0,
         kept: int = 0,
+        # User options that affect what gets excluded
+        include_duplicates: bool = False,
+        include_isoforms: bool = False,
+        exclude_noncanonical: bool = False,
+        exclude_overlap: bool = False,
     ):
         """
-        Print filtering summary table to both console and log.
+        Print filtering summary table with Included and Excluded columns.
+
+        Each category count appears in either Included or Excluded column
+        based on user options, making it clear what action was taken.
 
         Args:
             total: Total number of introns before filtering
-            omitted_short: Number omitted for being too short
-            omitted_ambiguous: Number omitted for ambiguous bases
-            omitted_noncanonical: Number omitted for non-canonical splice sites
-            omitted_isoform: Number omitted for being non-longest isoform
-            omitted_overlap: Number omitted for overlapping
-            duplicates: Total number of duplicates
-            duplicates_only: Number of duplicates not also omitted
-            total_removed: Total removed (omitted + duplicates_only)
+            short: Number too short for scoring
+            ambiguous: Number with ambiguous bases in scoring regions
+            noncanonical: Number with non-canonical splice sites
+            isoform: Number from non-longest isoforms
+            overlap: Number with overlapping coordinates
+            duplicates: Number with duplicate coordinates
             kept: Number retained for scoring
+            include_duplicates: User specified -d/--include-duplicates flag
+            include_isoforms: User specified -i/--allow-multiple-isoforms flag
+            exclude_noncanonical: User specified --no-nc flag
+            exclude_overlap: User specified -v/--no-intron-overlap flag
         """
         from rich import box
         from rich.table import Table
 
-        total_omitted = (
-            omitted_short
-            + omitted_ambiguous
-            + omitted_noncanonical
-            + omitted_isoform
-            + omitted_overlap
+        # Helper to format count in appropriate column
+        def fmt_inc_exc(count: int, is_excluded: bool) -> tuple:
+            """Return (included_str, excluded_str) for a count."""
+            if count == 0:
+                return ("0", "0")
+            if is_excluded:
+                return ("", f"{count:,}")
+            else:
+                return (f"{count:,}", "")
+
+        # Determine which column each category goes in
+        # Always excluded: short, ambiguous
+        # Conditionally based on flags:
+        dup_inc, dup_exc = fmt_inc_exc(duplicates, not include_duplicates)
+        short_inc, short_exc = fmt_inc_exc(short, True)  # always excluded
+        ambig_inc, ambig_exc = fmt_inc_exc(ambiguous, True)  # always excluded
+        nc_inc, nc_exc = fmt_inc_exc(noncanonical, exclude_noncanonical)
+        overlap_inc, overlap_exc = fmt_inc_exc(overlap, exclude_overlap)
+        iso_inc, iso_exc = fmt_inc_exc(isoform, not include_isoforms)
+
+        # Calculate totals
+        total_excluded = (
+            (short if True else 0)
+            + (ambiguous if True else 0)
+            + (noncanonical if exclude_noncanonical else 0)
+            + (overlap if exclude_overlap else 0)
+            + (isoform if not include_isoforms else 0)
+            + (duplicates if not include_duplicates else 0)
         )
 
         # Console: Rich table
@@ -433,74 +463,35 @@ class UnifiedMessenger:
                 title_style=f"bold {PALETTE.highlight}",
             )
             table.add_column(
-                "Category", style=PALETTE.table_header, no_wrap=False, width=30
+                "Category", style=PALETTE.table_header, no_wrap=False, width=28
             )
             table.add_column(
-                "Count", style=PALETTE.table_value, justify="right", width=12
+                "Included", style=PALETTE.table_value, justify="right", width=10
             )
             table.add_column(
-                "Percent", style=PALETTE.table_value, justify="right", width=10
+                "Excluded", style=PALETTE.table_value, justify="right", width=10
             )
 
-            # Show omitted section if any were omitted
-            if total_omitted > 0:
-                table.add_row(
-                    "Omitted",
-                    f"{total_omitted:,}",
-                    f"{(total_omitted / total * 100) if total > 0 else 0:.2f}%",
-                )
-                # Show breakdown items that have non-zero counts
-                if omitted_short > 0:
-                    table.add_row(
-                        "  - Too short",
-                        f"{omitted_short:,}",
-                        f"{(omitted_short / total * 100) if total > 0 else 0:.2f}%",
-                    )
-                if omitted_ambiguous > 0:
-                    table.add_row(
-                        "  - Ambiguous bases",
-                        f"{omitted_ambiguous:,}",
-                        f"{(omitted_ambiguous / total * 100) if total > 0 else 0:.2f}%",
-                    )
-                if omitted_noncanonical > 0:
-                    table.add_row(
-                        "  - Non-canonical",
-                        f"{omitted_noncanonical:,}",
-                        f"{(omitted_noncanonical / total * 100) if total > 0 else 0:.2f}%",
-                    )
-                if omitted_isoform > 0:
-                    table.add_row(
-                        "  - Non-longest isoform",
-                        f"{omitted_isoform:,}",
-                        f"{(omitted_isoform / total * 100) if total > 0 else 0:.2f}%",
-                    )
-                if omitted_overlap > 0:
-                    table.add_row(
-                        "  - Overlapping",
-                        f"{omitted_overlap:,}",
-                        f"{(omitted_overlap / total * 100) if total > 0 else 0:.2f}%",
-                    )
-
-            # Show duplicates row if there are duplicates that weren't also omitted
-            if duplicates_only > 0:
-                table.add_row(
-                    "Duplicates only",
-                    f"{duplicates_only:,}",
-                    f"{(duplicates_only / total * 100) if total > 0 else 0:.2f}%",
-                )
+            # Always show all categories to indicate which checks were performed
+            table.add_row("  Duplicates", dup_inc, dup_exc)
+            table.add_row("  Too short", short_inc, short_exc)
+            table.add_row("  Ambiguous bases", ambig_inc, ambig_exc)
+            table.add_row("  Non-canonical", nc_inc, nc_exc)
+            table.add_row("  Overlapping", overlap_inc, overlap_exc)
+            table.add_row("  Non-longest isoform", iso_inc, iso_exc)
 
             # Separator and totals
             table.add_section()
             table.add_row(
-                "Total filtered out",
-                f"{total_removed:,}",
-                f"{(total_removed / total * 100) if total > 0 else 0:.2f}%",
+                "Total excluded",
+                "",
+                f"{total_excluded:,}",
                 style=f"bold {PALETTE.warning}",
             )
             table.add_row(
                 "Retained for scoring",
+                "",
                 f"{kept:,}",
-                f"{(kept / total * 100) if total > 0 else 0:.2f}%",
                 style=f"bold {PALETTE.success}",
             )
 
@@ -509,64 +500,55 @@ class UnifiedMessenger:
             self.console.print()
 
         # Log: ASCII table with color
+        # Helper for fixed-width formatting
+        def pad(s: str, width: int = 10) -> str:
+            return s.rjust(width)
+
         self.log_console.print("")
         self.log_console.print(
             f"[bold {PALETTE.highlight}]Intron Filtering Summary:[/bold {PALETTE.highlight}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]┌──────────────────────────────┬────────────┬───────────┐[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header}]┌────────────────────────────┬────────────┬────────────┐[/{PALETTE.table_header}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]│ Category                     │ Count      │ Percent   │[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header}]│ Category                   │ Included   │ Excluded   │[/{PALETTE.table_header}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]├──────────────────────────────┼────────────┼───────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header}]├────────────────────────────┼────────────┼────────────┤[/{PALETTE.table_header}]"
         )
 
-        # Show omitted section if any were omitted
-        if total_omitted > 0:
-            self.log_console.print(
-                f"│ Omitted                      │ {total_omitted:>10,} │ {(total_omitted / total * 100) if total > 0 else 0:>8.2f}% │"
-            )
-            # Show breakdown items that have non-zero counts
-            if omitted_short > 0:
-                self.log_console.print(
-                    f"│   - Too short                │ {omitted_short:>10,} │ {(omitted_short / total * 100) if total > 0 else 0:>8.2f}% │"
-                )
-            if omitted_ambiguous > 0:
-                self.log_console.print(
-                    f"│   - Ambiguous bases          │ {omitted_ambiguous:>10,} │ {(omitted_ambiguous / total * 100) if total > 0 else 0:>8.2f}% │"
-                )
-            if omitted_noncanonical > 0:
-                self.log_console.print(
-                    f"│   - Non-canonical            │ {omitted_noncanonical:>10,} │ {(omitted_noncanonical / total * 100) if total > 0 else 0:>8.2f}% │"
-                )
-            if omitted_isoform > 0:
-                self.log_console.print(
-                    f"│   - Non-longest isoform      │ {omitted_isoform:>10,} │ {(omitted_isoform / total * 100) if total > 0 else 0:>8.2f}% │"
-                )
-            if omitted_overlap > 0:
-                self.log_console.print(
-                    f"│   - Overlapping              │ {omitted_overlap:>10,} │ {(omitted_overlap / total * 100) if total > 0 else 0:>8.2f}% │"
-                )
-
-        # Show duplicates row if there are duplicates that weren't also omitted
-        if duplicates_only > 0:
-            self.log_console.print(
-                f"│ Duplicates only              │ {duplicates_only:>10,} │ {(duplicates_only / total * 100) if total > 0 else 0:>8.2f}% │"
-            )
+        # Always show all categories to indicate which checks were performed
+        self.log_console.print(
+            f"│   Duplicates               │ {pad(dup_inc)} │ {pad(dup_exc)} │"
+        )
+        self.log_console.print(
+            f"│   Too short                │ {pad(short_inc)} │ {pad(short_exc)} │"
+        )
+        self.log_console.print(
+            f"│   Ambiguous bases          │ {pad(ambig_inc)} │ {pad(ambig_exc)} │"
+        )
+        self.log_console.print(
+            f"│   Non-canonical            │ {pad(nc_inc)} │ {pad(nc_exc)} │"
+        )
+        self.log_console.print(
+            f"│   Overlapping              │ {pad(overlap_inc)} │ {pad(overlap_exc)} │"
+        )
+        self.log_console.print(
+            f"│   Non-longest isoform      │ {pad(iso_inc)} │ {pad(iso_exc)} │"
+        )
 
         self.log_console.print(
-            f"[{PALETTE.table_header}]├──────────────────────────────┼────────────┼───────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header}]├────────────────────────────┼────────────┼────────────┤[/{PALETTE.table_header}]"
         )
         self.log_console.print(
-            f"│ [{PALETTE.warning}]Total filtered out[/{PALETTE.warning}]           │ [{PALETTE.warning}]{total_removed:>10,}[/{PALETTE.warning}] │ [{PALETTE.warning}]{(total_removed / total * 100) if total > 0 else 0:>8.2f}%[/{PALETTE.warning}] │"
+            f"│ [{PALETTE.warning}]Total excluded[/{PALETTE.warning}]             │            │ [{PALETTE.warning}]{total_excluded:>10,}[/{PALETTE.warning}] │"
         )
         self.log_console.print(
-            f"│ [{PALETTE.success}]Retained for scoring[/{PALETTE.success}]         │ [{PALETTE.success}]{kept:>10,}[/{PALETTE.success}] │ [{PALETTE.success}]{(kept / total * 100) if total > 0 else 0:>8.2f}%[/{PALETTE.success}] │"
+            f"│ [{PALETTE.success}]Retained for scoring[/{PALETTE.success}]       │            │ [{PALETTE.success}]{kept:>10,}[/{PALETTE.success}] │"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]└──────────────────────────────┴────────────┴───────────┘[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header}]└────────────────────────────┴────────────┴────────────┘[/{PALETTE.table_header}]"
         )
         self.log_console.print("")
 
