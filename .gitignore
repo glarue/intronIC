@@ -89,3 +89,6 @@ test_chr19_output/
 *.model.metadata.json
 homo_sapiens.d*.model.*
 homo_sapiens.default*.model.*
+
+# Archive (not tracked)
+archive/
