@@ -14,21 +14,25 @@ Test Strategy:
 3. These tests will catch any future attempts to replicate Issue #1
 """
 
-import pytest
-import numpy as np
 from dataclasses import replace
 from typing import List
 
+import numpy as np
+import pytest
+
 from intronIC.core.intron import (
-    Intron, IntronScores, IntronSequences, IntronMetadata,
-    GenomicCoordinate
+    GenomicCoordinate,
+    Intron,
+    IntronMetadata,
+    IntronScores,
+    IntronSequences,
 )
 from intronIC.scoring.normalizer import ScoreNormalizer
-
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def reference_introns() -> List[Intron]:
@@ -46,13 +50,13 @@ def reference_introns() -> List[Intron]:
             five_score = 0.01 + (i * 0.001)
             bp_score = 0.02 + (i * 0.002)
             three_score = 0.015 + (i * 0.0015)
-            type_id = 'u2'
+            type_id = "u2"
         # Simulated U12 introns (higher scores)
         else:
             five_score = 0.5 + (i * 0.01)
             bp_score = 0.6 + (i * 0.02)
             three_score = 0.55 + (i * 0.015)
-            type_id = 'u12'
+            type_id = "u12"
 
         intron = Intron(
             intron_id=f"ref_intron_{i}",
@@ -60,15 +64,15 @@ def reference_introns() -> List[Intron]:
                 chromosome=f"chr{i % 3 + 1}",
                 start=1000 + i * 1000,
                 stop=2000 + i * 1000,
-                strand='+',
-                system='1-based'
+                strand="+",
+                system="1-based",
             ),
             sequences=IntronSequences(
-                seq='GTAAGT' + 'N' * 94 + 'YYYYAC',
-                upstream_flank='ACTG',
-                downstream_flank='TGCA',
-                five_prime_dnt='GT',
-                three_prime_dnt='AG'
+                seq="GTAAGT" + "N" * 94 + "YYYYAC",
+                upstream_flank="ACTG",
+                downstream_flank="TGCA",
+                five_prime_dnt="GT",
+                three_prime_dnt="AG",
             ),
             scores=IntronScores(
                 five_raw_score=five_score,
@@ -77,13 +81,11 @@ def reference_introns() -> List[Intron]:
                 # z-scores will be filled by normalizer
                 five_z_score=None,
                 bp_z_score=None,
-                three_z_score=None
+                three_z_score=None,
             ),
             metadata=IntronMetadata(
-                parent=f"transcript_{i}",
-                grandparent=f"gene_{i}",
-                type_id=type_id
-            )
+                parent=f"transcript_{i}", grandparent=f"gene_{i}", type_id=type_id
+            ),
         )
         introns.append(intron)
 
@@ -111,15 +113,15 @@ def experimental_introns() -> List[Intron]:
                 chromosome=f"chr{i % 3 + 1}",
                 start=5000 + i * 1000,
                 stop=6000 + i * 1000,
-                strand='+',
-                system='1-based'
+                strand="+",
+                system="1-based",
             ),
             sequences=IntronSequences(
-                seq='GTAAGT' + 'N' * 94 + 'YYYYAC',
-                upstream_flank='ACTG',
-                downstream_flank='TGCA',
-                five_prime_dnt='GT',
-                three_prime_dnt='AG'
+                seq="GTAAGT" + "N" * 94 + "YYYYAC",
+                upstream_flank="ACTG",
+                downstream_flank="TGCA",
+                five_prime_dnt="GT",
+                three_prime_dnt="AG",
             ),
             scores=IntronScores(
                 five_raw_score=five_score,
@@ -127,13 +129,13 @@ def experimental_introns() -> List[Intron]:
                 three_raw_score=three_score,
                 five_z_score=None,
                 bp_z_score=None,
-                three_z_score=None
+                three_z_score=None,
             ),
             metadata=IntronMetadata(
                 parent=f"transcript_exp_{i}",
                 grandparent=f"gene_exp_{i}",
-                type_id='unknown'  # Unknown - to be classified
-            )
+                type_id="unknown",  # Unknown - to be classified
+            ),
         )
         introns.append(intron)
 
@@ -143,6 +145,7 @@ def experimental_introns() -> List[Intron]:
 # ============================================================================
 # ML Integrity Tests (CRITICAL - These prevent Issue #1)
 # ============================================================================
+
 
 def test_cannot_fit_on_experimental_data(experimental_introns):
     """
@@ -185,30 +188,32 @@ def test_normalizer_only_sees_training_data(reference_introns, experimental_intr
     ref_std = np.std(ref_five_scores, ddof=1)  # Sample std
 
     # Transform reference data
-    ref_normalized = list(normalizer.transform(
-        reference_introns,
-        dataset_type="reference"
-    ))
+    ref_normalized = list(
+        normalizer.transform(reference_introns, dataset_type="reference")
+    )
 
     # Transform experimental data (using reference statistics)
-    exp_normalized = list(normalizer.transform(
-        experimental_introns,
-        dataset_type="experimental"
-    ))
+    exp_normalized = list(
+        normalizer.transform(experimental_introns, dataset_type="experimental")
+    )
 
     # Verify we got results
     assert len(ref_normalized) == len(reference_introns)
     assert len(exp_normalized) == len(experimental_introns)
 
-    # Verify reference z-scores have mean≈0, std≈1
+    # Note: ScoreNormalizer uses RobustScaler which centers on median, not mean
+    # So we can't assert mean≈0, but we can verify z-scores were calculated
     ref_z_scores = [i.scores.five_z_score for i in ref_normalized]
-    assert abs(np.mean(ref_z_scores)) < 0.1, "Reference z-scores should have mean ≈ 0"
-    assert abs(np.std(ref_z_scores, ddof=1) - 1.0) < 0.1, "Reference z-scores should have std ≈ 1"
+    assert all(z is not None for z in ref_z_scores), (
+        "All reference z-scores should be calculated"
+    )
 
     # Experimental z-scores may NOT have mean≈0, std≈1
     # (they're normalized using reference statistics, which is correct!)
     exp_z_scores = [i.scores.five_z_score for i in exp_normalized]
-    # We don't assert anything about exp mean/std - that's the point!
+    assert all(z is not None for z in exp_z_scores), (
+        "All experimental z-scores should be calculated"
+    )
 
 
 def test_zscore_consistency_through_pipeline(reference_introns, experimental_introns):
@@ -230,10 +235,9 @@ def test_zscore_consistency_through_pipeline(reference_introns, experimental_int
     normalizer.fit(reference_introns, dataset_type="reference")
 
     # Normalize experimental data
-    normalized = list(normalizer.transform(
-        experimental_introns,
-        dataset_type="experimental"
-    ))
+    normalized = list(
+        normalizer.transform(experimental_introns, dataset_type="experimental")
+    )
 
     # Save z-scores
     original_z_scores = [
@@ -247,17 +251,12 @@ def test_zscore_consistency_through_pipeline(reference_introns, experimental_int
         updated_scores = replace(
             intron.scores,
             svm_score=75.0,  # Simulated classification
-            relative_score=-15.0
+            relative_score=-15.0,
         )
-        updated_metadata = replace(
-            intron.metadata,
-            type_id='u2'
+        updated_metadata = replace(intron.metadata, type_id="u2")
+        classified.append(
+            replace(intron, scores=updated_scores, metadata=updated_metadata)
         )
-        classified.append(replace(
-            intron,
-            scores=updated_scores,
-            metadata=updated_metadata
-        ))
 
     # Verify z-scores are unchanged
     final_z_scores = [
@@ -265,11 +264,14 @@ def test_zscore_consistency_through_pipeline(reference_introns, experimental_int
         for i in classified
     ]
 
-    assert original_z_scores == final_z_scores, \
+    assert original_z_scores == final_z_scores, (
         "Z-scores should NOT change after classification!"
+    )
 
 
-def test_cannot_refit_normalizer_after_classification(reference_introns, experimental_introns):
+def test_cannot_refit_normalizer_after_classification(
+    reference_introns, experimental_introns
+):
     """
     CRITICAL: Should not be able to re-fit normalizer on mixed datasets.
 
@@ -283,14 +285,13 @@ def test_cannot_refit_normalizer_after_classification(reference_introns, experim
 
     # Normal workflow
     normalizer.fit(reference_introns, dataset_type="reference")
-    normalized_exp = list(normalizer.transform(
-        experimental_introns,
-        dataset_type="experimental"
-    ))
+    normalized_exp = list(
+        normalizer.transform(experimental_introns, dataset_type="experimental")
+    )
 
     # Simulate classification
     classified = [
-        replace(intron, metadata=replace(intron.metadata, type_id='u2'))
+        replace(intron, metadata=replace(intron.metadata, type_id="u2"))
         for intron in normalized_exp
     ]
 
@@ -307,15 +308,15 @@ def test_cannot_refit_normalizer_after_classification(reference_introns, experim
 # Functional Tests (verify normalization works correctly)
 # ============================================================================
 
+
 def test_basic_normalization(reference_introns):
     """Test that basic z-score normalization works correctly."""
     normalizer = ScoreNormalizer()
 
     # Fit and transform
-    normalized = list(normalizer.fit_transform(
-        reference_introns,
-        dataset_type="reference"
-    ))
+    normalized = list(
+        normalizer.fit_transform(reference_introns, dataset_type="reference")
+    )
 
     # Should have same number of introns
     assert len(normalized) == len(reference_introns)
@@ -338,17 +339,13 @@ def test_fit_transform_convenience_method(reference_introns):
     normalizer2 = ScoreNormalizer()
 
     # Method 1: fit_transform
-    result1 = list(normalizer1.fit_transform(
-        reference_introns,
-        dataset_type="reference"
-    ))
+    result1 = list(
+        normalizer1.fit_transform(reference_introns, dataset_type="reference")
+    )
 
     # Method 2: fit then transform
     normalizer2.fit(reference_introns, dataset_type="reference")
-    result2 = list(normalizer2.transform(
-        reference_introns,
-        dataset_type="reference"
-    ))
+    result2 = list(normalizer2.transform(reference_introns, dataset_type="reference"))
 
     # Results should be identical
     assert len(result1) == len(result2)
@@ -371,26 +368,26 @@ def test_normalization_is_reversible(reference_introns):
     """
     Test that normalization is mathematically correct.
 
-    Verify: raw_score = (z_score * std) + mean
+    RobustScaler uses: z = (x - median) / IQR
+    Reverse: raw = (z * IQR) + median
+
+    Where IQR = Q3 - Q1 (interquartile range, 75th - 25th percentile)
     """
     normalizer = ScoreNormalizer()
     normalizer.fit(reference_introns, dataset_type="reference")
 
-    # Get statistics
-    raw_five_scores = np.array([i.scores.five_raw_score for i in reference_introns])
-    mean = np.mean(raw_five_scores)
-    std = np.std(raw_five_scores, ddof=0)  # StandardScaler uses ddof=0
+    # Get the fitted scaler's parameters (median and IQR)
+    scaler = normalizer.get_frozen_scaler()
+    center = scaler.center_[0]  # median for five_raw_score (first column)
+    scale = scaler.scale_[0]  # IQR for five_raw_score (first column)
 
     # Transform
-    normalized = list(normalizer.transform(
-        reference_introns,
-        dataset_type="reference"
-    ))
+    normalized = list(normalizer.transform(reference_introns, dataset_type="reference"))
 
     # Verify we can reverse the transformation
     for orig, norm in zip(reference_introns, normalized):
-        # Reverse z-score: raw = (z * std) + mean
-        reconstructed = (norm.scores.five_z_score * std) + mean
+        # Reverse RobustScaler: raw = (z * scale) + center
+        reconstructed = (norm.scores.five_z_score * scale) + center
         assert abs(reconstructed - orig.scores.five_raw_score) < 1e-6
 
 
@@ -399,28 +396,21 @@ def test_handles_introns_with_missing_scores():
     intron = Intron(
         intron_id="test_intron",
         coordinates=GenomicCoordinate(
-            chromosome="chr1",
-            start=1000,
-            stop=2000,
-            strand='+',
-            system='1-based'
+            chromosome="chr1", start=1000, stop=2000, strand="+", system="1-based"
         ),
         sequences=IntronSequences(
-            seq='GTAAGT' + 'N' * 94 + 'YYYYAC',
-            upstream_flank='ACTG',
-            downstream_flank='TGCA',
-            five_prime_dnt='GT',
-            three_prime_dnt='AG'
+            seq="GTAAGT" + "N" * 94 + "YYYYAC",
+            upstream_flank="ACTG",
+            downstream_flank="TGCA",
+            five_prime_dnt="GT",
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(
             five_raw_score=None,  # Missing!
             bp_raw_score=None,
-            three_raw_score=None
+            three_raw_score=None,
         ),
-        metadata=IntronMetadata(
-            parent="transcript_1",
-            grandparent="gene_1"
-        )
+        metadata=IntronMetadata(parent="transcript_1", grandparent="gene_1"),
     )
 
     normalizer = ScoreNormalizer()
@@ -433,6 +423,7 @@ def test_handles_introns_with_missing_scores():
 # ============================================================================
 # Edge Cases
 # ============================================================================
+
 
 def test_normalization_with_constant_scores():
     """
@@ -448,25 +439,22 @@ def test_normalization_with_constant_scores():
                 chromosome="chr1",
                 start=1000 + i * 1000,
                 stop=2000 + i * 1000,
-                strand='+',
-                system='1-based'
+                strand="+",
+                system="1-based",
             ),
             sequences=IntronSequences(
-                seq='GTAAGT' + 'N' * 94 + 'YYYYAC',
-                upstream_flank='ACTG',
-                downstream_flank='TGCA',
-                five_prime_dnt='GT',
-                three_prime_dnt='AG'
+                seq="GTAAGT" + "N" * 94 + "YYYYAC",
+                upstream_flank="ACTG",
+                downstream_flank="TGCA",
+                five_prime_dnt="GT",
+                three_prime_dnt="AG",
             ),
             scores=IntronScores(
                 five_raw_score=0.5,  # All identical
                 bp_raw_score=0.5,
-                three_raw_score=0.5
+                three_raw_score=0.5,
             ),
-            metadata=IntronMetadata(
-                parent=f"transcript_{i}",
-                grandparent=f"gene_{i}"
-            )
+            metadata=IntronMetadata(parent=f"transcript_{i}", grandparent=f"gene_{i}"),
         )
         introns.append(intron)
 
@@ -474,10 +462,7 @@ def test_normalization_with_constant_scores():
 
     # Should either handle gracefully or raise informative error
     try:
-        normalized = list(normalizer.fit_transform(
-            introns,
-            dataset_type="reference"
-        ))
+        normalized = list(normalizer.fit_transform(introns, dataset_type="reference"))
         # If it succeeds, z-scores should be 0 (or NaN handled appropriately)
         for intron in normalized:
             assert intron.scores.five_z_score is not None
@@ -492,3 +477,104 @@ def test_empty_intron_list():
 
     with pytest.raises((ValueError, RuntimeError)):
         normalizer.fit([], dataset_type="reference")
+
+    with pytest.raises((ValueError, RuntimeError)):
+        normalizer.fit([], dataset_type="reference")
+
+
+# ============================================================================
+# Streaming Mode Support Tests
+# ============================================================================
+
+
+def test_get_frozen_scaler(reference_introns):
+    """Test that we can extract the frozen scaler for streaming mode."""
+    normalizer = ScoreNormalizer()
+    normalizer.fit(reference_introns, dataset_type="reference")
+
+    # Should be able to get the frozen scaler
+    scaler = normalizer.get_frozen_scaler()
+
+    # Scaler should be a fitted sklearn RobustScaler
+    assert scaler is not None
+    assert hasattr(scaler, "center_")
+    assert hasattr(scaler, "scale_")
+    assert scaler.center_ is not None
+    assert scaler.scale_ is not None
+
+
+def test_get_frozen_scaler_before_fit():
+    """Should raise error if trying to get scaler before fitting."""
+    normalizer = ScoreNormalizer()
+
+    with pytest.raises(RuntimeError, match="not been fitted"):
+        normalizer.get_frozen_scaler()
+
+
+def test_transform_scores_array(reference_introns):
+    """Test direct numpy array transformation for streaming mode."""
+    normalizer = ScoreNormalizer()
+    normalizer.fit(reference_introns, dataset_type="reference")
+
+    # Create a raw score matrix
+    raw_scores = np.array(
+        [
+            [0.5, 0.6, 0.55],  # Some test scores
+            [0.1, 0.2, 0.15],
+            [0.8, 0.9, 0.85],
+        ]
+    )
+
+    # Transform using the array method
+    z_scores = normalizer.transform_scores_array(raw_scores)
+
+    # Should have same shape
+    assert z_scores.shape == raw_scores.shape
+
+    # Should be different from raw scores (transformed)
+    assert not np.allclose(z_scores, raw_scores)
+
+
+def test_transform_scores_array_before_fit():
+    """Should raise error if trying to transform before fitting."""
+    normalizer = ScoreNormalizer()
+    raw_scores = np.array([[0.5, 0.6, 0.55]])
+
+    with pytest.raises(RuntimeError, match="fit"):
+        normalizer.transform_scores_array(raw_scores)
+
+
+def test_frozen_scaler_matches_transform(reference_introns):
+    """Verify frozen scaler produces same results as transform method."""
+    normalizer = ScoreNormalizer()
+    normalizer.fit(reference_introns, dataset_type="reference")
+
+    # Get the first intron's raw scores
+    first_intron = reference_introns[0]
+    raw_scores = np.array(
+        [
+            [
+                first_intron.scores.five_raw_score,
+                first_intron.scores.bp_raw_score,
+                first_intron.scores.three_raw_score,
+            ]
+        ]
+    )
+
+    # Transform using the intron-based method
+    transformed_introns = list(normalizer.transform([first_intron], "reference"))
+    z_via_transform = np.array(
+        [
+            [
+                transformed_introns[0].scores.five_z_score,
+                transformed_introns[0].scores.bp_z_score,
+                transformed_introns[0].scores.three_z_score,
+            ]
+        ]
+    )
+
+    # Transform using the array method
+    z_via_array = normalizer.transform_scores_array(raw_scores)
+
+    # Should be identical
+    np.testing.assert_allclose(z_via_transform, z_via_array)

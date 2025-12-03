@@ -4,33 +4,39 @@ Integration tests for the extraction pipeline.
 Tests the full pipeline from annotation to introns.
 """
 
-import pytest
 from pathlib import Path
 
+import pytest
+
 from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+from intronIC.extraction.filters import IntronFilter
 from intronIC.extraction.intronator import IntronGenerator
 from intronIC.extraction.sequences import SequenceExtractor
-from intronIC.extraction.filters import IntronFilter
 
 # Mark all tests in this module
-pytestmark = [pytest.mark.integration, pytest.mark.extraction, pytest.mark.requires_chr19]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.extraction,
+    pytest.mark.requires_chr19,
+]
 
-# Test data paths
-TEST_DATA_DIR = Path(__file__).parent.parent.parent / "test_data"
+# Test data paths - use src layout path
+TEST_DATA_DIR = (
+    Path(__file__).parent.parent.parent / "src" / "intronIC" / "data" / "test_data"
+)
 CHR19_ANNOTATION = TEST_DATA_DIR / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
 CHR19_GENOME = TEST_DATA_DIR / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
 
 
 @pytest.mark.skipif(
-    not CHR19_ANNOTATION.exists(),
-    reason="Chr19 test data not available"
+    not CHR19_ANNOTATION.exists(), reason="Chr19 test data not available"
 )
 class TestExtractionPipeline:
     """Test the full extraction pipeline."""
 
     def test_annotation_hierarchy_building(self):
         """Test building gene hierarchy from chr19 annotation."""
-        builder = AnnotationHierarchyBuilder(['exon', 'cds'])
+        builder = AnnotationHierarchyBuilder(["exon", "cds"])
         genes = builder.build_from_file(str(CHR19_ANNOTATION))
 
         # Should have genes
@@ -39,20 +45,23 @@ class TestExtractionPipeline:
 
         # Check structure
         first_gene = genes[0]
-        assert hasattr(first_gene, 'children')
-        assert hasattr(first_gene, 'feature_id')
+        assert hasattr(first_gene, "children")
+        assert hasattr(first_gene, "feature_id")
 
         # Should have transcripts as children
-        transcript_count = sum(1 for child_id in first_gene.children
-                              if child_id in builder.feature_index and
-                              hasattr(builder.feature_index[child_id], 'children'))
+        transcript_count = sum(
+            1
+            for child_id in first_gene.children
+            if child_id in builder.feature_index
+            and hasattr(builder.feature_index[child_id], "children")
+        )
         assert transcript_count > 0
         print(f"First gene has {transcript_count} transcripts")
 
     def test_intron_generation_from_genes(self):
         """Test generating introns from gene hierarchy."""
         # Build hierarchy
-        builder = AnnotationHierarchyBuilder(['exon', 'cds'])
+        builder = AnnotationHierarchyBuilder(["exon", "cds"])
         genes = builder.build_from_file(str(CHR19_ANNOTATION))
 
         # Generate introns
@@ -65,14 +74,14 @@ class TestExtractionPipeline:
 
         # Check intron structure
         first_intron = introns[0]
-        assert hasattr(first_intron, 'coordinates')
-        assert hasattr(first_intron, 'metadata')
+        assert hasattr(first_intron, "coordinates")
+        assert hasattr(first_intron, "metadata")
         assert first_intron.coordinates.start < first_intron.coordinates.stop
 
     def test_sequence_extraction(self):
         """Test extracting sequences for introns."""
         # Build hierarchy
-        builder = AnnotationHierarchyBuilder(['exon'])
+        builder = AnnotationHierarchyBuilder(["exon"])
         genes = builder.build_from_file(str(CHR19_ANNOTATION))
 
         # Generate introns (just first 10 for speed)
@@ -98,7 +107,7 @@ class TestExtractionPipeline:
 
         # Step 1: Build hierarchy
         print("Building annotation hierarchy...")
-        builder = AnnotationHierarchyBuilder(['exon', 'cds'])
+        builder = AnnotationHierarchyBuilder(["exon", "cds"])
         genes = builder.build_from_file(str(CHR19_ANNOTATION))
         print(f"  Found {len(genes)} genes")
 
@@ -115,7 +124,7 @@ class TestExtractionPipeline:
             allow_noncanonical=True,  # Include all for now
             allow_overlap=True,
             longest_only=False,
-            include_duplicates=False
+            include_duplicates=False,
         )
 
         # Just check omission without full filtering for speed
@@ -143,17 +152,21 @@ class TestExtractionPipeline:
         # We'll refine this as we verify against gold standard
         assert unique_introns > EXPECTED_INTRON_COUNT * 0.9
         assert unique_introns < EXPECTED_INTRON_COUNT * 1.1
-        print(f"✓ Intron count within expected range (expected: {EXPECTED_INTRON_COUNT})")
+        print(
+            f"✓ Intron count within expected range (expected: {EXPECTED_INTRON_COUNT})"
+        )
 
     def test_filtering_omission_codes(self):
         """Test that omission codes are correctly assigned."""
         # Build hierarchy
-        builder = AnnotationHierarchyBuilder(['exon'])
+        builder = AnnotationHierarchyBuilder(["exon"])
         genes = builder.build_from_file(str(CHR19_ANNOTATION))
 
         # Generate introns
         generator = IntronGenerator()
-        introns = list(generator.generate_from_genes(genes, builder.feature_index))[:100]
+        introns = list(generator.generate_from_genes(genes, builder.feature_index))[
+            :100
+        ]
 
         # Extract sequences for proper filtering
         extractor = SequenceExtractor(str(CHR19_GENOME))
@@ -164,7 +177,7 @@ class TestExtractionPipeline:
             min_length=100,  # Higher threshold to catch some
             allow_noncanonical=False,
             allow_overlap=False,
-            longest_only=True
+            longest_only=True,
         )
 
         for intron in introns_with_seqs:
@@ -182,16 +195,16 @@ class TestExtractionPipeline:
 
 
 @pytest.mark.skipif(
-    not CHR19_ANNOTATION.exists(),
-    reason="Chr19 test data not available"
+    not CHR19_ANNOTATION.exists(), reason="Chr19 test data not available"
 )
 def test_quick_extraction():
     """Quick test for development - just make sure nothing crashes."""
-    builder = AnnotationHierarchyBuilder(['exon'])
+    builder = AnnotationHierarchyBuilder(["exon"])
     genes = builder.build_from_file(str(CHR19_ANNOTATION))
 
     generator = IntronGenerator()
     introns = list(generator.generate_from_genes(genes, builder.feature_index))
 
     print(f"✓ Generated {len(introns)} introns from chr19")
+    assert len(introns) > 10000  # Should be thousands
     assert len(introns) > 10000  # Should be thousands

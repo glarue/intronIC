@@ -22,18 +22,19 @@ For LLR features s = log(P(seq|PWM_U12)) - log(P(seq|PWM_U2)):
 - Scale by median(|s|) after winsorizing at 99.5th percentile
 """
 
-from typing import Literal, Optional, Iterable, Iterator
 from dataclasses import replace
+from typing import Iterable, Iterator, Literal, Optional
+
 import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
 
 from intronIC.core.intron import Intron
-
 
 # Type alias for dataset classification
 DatasetType = Literal["reference", "experimental", "unlabeled"]
 
 
-class ZeroAnchoredRobustScaler:
+class ZeroAnchoredRobustScaler(BaseEstimator, TransformerMixin):
     """
     Zero-Anchored Robust (ZAR) scaler for log-odds ratio features.
 
@@ -57,9 +58,12 @@ class ZeroAnchoredRobustScaler:
     - Robust to outliers (winsorization + median)
     - Minimal contamination from rare U12s (~0.5% of data)
 
+    Inherits from sklearn BaseEstimator and TransformerMixin for full
+    sklearn Pipeline compatibility.
+
     Attributes:
         scales_: Per-feature scale factors (shape: n_features)
-        winsor_quantile_: Quantile for winsorization (default: 0.995)
+        winsor_quantile: Quantile for winsorization (default: 0.995)
 
     Example:
         >>> scaler = ZeroAnchoredRobustScaler()
@@ -75,7 +79,7 @@ class ZeroAnchoredRobustScaler:
             winsor_quantile: Quantile for winsorizing |s| (default: 0.995)
                             Clamps extreme values before computing median
         """
-        self.winsor_quantile_ = winsor_quantile
+        self.winsor_quantile = winsor_quantile
         self.scales_: Optional[np.ndarray] = None
 
     def fit(self, X: np.ndarray) -> "ZeroAnchoredRobustScaler":
@@ -107,7 +111,7 @@ class ZeroAnchoredRobustScaler:
             abs_values = np.abs(feature_values)
 
             # Winsorize: clip at quantile to reduce outlier impact
-            clip_value = np.quantile(abs_values, self.winsor_quantile_)
+            clip_value = np.quantile(abs_values, self.winsor_quantile)
             winsorized = np.clip(abs_values, 0, clip_value)
 
             # Compute robust spread: median of winsorized absolute values
@@ -223,14 +227,13 @@ class ScoreNormalizer:
 
     def __init__(self):
         """Initialize an unfitted normalizer."""
-        self._scaler: Optional[ZeroAnchoredRobustScaler] = None
+        # Uses sklearn RobustScaler with centering (NOT ZeroAnchoredRobustScaler)
+        self._scaler: Optional["RobustScaler"] = None
         self._fitted_on: Optional[DatasetType] = None
         self._is_fitted: bool = False
 
     def fit(
-        self,
-        introns: Iterable[Intron],
-        dataset_type: DatasetType = "reference"
+        self, introns: Iterable[Intron], dataset_type: DatasetType = "reference"
     ) -> "ScoreNormalizer":
         """
         Fit scaler on intron scores.
@@ -294,16 +297,69 @@ class ScoreNormalizer:
         # EXPERIMENT: Test centering hypothesis
         # Use sklearn RobustScaler WITH centering to test if this fixes C. elegans FPs
         from sklearn.preprocessing import RobustScaler
-        self._scaler = RobustScaler(with_centering=True, with_scaling=True).fit(score_matrix)
+
+        self._scaler = RobustScaler(with_centering=True, with_scaling=True).fit(
+            score_matrix
+        )
         self._fitted_on = dataset_type
         self._is_fitted = True
 
         return self
 
+    def get_frozen_scaler(self) -> "RobustScaler":
+        """
+        Get the fitted sklearn scaler for direct use in streaming mode.
+
+        This allows streaming classification to transform scores without
+        accumulating all introns first. The scaler's parameters (center_, scale_)
+        are frozen from training and can be applied to any new data.
+
+        Returns:
+            The fitted sklearn RobustScaler instance
+
+        Raises:
+            RuntimeError: If fit() has not been called yet
+
+        Example:
+            >>> normalizer = model_bundle["normalizer"]
+            >>> scaler = normalizer.get_frozen_scaler()
+            >>> # Use directly on numpy arrays
+            >>> z_scores = scaler.transform(raw_scores_array)
+        """
+        if not self._is_fitted or self._scaler is None:
+            raise RuntimeError(
+                "Normalizer has not been fitted. "
+                "Cannot get frozen scaler from unfitted normalizer."
+            )
+        return self._scaler
+
+    def transform_scores_array(self, score_matrix: np.ndarray) -> np.ndarray:
+        """
+        Transform a numpy array of raw scores to z-scores.
+
+        This is a low-level method for streaming mode that bypasses Intron
+        object creation. Useful when processing introns one at a time without
+        accumulating them all in memory.
+
+        Args:
+            score_matrix: numpy array of shape (n_introns, 3) containing
+                         [five_raw, bp_raw, three_raw] scores
+
+        Returns:
+            numpy array of shape (n_introns, 3) containing z-scores
+
+        Raises:
+            RuntimeError: If fit() has not been called yet
+        """
+        if not self._is_fitted or self._scaler is None:
+            raise RuntimeError(
+                "Must call fit() before transform_scores_array(). "
+                "The normalizer needs to be fitted on reference data first."
+            )
+        return self._scaler.transform(score_matrix)
+
     def transform(
-        self,
-        introns: Iterable[Intron],
-        dataset_type: DatasetType
+        self, introns: Iterable[Intron], dataset_type: DatasetType
     ) -> Iterator[Intron]:
         """
         Transform intron scores to z-scores.
@@ -345,9 +401,7 @@ class ScoreNormalizer:
             yield self._update_intron_with_zscores(intron, z_scores)
 
     def fit_transform(
-        self,
-        introns: Iterable[Intron],
-        dataset_type: DatasetType = "reference"
+        self, introns: Iterable[Intron], dataset_type: DatasetType = "reference"
     ) -> Iterator[Intron]:
         """
         Convenience method: fit and transform in one step.
@@ -422,9 +476,7 @@ class ScoreNormalizer:
         return np.asarray(score_matrix)
 
     def _update_intron_with_zscores(
-        self,
-        intron: Intron,
-        z_scores: np.ndarray
+        self, intron: Intron, z_scores: np.ndarray
     ) -> Intron:
         """
         Create a new intron with updated z-scores.
@@ -447,7 +499,7 @@ class ScoreNormalizer:
             intron.scores,
             five_z_score=float(five_z),
             bp_z_score=float(bp_z),
-            three_z_score=float(three_z)
+            three_z_score=float(three_z),
         )
 
         # Return new intron with updated scores
