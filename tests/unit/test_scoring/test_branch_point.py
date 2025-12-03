@@ -13,19 +13,26 @@ Test Strategy:
 4. Test edge cases (short sequences, no clear winner, etc.)
 """
 
-import pytest
-import numpy as np
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 
+import numpy as np
+import pytest
+
+from intronIC.core.intron import (
+    GenomicCoordinate,
+    Intron,
+    IntronMetadata,
+    IntronScores,
+    IntronSequences,
+)
 from intronIC.scoring.branch_point import BranchPointMatch, BranchPointScorer
 from intronIC.scoring.pwm import PWM
-from intronIC.core.intron import Intron, IntronSequences, IntronScores, IntronMetadata, GenomicCoordinate
-
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def u12_bp_pwm() -> PWM:
@@ -36,20 +43,17 @@ def u12_bp_pwm() -> PWM:
     """
     # 7-position PWM for TACTAAC
     # High frequency for T-A-C-T-A-A-C pattern
-    matrix = np.array([
-        # Position: 0    1    2    3    4    5    6
-        [0.05, 0.95, 0.05, 0.05, 0.95, 0.95, 0.05],  # A
-        [0.05, 0.05, 0.95, 0.05, 0.05, 0.05, 0.95],  # C
-        [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],  # G
-        [0.95, 0.05, 0.05, 0.95, 0.05, 0.05, 0.05],  # T
-    ])
-
-    return PWM(
-        name="u12_bp_test",
-        matrix=matrix,
-        length=7,
-        pseudocount=0.0001
+    matrix = np.array(
+        [
+            # Position: 0    1    2    3    4    5    6
+            [0.05, 0.95, 0.05, 0.05, 0.95, 0.95, 0.05],  # A
+            [0.05, 0.05, 0.95, 0.05, 0.05, 0.05, 0.95],  # C
+            [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],  # G
+            [0.95, 0.05, 0.05, 0.95, 0.05, 0.05, 0.05],  # T
+        ]
     )
+
+    return PWM(name="u12_bp_test", matrix=matrix, length=7, pseudocount=0.0001)
 
 
 @pytest.fixture
@@ -60,20 +64,17 @@ def u2_bp_pwm() -> PWM:
     This is more degenerate than U12, representing the variable U2 BP.
     """
     # 7-position PWM with more variability
-    matrix = np.array([
-        # Position: 0    1    2    3    4    5    6
-        [0.30, 0.20, 0.30, 0.40, 0.30, 0.50, 0.30],  # A
-        [0.30, 0.30, 0.20, 0.20, 0.20, 0.10, 0.30],  # C
-        [0.20, 0.20, 0.30, 0.20, 0.30, 0.20, 0.20],  # G
-        [0.20, 0.30, 0.20, 0.20, 0.20, 0.20, 0.20],  # T
-    ])
-
-    return PWM(
-        name="u2_bp_test",
-        matrix=matrix,
-        length=7,
-        pseudocount=0.0001
+    matrix = np.array(
+        [
+            # Position: 0    1    2    3    4    5    6
+            [0.30, 0.20, 0.30, 0.40, 0.30, 0.50, 0.30],  # A
+            [0.30, 0.30, 0.20, 0.20, 0.20, 0.10, 0.30],  # C
+            [0.20, 0.20, 0.30, 0.20, 0.30, 0.20, 0.20],  # G
+            [0.20, 0.30, 0.20, 0.20, 0.20, 0.20, 0.20],  # T
+        ]
     )
+
+    return PWM(name="u2_bp_test", matrix=matrix, length=7, pseudocount=0.0001)
 
 
 @pytest.fixture
@@ -91,24 +92,17 @@ def simple_intron() -> Intron:
     return Intron(
         intron_id="test_intron_1",
         coordinates=GenomicCoordinate(
-            chromosome="chr1",
-            start=1000,
-            stop=1100,
-            strand='+',
-            system='1-based'
+            chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="ACTG",
             downstream_flank="TGCA",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_1",
-            grandparent="gene_1"
-        )
+        metadata=IntronMetadata(parent="transcript_1", grandparent="gene_1"),
     )
 
 
@@ -128,30 +122,24 @@ def complex_intron() -> Intron:
     return Intron(
         intron_id="test_intron_2",
         coordinates=GenomicCoordinate(
-            chromosome="chr1",
-            start=2000,
-            stop=2100,
-            strand='+',
-            system='1-based'
+            chromosome="chr1", start=2000, stop=2100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="ACTG",
             downstream_flank="TGCA",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_2",
-            grandparent="gene_2"
-        )
+        metadata=IntronMetadata(parent="transcript_2", grandparent="gene_2"),
     )
 
 
 # ============================================================================
 # BranchPointMatch Data Structure Tests
 # ============================================================================
+
 
 def test_branch_point_match_creation():
     """Test that BranchPointMatch can be created with required fields."""
@@ -160,7 +148,7 @@ def test_branch_point_match_creation():
         score=0.85,
         position=-30,  # 30bp before 3' end
         start_in_region=10,
-        stop_in_region=17
+        stop_in_region=17,
     )
 
     assert match.sequence == "TACTAAC"
@@ -177,7 +165,7 @@ def test_branch_point_match_immutable():
         score=0.85,
         position=-30,
         start_in_region=10,
-        stop_in_region=17
+        stop_in_region=17,
     )
 
     with pytest.raises((AttributeError, Exception)):
@@ -187,6 +175,7 @@ def test_branch_point_match_immutable():
 # ============================================================================
 # BranchPointScorer Basic Tests
 # ============================================================================
+
 
 def test_branch_point_scorer_creation(u12_bp_pwm, u2_bp_pwm):
     """Test that BranchPointScorer can be initialized."""
@@ -259,6 +248,7 @@ def test_sequence_exactly_pwm_length(u12_bp_pwm, u2_bp_pwm):
 # Integration Tests with Intron Objects
 # ============================================================================
 
+
 def test_find_best_match_in_intron(u12_bp_pwm, u2_bp_pwm, simple_intron):
     """Test finding branch point in a full intron."""
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
@@ -283,7 +273,7 @@ def test_search_window_extraction(u12_bp_pwm, u2_bp_pwm, simple_intron):
         simple_intron,
         search_window=(-80, -60),
         five_coords=(-3, 9),
-        three_coords=(-6, 4)
+        three_coords=(-6, 4),
     )
 
     # Intron is 100bp, so:
@@ -328,6 +318,7 @@ def test_multiple_candidates_chooses_best(u12_bp_pwm, u2_bp_pwm, complex_intron)
 # ============================================================================
 # Edge Cases
 # ============================================================================
+
 
 def test_no_clear_winner_all_equal_scores(u12_bp_pwm, u2_bp_pwm):
     """Test behavior when all positions score equally (e.g., all Ns)."""
@@ -384,7 +375,7 @@ def test_short_intron_excludes_five_prime_region(u12_bp_pwm, u2_bp_pwm):
     # Structure: 9bp (5' region) + 33bp (searchable) + 6bp (3' region) = 48bp total
     # Note: 1bp overlap at position 41 (searchable goes to 41, 3' starts at 41)
     # Put TACTAAC in the middle of the searchable region (position 20-26)
-    seq = "GTAAGTNNN" + "NNNNNNNNN" + "NN" + "TACTAAC" + "N"*14 + "TTTCAG"
+    seq = "GTAAGTNNN" + "NNNNNNNNN" + "NN" + "TACTAAC" + "N" * 14 + "TTTCAG"
     #     ^^^^^^^^^ 5' region (0-8, 9bp)
     #     0-8         9-17 (9bp)    18-19  20-26 (7bp)  27-40 (14bp)  41-46 (6bp 3' region)
     #                               TACTAAC at absolute position 20-26
@@ -393,34 +384,24 @@ def test_short_intron_excludes_five_prime_region(u12_bp_pwm, u2_bp_pwm):
     intron = Intron(
         intron_id="short_intron_47bp",
         coordinates=GenomicCoordinate(
-            chromosome="chr1",
-            start=1000,
-            stop=1047,
-            strand='+',
-            system='1-based'
+            chromosome="chr1", start=1000, stop=1047, strand="+", system="1-based"
         ),
         sequences=IntronSequences(
             seq=seq,
             upstream_flank="CAG",
             downstream_flank="CCT",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_short",
-            grandparent="gene_short"
-        )
+        metadata=IntronMetadata(parent="transcript_short", grandparent="gene_short"),
     )
 
     # Search with standard window (-55, -5)
     # For 47bp intron: start would be 47+(-55)=-8, stop would be 47+(-5)=42
     # After clamping: start=max(-8, 9)=9, stop=min(42, 47)=42
     match = scorer.find_best_match(
-        intron,
-        search_window=(-55, -5),
-        five_coords=(-3, 9),
-        three_coords=(-6, 4)
+        intron, search_window=(-55, -5), five_coords=(-3, 9), three_coords=(-6, 4)
     )
 
     # Should find TACTAAC
@@ -435,10 +416,7 @@ def test_short_intron_excludes_five_prime_region(u12_bp_pwm, u2_bp_pwm):
 
     # Extract the actual search region to verify it excludes 5' region
     search_region, start_pos = scorer._extract_search_region(
-        intron,
-        search_window=(-55, -5),
-        five_coords=(-3, 9),
-        three_coords=(-6, 4)
+        intron, search_window=(-55, -5), five_coords=(-3, 9), three_coords=(-6, 4)
     )
 
     # Search region should be positions [9, 42) = 33bp
@@ -461,24 +439,17 @@ def test_negative_strand_intron(u12_bp_pwm, u2_bp_pwm):
     intron = Intron(
         intron_id="test_intron_minus",
         coordinates=GenomicCoordinate(
-            chromosome="chr1",
-            start=1000,
-            stop=1100,
-            strand='-',
-            system='1-based'
+            chromosome="chr1", start=1000, stop=1100, strand="-", system="1-based"
         ),
         sequences=IntronSequences(
             seq=seq,  # Already reverse-complemented by extraction
             upstream_flank="ACTG",
             downstream_flank="TGCA",
             five_prime_dnt="GT",
-            three_prime_dnt="AG"
+            three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_3",
-            grandparent="gene_3"
-        )
+        metadata=IntronMetadata(parent="transcript_3", grandparent="gene_3"),
     )
 
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
@@ -507,22 +478,15 @@ def test_empty_intron_sequence(u12_bp_pwm, u2_bp_pwm):
     intron = Intron(
         intron_id="test_intron_empty",
         coordinates=GenomicCoordinate(
-            chromosome="chr1",
-            start=1000,
-            stop=1100,
-            strand='+',
-            system='1-based'
+            chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(
             seq=None,  # No sequence!
             upstream_flank="ACTG",
-            downstream_flank="TGCA"
+            downstream_flank="TGCA",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata(
-            parent="transcript_4",
-            grandparent="gene_4"
-        )
+        metadata=IntronMetadata(parent="transcript_4", grandparent="gene_4"),
     )
 
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
@@ -535,6 +499,7 @@ def test_empty_intron_sequence(u12_bp_pwm, u2_bp_pwm):
 # ============================================================================
 # Algorithm Verification Tests
 # ============================================================================
+
 
 def test_algorithm_matches_original_logic(u12_bp_pwm, u2_bp_pwm):
     """
@@ -554,17 +519,19 @@ def test_algorithm_matches_original_logic(u12_bp_pwm, u2_bp_pwm):
     match = scorer._find_best_in_sequence(sequence, u12_bp_pwm, search_window_start=-55)
 
     # Verify structure matches original return signature
-    assert hasattr(match, 'score')
-    assert hasattr(match, 'sequence')
-    assert hasattr(match, 'start_in_region')
-    assert hasattr(match, 'stop_in_region')
+    assert hasattr(match, "score")
+    assert hasattr(match, "sequence")
+    assert hasattr(match, "start_in_region")
+    assert hasattr(match, "stop_in_region")
 
     # Verify it found the TACTAAC
     assert match.sequence == "TACTAAC"
     assert match.start_in_region == 3  # After "AAA"
 
 
-def test_coordinates_are_relative_to_search_region(u12_bp_pwm, u2_bp_pwm, simple_intron):
+def test_coordinates_are_relative_to_search_region(
+    u12_bp_pwm, u2_bp_pwm, simple_intron
+):
     """Test that returned coordinates are relative to the search region start."""
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
 
@@ -586,6 +553,7 @@ def test_coordinates_are_relative_to_search_region(u12_bp_pwm, u2_bp_pwm, simple
 # Performance Tests (Optional)
 # ============================================================================
 
+
 def test_long_search_region_performance(u12_bp_pwm, u2_bp_pwm):
     """Test that long search regions complete in reasonable time."""
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
@@ -602,6 +570,7 @@ def test_long_search_region_performance(u12_bp_pwm, u2_bp_pwm):
 # ============================================================================
 # Integration with PWM Scoring
 # ============================================================================
+
 
 def test_uses_u12_pwm_for_scoring(u12_bp_pwm, u2_bp_pwm):
     """Test that scorer uses U12 PWM (not U2) for finding best match."""
@@ -632,3 +601,63 @@ def test_score_is_product_of_base_frequencies(u12_bp_pwm, u2_bp_pwm):
 
     # Should match
     assert abs(match.score - direct_score) < 1e-10
+
+
+# ============================================================================
+# Streaming vs Standard Mode Consistency Tests
+# ============================================================================
+
+
+@pytest.mark.parametrize("length", [30, 40, 47, 55, 60, 70, 100, 150])
+def test_bp_extraction_streaming_standard_consistency(u12_bp_pwm, u2_bp_pwm, length):
+    """
+    Test that BP extraction is identical between streaming and standard modes.
+
+    Streaming mode uses Intron.extract_scoring_motifs() before scoring.
+    Standard mode uses BranchPointScorer._extract_search_region() during scoring.
+
+    Both should extract the same BP search region for identical introns.
+    """
+    five_coords = (-3, 9)
+    bp_coords = (-55, -5)
+    three_coords = (-6, 4)
+
+    # Create test sequence with known pattern
+    test_seq = "".join([chr(65 + (i % 26)) for i in range(length)])
+
+    coord = GenomicCoordinate("test", 1, length, "+", "1-based")
+
+    intron = Intron(
+        intron_id=f"test_{length}bp",
+        coordinates=coord,
+        sequences=IntronSequences(
+            seq=test_seq,
+            upstream_flank="TTT",
+            downstream_flank="CCC",
+            five_prime_dnt="GT",
+            three_prime_dnt="AG",
+        ),
+    )
+
+    scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
+
+    # Method 1: extract_scoring_motifs (streaming mode)
+    result_intron = intron.extract_scoring_motifs(five_coords, bp_coords, three_coords)
+    streaming_bp = result_intron.motifs.bp_region
+
+    # Method 2: BranchPointScorer._extract_search_region (standard mode)
+    standard_bp, _ = scorer._extract_search_region(
+        intron, bp_coords, five_coords, three_coords
+    )
+
+    # Both methods should produce identical BP regions
+    assert streaming_bp == standard_bp, (
+        f"BP extraction mismatch for {length}bp intron: "
+        f"streaming={repr(streaming_bp[:30])}... vs standard={repr(standard_bp[:30])}..."
+    )
+
+    # Both methods should produce identical BP regions
+    assert streaming_bp == standard_bp, (
+        f"BP extraction mismatch for {length}bp intron: "
+        f"streaming={repr(streaming_bp[:30])}... vs standard={repr(standard_bp[:30])}..."
+    )
