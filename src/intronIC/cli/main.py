@@ -14,7 +14,7 @@ import time
 from dataclasses import replace
 from multiprocessing import Pool
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -1042,6 +1042,167 @@ def _process_contig_worker(
     return contig_with_seqs
 
 
+# Global for streaming worker initialization
+_streaming_worker_db_path: str = ""
+_streaming_worker_species_name: str = ""
+_streaming_worker_simple_name: bool = False
+_streaming_worker_no_abbreviate: bool = False
+_streaming_worker_five_coords: tuple[int, int] = (0, 0)
+_streaming_worker_bp_coords: tuple[int, int] = (0, 0)
+_streaming_worker_three_coords: tuple[int, int] = (0, 0)
+
+
+def _init_streaming_worker(
+    genome_path: str,
+    db_path: str,
+    species_name: str,
+    simple_name: bool,
+    no_abbreviate: bool,
+    five_coords: tuple[int, int],
+    bp_coords: tuple[int, int],
+    three_coords: tuple[int, int],
+) -> None:
+    """
+    Initialize streaming worker process with genome and config.
+
+    Called once per worker process by Pool initializer.
+    Sets up both the genome reader and streaming-specific config.
+    """
+    from intronIC.file_io.indexed_genome import init_worker_genome
+
+    # Initialize genome reader (reuse existing function)
+    init_worker_genome(genome_path)
+
+    # Store streaming-specific config in globals
+    global _streaming_worker_db_path, _streaming_worker_species_name
+    global _streaming_worker_simple_name, _streaming_worker_no_abbreviate
+    global _streaming_worker_five_coords, _streaming_worker_bp_coords, _streaming_worker_three_coords
+
+    _streaming_worker_db_path = db_path
+    _streaming_worker_species_name = species_name
+    _streaming_worker_simple_name = simple_name
+    _streaming_worker_no_abbreviate = no_abbreviate
+    _streaming_worker_five_coords = five_coords
+    _streaming_worker_bp_coords = bp_coords
+    _streaming_worker_three_coords = three_coords
+
+
+def _process_contig_streaming_worker(
+    contig_name: str,
+    contig_introns: List[Intron],
+    flank_len: int,
+    u12_correction: bool,
+) -> tuple[List[Intron], int, int]:
+    """
+    Worker function for parallel streaming contig processing.
+
+    Like _process_contig_worker but also:
+    1. Writes full sequences to SQLite (for later output)
+    2. Extracts scoring motifs
+    3. Returns lightweight introns (no full sequences)
+
+    Args:
+        contig_name: Name of the contig to process
+        contig_introns: Pre-filtered introns on this contig
+        flank_len: Flanking sequence length
+        u12_correction: Whether to apply U12 boundary corrections
+
+    Returns:
+        Tuple of (lightweight_introns, sequences_stored_count, corrections_count)
+    """
+    from intronIC.extraction.sequences import SequenceExtractor
+    from intronIC.file_io.indexed_genome import get_worker_genome
+    from intronIC.file_io.sequence_store import StreamingSequenceStore
+    from intronIC.file_io.writers import generate_intron_name
+
+    try:
+        # Get the worker's indexed genome reader
+        indexed_genome = get_worker_genome()
+
+        # Create extractor using indexed genome
+        extractor = SequenceExtractor.__new__(SequenceExtractor)
+        extractor.genome_file = None  # type: ignore[assignment]
+        extractor.genome_reader = indexed_genome  # type: ignore[assignment]
+        extractor.use_cache = False
+
+        # Extract sequences with deduplication
+        contig_with_seqs = list(
+            extractor.extract_sequences_with_deduplication(
+                contig_introns, flank_size=flank_len
+            )
+        )
+    except Exception as e:
+        import sys
+        import traceback
+
+        print(
+            f"\n[ERROR] Streaming worker failed on contig '{contig_name}': {e}",
+            file=sys.stderr,
+        )
+        print(f"Contig had {len(contig_introns)} introns", file=sys.stderr)
+        traceback.print_exc()
+        raise
+
+    # Apply U12 corrections if enabled
+    corrections_count = 0
+    if u12_correction:
+        from intronIC.extraction.boundary_correction import correct_intron_if_needed
+
+        corrected_introns = []
+
+        for intron in contig_with_seqs:
+            corrected_intron, was_corrected = correct_intron_if_needed(
+                intron, correction_enabled=True, use_strict_motif=True
+            )
+            if was_corrected:
+                corrected_with_seq = list(
+                    extractor.extract_sequences(
+                        [corrected_intron], flank_size=flank_len
+                    )
+                )[0]
+                corrected_introns.append(corrected_with_seq)
+                corrections_count += 1
+            else:
+                corrected_introns.append(corrected_intron)
+
+        contig_with_seqs = corrected_introns
+
+    # Filter introns with valid sequences for storage
+    storable_introns = [i for i in contig_with_seqs if i.has_sequences]
+    sequences_stored = len(storable_introns)
+
+    # Write to SQLite (each worker opens its own connection)
+    if storable_introns:
+        store = StreamingSequenceStore(_streaming_worker_db_path)
+
+        formatted_names = [
+            generate_intron_name(
+                intron,
+                species_name=_streaming_worker_species_name,
+                simple_name=_streaming_worker_simple_name,
+                no_abbreviate=_streaming_worker_no_abbreviate,
+            )
+            for intron in storable_introns
+        ]
+        store.insert_batch(storable_introns, formatted_names=formatted_names)
+        store.close()
+
+    # Extract scoring motifs and create lightweight introns
+    lightweight_introns = []
+    for intron in contig_with_seqs:
+        if intron.has_sequences:
+            lightweight_intron = intron.extract_scoring_motifs(
+                five_coords=_streaming_worker_five_coords,
+                bp_coords=_streaming_worker_bp_coords,
+                three_coords=_streaming_worker_three_coords,
+            )
+            lightweight_introns.append(lightweight_intron)
+        else:
+            lightweight_introns.append(intron)
+
+    return lightweight_introns, sequences_stored, corrections_count
+
+
 def extract_introns_from_annotation(
     config: IntronICConfig,
     messenger: "UnifiedMessenger",
@@ -1103,7 +1264,7 @@ def extract_introns_from_annotation(
 
     messenger.info(
         f"Parsed annotation: {n_genes:,} genes, {n_transcripts:,} transcripts, "
-        f"{n_exons:,} exons ({n_cds:,} CDS)"
+        f"{n_cds:,} CDS, {n_exons:,} exons"
     )
 
     # Generate introns (coordinates only, NO sequences yet)
@@ -1627,15 +1788,19 @@ def extract_introns_streaming(
         config.scoring.scoring_regions.three_end,
     )
 
-    # Initialize sequence extractor (sequential for streaming)
-    messenger.info(f"Loading genome: {config.input.genome}")
-    sequence_extractor = SequenceExtractor(
-        genome_file=str(config.input.genome), use_cache=True
-    )
-    if sequence_extractor.genome_reader.cache:
+    # Determine parallelization
+    n_processes = config.performance.processes
+    use_parallel = n_processes > 1 and len(contigs) > 1
+
+    if use_parallel:
         messenger.info(
-            f"Loaded {len(sequence_extractor.genome_reader.cache)} sequences into memory"
+            f"Extracting sequences in parallel ({n_processes} processes, {len(contigs)} contigs)"
         )
+    else:
+        messenger.info(f"Extracting sequences sequentially ({len(contigs)} contigs)")
+
+    # Close the store we created - workers will open their own connections
+    store.close()
 
     # Accumulators
     all_introns_with_motifs = []
@@ -1643,97 +1808,157 @@ def extract_introns_streaming(
     total_sequences_stored = 0
     total_corrected = 0
 
-    # Process each contig: extract sequences, apply U12 correction, store in SQLite, extract motifs
-    for contig_idx, contig in enumerate(contigs, 1):
-        contig_introns = introns_by_contig[contig]
-        messenger.log_only(
-            f"[{contig_idx}/{len(contigs)}] Processing {contig}: {len(contig_introns):,} introns"
-        )
+    if use_parallel:
+        # Parallel processing using Pool
+        from multiprocessing import Pool
 
-        # Extract sequences
-        contig_with_seqs = list(
-            sequence_extractor.extract_sequences_with_deduplication(
-                contig_introns, flank_size=config.extraction.flank_len
+        # Prepare worker inputs
+        worker_inputs = [
+            (
+                contig,
+                introns_by_contig[contig],
+                config.extraction.flank_len,
+                config.extraction.u12_boundary_correction,
             )
-        )
+            for contig in contigs
+        ]
 
-        # Apply U12 corrections if enabled (BEFORE storing in SQLite)
-        # Note: Call correct_intron_if_needed() on ALL introns - it handles the
-        # noncanonical check internally via metadata.noncanonical flag.
-        # This matches standard mode behavior.
-        if config.extraction.u12_boundary_correction:
-            from intronIC.extraction.boundary_correction import correct_intron_if_needed
+        # Process contigs in parallel
+        completed = 0
+        last_reported_percent = 0
 
-            corrected_count = 0
-            corrected_contig_introns = []
+        with Pool(
+            processes=n_processes,
+            initializer=_init_streaming_worker,
+            initargs=(
+                str(config.input.genome),
+                str(db_path),
+                config.output.species_name,
+                config.output.uninformative_naming,
+                config.output.no_abbreviate,
+                five_coords,
+                bp_coords,
+                three_coords,
+            ),
+        ) as pool:
+            try:
+                for lightweight_introns, seqs_stored, corrections in pool.starmap(
+                    _process_contig_streaming_worker, worker_inputs
+                ):
+                    completed += 1
+                    all_introns_with_motifs.extend(lightweight_introns)
+                    total_sequences_stored += seqs_stored
+                    total_corrected += corrections
 
-            for intron in contig_with_seqs:
-                corrected_intron, was_corrected = correct_intron_if_needed(
-                    intron, correction_enabled=True, use_strict_motif=True
-                )
-                if was_corrected:
-                    corrected_with_seq = list(
-                        sequence_extractor.extract_sequences(
-                            [corrected_intron], flank_size=config.extraction.flank_len
+                    # Log progress every 10%
+                    current_percent = int((completed / len(contigs)) * 100)
+                    if (
+                        current_percent // 10 > last_reported_percent // 10
+                    ) or completed == len(contigs):
+                        messenger.info(
+                            f"Progress: {completed}/{len(contigs)} contigs ({current_percent}%) - "
+                            f"{total_sequences_stored:,} sequences stored"
                         )
-                    )[0]
-                    corrected_contig_introns.append(corrected_with_seq)
-                    corrected_count += 1
+                        last_reported_percent = current_percent
+            except Exception as e:
+                messenger.error(
+                    f"Parallel streaming extraction failed after {completed}/{len(contigs)} contigs"
+                )
+                messenger.error(f"Error: {e}")
+                raise
+    else:
+        # Sequential processing (original behavior)
+        messenger.info(f"Loading genome: {config.input.genome}")
+        sequence_extractor = SequenceExtractor(
+            genome_file=str(config.input.genome), use_cache=True
+        )
+        if sequence_extractor.genome_reader.cache:
+            messenger.info(
+                f"Loaded {len(sequence_extractor.genome_reader.cache)} sequences into memory"
+            )
+
+        # Reopen store for sequential writes
+        store = StreamingSequenceStore(db_path)
+
+        for contig_idx, contig in enumerate(contigs, 1):
+            contig_introns = introns_by_contig[contig]
+            messenger.log_only(
+                f"[{contig_idx}/{len(contigs)}] Processing {contig}: {len(contig_introns):,} introns"
+            )
+
+            # Extract sequences
+            contig_with_seqs = list(
+                sequence_extractor.extract_sequences_with_deduplication(
+                    contig_introns, flank_size=config.extraction.flank_len
+                )
+            )
+
+            # Apply U12 corrections if enabled
+            if config.extraction.u12_boundary_correction:
+                from intronIC.extraction.boundary_correction import correct_intron_if_needed
+
+                corrected_count = 0
+                corrected_contig_introns = []
+
+                for intron in contig_with_seqs:
+                    corrected_intron, was_corrected = correct_intron_if_needed(
+                        intron, correction_enabled=True, use_strict_motif=True
+                    )
+                    if was_corrected:
+                        corrected_with_seq = list(
+                            sequence_extractor.extract_sequences(
+                                [corrected_intron], flank_size=config.extraction.flank_len
+                            )
+                        )[0]
+                        corrected_contig_introns.append(corrected_with_seq)
+                        corrected_count += 1
+                    else:
+                        corrected_contig_introns.append(corrected_intron)
+
+                contig_with_seqs = corrected_contig_introns
+                total_corrected += corrected_count
+
+            # Filter and store sequences
+            storable_introns = [i for i in contig_with_seqs if i.has_sequences]
+
+            if storable_introns:
+                from intronIC.file_io.writers import generate_intron_name
+
+                formatted_names = [
+                    generate_intron_name(
+                        intron,
+                        species_name=config.output.species_name,
+                        simple_name=config.output.uninformative_naming,
+                        no_abbreviate=config.output.no_abbreviate,
+                    )
+                    for intron in storable_introns
+                ]
+                store.insert_batch(storable_introns, formatted_names=formatted_names)
+                total_sequences_stored += len(storable_introns)
+
+            # Extract scoring motifs
+            for intron in contig_with_seqs:
+                if intron.has_sequences:
+                    lightweight_intron = intron.extract_scoring_motifs(
+                        five_coords=five_coords,
+                        bp_coords=bp_coords,
+                        three_coords=three_coords,
+                    )
+                    all_introns_with_motifs.append(lightweight_intron)
                 else:
-                    corrected_contig_introns.append(corrected_intron)
+                    all_introns_with_motifs.append(intron)
 
-            contig_with_seqs = corrected_contig_introns
-            total_corrected += corrected_count
-            if corrected_count > 0:
-                messenger.log_only(
-                    f"  Applied U12 corrections to {corrected_count} introns"
-                )
+            del contig_introns
+            del contig_with_seqs
+            gc.collect()
 
-        # Filter introns with valid sequences for storage
-        storable_introns = [i for i in contig_with_seqs if i.has_sequences]
-
-        # Store full sequences in SQLite (preserves insertion order)
-        # Generate formatted names matching standard output format
-        if storable_introns:
-            from intronIC.file_io.writers import generate_intron_name
-
-            formatted_names = [
-                generate_intron_name(
-                    intron,
-                    species_name=config.output.species_name,
-                    simple_name=config.output.uninformative_naming,
-                    no_abbreviate=config.output.no_abbreviate,
-                )
-                for intron in storable_introns
-            ]
-            store.insert_batch(storable_introns, formatted_names=formatted_names)
-            total_sequences_stored += len(storable_introns)
-
-        # Extract minimal scoring motifs and create lightweight introns
-        for intron in contig_with_seqs:
-            if intron.has_sequences:
-                # Extract motifs, clearing full sequences
-                lightweight_intron = intron.extract_scoring_motifs(
-                    five_coords=five_coords,
-                    bp_coords=bp_coords,
-                    three_coords=three_coords,
-                )
-                all_introns_with_motifs.append(lightweight_intron)
-            else:
-                # Keep intron as-is if no sequences (will be omitted later)
-                all_introns_with_motifs.append(intron)
-
-        del contig_introns
-        del contig_with_seqs
+        store.close()
+        del sequence_extractor
         gc.collect()
 
-    # Close store (we'll reopen after scoring to read sequences)
-    store.close()
-
-    # Free extraction resources
+    # Free remaining resources
     del introns_by_contig
     del extract_list
-    del sequence_extractor
     gc.collect()
 
     messenger.info(
@@ -2489,6 +2714,252 @@ def _apply_prior_adjustment(
     return updated_introns
 
 
+# =============================================================================
+# Parallel streaming classification worker
+# =============================================================================
+
+# Globals for streaming classification worker initialization
+_streaming_classify_worker_genome_path: str = ""
+_streaming_classify_worker_annotation_db_path: str = ""
+_streaming_classify_worker_ensemble: Any = None
+_streaming_classify_worker_scaler: Any = None
+_streaming_classify_worker_pwm_sets: Any = None
+_streaming_classify_worker_config: dict = {}
+
+
+def _init_streaming_classify_worker(
+    genome_path: str,
+    annotation_db_path: str,
+    ensemble: Any,
+    scaler: Any,
+    pwm_sets: Any,
+    config_dict: dict,
+) -> None:
+    """
+    Initialize streaming classification worker process.
+
+    Called once per worker process by Pool initializer.
+    Sets up genome reader and stores classification components.
+    """
+    from intronIC.file_io.indexed_genome import init_worker_genome
+
+    # Initialize genome reader
+    init_worker_genome(genome_path)
+
+    # Store classification components in globals
+    global _streaming_classify_worker_genome_path
+    global _streaming_classify_worker_annotation_db_path
+    global _streaming_classify_worker_ensemble
+    global _streaming_classify_worker_scaler
+    global _streaming_classify_worker_pwm_sets
+    global _streaming_classify_worker_config
+
+    _streaming_classify_worker_genome_path = genome_path
+    _streaming_classify_worker_annotation_db_path = annotation_db_path
+    _streaming_classify_worker_ensemble = ensemble
+    _streaming_classify_worker_scaler = scaler
+    _streaming_classify_worker_pwm_sets = pwm_sets
+    _streaming_classify_worker_config = config_dict
+
+
+def _process_contig_streaming_classify_worker(
+    contig: str,
+    contig_annotation_count: int,
+) -> tuple[List[Intron], dict]:
+    """
+    Worker function for parallel streaming classification.
+
+    Processes a single contig: extracts sequences, scores, normalizes, and classifies.
+    Returns classified introns and statistics for this contig.
+
+    Args:
+        contig: Contig name to process
+        contig_annotation_count: Number of annotations for this contig (for stats)
+
+    Returns:
+        Tuple of (classified_introns, stats_dict)
+    """
+    from collections import Counter
+
+    from intronIC.classification.predictor import classify_introns_batch
+    from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+    from intronIC.extraction.filters import IntronFilter
+    from intronIC.extraction.intronator import IntronGenerator
+    from intronIC.extraction.sequences import SequenceExtractor
+    from intronIC.file_io.annotation_store import StreamingAnnotationStore
+    from intronIC.file_io.indexed_genome import get_worker_genome
+    from intronIC.scoring.scorer import IntronScorer, score_and_normalize_batch
+
+    # Access worker globals
+    config = _streaming_classify_worker_config
+    ensemble = _streaming_classify_worker_ensemble
+    scaler = _streaming_classify_worker_scaler
+    pwm_sets = _streaming_classify_worker_pwm_sets
+
+    # Statistics for this contig
+    stats = {
+        "genes": 0,
+        "introns_generated": 0,
+        "scored": 0,
+        "classified": 0,
+        "boundaries_u12": Counter(),
+        "boundaries_u2": Counter(),
+    }
+
+    # Open annotation store (read-only, each worker gets own connection)
+    annotation_store = StreamingAnnotationStore(_streaming_classify_worker_annotation_db_path)
+
+    # Get annotations for this contig
+    contig_annotations = annotation_store.get_annotations_for_contig(contig)
+    annotation_store.close()
+
+    # Skip empty contigs
+    if not contig_annotations or all(a.feat_type == "region" for a in contig_annotations):
+        return [], stats
+
+    # Build gene hierarchy
+    builder = AnnotationHierarchyBuilder(
+        child_features=["cds", "exon"],
+        clean_names=config["clean_names"],
+        messenger=None,  # No logging from workers
+    )
+
+    try:
+        contig_genes = builder.build_from_annotations(contig_annotations)
+    except ValueError as e:
+        if "Could not establish parent-child relationships" in str(e):
+            return [], stats
+        raise
+
+    del contig_annotations
+
+    if not contig_genes:
+        return [], stats
+
+    stats["genes"] = len(contig_genes)
+
+    # Generate introns
+    generator = IntronGenerator(debug=config["debug"], messenger=None)
+    contig_introns = list(generator.generate_from_genes(contig_genes, builder.feature_index))
+
+    # Filter by feature type
+    if config["feature_type"] == "cds":
+        contig_introns = [
+            i for i in contig_introns
+            if i.metadata is not None and i.metadata.defined_by == "cds"
+        ]
+    elif config["feature_type"] == "exon":
+        contig_introns = [
+            i for i in contig_introns
+            if i.metadata is not None and i.metadata.defined_by == "exon"
+        ]
+
+    stats["introns_generated"] = len(contig_introns)
+
+    if not contig_introns:
+        del contig_genes, builder
+        return [], stats
+
+    # Get worker's genome reader and create extractor
+    indexed_genome = get_worker_genome()
+    extractor = SequenceExtractor.__new__(SequenceExtractor)
+    extractor.genome_file = None  # type: ignore[assignment]
+    extractor.genome_reader = indexed_genome  # type: ignore[assignment]
+    extractor.use_cache = False
+
+    # Extract sequences
+    contig_with_seqs = list(
+        extractor.extract_sequences_with_deduplication(
+            contig_introns, flank_size=config["flank_len"]
+        )
+    )
+
+    # Apply U12 corrections if enabled
+    if config["u12_boundary_correction"]:
+        from intronIC.extraction.boundary_correction import correct_intron_if_needed
+
+        corrected_contig_introns = []
+        for intron in contig_with_seqs:
+            corrected_intron, was_corrected = correct_intron_if_needed(
+                intron, correction_enabled=True, use_strict_motif=True
+            )
+            if was_corrected:
+                corrected_with_seq = list(
+                    extractor.extract_sequences(
+                        [corrected_intron], flank_size=config["flank_len"]
+                    )
+                )[0]
+                corrected_contig_introns.append(corrected_with_seq)
+            else:
+                corrected_contig_introns.append(corrected_intron)
+        contig_with_seqs = corrected_contig_introns
+
+    # Create filter
+    intron_filter = IntronFilter(
+        min_length=config["min_intron_len"],
+        bp_matrix_length=7,
+        scoring_regions=["five", "three"],
+        allow_noncanonical=not config["exclude_noncanonical"],
+        allow_overlap=not config["no_intron_overlap"],
+        longest_only=True,
+        include_duplicates=config["include_duplicates"],
+    )
+
+    # Filter introns
+    filtered_introns = intron_filter.filter_introns(contig_with_seqs)
+
+    # Filter to only scorable introns
+    scorable = [
+        i for i in filtered_introns
+        if i.has_sequences
+        and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
+    ]
+
+    if not scorable:
+        del contig_genes, builder, contig_introns, contig_with_seqs, filtered_introns
+        return [], stats
+
+    # Create scorer
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=(config["five_start"], config["five_end"]),
+        bp_coords=(config["bp_start"], config["bp_end"]),
+        three_coords=(config["three_start"], config["three_end"]),
+        ignore_nc_dnts=config["ignore_nc_dnts"],
+    )
+
+    # Score and normalize
+    scored_introns = score_and_normalize_batch(scorable, scorer, scaler)
+    stats["scored"] = len(scored_introns)
+
+    # Classify
+    classified_introns = classify_introns_batch(
+        scored_introns,
+        ensemble,
+        threshold=config["threshold"],
+    )
+    stats["classified"] = len(classified_introns)
+
+    # Track boundary statistics
+    for intron in classified_introns:
+        if intron.metadata and intron.sequences and intron.sequences.terminal_dinucleotides:
+            dnts = intron.sequences.terminal_dinucleotides
+            if (
+                intron.scores
+                and intron.scores.svm_score is not None
+                and intron.scores.svm_score >= config["threshold"]
+            ):
+                stats["boundaries_u12"][dnts] += 1
+            else:
+                stats["boundaries_u2"][dnts] += 1
+
+    # Clean up
+    del contig_genes, builder, contig_introns, contig_with_seqs
+    del filtered_introns, scorable, scored_introns
+
+    return classified_introns, stats
+
+
 def classify_streaming_per_contig(
     config: IntronICConfig,
     messenger: "UnifiedMessenger",
@@ -2653,196 +3124,301 @@ def classify_streaming_per_contig(
     boundaries_u12: Counter = Counter()
     boundaries_u2: Counter = Counter()
 
-    # Create IntronFilter for per-contig filtering
-    intron_filter = IntronFilter(
-        min_length=config.extraction.min_intron_len,
-        bp_matrix_length=7,
-        scoring_regions=["five", "three"],
-        allow_noncanonical=not config.scoring.exclude_noncanonical,
-        allow_overlap=not config.extraction.no_intron_overlap,
-        longest_only=True,
-        include_duplicates=config.extraction.include_duplicates,
-    )
+    # Determine parallelization
+    n_processes = config.performance.processes
+    use_parallel = n_processes > 1 and len(contigs_with_counts) > 1
 
-    # Process each contig, tracking progress by annotations for accurate ETA
-    # (annotations are a better proxy for work than contigs, since chr1 has
-    # thousands of annotations while small scaffolds may have only a few)
-    progress = reporter.create_progress()
-
-    with output_writer, progress:
-        task = progress.add_task(
-            "[cyan]Processing annotations...", total=total_annotations
+    if use_parallel:
+        messenger.info(
+            f"Processing {len(contigs_with_counts)} contigs in parallel "
+            f"({n_processes} processes)"
         )
 
-        for contig_idx, (contig, contig_annotation_count) in enumerate(
-            contigs_with_counts, 1
-        ):
-            # =========================================================================
-            # MEMORY OPTIMIZATION 3: Load only current contig's data
-            # =========================================================================
+        # Build config dict for workers
+        worker_config = {
+            "clean_names": config.output.clean_names,
+            "debug": config.output.debug,
+            "feature_type": config.extraction.feature_type,
+            "flank_len": config.extraction.flank_len,
+            "u12_boundary_correction": config.extraction.u12_boundary_correction,
+            "min_intron_len": config.extraction.min_intron_len,
+            "exclude_noncanonical": config.scoring.exclude_noncanonical,
+            "no_intron_overlap": config.extraction.no_intron_overlap,
+            "include_duplicates": config.extraction.include_duplicates,
+            "threshold": config.scoring.threshold,
+            "ignore_nc_dnts": config.scoring.ignore_nc_dnts,
+            "five_start": config.scoring.scoring_regions.five_start,
+            "five_end": config.scoring.scoring_regions.five_end,
+            "bp_start": config.scoring.scoring_regions.bp_start,
+            "bp_end": config.scoring.scoring_regions.bp_end,
+            "three_start": config.scoring.scoring_regions.three_start,
+            "three_end": config.scoring.scoring_regions.three_end,
+        }
 
-            # Get annotations for this contig from SQLite
-            contig_annotations = annotation_store.get_annotations_for_contig(contig)
+        # Close annotation store in main process - workers will open their own
+        annotation_store.close()
 
-            # Skip empty contigs or region-only contigs
-            if not contig_annotations or all(
-                a.feat_type == "region" for a in contig_annotations
-            ):
-                progress.update(task, advance=contig_annotation_count)
-                continue
+        # Prepare worker inputs
+        worker_inputs = [
+            (contig, count) for contig, count in contigs_with_counts
+        ]
 
-            # Build gene hierarchy for this contig
-            builder = AnnotationHierarchyBuilder(
-                child_features=["cds", "exon"],
-                clean_names=config.output.clean_names,
-                messenger=messenger,
-            )
+        # Process contigs in parallel
+        all_classified_introns = []
+        completed = 0
+        last_reported_percent = 0
 
+        with Pool(
+            processes=n_processes,
+            initializer=_init_streaming_classify_worker,
+            initargs=(
+                str(config.input.genome),
+                str(annotation_db_path),
+                ensemble,
+                scaler,
+                pwm_sets,
+                worker_config,
+            ),
+        ) as pool:
             try:
-                contig_genes = builder.build_from_annotations(contig_annotations)
-            except ValueError as e:
-                if "Could not establish parent-child relationships" in str(e):
-                    progress.update(task, advance=contig_annotation_count)
-                    continue
+                for classified_introns, stats in pool.starmap(
+                    _process_contig_streaming_classify_worker, worker_inputs
+                ):
+                    completed += 1
+                    all_classified_introns.extend(classified_introns)
+
+                    # Accumulate statistics
+                    total_genes += stats["genes"]
+                    total_introns_generated += stats["introns_generated"]
+                    total_scored += stats["scored"]
+                    total_classified += stats["classified"]
+                    boundaries_u12.update(stats["boundaries_u12"])
+                    boundaries_u2.update(stats["boundaries_u2"])
+
+                    # Log progress every 10%
+                    current_percent = int((completed / len(contigs_with_counts)) * 100)
+                    if (
+                        current_percent // 10 > last_reported_percent // 10
+                    ) or completed == len(contigs_with_counts):
+                        messenger.info(
+                            f"Progress: {completed}/{len(contigs_with_counts)} contigs "
+                            f"({current_percent}%) - {total_classified:,} introns classified"
+                        )
+                        last_reported_percent = current_percent
+            except Exception as e:
+                messenger.error(
+                    f"Parallel streaming classification failed after "
+                    f"{completed}/{len(contigs_with_counts)} contigs"
+                )
+                messenger.error(f"Error: {e}")
                 raise
 
-            # Free annotation memory for this contig (no longer needed)
-            del contig_annotations
-
-            if not contig_genes:
-                progress.update(task, advance=contig_annotation_count)
-                continue
-
-            total_genes += len(contig_genes)
-
-            # Generate introns for this contig
-            generator = IntronGenerator(debug=config.output.debug, messenger=messenger)
-            contig_introns = list(
-                generator.generate_from_genes(contig_genes, builder.feature_index)
+        # Write outputs sequentially (maintains deterministic order by sorting)
+        # Sort by coordinates for consistent output order
+        all_classified_introns.sort(
+            key=lambda i: (
+                i.coordinates.chromosome,
+                i.coordinates.start,
+                i.coordinates.stop,
             )
+        )
 
-            # Filter by feature type
-            if config.extraction.feature_type == "cds":
-                contig_introns = [
-                    i
-                    for i in contig_introns
-                    if i.metadata is not None and i.metadata.defined_by == "cds"
-                ]
-            elif config.extraction.feature_type == "exon":
-                contig_introns = [
-                    i
-                    for i in contig_introns
-                    if i.metadata is not None and i.metadata.defined_by == "exon"
-                ]
-
-            total_introns_generated += len(contig_introns)
-
-            if not contig_introns:
-                progress.update(task, advance=contig_annotation_count)
-                del contig_genes, builder
-                gc.collect()
-                continue
-
-            # Create sequence extractor using indexed genome reader
-            sequence_extractor = SequenceExtractor.from_indexed_reader(
-                str(config.input.genome), genome_reader
-            )
-
-            # Extract sequences
-            contig_with_seqs = list(
-                sequence_extractor.extract_sequences_with_deduplication(
-                    contig_introns, flank_size=config.extraction.flank_len
-                )
-            )
-
-            # Apply U12 corrections if enabled
-            if config.extraction.u12_boundary_correction:
-                from intronIC.extraction.boundary_correction import (
-                    correct_intron_if_needed,
-                )
-
-                corrected_contig_introns = []
-                for intron in contig_with_seqs:
-                    corrected_intron, was_corrected = correct_intron_if_needed(
-                        intron, correction_enabled=True, use_strict_motif=True
-                    )
-                    if was_corrected:
-                        corrected_with_seq = list(
-                            sequence_extractor.extract_sequences(
-                                [corrected_intron],
-                                flank_size=config.extraction.flank_len,
-                            )
-                        )[0]
-                        corrected_contig_introns.append(corrected_with_seq)
-                    else:
-                        corrected_contig_introns.append(corrected_intron)
-                contig_with_seqs = corrected_contig_introns
-
-            # Filter introns (duplicates, short, noncanonical, etc.)
-            filtered_introns = intron_filter.filter_introns(contig_with_seqs)
-
-            # Filter to only scorable introns (have sequences and aren't omitted)
-            scorable = [
-                i
-                for i in filtered_introns
-                if i.has_sequences
-                and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
-            ]
-
-            if not scorable:
-                progress.update(task, advance=contig_annotation_count)
-                del (
-                    contig_genes,
-                    builder,
-                    contig_introns,
-                    contig_with_seqs,
-                    filtered_introns,
-                )
-                gc.collect()
-                continue
-
-            # Score and normalize using frozen scaler
-            scored_introns = score_and_normalize_batch(scorable, scorer, scaler)
-            total_scored += len(scored_introns)
-
-            # Classify
-            classified_introns = classify_introns_batch(
-                scored_introns,
-                ensemble,
-                threshold=config.scoring.threshold,
-            )
-            total_classified += len(classified_introns)
-
-            # Write outputs and track statistics
-            for intron in classified_introns:
+        with output_writer:
+            for intron in all_classified_introns:
                 output_writer.write_intron(intron)
 
-                # Track boundary statistics
-                if (
-                    intron.metadata
-                    and intron.sequences
-                    and intron.sequences.terminal_dinucleotides
+        del all_classified_introns
+        gc.collect()
+
+    else:
+        # Sequential processing (original behavior)
+        messenger.info(f"Processing {len(contigs_with_counts)} contigs sequentially")
+
+        # Create IntronFilter for per-contig filtering
+        intron_filter = IntronFilter(
+            min_length=config.extraction.min_intron_len,
+            bp_matrix_length=7,
+            scoring_regions=["five", "three"],
+            allow_noncanonical=not config.scoring.exclude_noncanonical,
+            allow_overlap=not config.extraction.no_intron_overlap,
+            longest_only=True,
+            include_duplicates=config.extraction.include_duplicates,
+        )
+
+        # Process each contig with progress tracking
+        progress = reporter.create_progress()
+
+        with output_writer, progress:
+            task = progress.add_task(
+                "[cyan]Processing annotations...", total=total_annotations
+            )
+
+            for contig_idx, (contig, contig_annotation_count) in enumerate(
+                contigs_with_counts, 1
+            ):
+                # Get annotations for this contig from SQLite
+                contig_annotations = annotation_store.get_annotations_for_contig(contig)
+
+                # Skip empty contigs or region-only contigs
+                if not contig_annotations or all(
+                    a.feat_type == "region" for a in contig_annotations
                 ):
-                    dnts = intron.sequences.terminal_dinucleotides
+                    progress.update(task, advance=contig_annotation_count)
+                    continue
+
+                # Build gene hierarchy for this contig
+                builder = AnnotationHierarchyBuilder(
+                    child_features=["cds", "exon"],
+                    clean_names=config.output.clean_names,
+                    messenger=messenger,
+                )
+
+                try:
+                    contig_genes = builder.build_from_annotations(contig_annotations)
+                except ValueError as e:
+                    if "Could not establish parent-child relationships" in str(e):
+                        progress.update(task, advance=contig_annotation_count)
+                        continue
+                    raise
+
+                del contig_annotations
+
+                if not contig_genes:
+                    progress.update(task, advance=contig_annotation_count)
+                    continue
+
+                total_genes += len(contig_genes)
+
+                # Generate introns for this contig
+                generator = IntronGenerator(debug=config.output.debug, messenger=messenger)
+                contig_introns = list(
+                    generator.generate_from_genes(contig_genes, builder.feature_index)
+                )
+
+                # Filter by feature type
+                if config.extraction.feature_type == "cds":
+                    contig_introns = [
+                        i
+                        for i in contig_introns
+                        if i.metadata is not None and i.metadata.defined_by == "cds"
+                    ]
+                elif config.extraction.feature_type == "exon":
+                    contig_introns = [
+                        i
+                        for i in contig_introns
+                        if i.metadata is not None and i.metadata.defined_by == "exon"
+                    ]
+
+                total_introns_generated += len(contig_introns)
+
+                if not contig_introns:
+                    progress.update(task, advance=contig_annotation_count)
+                    del contig_genes, builder
+                    gc.collect()
+                    continue
+
+                # Create sequence extractor using indexed genome reader
+                sequence_extractor = SequenceExtractor.from_indexed_reader(
+                    str(config.input.genome), genome_reader
+                )
+
+                # Extract sequences
+                contig_with_seqs = list(
+                    sequence_extractor.extract_sequences_with_deduplication(
+                        contig_introns, flank_size=config.extraction.flank_len
+                    )
+                )
+
+                # Apply U12 corrections if enabled
+                if config.extraction.u12_boundary_correction:
+                    from intronIC.extraction.boundary_correction import (
+                        correct_intron_if_needed,
+                    )
+
+                    corrected_contig_introns = []
+                    for intron in contig_with_seqs:
+                        corrected_intron, was_corrected = correct_intron_if_needed(
+                            intron, correction_enabled=True, use_strict_motif=True
+                        )
+                        if was_corrected:
+                            corrected_with_seq = list(
+                                sequence_extractor.extract_sequences(
+                                    [corrected_intron],
+                                    flank_size=config.extraction.flank_len,
+                                )
+                            )[0]
+                            corrected_contig_introns.append(corrected_with_seq)
+                        else:
+                            corrected_contig_introns.append(corrected_intron)
+                    contig_with_seqs = corrected_contig_introns
+
+                # Filter introns (duplicates, short, noncanonical, etc.)
+                filtered_introns = intron_filter.filter_introns(contig_with_seqs)
+
+                # Filter to only scorable introns (have sequences and aren't omitted)
+                scorable = [
+                    i
+                    for i in filtered_introns
+                    if i.has_sequences
+                    and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
+                ]
+
+                if not scorable:
+                    progress.update(task, advance=contig_annotation_count)
+                    del (
+                        contig_genes,
+                        builder,
+                        contig_introns,
+                        contig_with_seqs,
+                        filtered_introns,
+                    )
+                    gc.collect()
+                    continue
+
+                # Score and normalize using frozen scaler
+                scored_introns = score_and_normalize_batch(scorable, scorer, scaler)
+                total_scored += len(scored_introns)
+
+                # Classify
+                classified_introns = classify_introns_batch(
+                    scored_introns,
+                    ensemble,
+                    threshold=config.scoring.threshold,
+                )
+                total_classified += len(classified_introns)
+
+                # Write outputs and track statistics
+                for intron in classified_introns:
+                    output_writer.write_intron(intron)
+
+                    # Track boundary statistics
                     if (
-                        intron.scores
-                        and intron.scores.svm_score is not None
-                        and intron.scores.svm_score >= config.scoring.threshold
+                        intron.metadata
+                        and intron.sequences
+                        and intron.sequences.terminal_dinucleotides
                     ):
-                        boundaries_u12[dnts] += 1
-                    else:
-                        boundaries_u2[dnts] += 1
+                        dnts = intron.sequences.terminal_dinucleotides
+                        if (
+                            intron.scores
+                            and intron.scores.svm_score is not None
+                            and intron.scores.svm_score >= config.scoring.threshold
+                        ):
+                            boundaries_u12[dnts] += 1
+                        else:
+                            boundaries_u2[dnts] += 1
 
-            # Free contig memory
-            del contig_genes, builder, contig_introns, contig_with_seqs
-            del filtered_introns, scorable, scored_introns, classified_introns
-            gc.collect()
+                # Free contig memory
+                del contig_genes, builder, contig_introns, contig_with_seqs
+                del filtered_introns, scorable, scored_introns, classified_introns
+                gc.collect()
 
-            progress.update(task, advance=contig_annotation_count)
+                progress.update(task, advance=contig_annotation_count)
+
+        del genome_reader
+        gc.collect()
 
     # Free global resources and cleanup temp files
     annotation_store.cleanup()  # Delete SQLite annotation database
-    del genome_reader
     gc.collect()
 
     # Build summary
