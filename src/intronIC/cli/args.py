@@ -1055,20 +1055,6 @@ Note: This command extracts intron sequences but does not perform classification
                 has_model = hasattr(args, "model") and args.model is not None
                 has_train = hasattr(args, "train") and args.train
 
-                # DEPRECATION WARNING for --train flag
-                if has_train:
-                    import sys
-                    print("\n" + "=" * 80, file=sys.stderr)
-                    print("⚠️  DEPRECATION WARNING", file=sys.stderr)
-                    print("=" * 80, file=sys.stderr)
-                    print("The --train flag is deprecated and will be removed in v3.0.0", file=sys.stderr)
-                    print("\nPlease use the new two-step workflow:", file=sys.stderr)
-                    print("  1. intronIC train -n species_name", file=sys.stderr)
-                    print("  2. intronIC classify -g genome.fa -a annotation.gff --model species_name.model.pkl", file=sys.stderr)
-                    print("\nThis separates model training (on reference sequences) from", file=sys.stderr)
-                    print("classification (on genomic data), providing better modularity.", file=sys.stderr)
-                    print("=" * 80 + "\n", file=sys.stderr)
-
                 if not has_model and not has_train:
                     # Try to use default pretrained model if available
                     from intronIC.cli.config import get_default_pretrained_model_path

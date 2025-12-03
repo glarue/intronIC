@@ -1,7 +1,8 @@
 # Train/Classify Architecture Refactor
 
 **Date:** December 3, 2025
-**Status:** Design Phase
+**Status:** Implemented in v2.0.0
+**Note:** No deprecation period needed - v2.0.0 is not yet released
 
 ## Problem Statement
 
@@ -138,40 +139,27 @@ intronIC train -n species --reference-u12s curated_u12.iic --reference-u2s curat
 intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
 ```
 
-## Implementation Plan
+## Implementation (v2.0.0)
 
-### Phase 1: Add `extract` Subcommand (Low Risk)
+Since v2.0.0 has not been released, we can make all changes directly without deprecation warnings.
 
-This is essentially renaming/exposing the existing `-s/--sequences-only` functionality:
+### Changes Made
 
-1. Add `extract` subcommand to argument parser
-2. Route to extraction-only pipeline (already exists)
-3. Update documentation
+1. **Add `extract` Subcommand**
+   - New `intronIC extract` command for extraction-only workflow
+   - Exposes existing extraction pipeline without classification
+   - Supports annotation, BED input, and streaming modes
 
-**Backward compatibility:** Keep `-s` flag working in `classify` mode
+2. **Keep `--train` Flag Functional**
+   - `--train` flag still works for backward compatibility with internal workflows
+   - Not advertised in primary documentation
+   - May be removed in future if not needed
 
-### Phase 2: Deprecate `--train` Flag (Breaking Change)
-
-1. Add deprecation warning when `--train` is used
-2. Update error message to suggest new workflow:
-   ```
-   ⚠️  The --train flag is deprecated and will be removed in v3.0.0
-
-   Please use the new two-step workflow:
-     1. intronIC train -n species
-     2. intronIC classify -g genome.fa -a annotation.gff --model species.model.pkl
-   ```
-3. Update all documentation and examples
-
-**Backward compatibility:** Keep `--train` working with deprecation warning in v2.x
-
-### Phase 3: Make `--model` Required in `classify` (Breaking Change)
-
-After deprecation period (v3.0.0):
-
-1. Remove `--train` flag entirely
-2. Make `--model` required for `classify` command
-3. Clean up training logic from `main_classify()`
+3. **Model Handling in `classify`**
+   - Model is required for classification (not extraction)
+   - If `--model` not specified, tries to use default model if available
+   - Falls back to error if no model and no --train flag
+   - User doesn't need to pass --model flag if default model exists
 
 ## Benefits of Refactor
 
@@ -220,21 +208,8 @@ intronIC train -n species --reference-u12s u12_labeled.iic --reference-u2s u2_la
 
 This makes it clear that training requires curated labels, not raw genomic extractions.
 
-## Timeline
-
-- **v2.1.0 (current)**: Add `extract` subcommand, add deprecation warning for `--train`
-- **v2.2.0**: Update all documentation to show new workflows
-- **v3.0.0**: Remove `--train` flag, make `--model` required
-
 ## Related Files
 
 - [src/intronIC/cli/args.py](../src/intronIC/cli/args.py) - Argument parsing
 - [src/intronIC/cli/main.py](../src/intronIC/cli/main.py) - Main entry points
 - [src/intronIC/cli/config.py](../src/intronIC/cli/config.py) - Configuration dataclasses
-
-## Questions for Discussion
-
-1. Should we provide a default/universal model, or always require users to train?
-2. Should `extract` be a subcommand or keep as `-s` flag in `classify`?
-3. What's an appropriate deprecation timeline for `--train`?
-4. Should we add a `quick` convenience command for one-step train+classify?
