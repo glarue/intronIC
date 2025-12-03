@@ -330,9 +330,9 @@ class IntronICConfig:
             threshold=args.threshold,
             exclude_noncanonical=args.no_nc,
             scoring_regions=scoring_regions,
-            pwm_file=args.pwms,
-            reference_u12s=args.reference_u12s,
-            reference_u2s=args.reference_u2s,
+            pwm_file=getattr(args, "pwms", None),
+            reference_u12s=getattr(args, "reference_u12s", None),
+            reference_u2s=getattr(args, "reference_u2s", None),
             generate_u2_bps_pwm=getattr(
                 args, "generate_u2_bps_pwm", False
             ),  # Not currently implemented
@@ -386,16 +386,16 @@ class IntronICConfig:
                 )
 
         training_config = TrainingConfig(
-            fixed_C=args.C,
-            n_models=args.n_models,
+            fixed_C=getattr(args, "C", None),
+            n_models=getattr(args, "n_models", 1),
             recursive=bool(recursive_arg),
             recursive_subset=recursive_subset,
             seed=args.seed,
-            max_iter=args.max_iter,
-            eval_mode=args.eval_mode,
-            n_cv_folds=args.n_cv_folds,
-            test_fraction=args.test_fraction,
-            n_optimization_rounds=args.n_optimization_rounds,
+            max_iter=getattr(args, "max_iter", 50000),
+            eval_mode=getattr(args, "eval_mode", "nested_cv"),
+            n_cv_folds=getattr(args, "n_cv_folds", 5),
+            test_fraction=getattr(args, "test_fraction", 0.2),
+            n_optimization_rounds=getattr(args, "n_optimization_rounds", 5),
             pretrained_model_path=pretrained_model_path,
             config_path=getattr(args, "config_path", None),
             use_fold_averaged_params=getattr(args, "use_fold_averaged_params", False),

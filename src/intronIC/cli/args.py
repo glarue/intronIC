@@ -107,8 +107,8 @@ Examples:
   # Classify introns with pretrained model
   intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
 
-  # Classify and train on-the-fly
-  intronIC classify -g genome.fa -a annotation.gff -n species --train
+  # Extract introns without classification
+  intronIC extract -g genome.fa -a annotation.gff -n species
 
   # Backward compatible (no subcommand = classify)
   intronIC -g genome.fa -a annotation.gff -n species --model species.model.pkl
@@ -186,14 +186,14 @@ Classify mode examples:
   # With pretrained model
   intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
 
-  # Train on-the-fly
-  intronIC classify -g genome.fa -a annotation.gff -n species --train
-
   # Extract sequences only (no classification)
   intronIC classify -g genome.fa -a annotation.gff -n species -s
 
   # From BED file
   intronIC classify -g genome.fa -b introns.bed -n species --model species.model.pkl
+
+  # Use default model if available
+  intronIC classify -g genome.fa -a annotation.gff -n species
 """,
         )
         self._add_classify_arguments(classify_parser)
@@ -592,15 +592,9 @@ Note: This command extracts intron sequences but does not perform classification
         )
 
         # === Model Source ===
-        model_group = parser.add_argument_group("model source (choose one)")
-        model_exclusive = model_group.add_mutually_exclusive_group()
-        model_exclusive.add_argument(
+        model_group = parser.add_argument_group("model source")
+        model_group.add_argument(
             "--model", type=Path, help="Path to pretrained model (.model.pkl)"
-        )
-        model_exclusive.add_argument(
-            "--train",
-            action="store_true",
-            help="Train model on-the-fly (slower, includes full training and evaluation)",
         )
 
         # Normalizer mode (for pretrained model classification)
@@ -774,86 +768,6 @@ Note: This command extracts intron sequences but does not perform classification
             default=[-6, 4],
             metavar=("START", "END"),
             help="3' splice site region (default: -6 4)",
-        )
-
-        # === Training Parameters (only if --train flag used) ===
-        training = parser.add_argument_group("training parameters (only with --train)")
-        training.add_argument(
-            "--reference-u12s",
-            "--reference_u12s",
-            type=Path,
-            help="Custom U12 reference sequences",
-        )
-        training.add_argument(
-            "--reference-u2s",
-            "--reference_u2s",
-            type=Path,
-            help="Custom U2 reference sequences",
-        )
-        training.add_argument("--pwms", type=Path, help="Custom PWM matrix file")
-        # NOTE: The following arguments are not currently implemented in v2.0
-        # Uncomment when functionality is added
-        # training.add_argument(
-        #     '--generate-u2-bps-pwm', '--generate_u2_bps_pwm',
-        #     action='store_true',
-        #     help='Generate U2 branch point PWM from data (NOT IMPLEMENTED)'
-        # )
-        # training.add_argument(
-        #     '--recursive',
-        #     nargs='?',
-        #     const=True,
-        #     help='Perform recursive training (NOT IMPLEMENTED)'
-        # )
-        training.add_argument(
-            "-C", type=float, help="Fixed SVM C parameter (skips optimization)"
-        )
-        training.add_argument(
-            "--n-models",
-            "--n_models",
-            type=int,
-            default=1,
-            help="Number of ensemble models (default: 1)",
-        )
-        training.add_argument(
-            "--max-iter",
-            "--max_iter",
-            type=int,
-            default=50000,
-            help="Maximum SVM iterations (default: 50000)",
-        )
-        training.add_argument(
-            "--eval-mode",
-            "--eval_mode",
-            choices=["nested_cv", "split", "none"],
-            default="nested_cv",
-            help="Evaluation mode (default: nested_cv)",
-        )
-        training.add_argument(
-            "--n-cv-folds",
-            "--n_cv_folds",
-            type=int,
-            default=5,
-            help="Cross-validation folds (default: 5)",
-        )
-        training.add_argument(
-            "--test-fraction",
-            "--test_fraction",
-            type=float,
-            default=0.2,
-            help="Test fraction for split mode (default: 0.2)",
-        )
-        training.add_argument(
-            "--n-optimization-rounds",
-            "--n_optimization_rounds",
-            type=int,
-            default=5,
-            help="Optimization rounds (default: 5)",
-        )
-        training.add_argument(
-            "--use-fold-averaged-params",
-            action="store_true",
-            default=None,
-            help="Use fold-averaged hyperparameters from nested CV instead of re-optimizing on full dataset (better cross-species generalization)",
         )
 
         # === Performance ===
@@ -1053,9 +967,8 @@ Note: This command extracts intron sequences but does not perform classification
             # Model source validation (skip if sequences_only mode)
             if not args.sequences_only:
                 has_model = hasattr(args, "model") and args.model is not None
-                has_train = hasattr(args, "train") and args.train
 
-                if not has_model and not has_train:
+                if not has_model:
                     # Try to use default pretrained model if available
                     from intronIC.cli.config import get_default_pretrained_model_path
 
@@ -1068,10 +981,10 @@ Note: This command extracts intron sequences but does not perform classification
                     else:
                         # No default model available - require explicit specification
                         self.parser.error(
-                            "classify: must specify model source:\n"
-                            "  --model PATH  (use pretrained model)\n"
-                            "  --train       (train on-the-fly)\n"
+                            "classify: must specify model:\n"
+                            "  --model PATH  (path to pretrained model)\n"
                             "\n"
+                            "To train a new model, use: intronIC train -n species_name\n"
                             "Note: Default pretrained model not found at data/default_pretrained.model.pkl"
                         )
 
@@ -1082,10 +995,6 @@ Note: This command extracts intron sequences but does not perform classification
                 "bed",
                 "sequence_file",
                 "model",
-                "pwms",
-                "reference_u12s",
-                "reference_u2s",
-                "optimizer_config",
             ]
             for attr_name in file_attrs:
                 if hasattr(args, attr_name):
@@ -1096,17 +1005,6 @@ Note: This command extracts intron sequences but does not perform classification
             # Threshold validation
             if not 0 <= args.threshold <= 100:
                 self.parser.error("classify: threshold must be between 0 and 100")
-
-            # Training parameters validation (if --train used)
-            if hasattr(args, "train") and args.train:
-                if args.n_cv_folds < 2:
-                    self.parser.error("classify: n_cv_folds must be >= 2")
-                if not 0 < args.test_fraction < 1:
-                    self.parser.error("classify: test_fraction must be between 0 and 1")
-
-            # Set cv_processes to processes if not specified
-            if args.cv_processes is None:
-                args.cv_processes = args.processes
 
             # Process count validation
             if args.processes < 1:

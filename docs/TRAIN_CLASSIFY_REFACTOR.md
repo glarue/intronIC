@@ -150,16 +150,18 @@ Since v2.0.0 has not been released, we can make all changes directly without dep
    - Exposes existing extraction pipeline without classification
    - Supports annotation, BED input, and streaming modes
 
-2. **Keep `--train` Flag Functional**
-   - `--train` flag still works for backward compatibility with internal workflows
-   - Not advertised in primary documentation
-   - May be removed in future if not needed
+2. **Remove `--train` Flag**
+   - `--train` flag completely removed from classify command
+   - Training and classification are now fully separated
+   - Use `intronIC train` to create models
+   - Use `intronIC classify` with a model to classify
 
 3. **Model Handling in `classify`**
-   - Model is required for classification (not extraction)
-   - If `--model` not specified, tries to use default model if available
-   - Falls back to error if no model and no --train flag
-   - User doesn't need to pass --model flag if default model exists
+   - Model required for classification (uses default if available)
+   - If `--model` not specified, tries to use default model
+   - Falls back to error if no model available
+   - User doesn't need `--model` flag if default model exists
+   - Error message guides users to train their own model
 
 ## Benefits of Refactor
 
