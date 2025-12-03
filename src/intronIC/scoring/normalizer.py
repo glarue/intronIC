@@ -1,25 +1,26 @@
 """
-Score normalization with Zero-Anchored Robust (ZAR) scaling.
+Score normalization for intron PWM log-odds ratio scores.
 
-This module implements ZAR normalization for intron PWM log-odds ratio scores.
-ZAR preserves the semantic zero of LLRs while correcting for dispersion shifts.
+This module provides normalization for the ML classification pipeline.
 
-CRITICAL: This implementation:
-1. Preserves semantic zero (zero = "U12 and U2 equally plausible")
-2. Prevents data leakage through explicit dataset_type API
-3. Enables cross-species deployment via unlabeled domain adaptation
+CURRENT IMPLEMENTATION:
+    ScoreNormalizer uses sklearn's RobustScaler(with_centering=True) to
+    convert raw PWM log-odds ratios into z-scores. Centering is essential
+    for cross-species generalization by removing composition bias.
+
+DEPRECATED (ZeroAnchoredRobustScaler):
+    This module also contains ZeroAnchoredRobustScaler, which was designed
+    to preserve "semantic zero" by scaling WITHOUT centering. However,
+    empirical testing showed this causes 130 false positives on C. elegans
+    vs 0 with centering. See ZeroAnchoredRobustScaler docstring and
+    docs/PHASE_1_SUCCESS_SUMMARY.md for details.
 
 Design Principles:
-1. Zero-anchored: Scale by spread around zero, never center
-2. Robust: Use median of absolute values with winsorization
-3. Explicit dataset_type parameter forces conscious decision
-4. Statistics frozen after fitting (immutable)
-
-Expert Guidance:
-For LLR features s = log(P(seq|PWM_U12)) - log(P(seq|PWM_U2)):
-- Zero means "U12 ≈ U2" (preserve this!)
-- Centering destroys semantic information
-- Scale by median(|s|) after winsorizing at 99.5th percentile
+1. Single scaling step: ScoreNormalizer handles all normalization OUTSIDE pipeline
+2. Centering enabled: Removes composition bias for cross-species deployment
+3. Robust to outliers: Uses median/IQR (RobustScaler) rather than mean/std
+4. Explicit dataset_type parameter forces conscious decision about data source
+5. Statistics frozen after fitting (immutable)
 """
 
 from dataclasses import replace
@@ -37,6 +38,39 @@ DatasetType = Literal["reference", "experimental", "unlabeled"]
 class ZeroAnchoredRobustScaler(BaseEstimator, TransformerMixin):
     """
     Zero-Anchored Robust (ZAR) scaler for log-odds ratio features.
+
+    ⚠️ DEPRECATED - NOT USED IN PRODUCTION PIPELINE
+    ════════════════════════════════════════════════════════════════════════
+
+    This class was designed to preserve "semantic zero" (where s=0 means
+    U12 ≈ U2 equally plausible) by scaling WITHOUT centering.
+
+    However, empirical testing on C. elegans (a U12-free genome) revealed
+    that this approach causes severe false positive issues:
+
+        - Zero-anchored (no centering): 130 false positives (0.118% FP rate)
+        - Centered (RobustScaler):       0 false positives (0.000% FP rate)
+
+    ROOT CAUSE: Without centering, composition bias (different GC content
+    across species) causes unbounded z-score inflation. Centering removes
+    this global shift by making features relative to the training distribution.
+
+    DECISION (Nov 2025): Abandon semantic zero preservation in favor of
+    centering, which is essential for cross-species generalization.
+
+    See: docs/PHASE_1_SUCCESS_SUMMARY.md for full analysis and test results.
+
+    CURRENT ARCHITECTURE: ScoreNormalizer uses sklearn's
+    RobustScaler(with_centering=True) instead of this class.
+
+    This class is retained for:
+    - Historical reference and code archaeology
+    - Potential future experiments with alternative scaling approaches
+    - Understanding the design trade-offs in normalization
+
+    ════════════════════════════════════════════════════════════════════════
+
+    ORIGINAL DESIGN (for reference):
 
     Scales features by robust spread around zero WITHOUT centering,
     preserving the semantic zero point of log-likelihood ratios.
