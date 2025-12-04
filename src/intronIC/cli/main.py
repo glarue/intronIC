@@ -1078,7 +1078,10 @@ def _init_streaming_worker(
     # Store streaming-specific config in globals
     global _streaming_worker_db_path, _streaming_worker_species_name
     global _streaming_worker_simple_name, _streaming_worker_no_abbreviate
-    global _streaming_worker_five_coords, _streaming_worker_bp_coords, _streaming_worker_three_coords
+    global \
+        _streaming_worker_five_coords, \
+        _streaming_worker_bp_coords, \
+        _streaming_worker_three_coords
 
     _streaming_worker_db_path = db_path
     _streaming_worker_species_name = species_name
@@ -1785,8 +1788,9 @@ def extract_introns_streaming(
     )
 
     # Get contig lengths for length-weighted progress reporting
-    from intronIC.file_io.indexed_genome import get_contig_lengths
     import numpy as np
+
+    from intronIC.file_io.indexed_genome import get_contig_lengths
 
     assert config.input.genome is not None, "Genome path required"
     contig_lengths = get_contig_lengths(config.input.genome)
@@ -1855,14 +1859,18 @@ def extract_introns_streaming(
         ) as pool, progress:
             # Add task with total = total genome length for smooth progress
             task = progress.add_task(
-                "[cyan]Extracting sequences (parallel streaming)...",
-                total=total_length
+                "[cyan]Extracting sequences (parallel streaming)...", total=total_length
             )
 
             try:
                 # Use imap_unordered to get results as soon as any worker completes
                 # This provides better visual feedback - small contigs update progress immediately
-                for contig_name, lightweight_introns, seqs_stored, corrections in pool.imap_unordered(
+                for (
+                    contig_name,
+                    lightweight_introns,
+                    seqs_stored,
+                    corrections,
+                ) in pool.imap_unordered(
                     _process_contig_streaming_worker, worker_inputs
                 ):
                     completed += 1
@@ -1910,7 +1918,9 @@ def extract_introns_streaming(
 
             # Apply U12 corrections if enabled
             if config.extraction.u12_boundary_correction:
-                from intronIC.extraction.boundary_correction import correct_intron_if_needed
+                from intronIC.extraction.boundary_correction import (
+                    correct_intron_if_needed,
+                )
 
                 corrected_count = 0
                 corrected_contig_introns = []
@@ -1922,7 +1932,8 @@ def extract_introns_streaming(
                     if was_corrected:
                         corrected_with_seq = list(
                             sequence_extractor.extract_sequences(
-                                [corrected_intron], flank_size=config.extraction.flank_len
+                                [corrected_intron],
+                                flank_size=config.extraction.flank_len,
                             )
                         )[0]
                         corrected_contig_introns.append(corrected_with_seq)
@@ -2812,6 +2823,7 @@ def _process_contig_streaming_classify_worker(
 
     # Statistics for this contig
     from intronIC.extraction.filters import FilterStats
+
     stats = {
         "genes": 0,
         "introns_generated": 0,
@@ -2823,14 +2835,18 @@ def _process_contig_streaming_classify_worker(
     }
 
     # Open annotation store (read-only, each worker gets own connection)
-    annotation_store = StreamingAnnotationStore(_streaming_classify_worker_annotation_db_path)
+    annotation_store = StreamingAnnotationStore(
+        _streaming_classify_worker_annotation_db_path
+    )
 
     # Get annotations for this contig
     contig_annotations = annotation_store.get_annotations_for_contig(contig)
     annotation_store.close()
 
     # Skip empty contigs
-    if not contig_annotations or all(a.feat_type == "region" for a in contig_annotations):
+    if not contig_annotations or all(
+        a.feat_type == "region" for a in contig_annotations
+    ):
         return contig, [], stats
 
     # Build gene hierarchy
@@ -2856,17 +2872,21 @@ def _process_contig_streaming_classify_worker(
 
     # Generate introns
     generator = IntronGenerator(debug=config["debug"], messenger=None)
-    contig_introns = list(generator.generate_from_genes(contig_genes, builder.feature_index))
+    contig_introns = list(
+        generator.generate_from_genes(contig_genes, builder.feature_index)
+    )
 
     # Filter by feature type
     if config["feature_type"] == "cds":
         contig_introns = [
-            i for i in contig_introns
+            i
+            for i in contig_introns
             if i.metadata is not None and i.metadata.defined_by == "cds"
         ]
     elif config["feature_type"] == "exon":
         contig_introns = [
-            i for i in contig_introns
+            i
+            for i in contig_introns
             if i.metadata is not None and i.metadata.defined_by == "exon"
         ]
 
@@ -2929,7 +2949,8 @@ def _process_contig_streaming_classify_worker(
 
     # Filter to only scorable introns
     scorable = [
-        i for i in filtered_introns
+        i
+        for i in filtered_introns
         if i.has_sequences
         and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
     ]
@@ -2961,7 +2982,11 @@ def _process_contig_streaming_classify_worker(
 
     # Track boundary statistics
     for intron in classified_introns:
-        if intron.metadata and intron.sequences and intron.sequences.terminal_dinucleotides:
+        if (
+            intron.metadata
+            and intron.sequences
+            and intron.sequences.terminal_dinucleotides
+        ):
             dnts = intron.sequences.terminal_dinucleotides
             if (
                 intron.scores
@@ -3143,11 +3168,13 @@ def classify_streaming_per_contig(
 
     # Accumulated filter statistics
     from intronIC.extraction.filters import FilterStats
+
     accumulated_filter_stats = FilterStats()
 
     # Get contig lengths for length-weighted progress reporting
-    from intronIC.file_io.indexed_genome import get_contig_lengths
     import numpy as np
+
+    from intronIC.file_io.indexed_genome import get_contig_lengths
 
     assert config.input.genome is not None, "Genome path required"
     contig_lengths = get_contig_lengths(config.input.genome)
@@ -3193,10 +3220,10 @@ def classify_streaming_per_contig(
         annotation_store.close()
 
         # Prepare worker inputs and create contig index mapping
-        worker_inputs = [
-            (contig, count) for contig, count in contigs_with_counts
-        ]
-        contig_to_index = {contig: idx for idx, (contig, _) in enumerate(contigs_with_counts)}
+        worker_inputs = [(contig, count) for contig, count in contigs_with_counts]
+        contig_to_index = {
+            contig: idx for idx, (contig, _) in enumerate(contigs_with_counts)
+        }
 
         # Process contigs in parallel with progress bar
         all_classified_introns = []
@@ -3220,8 +3247,7 @@ def classify_streaming_per_contig(
         ) as pool, progress:
             # Add task with total = total genome length for smooth progress
             task = progress.add_task(
-                "[cyan]Classifying introns (parallel streaming)...",
-                total=total_length
+                "[cyan]Classifying introns (parallel streaming)...", total=total_length
             )
 
             try:
@@ -3342,7 +3368,9 @@ def classify_streaming_per_contig(
                 total_genes += len(contig_genes)
 
                 # Generate introns for this contig
-                generator = IntronGenerator(debug=config.output.debug, messenger=messenger)
+                generator = IntronGenerator(
+                    debug=config.output.debug, messenger=messenger
+                )
                 contig_introns = list(
                     generator.generate_from_genes(contig_genes, builder.feature_index)
                 )
@@ -3411,18 +3439,26 @@ def classify_streaming_per_contig(
                 accumulated_filter_stats.duplicates += intron_filter.stats.duplicates
                 accumulated_filter_stats.short += intron_filter.stats.short
                 accumulated_filter_stats.ambiguous += intron_filter.stats.ambiguous
-                accumulated_filter_stats.noncanonical += intron_filter.stats.noncanonical
+                accumulated_filter_stats.noncanonical += (
+                    intron_filter.stats.noncanonical
+                )
                 accumulated_filter_stats.overlap += intron_filter.stats.overlap
                 accumulated_filter_stats.isoform += intron_filter.stats.isoform
-                accumulated_filter_stats.total_introns += intron_filter.stats.total_introns
-                accumulated_filter_stats.kept_introns += intron_filter.stats.kept_introns
+                accumulated_filter_stats.total_introns += (
+                    intron_filter.stats.total_introns
+                )
+                accumulated_filter_stats.kept_introns += (
+                    intron_filter.stats.kept_introns
+                )
 
                 # Filter to only scorable introns (have sequences and aren't omitted)
                 scorable = [
                     i
                     for i in filtered_introns
                     if i.has_sequences
-                    and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
+                    and (
+                        i.metadata is None or i.metadata.omitted == OmissionReason.NONE
+                    )
                 ]
 
                 if not scorable:
@@ -4733,11 +4769,7 @@ def main_extract(config: IntronICConfig):
     meta_path = config.output.get_output_path(".meta.iic")
     bed_path = config.output.get_output_path(".bed.iic")
 
-    from intronIC.file_io.writers import (
-        BEDWriter,
-        MetaWriter,
-        SequenceWriter,
-    )
+    from intronIC.file_io.writers import BEDWriter, MetaWriter, SequenceWriter
 
     # If streaming mode, read sequences from SQLite
     if config.performance.streaming and config.input.mode == "annotation":
@@ -4769,7 +4801,9 @@ def main_extract(config: IntronICConfig):
         # Standard mode - write from memory
         # Filter introns with sequences
         introns_with_seqs = [i for i in introns if i.has_sequences]
-        messenger.info(f"Writing sequences: {seq_path} ({len(introns_with_seqs):,} introns with sequences)")
+        messenger.info(
+            f"Writing sequences: {seq_path} ({len(introns_with_seqs):,} introns with sequences)"
+        )
         seq_writer = SequenceWriter(seq_path)
         with seq_writer:
             seq_writer.write_introns(

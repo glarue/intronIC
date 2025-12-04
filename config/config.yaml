@@ -290,22 +290,23 @@ optimizer:
   # to learn positive coefficients that rewarded imbalance. New models use
   # 'absdiff_*' (positive values) so negative coefficients properly penalize it.
   #
-  # Default (7D): All except pairwise mins and max features
-  # Minimal (4D): Only the features L1 regularization found useful
+  # Standard (4D): Base 3 z-scores + BP/3' imbalance penalty (RECOMMENDED)
+  #   Based on L1 regularization analysis showing absdiff_bp_3 is most informative
+  # Extended (7D): Adds min_all and all three imbalance terms
   # Custom: Specify exactly which features you want
   #
   # Examples:
-  #   # Default 7D (L2-friendly, non-redundant) - CORRECTED 2025-01-20
-  #   features: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3']
-  #
-  #   # Minimal 4D (based on L1 coefficient analysis)
+  #   # Standard 4D (RECOMMENDED - based on L1 coefficient analysis)
   #   features: ['absdiff_bp_3']
   #
-  #   # Full 11D (all composite features)
+  #   # Extended 7D (more features, may help edge cases)
+  #   features: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3']
+  #
+  #   # Full 11D (all composite features - for experimentation)
   #   features: ['min_5_bp', 'min_5_3', 'min_all', 'absdiff_5_bp',
   #              'absdiff_5_3', 'absdiff_bp_3', 'max_5_bp', 'max_5_3']
   feature_transform:
-    # List of composite features to include (default: 7D recommended set)
+    # List of composite features to include (standard: 4D recommended set)
     features: ['absdiff_bp_3']
 
   # Gamma scaling for imbalance features (nudges L2 toward L1 behavior)
@@ -357,8 +358,7 @@ optimizer:
 # - calibration_method: Auto-selected (sigmoid vs isotonic) via log-loss
 #
 # FIXED ARCHITECTURE POINTS:
-# - include_max: false (7D non-redundant features)
-# - include_pairwise_mins: false (min_all captures all constraints)
+# - Standard 4D features: base 3 z-scores + absdiff_bp_3 (BP/3' imbalance penalty)
 # - dual: false (primal formulation, faster for n_features << n_samples)
 # - Stratified U2 sampling: 2D binning (length × GC content)
 # - Ensemble diversity: Different stratified U2 samples per model
@@ -484,12 +484,12 @@ advanced:
 # - config/profiles/quick.yaml: 2 rounds, 3 CV folds, 3 models (~10-20 min)
 # - config/profiles/minimal.yaml: 1 round, 2 CV folds, 1 model (~5-10 min)
 #
-# ARCHITECTURE NOTES (v2.0 - 2025-01-17):
+# ARCHITECTURE NOTES (v2.0 - 2025-01-17, updated 2025-12):
 # - Single scaling step: RobustScaler(with_centering=True) outside pipeline
-# - 7D non-redundant features: include_max=false, include_pairwise_mins=false
+# - Standard 4D features: base 3 z-scores + absdiff_bp_3 (BP/3' imbalance penalty)
 # - L2-only penalty: Keeps all features appropriately weighted
 # - Two-stage optimization: C first (balanced_accuracy), then calibration (log-loss)
-# - Validation: 2 FPs on C. elegans (vs 130 uncentered, 49 centered-only)
+# - Validation: 1 FP on C. elegans (vs 130 with zero-anchored scaling)
 #
 # REFERENCES:
 # - Architecture: SCALER_CENTERING_FIX_COMPLETE.md
