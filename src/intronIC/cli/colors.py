@@ -9,7 +9,7 @@ This ensures the best visual experience in both contexts.
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import ClassVar, Literal
 
 
 @dataclass(frozen=True)
@@ -47,86 +47,47 @@ class ColorPalette:
     mustard_ansi: str = "yellow"
     deep_saffron_ansi: str = "bright_yellow"
 
-    def _color_dict(self, console: str, log: str) -> dict[Literal["console", "log"], str]:
-        """Helper to create color dictionary."""
-        return {"console": console, "log": log}
+    # Semantic color mappings: name -> (hex_attr, ansi_attr, prefix)
+    # prefix is optional style modifier (e.g., "dim", "bold")
+    _SEMANTIC_COLORS: ClassVar[dict] = {
+        "info": ("baltic_blue_hex", "baltic_blue_ansi", ""),
+        "success": ("deep_saffron_hex", "deep_saffron_ansi", ""),
+        "warning": ("mustard_hex", "mustard_ansi", ""),
+        "error": ("red", "red", ""),  # literals, not attrs
+        "header": ("yale_blue_hex", "yale_blue_ansi", ""),
+        "highlight": ("sky_aqua_hex", "sky_aqua_ansi", ""),
+        "path": ("baltic_blue_hex", "baltic_blue_ansi", ""),
+        "step_current": ("mustard_hex", "mustard_ansi", ""),
+        "step_complete": ("deep_saffron_hex", "deep_saffron_ansi", "dim"),
+        "step_pending": ("white", "white", "dim"),
+        "table_header": ("sky_aqua_hex", "sky_aqua_ansi", ""),
+        "table_value": ("white", "white", ""),
+        "u12_highlight": ("mustard_hex", "mustard_ansi", "bold"),
+        "timestamp": ("white", "white", "dim"),
+    }
 
-    # Semantic color mappings
-    @property
-    def info(self) -> dict[Literal["console", "log"], str]:
-        """Info messages (ℹ)."""
-        return self._color_dict(self.baltic_blue_hex, self.baltic_blue_ansi)
+    def __getattr__(self, name: str) -> dict[Literal["console", "log"], str]:
+        """
+        Get semantic color dict by name.
 
-    @property
-    def success(self) -> dict[Literal["console", "log"], str]:
-        """Success messages (✓)."""
-        return self._color_dict(self.deep_saffron_hex, self.deep_saffron_ansi)
+        Returns dict with 'console' (hex) and 'log' (ANSI) keys.
+        """
+        if name.startswith("_"):
+            raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
-    @property
-    def warning(self) -> dict[Literal["console", "log"], str]:
-        """Warning messages (⚠)."""
-        return self._color_dict(self.mustard_hex, self.mustard_ansi)
+        if name in self._SEMANTIC_COLORS:
+            hex_key, ansi_key, prefix = self._SEMANTIC_COLORS[name]
 
-    @property
-    def error(self) -> dict[Literal["console", "log"], str]:
-        """Error messages (✗)."""
-        return self._color_dict("red", "red")
+            # Get actual color values (attrs or literals)
+            hex_val = getattr(self, hex_key, hex_key)
+            ansi_val = getattr(self, ansi_key, ansi_key)
 
-    @property
-    def header(self) -> dict[Literal["console", "log"], str]:
-        """Headers and titles."""
-        return self._color_dict(self.yale_blue_hex, self.yale_blue_ansi)
+            # Apply prefix if present
+            if prefix:
+                return {"console": f"{prefix} {hex_val}", "log": f"{prefix} {ansi_val}"}
+            return {"console": hex_val, "log": ansi_val}
 
-    @property
-    def highlight(self) -> dict[Literal["console", "log"], str]:
-        """Numbers, important values."""
-        return self._color_dict(self.sky_aqua_hex, self.sky_aqua_ansi)
-
-    @property
-    def path(self) -> dict[Literal["console", "log"], str]:
-        """File paths."""
-        return self._color_dict(self.baltic_blue_hex, self.baltic_blue_ansi)
-
-    @property
-    def step_current(self) -> dict[Literal["console", "log"], str]:
-        """Current step in progress."""
-        return self._color_dict(self.mustard_hex, self.mustard_ansi)
-
-    @property
-    def step_complete(self) -> dict[Literal["console", "log"], str]:
-        """Completed steps."""
-        return self._color_dict(
-            f"dim {self.deep_saffron_hex}",
-            f"dim {self.deep_saffron_ansi}"
-        )
-
-    @property
-    def step_pending(self) -> dict[Literal["console", "log"], str]:
-        """Pending steps."""
-        return self._color_dict("dim white", "dim white")
-
-    @property
-    def table_header(self) -> dict[Literal["console", "log"], str]:
-        """Table column headers."""
-        return self._color_dict(self.sky_aqua_hex, self.sky_aqua_ansi)
-
-    @property
-    def table_value(self) -> dict[Literal["console", "log"], str]:
-        """Table values."""
-        return self._color_dict("white", "white")
-
-    @property
-    def u12_highlight(self) -> dict[Literal["console", "log"], str]:
-        """U12 introns (rare, important)."""
-        return self._color_dict(
-            f"bold {self.mustard_hex}",
-            f"bold {self.mustard_ansi}"
-        )
-
-    @property
-    def timestamp(self) -> dict[Literal["console", "log"], str]:
-        """Timestamps."""
-        return self._color_dict("dim white", "dim white")
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
 
 # Global palette instance

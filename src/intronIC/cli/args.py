@@ -871,6 +871,24 @@ Note: This command extracts intron sequences but does not perform classification
             "--seed", type=int, default=42, help="Random seed (default: 42)"
         )
 
+    def _require_file_exists(self, path: Optional[Path], command: str, label: str):
+        """Validate file exists, error if not."""
+        if path and not path.exists():
+            self.parser.error(f"{command}: {label} not found: {path}")
+
+    def _validate_files(self, args, command: str, file_specs: list):
+        """
+        Validate multiple file attributes exist.
+
+        Args:
+            args: Parsed arguments
+            command: Command name for error messages
+            file_specs: List of (attr_name, label) tuples
+        """
+        for attr, label in file_specs:
+            path = getattr(args, attr, None)
+            self._require_file_exists(path, command, label)
+
     def _validate_args(self, args):
         """Validate parsed arguments based on command.
 
@@ -903,14 +921,10 @@ Note: This command extracts intron sequences but does not perform classification
                 self.parser.error("train: test_fraction must be between 0 and 1")
 
             # Validate custom reference files exist
-            if args.reference_u12s and not args.reference_u12s.exists():
-                self.parser.error(
-                    f"train: reference U12 file not found: {args.reference_u12s}"
-                )
-            if args.reference_u2s and not args.reference_u2s.exists():
-                self.parser.error(
-                    f"train: reference U2 file not found: {args.reference_u2s}"
-                )
+            self._validate_files(args, "train", [
+                ("reference_u12s", "U12 reference file"),
+                ("reference_u2s", "U2 reference file"),
+            ])
 
         # ===============================================================
         # EXTRACT MODE VALIDATION
@@ -943,12 +957,11 @@ Note: This command extracts intron sequences but does not perform classification
                 )
 
             # Validate file paths exist
-            if args.genome and not args.genome.exists():
-                self.parser.error(f"extract: genome file not found: {args.genome}")
-            if has_annotation and not args.annotation.exists():
-                self.parser.error(f"extract: annotation file not found: {args.annotation}")
-            if has_bed and not args.bed.exists():
-                self.parser.error(f"extract: BED file not found: {args.bed}")
+            self._validate_files(args, "extract", [
+                ("genome", "genome file"),
+                ("annotation", "annotation file"),
+                ("bed", "BED file"),
+            ])
 
         # ===============================================================
         # CLASSIFY MODE VALIDATION
@@ -1016,18 +1029,13 @@ Note: This command extracts intron sequences but does not perform classification
                         )
 
             # Validate file paths exist
-            file_attrs = [
-                "genome",
-                "annotation",
-                "bed",
-                "sequence_file",
-                "model",
-            ]
-            for attr_name in file_attrs:
-                if hasattr(args, attr_name):
-                    filepath = getattr(args, attr_name)
-                    if filepath and not filepath.exists():
-                        self.parser.error(f"classify: file not found: {filepath}")
+            self._validate_files(args, "classify", [
+                ("genome", "genome file"),
+                ("annotation", "annotation file"),
+                ("bed", "BED file"),
+                ("sequence_file", "sequence file"),
+                ("model", "model file"),
+            ])
 
             # Threshold validation
             if not 0 <= args.threshold <= 100:

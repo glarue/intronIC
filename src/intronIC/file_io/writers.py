@@ -20,6 +20,53 @@ from typing import Dict, Iterable, Optional, TextIO, Tuple, Union
 
 from intronIC.core.intron import Intron, IntronFlags, OmissionReason
 
+
+# ============================================================================
+# Base Writer Class
+# ============================================================================
+
+
+class BaseWriter:
+    """Base class for all intronIC output writers with shared file handling."""
+
+    def __init__(self, file_path: Union[str, Path], mode: str = "w"):
+        """
+        Initialize writer.
+
+        Args:
+            file_path: Path to output file
+            mode: File open mode ('w' for write, 'a' for append)
+        """
+        self.file_path = Path(file_path)
+        self.file: Optional[TextIO] = None
+        self.items_written = 0
+        self._mode = mode
+
+    def open(self) -> None:
+        """Open output file for writing."""
+        self.file = open(self.file_path, self._mode)
+
+    def close(self) -> None:
+        """Close output file."""
+        if self.file:
+            self.file.close()
+            self.file = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()
+
+    def _require_open(self):
+        """Raise error if file is not open."""
+        if not self.file:
+            raise ValueError("File not open. Call open() first or use context manager.")
+
+
 # ============================================================================
 # Attribute Tag Mapping
 # ============================================================================
@@ -530,7 +577,7 @@ def generate_bp_context(intron: Intron) -> str:
 # ============================================================================
 
 
-class BEDWriter:
+class BEDWriter(BaseWriter):
     """
     Writer for BED format output (.bed.iic).
 
@@ -550,44 +597,14 @@ class BEDWriter:
         >>> writer.close()
     """
 
-    def __init__(self, file_path: Union[str, Path]):
-        """
-        Initialize BED writer.
-
-        Args:
-            file_path: Path to output file
-        """
-        self.file_path = Path(file_path)
-        self.file: Optional[TextIO] = None
-        self.introns_written = 0
-
-    def open(self) -> None:
-        """Open output file for writing."""
-        self.file = open(self.file_path, "w")
-
-    def close(self) -> None:
-        """Close output file."""
-        if self.file:
-            self.file.close()
-            self.file = None
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.open()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    @property
+    def introns_written(self) -> int:
+        """Backward-compatible alias for items_written."""
+        return self.items_written
 
     def write_header(self) -> None:
-        """
-        Write BED header (optional).
-
-        BED format doesn't have a standard header, but we can add a track line.
-        """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        """Write BED header (optional). BED has no standard header."""
+        self._require_open()
 
     def write_intron(
         self,
@@ -610,8 +627,7 @@ class BEDWriter:
         Format:
             chrom  start(0-based)  stop  name  svm_score  strand  attributes
         """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         # Get BED start (0-based)
         start_0based = intron.start - 1
@@ -620,7 +636,6 @@ class BEDWriter:
         score = "NA" if intron.svm_score is None else str(intron.svm_score)
 
         # Generate intron name using same format as meta.iic
-        # Format: Species-Gene@Transcript-intron_N(family_size)
         name = generate_intron_name(
             intron, species_name, simple_name, no_abbreviate, intron_number
         )
@@ -639,7 +654,7 @@ class BEDWriter:
             attributes,
         ]
         self.file.write("\t".join(fields) + "\n")
-        self.introns_written += 1
+        self.items_written += 1
 
     def write_introns(
         self,
@@ -676,7 +691,7 @@ class BEDWriter:
 # ============================================================================
 
 
-class MetaWriter:
+class MetaWriter(BaseWriter):
     """
     Writer for metadata format output (.meta.iic).
 
@@ -693,40 +708,14 @@ class MetaWriter:
         >>> #     writer.write_introns(introns)
     """
 
-    def __init__(self, file_path: Union[str, Path]):
-        """
-        Initialize metadata writer.
-
-        Args:
-            file_path: Path to output file
-        """
-        self.file_path = Path(file_path)
-        self.file: Optional[TextIO] = None
-        self.introns_written = 0
-
-    def open(self) -> None:
-        """Open output file for writing."""
-        self.file = open(self.file_path, "w")
-
-    def close(self) -> None:
-        """Close output file."""
-        if self.file:
-            self.file.close()
-            self.file = None
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.open()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    @property
+    def introns_written(self) -> int:
+        """Backward-compatible alias for items_written."""
+        return self.items_written
 
     def write_header(self) -> None:
         """Write metadata file header."""
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         header_fields = [
             "name",
@@ -771,8 +760,7 @@ class MetaWriter:
             name  rel_score  dnts  motif  bp_context  length  parent  grandparent
             index  family_size  frac_pos  phase  type_id  feature
         """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         # Generate intron name using shared function
         name = generate_intron_name(
@@ -859,7 +847,7 @@ class MetaWriter:
         ]
 
         self.file.write("\t".join(fields) + "\n")
-        self.introns_written += 1
+        self.items_written += 1
 
     def write_introns(
         self,
@@ -867,20 +855,9 @@ class MetaWriter:
         species_name: Optional[str] = None,
         simple_name: bool = False,
     ) -> int:
-        """
-        Write multiple introns.
-
-        Args:
-            introns: Iterable of Intron objects
-            species_name: Species name
-            simple_name: Use simple naming
-
-        Returns:
-            Number of introns written
-        """
+        """Write multiple introns. Returns number written."""
         count = 0
         for idx, intron in enumerate(introns, start=1):
-            # Pass enumeration counter when using simple_name
             intron_number = idx if simple_name else None
             self.write_intron(
                 intron, species_name, simple_name, intron_number=intron_number
@@ -894,7 +871,7 @@ class MetaWriter:
 # ============================================================================
 
 
-class SequenceWriter:
+class SequenceWriter(BaseWriter):
     """
     Writer for sequence format output (.introns.iic).
 
@@ -910,37 +887,10 @@ class SequenceWriter:
         >>> #     writer.write_introns(introns, include_score=True)
     """
 
-    def __init__(self, file_path: Union[str, Path], mode: str = "w"):
-        """
-        Initialize sequence writer.
-
-        Args:
-            file_path: Path to output file
-            mode: File open mode ('w' for write, 'a' for append)
-        """
-        self.file_path = Path(file_path)
-        self.file: Optional[TextIO] = None
-        self.introns_written = 0
-        self.mode = mode
-
-    def open(self) -> None:
-        """Open output file for writing."""
-        self.file = open(self.file_path, self.mode)
-
-    def close(self) -> None:
-        """Close output file."""
-        if self.file:
-            self.file.close()
-            self.file = None
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.open()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    @property
+    def introns_written(self) -> int:
+        """Backward-compatible alias for items_written."""
+        return self.items_written
 
     def write_intron(
         self,
@@ -965,8 +915,7 @@ class SequenceWriter:
         Format:
             name  [score]  upstream_flank  sequence  downstream_flank
         """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         if not intron.sequences or not intron.sequences.seq:
             raise ValueError(f"Intron {intron.intron_id} has no sequence data")
@@ -991,7 +940,7 @@ class SequenceWriter:
         fields.extend([upstream, sequence, downstream])
 
         self.file.write("\t".join(fields) + "\n")
-        self.introns_written += 1
+        self.items_written += 1
 
     def write_from_row(
         self,
@@ -1022,8 +971,7 @@ class SequenceWriter:
         Format:
             name  score  upstream_flank  sequence  downstream_flank
         """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         fields = [formatted_name]
 
@@ -1035,7 +983,7 @@ class SequenceWriter:
         fields.extend([upstream_flank or "", seq, downstream_flank or ""])
 
         self.file.write("\t".join(fields) + "\n")
-        self.introns_written += 1
+        self.items_written += 1
 
     def write_introns(
         self,
@@ -1079,7 +1027,7 @@ class SequenceWriter:
 # ============================================================================
 
 
-class ScoreWriter:
+class ScoreWriter(BaseWriter):
     """
     Writer for detailed scoring information (.score_info.iic).
 
@@ -1097,40 +1045,14 @@ class ScoreWriter:
         >>> #     writer.write_introns(introns)
     """
 
-    def __init__(self, file_path: Union[str, Path]):
-        """
-        Initialize score writer.
-
-        Args:
-            file_path: Path to output file
-        """
-        self.file_path = Path(file_path)
-        self.file: Optional[TextIO] = None
-        self.introns_written = 0
-
-    def open(self) -> None:
-        """Open output file for writing."""
-        self.file = open(self.file_path, "w")
-
-    def close(self) -> None:
-        """Close output file."""
-        if self.file:
-            self.file.close()
-            self.file = None
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.open()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    @property
+    def introns_written(self) -> int:
+        """Backward-compatible alias for items_written."""
+        return self.items_written
 
     def write_header(self) -> None:
         """Write score file header."""
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         header_fields = [
             "name",
@@ -1172,8 +1094,7 @@ class ScoreWriter:
             no_abbreviate: Use full species name instead of abbreviation
             null: Placeholder for missing values
         """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
+        self._require_open()
 
         # Generate intron name using shared function
         name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
@@ -1267,7 +1188,7 @@ class ScoreWriter:
         ]
 
         self.file.write("\t".join(fields) + "\n")
-        self.introns_written += 1
+        self.items_written += 1
 
     def write_introns(
         self,
@@ -1298,7 +1219,7 @@ class ScoreWriter:
 # ============================================================================
 
 
-class MappingWriter:
+class MappingWriter(BaseWriter):
     """
     Writer for mapping files (duplicate and overlap maps).
 
@@ -1315,35 +1236,10 @@ class MappingWriter:
         >>> #     writer.write_mapping("rep1", "dup2")
     """
 
-    def __init__(self, file_path: Union[str, Path]):
-        """
-        Initialize mapping writer.
-
-        Args:
-            file_path: Path to output file
-        """
-        self.file_path = Path(file_path)
-        self.file: Optional[TextIO] = None
-        self.mappings_written = 0
-
-    def open(self) -> None:
-        """Open output file for writing."""
-        self.file = open(self.file_path, "w")
-
-    def close(self) -> None:
-        """Close output file."""
-        if self.file:
-            self.file.close()
-            self.file = None
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.open()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    @property
+    def mappings_written(self) -> int:
+        """Backward-compatible alias for items_written."""
+        return self.items_written
 
     def write_mapping(self, representative: str, excluded: str) -> None:
         """
@@ -1353,11 +1249,9 @@ class MappingWriter:
             representative: Name of the representative intron
             excluded: Name of the excluded (duplicate/overlapping) intron
         """
-        if not self.file:
-            raise ValueError("File not open. Call open() first or use context manager.")
-
+        self._require_open()
         self.file.write(f"{representative}\t{excluded}\n")
-        self.mappings_written += 1
+        self.items_written += 1
 
     def write_mappings(self, mappings: Dict[str, Iterable[str]]) -> int:
         """

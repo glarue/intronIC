@@ -56,17 +56,17 @@ class IntronICProgressReporter:
             return
 
         header = Text()
-        header.append("intronIC ", style=f"bold {PALETTE.highlight}")
+        header.append("intronIC ", style=f"bold {PALETTE.highlight['console']}")
         header.append(f"v{__version__}", style="dim")
-        header.append(" - Intron Classification Pipeline\n", style=f"bold {PALETTE.highlight}")
-        header.append(f"Species: ", style=PALETTE.table_value)
-        header.append(f"{species_name}\n", style=PALETTE.mustard)
-        header.append(f"Input: ", style=PALETTE.table_value)
-        header.append(f"{input_mode}", style=PALETTE.success)
+        header.append(" - Intron Classification Pipeline\n", style=f"bold {PALETTE.highlight['console']}")
+        header.append(f"Species: ", style=PALETTE.table_value["console"])
+        header.append(f"{species_name}\n", style=PALETTE.mustard_hex)
+        header.append(f"Input: ", style=PALETTE.table_value["console"])
+        header.append(f"{input_mode}", style=PALETTE.success["console"])
 
         panel = Panel(
             header,
-            border_style=PALETTE.highlight,
+            border_style=PALETTE.highlight["console"],
             box=box.DOUBLE,
             padding=(1, 2)
         )
@@ -83,7 +83,7 @@ class IntronICProgressReporter:
             return
 
         if style is None:
-            style = f"bold {PALETTE.header}"
+            style = f"bold {PALETTE.header['console']}"
 
         self.console.print()
         self.console.rule(f"[{style}]{title}", style=style)
@@ -98,7 +98,8 @@ class IntronICProgressReporter:
         if self.quiet:
             return
 
-        self.console.print(f"[{PALETTE.info}]{prefix}[/{PALETTE.info}] {message}")
+        color = PALETTE.info["console"]
+        self.console.print(f"[{color}]{prefix}[/{color}] {message}")
 
     def print_success(self, message: str, prefix: str = "✓"):
         """Print success message.
@@ -107,7 +108,8 @@ class IntronICProgressReporter:
             message: Message to print
             prefix: Prefix icon/text
         """
-        self.console.print(f"[{PALETTE.success}]{prefix}[/{PALETTE.success}] {message}")
+        color = PALETTE.success["console"]
+        self.console.print(f"[{color}]{prefix}[/{color}] {message}")
 
     def print_warning(self, message: str, prefix: str = "⚠"):
         """Print warning message.
@@ -116,7 +118,8 @@ class IntronICProgressReporter:
             message: Message to print
             prefix: Prefix icon/text
         """
-        self.console.print(f"[{PALETTE.warning}]{prefix}[/{PALETTE.warning}] {message}")
+        color = PALETTE.warning["console"]
+        self.console.print(f"[{color}]{prefix}[/{color}] {message}")
 
     def print_error(self, message: str, prefix: str = "✗"):
         """Print error message.
@@ -125,7 +128,8 @@ class IntronICProgressReporter:
             message: Message to print
             prefix: Prefix icon/text
         """
-        self.console.print(f"[{PALETTE.error}]{prefix}[/{PALETTE.error}] {message}", style="bold")
+        color = PALETTE.error["console"]
+        self.console.print(f"[{color}]{prefix}[/{color}] {message}", style="bold")
 
     def print_stats_table(self, stats: Dict[str, Any], title: str = "Statistics"):
         """Print statistics as a formatted table.
@@ -137,9 +141,9 @@ class IntronICProgressReporter:
         if self.quiet:
             return
 
-        table = Table(title=title, box=box.ROUNDED, title_style=f"bold {PALETTE.highlight}")
-        table.add_column("Metric", style=PALETTE.table_header, no_wrap=True)
-        table.add_column("Value", style=PALETTE.table_value, justify="right")
+        table = Table(title=title, box=box.ROUNDED, title_style=f"bold {PALETTE.highlight['console']}")
+        table.add_column("Metric", style=PALETTE.table_header["console"], no_wrap=True)
+        table.add_column("Value", style=PALETTE.table_value["console"], justify="right")
 
         for key, value in stats.items():
             # Format values nicely
@@ -181,11 +185,11 @@ class IntronICProgressReporter:
         table = Table(
             title=f"Classification Results (threshold: {threshold}%)",
             box=box.DOUBLE_EDGE,
-            title_style=f"bold {PALETTE.highlight}"
+            title_style=f"bold {PALETTE.highlight['console']}"
         )
-        table.add_column("Type", style=PALETTE.table_header, no_wrap=True)
-        table.add_column("Count", style=PALETTE.table_value, justify="right")
-        table.add_column("Percentage", style=PALETTE.table_value, justify="right")
+        table.add_column("Type", style=PALETTE.table_header["console"], no_wrap=True)
+        table.add_column("Count", style=PALETTE.table_value["console"], justify="right")
+        table.add_column("Percentage", style=PALETTE.table_value["console"], justify="right")
 
         table.add_row("[bold]U12-type", f"[bold]{u12_count:,}", f"[bold]{u12_pct:.2f}%")
         table.add_row("U2-type", f"{u2_count:,}", f"{u2_pct:.2f}%")
@@ -202,10 +206,12 @@ class IntronICProgressReporter:
         if self.quiet:
             return
 
-        tree = Tree(f"📁 [bold {PALETTE.highlight}]Output Files", guide_style="dim")
+        tree = Tree(f"📁 [bold {PALETTE.highlight['console']}]Output Files", guide_style="dim")
 
         for file_type, filepath in output_files.items():
-            tree.add(f"[{PALETTE.success}]{file_type}:[/{PALETTE.success}] [{PALETTE.path}]{filepath}")
+            success_color = PALETTE.success["console"]
+            path_color = PALETTE.path["console"]
+            tree.add(f"[{success_color}]{file_type}:[/{success_color}] [{path_color}]{filepath}")
 
         self.console.print(tree)
 
@@ -237,22 +243,22 @@ class IntronICProgressReporter:
         if self.quiet:
             return
 
-        tree = Tree(f"🔄 [bold {PALETTE.highlight}]Pipeline Steps", guide_style="dim")
+        tree = Tree(f"🔄 [bold {PALETTE.highlight['console']}]Pipeline Steps", guide_style="dim")
 
         for i, step in enumerate(steps, 1):
             if current_step is not None:
                 if i < current_step:
                     # Completed
-                    tree.add(f"[{PALETTE.step_complete}]✓ {step}")
+                    tree.add(f"[{PALETTE.step_complete['console']}]✓ {step}")
                 elif i == current_step:
                     # Current
-                    tree.add(f"[bold {PALETTE.step_current}]▶ {step}")
+                    tree.add(f"[bold {PALETTE.step_current['console']}]▶ {step}")
                 else:
                     # Pending
-                    tree.add(f"[{PALETTE.step_pending}]○ {step}")
+                    tree.add(f"[{PALETTE.step_pending['console']}]○ {step}")
             else:
                 # Overview mode
-                tree.add(f"[{PALETTE.table_value}]{i}. {step}")
+                tree.add(f"[{PALETTE.table_value['console']}]{i}. {step}")
 
         self.console.print(tree)
 
@@ -269,10 +275,10 @@ class IntronICProgressReporter:
         table = Table(
             title=f"Model {model_index} Metrics",
             box=box.SIMPLE,
-            title_style=f"bold {PALETTE.header}"
+            title_style=f"bold {PALETTE.header['console']}"
         )
-        table.add_column("Metric", style=PALETTE.table_header)
-        table.add_column("Value", style=PALETTE.table_value, justify="right")
+        table.add_column("Metric", style=PALETTE.table_header["console"])
+        table.add_column("Value", style=PALETTE.table_value["console"], justify="right")
 
         for metric, value in metrics.items():
             if isinstance(value, float):
