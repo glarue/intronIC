@@ -2830,7 +2830,7 @@ def _process_contig_streaming_classify_worker(
 
     # Skip empty contigs
     if not contig_annotations or all(a.feat_type == "region" for a in contig_annotations):
-        return [], stats
+        return contig, [], stats
 
     # Build gene hierarchy
     builder = AnnotationHierarchyBuilder(
@@ -2843,13 +2843,13 @@ def _process_contig_streaming_classify_worker(
         contig_genes = builder.build_from_annotations(contig_annotations)
     except ValueError as e:
         if "Could not establish parent-child relationships" in str(e):
-            return [], stats
+            return contig, [], stats
         raise
 
     del contig_annotations
 
     if not contig_genes:
-        return [], stats
+        return contig, [], stats
 
     stats["genes"] = len(contig_genes)
 
@@ -2873,7 +2873,7 @@ def _process_contig_streaming_classify_worker(
 
     if not contig_introns:
         del contig_genes, builder
-        return [], stats
+        return contig, [], stats
 
     # Get worker's genome reader and create extractor
     indexed_genome = get_worker_genome()
@@ -2935,7 +2935,7 @@ def _process_contig_streaming_classify_worker(
 
     if not scorable:
         del contig_genes, builder, contig_introns, contig_with_seqs, filtered_introns
-        return [], stats
+        return contig, [], stats
 
     # Create scorer
     scorer = IntronScorer(
