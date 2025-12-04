@@ -26,6 +26,9 @@ wheels/
 htmlcov/
 .tox/
 
+# Local config files (for testing)
+config/full_training_config.yaml
+
 # IDEs
 .vscode/
 .idea/
