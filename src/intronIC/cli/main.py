@@ -3792,198 +3792,55 @@ def classify_introns(
     """
     messenger.info("Training SVM classifier")
 
-    # Load optimizer configuration if specified
-    param_grid_override = None
-    optimizer_n_rounds = config.training.n_optimization_rounds
-    optimizer_cv_folds = config.training.n_cv_folds
-    optimizer_cv_processes = config.performance.cv_processes
-    optimizer_max_iter = config.training.max_iter
-    optimizer_n_points_initial = 13  # Default value
-    eff_C_pos_range = (1e-3, 1e3)  # Default C bounds
-    eff_C_neg_max = None  # Default C bounds
+    # All optimizer/ensemble settings are pre-loaded in config.optimizer and config.ensemble
+    # These were populated from YAML during IntronICConfig.from_yaml_and_args()
+    # No need to re-load the YAML file here!
 
-    # Initialize YAML training settings to None (may be overridden if YAML config provided)
-    yaml_n_models = None
-    yaml_subsample_u2 = None
-    yaml_subsample_ratio = None
-    yaml_training_max_iter = None
-    yaml_training_random_state = None
+    opt = config.optimizer
+    ens = config.ensemble
 
-    # Load unified configuration file
-    # Auto-discovers from standard paths if not explicitly specified
-    # Priority: --config arg > ./.intronIC.yaml > ~/.config/intronIC/config.yaml > built-in
-    from intronIC.utils.config_loader import find_config, load_config
+    # Log config source
+    if config.config_path:
+        messenger.log_only(f"Using configuration from: {config.config_path}")
+    else:
+        messenger.log_only("Using default configuration")
 
-    try:
-        # Load config (auto-discovers if config_path is None)
-        config_path_str = (
-            str(config.training.config_path) if config.training.config_path else None
+    # Log optimizer settings
+    messenger.log_only("Optimizer configuration:")
+    messenger.log_only(f"  Optimization rounds: {opt.n_rounds}")
+    messenger.log_only(f"  Initial grid points: {opt.n_points_initial}")
+    messenger.log_only(f"  CV folds: {opt.cv_folds}")
+    messenger.log_only(f"  Parallel jobs: {opt.n_jobs}")
+    messenger.log_only(f"  Max iterations: {opt.max_iter}")
+    messenger.log_only(f"  Scoring metric: {opt.scoring_metric}")
+    messenger.log_only(f"  Penalty options: {list(opt.penalty_options)}")
+    messenger.log_only(f"  Loss options: {list(opt.loss_options)}")
+    messenger.log_only(
+        f"  Class weight multipliers: {list(opt.class_weight_multipliers)}"
+    )
+    if opt.features:
+        messenger.log_only(f"  Features: {list(opt.features)}")
+    else:
+        messenger.log_only("  Features: default (4D)")
+    if opt.gamma_imbalance_options:
+        messenger.log_only(
+            f"  Gamma imbalance options: {list(opt.gamma_imbalance_options)}"
         )
-        yaml_config = load_config(config_path_str)
-
-        # Log which config file was loaded
-        if yaml_config:
-            config_path = find_config(config_path_str)
-            if config_path:
-                messenger.log_only(f"Loaded configuration from: {config_path}")
-
-            # Extract sections from unified config
-            optimizer_cfg = yaml_config.get("optimizer", {})
-            training_cfg = yaml_config.get("training", {})
-            ensemble_cfg = training_cfg.get("ensemble", {})
-            param_grid_override = yaml_config.get("param_grid", {})
-
-            # Extract optimizer settings
-            optimizer_n_rounds = optimizer_cfg.get("n_rounds", 5)
-            optimizer_cv_folds = optimizer_cfg.get("cv_folds", 7)
-            optimizer_cv_processes = optimizer_cfg.get("n_jobs", -1)
-            optimizer_max_iter = optimizer_cfg.get("max_iter", 60000)
-            optimizer_n_points_initial = optimizer_cfg.get("n_points_initial", 13)
-
-            # Extract new robustness parameters
-            scoring_metric = optimizer_cfg.get("scoring_metric", "balanced_accuracy")
-            penalty_options = optimizer_cfg.get("penalty_options", ["l2"])
-            loss_options = optimizer_cfg.get("loss_options", ["squared_hinge"])
-            class_weight_multipliers = optimizer_cfg.get(
-                "class_weight_multipliers", [1.0]
-            )
-            use_multiplier_tiebreaker = optimizer_cfg.get(
-                "use_multiplier_tiebreaker", True
-            )
-
-            # Extract feature transformation settings
-            feature_transform_cfg = optimizer_cfg.get("feature_transform", {})
-            features_list = feature_transform_cfg.get("features", None)
-
-            # Extract gamma scaling options
-            gamma_imbalance_options = optimizer_cfg.get("gamma_imbalance_options", None)
-
-            # Extract C bounds (if specified)
-            c_bounds = optimizer_cfg.get("c_bounds", {})
-            eff_C_pos_range = tuple(c_bounds.get("eff_C_pos_range", [1e-3, 1e3]))
-            eff_C_neg_max = c_bounds.get("eff_C_neg_max", None)
-
-            # Extract ensemble/training settings
-            yaml_n_models = ensemble_cfg.get("n_models")
-            yaml_subsample_u2 = ensemble_cfg.get("subsample_u2")
-            yaml_subsample_ratio = ensemble_cfg.get("subsample_ratio")
-            yaml_training_max_iter = ensemble_cfg.get("max_iter")
-            yaml_training_random_state = ensemble_cfg.get("random_state")
-
-            # Extract fold-averaged params setting
-            yaml_use_fold_averaged = training_cfg.get("use_fold_averaged_params")
-
-            # Update config if ensemble settings provided
-            if yaml_n_models is not None:
-                config = replace(
-                    config, training=replace(config.training, n_models=yaml_n_models)
-                )
-                messenger.log_only(f"  Ensemble models: {yaml_n_models} (from config)")
-            if yaml_subsample_u2 is not None:
-                messenger.log_only(f"  Subsample U2: {yaml_subsample_u2} (from config)")
-            if yaml_subsample_ratio is not None:
-                messenger.log_only(
-                    f"  Subsample ratio: {yaml_subsample_ratio} (from config)"
-                )
-            if yaml_training_max_iter is not None:
-                messenger.log_only(
-                    f"  Training max_iter: {yaml_training_max_iter} (from config)"
-                )
-            if yaml_training_random_state is not None:
-                messenger.log_only(
-                    f"  Training random_state: {yaml_training_random_state} (from config)"
-                )
-
-            # Log optimizer settings
-            if optimizer_cfg:
-                messenger.log_only("Loaded optimizer configuration:")
-                messenger.log_only(f"  Optimization rounds: {optimizer_n_rounds}")
-                messenger.log_only(
-                    f"  Initial grid points: {optimizer_n_points_initial}"
-                )
-                messenger.log_only(f"  CV folds: {optimizer_cv_folds}")
-                messenger.log_only(f"  Parallel jobs: {optimizer_cv_processes}")
-                messenger.log_only(f"  Max iterations: {optimizer_max_iter}")
-                messenger.log_only(f"  Scoring metric: {scoring_metric}")
-                messenger.log_only(f"  Penalty options: {penalty_options}")
-                messenger.log_only(f"  Loss options: {loss_options}")
-                messenger.log_only(
-                    f"  Class weight multipliers: {class_weight_multipliers}"
-                )
-                if features_list:
-                    messenger.log_only(f"  Feature transform: {features_list}")
-                else:
-                    messenger.log_only("  Feature transform: default (7D)")
-                if gamma_imbalance_options:
-                    messenger.log_only(
-                        f"  Gamma imbalance options: {gamma_imbalance_options}"
-                    )
-                if param_grid_override:
-                    messenger.log_only(
-                        f"  Parameter grid: {len(param_grid_override)} hyperparameter sets"
-                    )
-                if c_bounds:
-                    messenger.log_only(
-                        f"  C bounds: eff_C_pos_range={eff_C_pos_range}, eff_C_neg_max={eff_C_neg_max}"
-                    )
-        else:
-            # No config found - use CLI defaults
-            messenger.log_only("No configuration file found - using CLI defaults")
-            optimizer_n_rounds = config.training.n_optimization_rounds
-            optimizer_cv_folds = config.training.n_cv_folds
-            optimizer_cv_processes = (
-                config.performance.cv_processes or config.performance.processes
-            )
-            optimizer_max_iter = config.training.max_iter
-            optimizer_n_points_initial = 13
-            scoring_metric = "balanced_accuracy"
-            penalty_options = ["l2"]
-            loss_options = ["squared_hinge"]
-            class_weight_multipliers = [1.0]
-            use_multiplier_tiebreaker = True
-            features_list = None
-            gamma_imbalance_options = None
-            param_grid_override = {}
-            eff_C_pos_range = (1e-3, 1e3)
-            eff_C_neg_max = None
-            yaml_n_models = None
-            yaml_subsample_u2 = None
-            yaml_subsample_ratio = None
-            yaml_training_max_iter = None
-            yaml_training_random_state = None
-            yaml_use_fold_averaged = None
-
-    except FileNotFoundError as e:
-        messenger.error(f"Config file not found: {e}")
-        messenger.error("Use --config to specify a valid config file path")
-        raise SystemExit(1)
-    except Exception as e:
-        messenger.warning(f"Failed to load config: {e}")
-        messenger.warning("Continuing with CLI defaults...")
-        # Use CLI defaults if config loading fails
-        optimizer_n_rounds = config.training.n_optimization_rounds
-        optimizer_cv_folds = config.training.n_cv_folds
-        optimizer_cv_processes = (
-            config.performance.cv_processes or config.performance.processes
+    if opt.param_grid_override:
+        messenger.log_only(
+            f"  Parameter grid: {len(opt.param_grid_override)} hyperparameter sets"
         )
-        optimizer_max_iter = config.training.max_iter
-        optimizer_n_points_initial = 13
-        scoring_metric = "balanced_accuracy"
-        penalty_options = ["l2"]
-        loss_options = ["squared_hinge"]
-        class_weight_multipliers = [1.0]
-        use_multiplier_tiebreaker = True
-        features_list = None
-        gamma_imbalance_options = None
-        param_grid_override = {}
-        eff_C_pos_range = (1e-3, 1e3)
-        eff_C_neg_max = None
-        yaml_n_models = None
-        yaml_subsample_u2 = None
-        yaml_subsample_ratio = None
-        yaml_training_max_iter = None
-        yaml_training_random_state = None
-        yaml_use_fold_averaged = None
+    messenger.log_only(
+        f"  C bounds: eff_C_pos_range={opt.eff_C_pos_range}, eff_C_neg_max={opt.eff_C_neg_max}"
+    )
+
+    # Log ensemble settings
+    messenger.log_only("Ensemble configuration:")
+    messenger.log_only(f"  n_models: {ens.n_models}")
+    messenger.log_only(f"  subsample_u2: {ens.subsample_u2}")
+    messenger.log_only(f"  subsample_ratio: {ens.subsample_ratio}")
+    messenger.log_only(f"  max_iter: {ens.max_iter}")
+    messenger.log_only(f"  random_state: {ens.random_state}")
 
     # Create classifier with correct parameter names
     # IntronClassifier API uses:
@@ -3998,25 +3855,11 @@ def classify_introns(
     # - subsample_u2, subsample_ratio (ensemble diversity settings)
     # - max_iter (for LinearSVC convergence during ensemble training)
 
-    # Use YAML training settings if available, otherwise use CLI defaults
-    ensemble_subsample_u2 = yaml_subsample_u2 if yaml_subsample_u2 is not None else True
-    ensemble_subsample_ratio = (
-        yaml_subsample_ratio if yaml_subsample_ratio is not None else 0.8
+    # Get use_fold_averaged_params: CLI arg takes precedence over YAML config
+    # Check yaml_config for training.use_fold_averaged_params
+    yaml_use_fold_averaged = config.yaml_config.get("training", {}).get(
+        "use_fold_averaged_params"
     )
-    ensemble_max_iter = (
-        yaml_training_max_iter
-        if yaml_training_max_iter is not None
-        else optimizer_max_iter
-    )
-    ensemble_random_state = (
-        yaml_training_random_state
-        if yaml_training_random_state is not None
-        else config.training.seed
-    )
-
-    # Get use_fold_averaged_params: CLI arg takes precedence over config
-    # Priority: CLI arg (if explicitly set) > config value > default (False)
-    # yaml_use_fold_averaged was already extracted above from training_cfg
     if config.training.use_fold_averaged_params is not None:
         # CLI arg was explicitly provided
         use_fold_averaged_params = config.training.use_fold_averaged_params
@@ -4028,31 +3871,33 @@ def classify_introns(
         use_fold_averaged_params = False
 
     classifier = IntronClassifier(
-        n_optimization_rounds=optimizer_n_rounds,
+        n_optimization_rounds=opt.n_rounds,
         classification_threshold=config.scoring.threshold,
-        n_ensemble_models=config.training.n_models,
-        subsample_u2=ensemble_subsample_u2,
-        subsample_ratio=ensemble_subsample_ratio,
+        n_ensemble_models=ens.n_models,
+        subsample_u2=ens.subsample_u2,
+        subsample_ratio=ens.subsample_ratio,
         fixed_c=config.training.fixed_C,
         optimize_c=(config.training.fixed_C is None),
-        random_state=ensemble_random_state,
-        cv_processes=optimizer_cv_processes,
+        random_state=ens.random_state,
+        cv_processes=opt.n_jobs,
         classification_processes=config.performance.processes,
-        max_iter=ensemble_max_iter,
+        max_iter=ens.max_iter,
         eval_mode=config.training.eval_mode,
-        n_cv_folds=optimizer_cv_folds,
+        n_cv_folds=opt.cv_folds,
         test_fraction=config.training.test_fraction,
-        scoring_metric=scoring_metric,
-        penalty_options=penalty_options,
-        loss_options=loss_options,
-        class_weight_multipliers=class_weight_multipliers,
-        use_multiplier_tiebreaker=use_multiplier_tiebreaker,
-        features_list=features_list,
-        gamma_imbalance_options=gamma_imbalance_options,
-        param_grid_override=param_grid_override,
-        n_points_initial=optimizer_n_points_initial,
-        eff_C_pos_range=eff_C_pos_range,
-        eff_C_neg_max=eff_C_neg_max,
+        scoring_metric=opt.scoring_metric,
+        penalty_options=list(opt.penalty_options),
+        loss_options=list(opt.loss_options),
+        class_weight_multipliers=list(opt.class_weight_multipliers),
+        use_multiplier_tiebreaker=opt.use_multiplier_tiebreaker,
+        features_list=list(opt.features) if opt.features else None,
+        gamma_imbalance_options=list(opt.gamma_imbalance_options)
+        if opt.gamma_imbalance_options
+        else None,
+        param_grid_override=opt.param_grid_override,
+        n_points_initial=opt.n_points_initial,
+        eff_C_pos_range=opt.eff_C_pos_range,
+        eff_C_neg_max=opt.eff_C_neg_max,
         use_fold_averaged_params=use_fold_averaged_params,
     )
 
@@ -4491,22 +4336,9 @@ def main_train(config: IntronICConfig):
         messenger.log_only(f"  U2 reference: {config.scoring.reference_u2s.absolute()}")
     messenger.log_only("")
 
-    # Load yaml config for detailed logging
-    from intronIC.utils.config_loader import find_config, load_config
-
-    yaml_config = None
-    try:
-        config_path_str = (
-            str(config.training.config_path) if config.training.config_path else None
-        )
-        yaml_config = load_config(config_path_str)
-        if yaml_config:
-            config_path = find_config(config_path_str)
-            if config_path:
-                messenger.log_only(f"Config file: {config_path.absolute()}")
-                messenger.log_only("")
-    except Exception as e:
-        messenger.log_only(f"Note: Could not load yaml config ({e})")
+    # Log config file path if loaded
+    if config.config_path:
+        messenger.log_only(f"Config file: {config.config_path.absolute()}")
         messenger.log_only("")
 
     # Log key configuration parameters in condensed format
@@ -4517,54 +4349,34 @@ def main_train(config: IntronICConfig):
     messenger.log_only("")
 
     messenger.log_only("Training:")
-    messenger.log_only(f"  n_models: {config.training.n_models}")
-    messenger.log_only(f"  max_iter: {config.training.max_iter}")
+    messenger.log_only(f"  n_models: {config.ensemble.n_models}")
+    messenger.log_only(f"  max_iter: {config.ensemble.max_iter}")
     messenger.log_only(f"  eval_mode: {config.training.eval_mode}")
     if config.training.fixed_C:
         messenger.log_only(f"  C: {config.training.fixed_C:.6e} (fixed)")
     else:
         messenger.log_only("  C: optimized via grid search")
-        messenger.log_only(
-            f"  n_optimization_rounds: {config.training.n_optimization_rounds}"
-        )
-        messenger.log_only(f"  n_cv_folds: {config.training.n_cv_folds}")
+        messenger.log_only(f"  n_optimization_rounds: {config.optimizer.n_rounds}")
+        messenger.log_only(f"  n_cv_folds: {config.optimizer.cv_folds}")
     messenger.log_only("")
 
-    # Log optimizer-specific config if present
-    if yaml_config and "optimizer" in yaml_config:
-        opt_cfg = yaml_config["optimizer"]
-        messenger.log_only("Optimizer:")
-
-        # Penalty options
-        if "penalty_options" in opt_cfg:
-            messenger.log_only(f"  penalty_options: {opt_cfg['penalty_options']}")
-
-        # Feature transform
-        if "feature_transform" in opt_cfg:
-            ft = opt_cfg["feature_transform"]
-            # Extract features list from feature_transform dict
-            features_list = ft.get("features", None)
-            if features_list:
-                features_str = ", ".join(features_list)
-                messenger.log_only(f"  features: [{features_str}]")
-            else:
-                messenger.log_only("  features: default (4D)")
-        else:
-            # No feature_transform section
-            messenger.log_only("  features: default (4D)")
-
-        # Gamma scaling
-        if "gamma_imbalance_options" in opt_cfg:
-            messenger.log_only(
-                f"  gamma_imbalance_options: {opt_cfg['gamma_imbalance_options']}"
-            )
-
-        # Class weight multipliers
-        if "class_weight_multipliers" in opt_cfg:
-            cwm = opt_cfg["class_weight_multipliers"]
-            messenger.log_only(f"  class_weight_multipliers: {cwm}")
-
-        messenger.log_only("")
+    # Log optimizer-specific config
+    opt = config.optimizer
+    messenger.log_only("Optimizer:")
+    messenger.log_only(f"  penalty_options: {list(opt.penalty_options)}")
+    if opt.features:
+        features_str = ", ".join(opt.features)
+        messenger.log_only(f"  features: [{features_str}]")
+    else:
+        messenger.log_only("  features: default (4D)")
+    if opt.gamma_imbalance_options:
+        messenger.log_only(
+            f"  gamma_imbalance_options: {list(opt.gamma_imbalance_options)}"
+        )
+    messenger.log_only(
+        f"  class_weight_multipliers: {list(opt.class_weight_multipliers)}"
+    )
+    messenger.log_only("")
 
     messenger.log_only("=" * 80)
     messenger.log_only("")

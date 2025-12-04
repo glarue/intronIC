@@ -134,6 +134,134 @@ class TrainingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class OptimizerConfig:
+    """Configuration for hyperparameter optimization.
+
+    Loaded from YAML config 'optimizer' section. This consolidates all
+    optimizer settings in one place, loaded once at startup.
+    """
+
+    # Grid search parameters
+    n_rounds: int = 5
+    n_points_initial: int = 13
+    n_points_refine: int = 50
+    cv_folds: int = 5
+    max_iter: int = 60000
+    random_state: int = 42
+    n_jobs: int = -1
+    verbose: bool = True
+
+    # Scoring and regularization
+    scoring_metric: str = "balanced_accuracy"
+    penalty_options: tuple = ("l2",)
+    loss_options: tuple = ("squared_hinge",)
+    class_weight_multipliers: tuple = (1.0,)
+    use_multiplier_tiebreaker: bool = True
+
+    # Feature transformation
+    features: Optional[tuple] = None  # None = default 4D (absdiff_bp_3)
+
+    # Gamma imbalance scaling
+    gamma_imbalance_options: Optional[tuple] = None
+
+    # C parameter bounds
+    eff_C_pos_range: tuple = (1e-3, 1e3)
+    eff_C_neg_max: Optional[float] = None
+
+    # Parameter grid override (for custom grids)
+    param_grid_override: Optional[dict] = None
+
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "OptimizerConfig":
+        """Create OptimizerConfig from YAML config dict.
+
+        Args:
+            yaml_config: Full YAML config dictionary
+
+        Returns:
+            OptimizerConfig instance with values from YAML
+        """
+        opt = yaml_config.get("optimizer", {})
+
+        # Convert lists to tuples for immutability
+        def to_tuple(val, default):
+            if val is None:
+                return default
+            if isinstance(val, (list, tuple)):
+                return tuple(val)
+            return (val,)
+
+        # Extract C bounds
+        c_bounds = opt.get("c_bounds", {})
+
+        # Extract feature transform
+        ft = opt.get("feature_transform", {})
+        features = ft.get("features")
+        if features is not None:
+            features = tuple(features) if isinstance(features, list) else (features,)
+
+        return cls(
+            n_rounds=opt.get("n_rounds", 5),
+            n_points_initial=opt.get("n_points_initial", 13),
+            n_points_refine=opt.get("n_points_refine", 50),
+            cv_folds=opt.get("cv_folds", 5),
+            max_iter=opt.get("max_iter", 60000),
+            random_state=opt.get("random_state", 42),
+            n_jobs=opt.get("n_jobs", -1),
+            verbose=opt.get("verbose", True),
+            scoring_metric=opt.get("scoring_metric", "balanced_accuracy"),
+            penalty_options=to_tuple(opt.get("penalty_options"), ("l2",)),
+            loss_options=to_tuple(opt.get("loss_options"), ("squared_hinge",)),
+            class_weight_multipliers=to_tuple(
+                opt.get("class_weight_multipliers"), (1.0,)
+            ),
+            use_multiplier_tiebreaker=opt.get("use_multiplier_tiebreaker", True),
+            features=features,
+            gamma_imbalance_options=to_tuple(opt.get("gamma_imbalance_options"), None)
+            if opt.get("gamma_imbalance_options")
+            else None,
+            eff_C_pos_range=tuple(c_bounds.get("eff_C_pos_range", [1e-3, 1e3])),
+            eff_C_neg_max=c_bounds.get("eff_C_neg_max"),
+            param_grid_override=yaml_config.get("param_grid"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EnsembleConfig:
+    """Configuration for ensemble training.
+
+    Loaded from YAML config 'training.ensemble' section.
+    """
+
+    n_models: int = 1
+    subsample_u2: bool = True
+    subsample_ratio: float = 0.85
+    max_iter: int = 50000
+    random_state: int = 42
+
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "EnsembleConfig":
+        """Create EnsembleConfig from YAML config dict.
+
+        Args:
+            yaml_config: Full YAML config dictionary
+
+        Returns:
+            EnsembleConfig instance with values from YAML
+        """
+        training = yaml_config.get("training", {})
+        ensemble = training.get("ensemble", {})
+
+        return cls(
+            n_models=ensemble.get("n_models", 1),
+            subsample_u2=ensemble.get("subsample_u2", True),
+            subsample_ratio=ensemble.get("subsample_ratio", 0.85),
+            max_iter=ensemble.get("max_iter", 50000),
+            random_state=ensemble.get("random_state", 42),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PerformanceConfig:
     """Configuration for performance settings."""
 
@@ -182,9 +310,25 @@ class OutputConfig:
         return self.output_dir / f"{self.base_filename}{suffix}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class IntronICConfig:
-    """Complete intronIC pipeline configuration."""
+    """Complete intronIC pipeline configuration.
+
+    This is the single source of truth for all configuration. It is created once
+    at startup from YAML config + CLI args, with CLI taking precedence.
+
+    Attributes:
+        input: Input file configuration
+        extraction: Intron extraction settings
+        scoring: PWM scoring settings
+        training: Basic training settings (n_models, eval_mode, etc.)
+        performance: Parallelization and memory settings
+        output: Output file settings
+        optimizer: Hyperparameter optimization settings (from YAML 'optimizer' section)
+        ensemble: Ensemble training settings (from YAML 'training.ensemble' section)
+        yaml_config: Raw YAML config dict (for any custom/advanced settings)
+        config_path: Path to the loaded config file (for logging)
+    """
 
     input: InputConfig
     extraction: ExtractionConfig
@@ -192,6 +336,10 @@ class IntronICConfig:
     training: TrainingConfig
     performance: PerformanceConfig
     output: OutputConfig
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
+    yaml_config: dict = field(default_factory=dict)
+    config_path: Optional[Path] = None
 
     @classmethod
     def from_yaml_and_args(cls, args, yaml_config: dict = None) -> "IntronICConfig":
@@ -200,26 +348,46 @@ class IntronICConfig:
         CLI arguments take precedence over YAML config values.
         This is the primary entry point - creates a unified config from both sources.
 
+        The config is loaded ONCE here and stored. All optimizer/ensemble settings
+        are extracted from the YAML and stored in typed dataclasses. The raw YAML
+        is also kept for any advanced/custom settings.
+
         Args:
             args: Parsed argument namespace from CLI
             yaml_config: Optional YAML config dict (if None, will auto-load)
 
         Returns:
-            IntronICConfig instance
+            IntronICConfig instance with all settings populated
         """
-        # Load YAML config if not provided
-        if yaml_config is None:
-            from intronIC.utils.config_loader import load_config
+        from intronIC.utils.config_loader import find_config, load_config
 
-            config_path = getattr(args, "config_path", None)
-            yaml_config = load_config(config_path) or {}
+        # Load YAML config if not provided
+        config_path_arg = getattr(args, "config_path", None)
+        if yaml_config is None:
+            yaml_config = load_config(config_path_arg) or {}
+
+        # Find the actual config path for logging
+        found_config_path = find_config(
+            str(config_path_arg) if config_path_arg else None
+        )
 
         # Merge YAML into args (CLI args take precedence)
         # Only set arg from YAML if it wasn't explicitly set on CLI
         merged_args = cls._merge_yaml_into_args(args, yaml_config)
 
+        # Create optimizer and ensemble configs from YAML
+        optimizer_config = OptimizerConfig.from_yaml(yaml_config)
+        ensemble_config = EnsembleConfig.from_yaml(yaml_config)
+
         # Now create config from merged args using existing logic
-        return cls.from_args(merged_args)
+        # Pass the extra configs to from_args
+        return cls.from_args(
+            merged_args,
+            optimizer_config=optimizer_config,
+            ensemble_config=ensemble_config,
+            yaml_config=yaml_config,
+            config_path=found_config_path,
+        )
 
     @staticmethod
     def _merge_yaml_into_args(args, yaml_config: dict):
@@ -284,15 +452,34 @@ class IntronICConfig:
         return args
 
     @classmethod
-    def from_args(cls, args) -> "IntronICConfig":
+    def from_args(
+        cls,
+        args,
+        optimizer_config: OptimizerConfig = None,
+        ensemble_config: EnsembleConfig = None,
+        yaml_config: dict = None,
+        config_path: Path = None,
+    ) -> "IntronICConfig":
         """Create configuration from parsed arguments.
 
         Args:
             args: Parsed argument namespace
+            optimizer_config: Pre-built OptimizerConfig (from YAML)
+            ensemble_config: Pre-built EnsembleConfig (from YAML)
+            yaml_config: Raw YAML config dict
+            config_path: Path to loaded config file
 
         Returns:
             IntronICConfig instance
         """
+        # Use defaults if not provided
+        if optimizer_config is None:
+            optimizer_config = OptimizerConfig()
+        if ensemble_config is None:
+            ensemble_config = EnsembleConfig()
+        if yaml_config is None:
+            yaml_config = {}
+
         # Input configuration
         input_config = InputConfig(
             genome=args.genome,
@@ -428,4 +615,8 @@ class IntronICConfig:
             training=training_config,
             performance=performance_config,
             output=output_config,
+            optimizer=optimizer_config,
+            ensemble=ensemble_config,
+            yaml_config=yaml_config,
+            config_path=config_path,
         )
