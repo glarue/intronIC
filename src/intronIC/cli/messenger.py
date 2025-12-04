@@ -23,7 +23,8 @@ class UnifiedMessenger:
     Unified messaging that sends to both console and log with Rich formatting.
 
     Eliminates redundancy by providing single method calls that output to both
-    destinations with preserved ANSI colors and formatting in the log file.
+    destinations. Uses dual color scheme: hex colors for console (truecolor),
+    named ANSI colors for log files (better compatibility).
     """
 
     def __init__(
@@ -51,12 +52,13 @@ class UnifiedMessenger:
         self.show_timestamps = show_timestamps
         self.last_timestamp = None  # Track last timestamp to avoid spam
 
-    def _get_timestamp(self, force: bool = False) -> str:
+    def _get_timestamp(self, force: bool = False, for_log: bool = False) -> str:
         """
         Get formatted timestamp if enough time has passed.
 
         Args:
             force: If True, always return timestamp
+            for_log: If True, use log-appropriate color
 
         Returns:
             Formatted timestamp string or empty string
@@ -73,7 +75,8 @@ class UnifiedMessenger:
             or (now - self.last_timestamp).total_seconds() >= 1.0
         ):
             self.last_timestamp = now
-            return f"[{PALETTE.timestamp}][{now.strftime('%H:%M:%S')}][/{PALETTE.timestamp}] "
+            ts_color = PALETTE.timestamp["log"] if for_log else PALETTE.timestamp["console"]
+            return f"[{ts_color}][{now.strftime('%H:%M:%S')}][/{ts_color}] "
 
         return ""
 
@@ -85,16 +88,18 @@ class UnifiedMessenger:
             message: Message text
             with_timestamp: If True, force timestamp on this message
         """
-        timestamp = self._get_timestamp(force=with_timestamp)
-        # Apply color to the entire message text for visibility in logs
-        formatted = f"{timestamp}[{PALETTE.info}]ℹ {message}[/{PALETTE.info}]"
-
-        # Console: with formatting
+        # Console: with truecolor hex
         if not self.quiet:
-            self.console.print(formatted)
+            timestamp = self._get_timestamp(force=with_timestamp, for_log=False)
+            color = PALETTE.info["console"]
+            console_msg = f"{timestamp}[{color}]ℹ {message}[/{color}]"
+            self.console.print(console_msg)
 
-        # Log: same formatting with ANSI preserved, written directly to log_console
-        self.log_console.print(formatted)
+        # Log: with named ANSI colors
+        timestamp = self._get_timestamp(force=with_timestamp, for_log=True)
+        color = PALETTE.info["log"]
+        log_msg = f"{timestamp}[{color}]ℹ {message}[/{color}]"
+        self.log_console.print(log_msg)
 
     def success(self, message: str, with_timestamp: bool = False):
         """
@@ -104,16 +109,18 @@ class UnifiedMessenger:
             message: Message text
             with_timestamp: If True, force timestamp on this message
         """
-        timestamp = self._get_timestamp(force=with_timestamp)
-        # Apply color to the entire message text for visibility in logs
-        formatted = f"{timestamp}[{PALETTE.success}]✓ {message}[/{PALETTE.success}]"
-
-        # Console: with formatting
+        # Console: with truecolor hex
         if not self.quiet:
-            self.console.print(formatted)
+            timestamp = self._get_timestamp(force=with_timestamp, for_log=False)
+            color = PALETTE.success["console"]
+            console_msg = f"{timestamp}[{color}]✓ {message}[/{color}]"
+            self.console.print(console_msg)
 
-        # Log: same formatting with ANSI preserved, written directly to log_console
-        self.log_console.print(formatted)
+        # Log: with named ANSI colors
+        timestamp = self._get_timestamp(force=with_timestamp, for_log=True)
+        color = PALETTE.success["log"]
+        log_msg = f"{timestamp}[{color}]✓ {message}[/{color}]"
+        self.log_console.print(log_msg)
 
     def warning(self, message: str, with_timestamp: bool = False):
         """
@@ -123,16 +130,18 @@ class UnifiedMessenger:
             message: Message text
             with_timestamp: If True, force timestamp on this message
         """
-        timestamp = self._get_timestamp(force=with_timestamp)
-        # Apply color to the entire message text for visibility in logs
-        formatted = f"{timestamp}[{PALETTE.warning}]⚠ {message}[/{PALETTE.warning}]"
-
-        # Console: with formatting
+        # Console: with truecolor hex
         if not self.quiet:
-            self.console.print(formatted)
+            timestamp = self._get_timestamp(force=with_timestamp, for_log=False)
+            color = PALETTE.warning["console"]
+            console_msg = f"{timestamp}[{color}]⚠ {message}[/{color}]"
+            self.console.print(console_msg)
 
-        # Log: same formatting with ANSI preserved, written directly to log_console
-        self.log_console.print(formatted)
+        # Log: with named ANSI colors
+        timestamp = self._get_timestamp(force=with_timestamp, for_log=True)
+        color = PALETTE.warning["log"]
+        log_msg = f"{timestamp}[{color}]⚠ {message}[/{color}]"
+        self.log_console.print(log_msg)
 
     def error(self, message: str, with_timestamp: bool = False):
         """
@@ -142,18 +151,18 @@ class UnifiedMessenger:
             message: Message text
             with_timestamp: If True, force timestamp on this message
         """
-        timestamp = self._get_timestamp(force=with_timestamp)
-        # Apply color and bold to the entire message text for visibility in logs
-        formatted = (
-            f"{timestamp}[bold {PALETTE.error}]✗ {message}[/bold {PALETTE.error}]"
-        )
-
-        # Console: with formatting, bold
+        # Console: with truecolor hex and bold
         if not self.quiet:
-            self.console.print(formatted)
+            timestamp = self._get_timestamp(force=with_timestamp, for_log=False)
+            color = PALETTE.error["console"]
+            console_msg = f"{timestamp}[bold {color}]✗ {message}[/bold {color}]"
+            self.console.print(console_msg)
 
-        # Log: same formatting with ANSI preserved, written directly to log_console
-        self.log_console.print(formatted)
+        # Log: with named ANSI colors and bold
+        timestamp = self._get_timestamp(force=with_timestamp, for_log=True)
+        color = PALETTE.error["log"]
+        log_msg = f"{timestamp}[bold {color}]✗ {message}[/bold {color}]"
+        self.log_console.print(log_msg)
 
     def step(
         self,
@@ -176,10 +185,16 @@ class UnifiedMessenger:
 
         # Console: Show section divider + optional tree
         if not self.quiet:
+            header_console = PALETTE.header["console"]
+            highlight_console = PALETTE.highlight["console"]
+            complete_console = PALETTE.step_complete["console"]
+            current_console = PALETTE.step_current["console"]
+            pending_console = PALETTE.step_pending["console"]
+
             # Section divider
             self.console.print()
             self.console.rule(
-                f"[{PALETTE.header}]Step {step_num}: {step_name}", style=PALETTE.header
+                f"[{header_console}]Step {step_num}: {step_name}", style=header_console
             )
 
             # Optional: Show pipeline tree with current step highlighted
@@ -187,33 +202,36 @@ class UnifiedMessenger:
                 from rich.tree import Tree
 
                 tree = Tree(
-                    f"🔄 [{PALETTE.highlight}]Pipeline Steps", guide_style="dim"
+                    f"🔄 [{highlight_console}]Pipeline Steps", guide_style="dim"
                 )
 
                 for i, step in enumerate(all_steps, 1):
                     if i < step_num:
                         # Completed
-                        tree.add(f"[{PALETTE.step_complete}]✓ {step}")
+                        tree.add(f"[{complete_console}]✓ {step}")
                     elif i == step_num:
                         # Current
-                        tree.add(f"[{PALETTE.step_current}]▶ {step}")
+                        tree.add(f"[{current_console}]▶ {step}")
                     else:
                         # Pending
-                        tree.add(f"[{PALETTE.step_pending}]○ {step}")
+                        tree.add(f"[{pending_console}]○ {step}")
 
                 self.console.print(tree)
 
         # Log: Simple section marker with color
+        header_log = PALETTE.header["log"]
+        info_log = PALETTE.info["log"]
         sep_line = "=" * 80
         step_text = f"STEP {step_num}: {step_name.upper()}"
+        timestamp = self._get_timestamp(force=True, for_log=True)
         self.log_console.print("")  # Blank line
-        self.log_console.print(f"[{PALETTE.header}]{sep_line}[/{PALETTE.header}]")
+        self.log_console.print(f"[{header_log}]{sep_line}[/{header_log}]")
         self.log_console.print(
-            f"[bold {PALETTE.header}]{step_text}[/bold {PALETTE.header}]"
+            f"[bold {header_log}]{step_text}[/bold {header_log}]"
         )
-        self.log_console.print(f"[{PALETTE.header}]{sep_line}[/{PALETTE.header}]")
+        self.log_console.print(f"[{header_log}]{sep_line}[/{header_log}]")
         self.log_console.print(
-            f"{timestamp}[{PALETTE.info}]Starting step {step_num} of {len(all_steps)}[/{PALETTE.info}]"
+            f"{timestamp}[{info_log}]Starting step {step_num} of {len(all_steps)}[/{info_log}]"
         )
 
     def log_only(self, message: str, level: str = "info"):
@@ -294,94 +312,94 @@ class UnifiedMessenger:
         # Console: Rich panel with metadata
         if not self.quiet:
             header = Text()
-            header.append("intronIC ", style=f"bold {PALETTE.highlight}")
+            header.append("intronIC ", style=f"bold {PALETTE.highlight["console"]}")
             header.append(f"v{ver}\n\n", style="dim")
-            header.append("Run name: ", style=PALETTE.table_value)
-            header.append(f"{species_name}\n", style=PALETTE.mustard)
-            header.append("Input: ", style=PALETTE.table_value)
-            header.append(f"{input_mode}\n", style=PALETTE.success)
-            header.append("Output: ", style=PALETTE.table_value)
-            header.append(f"{output_dir}\n", style=PALETTE.path)
-            header.append("Threshold: ", style=PALETTE.table_value)
-            header.append(f"{threshold}%\n", style=PALETTE.highlight)
+            header.append("Run name: ", style=PALETTE.table_value["console"])
+            header.append(f"{species_name}\n", style=PALETTE.warning["console"])
+            header.append("Input: ", style=PALETTE.table_value["console"])
+            header.append(f"{input_mode}\n", style=PALETTE.success["console"])
+            header.append("Output: ", style=PALETTE.table_value["console"])
+            header.append(f"{output_dir}\n", style=PALETTE.path["console"])
+            header.append("Threshold: ", style=PALETTE.table_value["console"])
+            header.append(f"{threshold}%\n", style=PALETTE.highlight["console"])
 
             if model_path:
                 # Show just the filename for brevity
                 import os
 
                 model_name = os.path.basename(model_path)
-                header.append("Model: ", style=PALETTE.table_value)
-                header.append(f"{model_name}\n", style=PALETTE.path)
+                header.append("Model: ", style=PALETTE.table_value["console"])
+                header.append(f"{model_name}\n", style=PALETTE.path["console"])
 
-            header.append("Started: ", style=PALETTE.table_value)
-            header.append(f"{timestamp}", style=PALETTE.timestamp)
+            header.append("Started: ", style=PALETTE.table_value["console"])
+            header.append(f"{timestamp}", style=PALETTE.timestamp["console"])
 
             panel = Panel(
-                header, border_style=PALETTE.highlight, box=box.DOUBLE, padding=(1, 2)
+                header, border_style=PALETTE.highlight["console"], box=box.DOUBLE, padding=(1, 2)
             )
             self.console.print(panel)
 
         # Log: Clean text format with full paths and color
         sep_line = "=" * 80
-        self.log_console.print(f"[{PALETTE.header}]{sep_line}[/{PALETTE.header}]")
+        self.log_console.print(f"[{PALETTE.header["log"]}]{sep_line}[/{PALETTE.header["log"]}]")
         self.log_console.print(
-            f"[bold {PALETTE.highlight}]intronIC v{ver}[/bold {PALETTE.highlight}]"
+            f"[bold {PALETTE.highlight["log"]}]intronIC v{ver}[/bold {PALETTE.highlight["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.timestamp}]Started: {timestamp}[/{PALETTE.timestamp}]"
+            f"[{PALETTE.timestamp["log"]}]Started: {timestamp}[/{PALETTE.timestamp["log"]}]"
         )
-        self.log_console.print(f"[{PALETTE.header}]{sep_line}[/{PALETTE.header}]")
+        self.log_console.print(f"[{PALETTE.header["log"]}]{sep_line}[/{PALETTE.header["log"]}]")
         self.log_console.print("")
 
         # Combined Command and Configuration section
         self.log_console.print(
-            f"[bold {PALETTE.header}]Command and Configuration:[/bold {PALETTE.header}]"
+            f"[bold {PALETTE.header["log"]}]Command and Configuration:[/bold {PALETTE.header["log"]}]"
         )
 
         # Command and working directory
         if command:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]Command:[/{PALETTE.table_header}] {command}"
+                f"  [{PALETTE.table_header["log"]}]Command:[/{PALETTE.table_header["log"]}] {command}"
             )
         if working_dir:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]Working directory:[/{PALETTE.table_header}] [{PALETTE.path}]{working_dir}[/{PALETTE.path}]"
+                f"  [{PALETTE.table_header["log"]}]Working directory:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{working_dir}[/{PALETTE.path["log"]}]"
             )
 
         # Configuration details
         self.log_console.print(
-            f"  [{PALETTE.table_header}]Run name:[/{PALETTE.table_header}] {species_name}"
+            f"  [{PALETTE.table_header["log"]}]Run name:[/{PALETTE.table_header["log"]}] {species_name}"
         )
         self.log_console.print(
-            f"  [{PALETTE.table_header}]Input mode:[/{PALETTE.table_header}] {input_mode}"
+            f"  [{PALETTE.table_header["log"]}]Input mode:[/{PALETTE.table_header["log"]}] {input_mode}"
         )
         self.log_console.print(
-            f"  [{PALETTE.table_header}]Classification threshold:[/{PALETTE.table_header}] [{PALETTE.highlight}]{threshold}%[/{PALETTE.highlight}]"
+            f"  [{PALETTE.table_header["log"]}]Classification threshold:[/{PALETTE.table_header["log"]}] [{PALETTE.highlight["log"]}]{threshold}%[/{PALETTE.highlight["log"]}]"
         )
         self.log_console.print(
-            f"  [{PALETTE.table_header}]Output directory:[/{PALETTE.table_header}] [{PALETTE.path}]{output_dir}[/{PALETTE.path}]"
+            f"  [{PALETTE.table_header["log"]}]Output directory:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{output_dir}[/{PALETTE.path["log"]}]"
         )
 
         # Log input files with full paths
         if genome_path:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]Genome:[/{PALETTE.table_header}] [{PALETTE.path}]{genome_path}[/{PALETTE.path}]"
+                f"  [{PALETTE.table_header["log"]}]Genome:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{genome_path}[/{PALETTE.path["log"]}]"
             )
         if annotation_path:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]Annotation:[/{PALETTE.table_header}] [{PALETTE.path}]{annotation_path}[/{PALETTE.path}]"
+                f"  [{PALETTE.table_header["log"]}]Annotation:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{annotation_path}[/{PALETTE.path["log"]}]"
             )
         if bed_path:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]BED file:[/{PALETTE.table_header}] [{PALETTE.path}]{bed_path}[/{PALETTE.path}]"
+                f"  [{PALETTE.table_header["log"]}]BED file:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{bed_path}[/{PALETTE.path["log"]}]"
             )
         if sequences_path:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]Sequences:[/{PALETTE.table_header}] [{PALETTE.path}]{sequences_path}[/{PALETTE.path}]"
+                f"  [{PALETTE.table_header["log"]}]Sequences:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{sequences_path}[/{PALETTE.path["log"]}]"
             )
         if model_path:
             self.log_console.print(
-                f"  [{PALETTE.table_header}]Model:[/{PALETTE.table_header}] [{PALETTE.path}]{model_path}[/{PALETTE.path}]"
+                f"  [{PALETTE.table_header["log"]}]Model:[/{PALETTE.table_header["log"]}] [{PALETTE.path["log"]}]{model_path}[/{PALETTE.path["log"]}]"
             )
 
         self.log_console.print("")
@@ -460,16 +478,16 @@ class UnifiedMessenger:
             table = Table(
                 title="Intron Filtering Summary",
                 box=box.ROUNDED,
-                title_style=f"bold {PALETTE.highlight}",
+                title_style=f"bold {PALETTE.highlight["console"]}",
             )
             table.add_column(
-                "Category", style=PALETTE.table_header, no_wrap=False, width=28
+                "Category", style=PALETTE.table_header["console"], no_wrap=False, width=28
             )
             table.add_column(
-                "Included", style=PALETTE.table_value, justify="right", width=10
+                "Included", style=PALETTE.table_value["console"], justify="right", width=10
             )
             table.add_column(
-                "Excluded", style=PALETTE.table_value, justify="right", width=10
+                "Excluded", style=PALETTE.table_value["console"], justify="right", width=10
             )
 
             # Always show all categories to indicate which checks were performed
@@ -486,13 +504,13 @@ class UnifiedMessenger:
                 "Total excluded",
                 "",
                 f"{total_excluded:,}",
-                style=f"bold {PALETTE.warning}",
+                style=f"bold {PALETTE.warning["console"]}",
             )
             table.add_row(
                 "Retained for scoring",
                 "",
                 f"{kept:,}",
-                style=f"bold {PALETTE.success}",
+                style=f"bold {PALETTE.success["console"]}",
             )
 
             self.console.print()
@@ -506,16 +524,16 @@ class UnifiedMessenger:
 
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.highlight}]Intron Filtering Summary:[/bold {PALETTE.highlight}]"
+            f"[bold {PALETTE.highlight["log"]}]Intron Filtering Summary:[/bold {PALETTE.highlight["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]┌────────────────────────────┬────────────┬────────────┐[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]┌────────────────────────────┬────────────┬────────────┐[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]│ Category                   │ Included   │ Excluded   │[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]│ Category                   │ Included   │ Excluded   │[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]├────────────────────────────┼────────────┼────────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]├────────────────────────────┼────────────┼────────────┤[/{PALETTE.table_header["log"]}]"
         )
 
         # Always show all categories to indicate which checks were performed
@@ -539,16 +557,16 @@ class UnifiedMessenger:
         )
 
         self.log_console.print(
-            f"[{PALETTE.table_header}]├────────────────────────────┼────────────┼────────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]├────────────────────────────┼────────────┼────────────┤[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"│ [{PALETTE.warning}]Total excluded[/{PALETTE.warning}]             │            │ [{PALETTE.warning}]{total_excluded:>10,}[/{PALETTE.warning}] │"
+            f"│ [{PALETTE.warning["log"]}]Total excluded[/{PALETTE.warning["log"]}]             │            │ [{PALETTE.warning["log"]}]{total_excluded:>10,}[/{PALETTE.warning["log"]}] │"
         )
         self.log_console.print(
-            f"│ [{PALETTE.success}]Retained for scoring[/{PALETTE.success}]       │            │ [{PALETTE.success}]{kept:>10,}[/{PALETTE.success}] │"
+            f"│ [{PALETTE.success["log"]}]Retained for scoring[/{PALETTE.success["log"]}]       │            │ [{PALETTE.success["log"]}]{kept:>10,}[/{PALETTE.success["log"]}] │"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]└────────────────────────────┴────────────┴────────────┘[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]└────────────────────────────┴────────────┴────────────┘[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print("")
 
@@ -579,21 +597,21 @@ class UnifiedMessenger:
             table = Table(
                 title=f"Classification Results (threshold: {threshold}%)",
                 box=box.DOUBLE_EDGE,
-                title_style=f"bold {PALETTE.highlight}",
+                title_style=f"bold {PALETTE.highlight["console"]}",
             )
-            table.add_column("Type", style=PALETTE.table_header, no_wrap=True)
-            table.add_column("Count", style=PALETTE.table_value, justify="right")
-            table.add_column("Percentage", style=PALETTE.table_value, justify="right")
+            table.add_column("Type", style=PALETTE.table_header["console"], no_wrap=True)
+            table.add_column("Count", style=PALETTE.table_value["console"], justify="right")
+            table.add_column("Percentage", style=PALETTE.table_value["console"], justify="right")
 
             table.add_row(
-                f"[{PALETTE.u12_highlight}]U12-type (total)",
-                f"[{PALETTE.u12_highlight}]{u12_count:,}",
-                f"[{PALETTE.u12_highlight}]{u12_pct:.2f}%",
+                f"[{PALETTE.u12_highlight["log"]}]U12-type (total)",
+                f"[{PALETTE.u12_highlight["log"]}]{u12_count:,}",
+                f"[{PALETTE.u12_highlight["log"]}]{u12_pct:.2f}%",
             )
             table.add_row(
-                f"[{PALETTE.u12_highlight}]U12-type (AT-AC)",
-                f"[{PALETTE.u12_highlight}]{atac_count:,}",
-                f"[{PALETTE.u12_highlight}]{atac_pct:.2f}%",
+                f"[{PALETTE.u12_highlight["log"]}]U12-type (AT-AC)",
+                f"[{PALETTE.u12_highlight["log"]}]{atac_count:,}",
+                f"[{PALETTE.u12_highlight["log"]}]{atac_pct:.2f}%",
             )
             table.add_row("U2-type", f"{u2_count:,}", f"{u2_pct:.2f}%")
             table.add_row("[bold]Total", f"[bold]{total:,}", "[bold]100.00%")
@@ -603,34 +621,34 @@ class UnifiedMessenger:
         # Log: ASCII table with color
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.highlight}]Classification Results (threshold: {threshold}%):[/bold {PALETTE.highlight}]"
+            f"[bold {PALETTE.highlight["log"]}]Classification Results (threshold: {threshold}%):[/bold {PALETTE.highlight["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]┌──────────────────────┬───────────┬────────────┐[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]┌──────────────────────┬───────────┬────────────┐[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]│ Type                 │ Count     │ Percentage │[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]│ Type                 │ Count     │ Percentage │[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]├──────────────────────┼───────────┼────────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]├──────────────────────┼───────────┼────────────┤[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"│ [{PALETTE.u12_highlight}]U12-type (total)[/{PALETTE.u12_highlight}]     │ [{PALETTE.u12_highlight}]{u12_count:>9,}[/{PALETTE.u12_highlight}] │ [{PALETTE.u12_highlight}]{u12_pct:>9.2f}%[/{PALETTE.u12_highlight}] │"
+            f"│ [{PALETTE.u12_highlight["log"]}]U12-type (total)[/{PALETTE.u12_highlight["log"]}]     │ [{PALETTE.u12_highlight["log"]}]{u12_count:>9,}[/{PALETTE.u12_highlight["log"]}] │ [{PALETTE.u12_highlight["log"]}]{u12_pct:>9.2f}%[/{PALETTE.u12_highlight["log"]}] │"
         )
         self.log_console.print(
-            f"│ [{PALETTE.u12_highlight}]U12-type (AT-AC)[/{PALETTE.u12_highlight}]     │ [{PALETTE.u12_highlight}]{atac_count:>9,}[/{PALETTE.u12_highlight}] │ [{PALETTE.u12_highlight}]{atac_pct:>9.2f}%[/{PALETTE.u12_highlight}] │"
+            f"│ [{PALETTE.u12_highlight["log"]}]U12-type (AT-AC)[/{PALETTE.u12_highlight["log"]}]     │ [{PALETTE.u12_highlight["log"]}]{atac_count:>9,}[/{PALETTE.u12_highlight["log"]}] │ [{PALETTE.u12_highlight["log"]}]{atac_pct:>9.2f}%[/{PALETTE.u12_highlight["log"]}] │"
         )
         self.log_console.print(
             f"│ U2-type              │ {u2_count:>9,} │ {u2_pct:>9.2f}% │"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]├──────────────────────┼───────────┼────────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]├──────────────────────┼───────────┼────────────┤[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
             f"│ [bold]Total[/bold]                │ [bold]{total:>9,}[/bold] │ [bold]{100.0:>9.2f}%[/bold] │"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]└──────────────────────┴───────────┴────────────┘[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]└──────────────────────┴───────────┴────────────┘[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print("")
 
@@ -656,12 +674,12 @@ class UnifiedMessenger:
             table = Table(
                 title=f"Top {top_n} Splice Site Boundaries ({intron_type} introns)",
                 box=box.ROUNDED,
-                title_style=f"bold {PALETTE.highlight}",
+                title_style=f"bold {PALETTE.highlight["console"]}",
             )
-            table.add_column("Rank", style=PALETTE.table_header, justify="right")
-            table.add_column("Dinucleotide", style=PALETTE.table_value, justify="right")
-            table.add_column("Count", style=PALETTE.table_value, justify="right")
-            table.add_column("Percent", style=PALETTE.table_value, justify="right")
+            table.add_column("Rank", style=PALETTE.table_header["console"], justify="right")
+            table.add_column("Dinucleotide", style=PALETTE.table_value["console"], justify="right")
+            table.add_column("Count", style=PALETTE.table_value["console"], justify="right")
+            table.add_column("Percent", style=PALETTE.table_value["console"], justify="right")
 
             for i, (dnts, count) in enumerate(boundaries_to_show, 1):
                 pct = (count / total * 100) if total > 0 else 0
@@ -673,16 +691,16 @@ class UnifiedMessenger:
         # Log: ASCII table with color
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.highlight}]Top {top_n} Splice Site Boundaries ({intron_type} introns):[/bold {PALETTE.highlight}]"
+            f"[bold {PALETTE.highlight["log"]}]Top {top_n} Splice Site Boundaries ({intron_type} introns):[/bold {PALETTE.highlight["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]┌──────┬──────────────┬──────────┬───────────┐[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]┌──────┬──────────────┬──────────┬───────────┐[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]│ Rank │ Dinucleotide │ Count    │ Percent   │[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]│ Rank │ Dinucleotide │ Count    │ Percent   │[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print(
-            f"[{PALETTE.table_header}]├──────┼──────────────┼──────────┼───────────┤[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]├──────┼──────────────┼──────────┼───────────┤[/{PALETTE.table_header["log"]}]"
         )
 
         for i, (dnts, count) in enumerate(boundaries_to_show, 1):
@@ -692,7 +710,7 @@ class UnifiedMessenger:
             )
 
         self.log_console.print(
-            f"[{PALETTE.table_header}]└──────┴──────────────┴──────────┴───────────┘[/{PALETTE.table_header}]"
+            f"[{PALETTE.table_header["log"]}]└──────┴──────────────┴──────────┴───────────┘[/{PALETTE.table_header["log"]}]"
         )
         self.log_console.print("")
 
@@ -711,7 +729,7 @@ class UnifiedMessenger:
 
             for file_type, filepath in output_files.items():
                 tree.add(
-                    f"[{PALETTE.success}]{file_type}:[/{PALETTE.success}] [{PALETTE.path}]{filepath}"
+                    f"[{PALETTE.success["log"]}]{file_type}:[/{PALETTE.success["console"]}] [{PALETTE.path["log"]}]{filepath}"
                 )
 
             self.console.print(tree)
@@ -719,7 +737,7 @@ class UnifiedMessenger:
         # Log: ASCII tree with box-drawing characters
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.highlight}]Output Files:[/bold {PALETTE.highlight}]"
+            f"[bold {PALETTE.highlight["log"]}]Output Files:[/bold {PALETTE.highlight["log"]}]"
         )
 
         # Convert dict to list for easier handling of first/last items
@@ -728,7 +746,7 @@ class UnifiedMessenger:
             is_last = i == len(items) - 1
             prefix = "└──" if is_last else "├──"
             self.log_console.print(
-                f"  {prefix} [{PALETTE.success}]{file_type}:[/{PALETTE.success}] [{PALETTE.path}]{filepath}[/{PALETTE.path}]"
+                f"  {prefix} [{PALETTE.success["log"]}]{file_type}:[/{PALETTE.success["console"]}] [{PALETTE.path["log"]}]{filepath}[/{PALETTE.path["log"]}]"
             )
 
         self.log_console.print("")
@@ -778,7 +796,7 @@ class UnifiedMessenger:
         # Log: Training configuration section
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.header}]Training Configuration:[/bold {PALETTE.header}]"
+            f"[bold {PALETTE.header["log"]}]Training Configuration:[/bold {PALETTE.header["log"]}]"
         )
         self.log_console.print(f"  Species: {species}")
         self.log_console.print(f"  Classification threshold: {threshold}%")
@@ -810,7 +828,7 @@ class UnifiedMessenger:
         """Print hyperparameter optimization results to log only."""
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.header}]Hyperparameter Optimization:[/bold {PALETTE.header}]"
+            f"[bold {PALETTE.header["log"]}]Hyperparameter Optimization:[/bold {PALETTE.header["log"]}]"
         )
         self.log_console.print(f"  Optimized C: {optimized_c:.6e}")
         self.log_console.print(f"  CV score (balanced accuracy): {cv_score:.4f}")
@@ -841,7 +859,7 @@ class UnifiedMessenger:
         """
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.header}]Nested Cross-Validation Results ({n_folds} folds):[/bold {PALETTE.header}]"
+            f"[bold {PALETTE.header["log"]}]Nested Cross-Validation Results ({n_folds} folds):[/bold {PALETTE.header["log"]}]"
         )
         self.log_console.print(f"  Mean F1 score: {mean_f1:.4f} ± {std_f1:.4f}")
         self.log_console.print(f"  Mean PR-AUC: {mean_pr_auc:.4f} ± {std_pr_auc:.4f}")
@@ -942,7 +960,7 @@ class UnifiedMessenger:
         """Print train/test split evaluation results to log only."""
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.header}]Train/Test Split Evaluation:[/bold {PALETTE.header}]"
+            f"[bold {PALETTE.header["log"]}]Train/Test Split Evaluation:[/bold {PALETTE.header["log"]}]"
         )
         self.log_console.print(
             f"  Training set: {n_u12_train + n_u2_train:,} introns "
@@ -973,7 +991,7 @@ class UnifiedMessenger:
         """
         self.log_console.print("")
         self.log_console.print(
-            f"[bold {PALETTE.header}]Trained Ensemble ({n_models} models):[/bold {PALETTE.header}]"
+            f"[bold {PALETTE.header["log"]}]Trained Ensemble ({n_models} models):[/bold {PALETTE.header["log"]}]"
         )
 
         for i, model in enumerate(models, 1):

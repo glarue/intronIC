@@ -9,7 +9,9 @@ from __future__ import annotations
 import gc
 import json
 import logging
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import replace
 from multiprocessing import Pool
@@ -1756,10 +1758,9 @@ def extract_introns_streaming(
     del all_introns_no_seq
     gc.collect()
 
-    # Create SQLite store for sequences
-    db_path = config.output.output_dir / f".{config.output.base_filename}.sequences.db"
-    if db_path.exists():
-        db_path.unlink()  # Clean up any leftover from previous run
+    # Create temporary SQLite store for sequences
+    temp_dir = tempfile.mkdtemp(prefix="intronIC_sequences_")
+    db_path = Path(temp_dir) / "sequences.db"
     store = StreamingSequenceStore.create(db_path)
 
     # Group introns by contig for extraction
@@ -3094,11 +3095,9 @@ def classify_streaming_per_contig(
     messenger.info(f"Indexing annotation: {config.input.annotation}")
     assert config.input.annotation is not None, "Annotation path required"
 
-    annotation_db_path = (
-        config.output.output_dir / f".{config.output.base_filename}.annotations.db"
-    )
-    if annotation_db_path.exists():
-        annotation_db_path.unlink()  # Clean up from previous run
+    # Create temporary SQLite store for annotations
+    temp_dir = tempfile.mkdtemp(prefix="intronIC_annotations_")
+    annotation_db_path = Path(temp_dir) / "annotations.db"
 
     parser = BioGLAnnotationParser(clean_names=config.output.clean_names)
     annotation_store = StreamingAnnotationStore.create_from_file(
@@ -3543,6 +3542,12 @@ def classify_streaming_per_contig(
         messenger.print_dinucleotide_boundaries(
             intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
         )
+
+    # Clean up temporary annotation database
+    temp_dir = annotation_db_path.parent
+    if temp_dir.name.startswith("intronIC_annotations_"):
+        shutil.rmtree(temp_dir)
+        messenger.log_only(f"Cleaned up temporary directory: {temp_dir}")
 
     return total_classified, summary
 
@@ -4740,10 +4745,26 @@ def main_extract(config: IntronICConfig):
         from intronIC.file_io.sequence_store import StreamingSequenceStore
 
         store = StreamingSequenceStore(db_path)
-        with open(seq_path, "w") as f:
-            for name, seq in store.iterate_sequences():
-                f.write(f">{name}\n{seq}\n")
+        seq_writer = SequenceWriter(seq_path)
+        with seq_writer:
+            for row in store.iter_all():
+                # Write using raw sequence data from SQLite
+                seq_writer.write_from_row(
+                    intron_id=row.intron_id,
+                    formatted_name=row.formatted_name,
+                    upstream_flank=row.upstream_flank,
+                    seq=row.seq,
+                    downstream_flank=row.downstream_flank,
+                    terminal_dnts=row.terminal_dnts,
+                    svm_score=None,  # No scores in extract mode
+                )
         store.close()
+
+        # Clean up temporary directory
+        temp_dir = db_path.parent
+        if temp_dir.name.startswith("intronIC_sequences_"):
+            shutil.rmtree(temp_dir)
+            messenger.log_only(f"Cleaned up temporary directory: {temp_dir}")
     else:
         # Standard mode - write from memory
         # Filter introns with sequences
@@ -5212,6 +5233,13 @@ def main_classify(config: IntronICConfig):
                     introns_written += 1
 
             store.cleanup()  # Delete SQLite database
+
+            # Clean up temporary directory
+            temp_dir = streaming_db_path.parent
+            if temp_dir.name.startswith("intronIC_sequences_"):
+                shutil.rmtree(temp_dir)
+                messenger.log_only(f"Cleaned up temporary directory: {temp_dir}")
+
             if duplicates_skipped > 0:
                 messenger.log_only(f"Skipped {duplicates_skipped} duplicate introns")
             messenger.log_only(
@@ -5316,9 +5344,6 @@ def main(args=None):
 
         # Handle --generate-config
         if getattr(parsed_args, "generate_config", False):
-            import shutil
-            from pathlib import Path
-
             # Copy the built-in config to current directory
             install_dir = Path(__file__).parent.parent.parent.parent
             source_config = install_dir / "config" / "config.yaml"
