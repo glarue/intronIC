@@ -140,7 +140,7 @@ class PerformanceConfig:
     processes: int = 1
     cv_processes: int = 1
     streaming: bool = (
-        False  # Streaming mode: ~85% memory savings, stores sequences in temp SQLite
+        True  # Streaming mode (default): ~85% memory savings, faster with parallelization
     )
 
 

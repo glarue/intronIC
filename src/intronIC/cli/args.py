@@ -104,11 +104,14 @@ Examples:
   # Train a model on reference data (no genome needed!)
   intronIC train -n homo_sapiens
 
-  # Classify introns with pretrained model
+  # Classify introns with pretrained model (uses streaming mode by default)
   intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
 
   # Extract introns without classification
   intronIC extract -g genome.fa -a annotation.gff -n species
+
+  # Use in-memory mode for small genomes (higher memory, potentially faster)
+  intronIC classify -g genome.fa -a annotation.gff -n species --in-memory
 
   # Backward compatible (no subcommand = classify)
   intronIC -g genome.fa -a annotation.gff -n species --model species.model.pkl
@@ -207,11 +210,11 @@ Classify mode examples:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Extract mode examples:
-  # Extract introns from annotation
+  # Extract introns from annotation (uses streaming mode by default)
   intronIC extract -g genome.fa -a annotation.gff -n species
 
-  # Extract with streaming mode (memory efficient)
-  intronIC extract -g genome.fa -a annotation.gff -n species --streaming
+  # Extract with in-memory mode (higher memory usage)
+  intronIC extract -g genome.fa -a annotation.gff -n species --in-memory
 
   # Extract from BED file
   intronIC extract -g genome.fa -b introns.bed -n species
@@ -344,10 +347,22 @@ Note: This command extracts intron sequences but does not perform classification
             default=1,
             help="Number of parallel processes (default: 1)",
         )
-        performance.add_argument(
+
+        # Memory mode (streaming is default)
+        memory_mode = performance.add_mutually_exclusive_group()
+        memory_mode.add_argument(
+            "--in-memory",
+            "--no-streaming",
+            action="store_false",
+            dest="streaming",
+            help="Use in-memory mode (loads full genome, higher memory usage)",
+        )
+        memory_mode.add_argument(
             "--streaming",
             action="store_true",
-            help="Use streaming mode for memory efficiency (~85%% savings)",
+            dest="streaming",
+            default=True,
+            help="Use streaming mode (default: ~85%% memory savings, faster with -p)",
         )
 
         # === Output Parameters ===
@@ -785,13 +800,25 @@ Note: This command extracts intron sequences but does not perform classification
             type=int,
             help="Processes for cross-validation (default: same as -p)",
         )
-        perf.add_argument(
+
+        # Memory mode (streaming is default)
+        memory_mode = perf.add_mutually_exclusive_group()
+        memory_mode.add_argument(
+            "--in-memory",
+            "--no-streaming",
+            action="store_false",
+            dest="streaming",
+            help="Use in-memory mode: load full genome into memory. Higher memory usage "
+            "but may be slightly faster for very small genomes.",
+        )
+        memory_mode.add_argument(
             "--streaming",
             action="store_true",
-            default=False,
-            help="Streaming mode: write sequences to temp storage during extraction, "
-            "keep only scoring motifs in memory. ~85%% memory savings for large genomes "
-            "(e.g., 11 GB → 2 GB for human). Slightly slower due to I/O.",
+            dest="streaming",
+            default=True,
+            help="Use streaming mode (default): stores sequences in temp storage, "
+            "keeps only scoring motifs in memory. ~85%% memory savings "
+            "(e.g., 11 GB → 2 GB for human), faster with parallel processing.",
         )
 
         # === Output Options ===
