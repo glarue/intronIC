@@ -196,11 +196,11 @@ class IntronClassifier:
             use_multiplier_tiebreaker: When multiple multipliers are tied for best score, prefer 1.0 (default: True).
                                       Set to False to use GridSearchCV's default first-tie behavior.
             features_list: List of composite feature names to include in BothEndsStrongTransformer (default: None).
-                          If None, uses default 7D feature set (min_all + neg_absdiff penalties).
+                          If None, uses default 4D feature set (base 3 z-scores + absdiff_bp_3).
                           Available features: 'min_5_bp', 'min_5_3', 'min_all',
-                                            'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',
+                                            'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
                                             'max_5_bp', 'max_5_3'
-                          Example: ['neg_absdiff_bp_3'] for minimal 4D space (based on L1 analysis)
+                          Example: ['absdiff_bp_3'] for minimal 4D space (default, based on L1 analysis)
             gamma_imbalance_options: List of gamma scaling factors to grid search (default: None).
                                     Scales all neg_absdiff_* features to nudge L2 toward L1 behavior.
                                     If None, uses gamma=1.0 (no scaling).
@@ -247,7 +247,7 @@ class IntronClassifier:
                 f"IntronClassifier initialized with explicit feature list: {features_list}"
             )
         else:
-            print(f"IntronClassifier initialized with default 7D feature set")
+            print(f"IntronClassifier initialized with default 4D feature set")
 
         # Auto-skip evaluation when using fixed C
         # Rationale: When C is pre-specified, evaluation metrics aren't useful

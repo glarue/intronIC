@@ -139,9 +139,7 @@ class PerformanceConfig:
 
     processes: int = 1
     cv_processes: int = 1
-    streaming: bool = (
-        True  # Streaming mode (default): ~85% memory savings, faster with parallelization
-    )
+    streaming: bool = True  # Streaming mode (default): ~85% memory savings, faster with parallelization
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +211,7 @@ class IntronICConfig:
         if yaml_config is None:
             from intronIC.utils.config_loader import load_config
 
-            config_path = getattr(args, "config", None)
+            config_path = getattr(args, "config_path", None)
             yaml_config = load_config(config_path) or {}
 
         # Merge YAML into args (CLI args take precedence)
