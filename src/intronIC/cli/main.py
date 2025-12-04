@@ -807,7 +807,7 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, "Console"]:
     from rich.console import Console
     from rich.logging import RichHandler
 
-    log_file = config.output.get_output_path(".log")
+    log_file = config.output.get_output_path(".iic.log")
 
     # Configure logging level based on flags
     # Both console and log file will use the same level for consistency
@@ -4378,7 +4378,7 @@ def write_outputs(
         "Metadata": str(meta_path),
         "Sequences": str(seq_path),
         "Scores": str(score_path),
-        "Log": str(config.output.get_output_path(".log")),
+        "Log": str(config.output.get_output_path(".iic.log")),
     }
 
     # Only include BED file if we wrote one (requires real genomic coordinates)
@@ -4904,7 +4904,7 @@ def main_classify(config: IntronICConfig):
             )
 
             # Save classification metrics
-            metrics_path = config.output.get_output_path(".metrics.json")
+            metrics_path = config.output.get_output_path(".metrics.iic.json")
             messenger.log_only(f"Saving classification metrics to {metrics_path}")
             with open(metrics_path, "w") as f:
                 json.dump(summary, f, indent=2)
@@ -5158,7 +5158,7 @@ def main_classify(config: IntronICConfig):
 
         # Save classification metrics to JSON file
         if metrics:
-            metrics_path = config.output.get_output_path(".metrics.json")
+            metrics_path = config.output.get_output_path(".metrics.iic.json")
             messenger.log_only(f"Saving classification metrics to {metrics_path}")
             with open(metrics_path, "w") as f:
                 json.dump(metrics, f, indent=2)
