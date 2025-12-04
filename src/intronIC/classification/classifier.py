@@ -413,6 +413,7 @@ class IntronClassifier:
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
+                features_list=self.features_list,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -443,6 +444,7 @@ class IntronClassifier:
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
+                features_list=self.features_list,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -660,6 +662,7 @@ class IntronClassifier:
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
+                features_list=self.features_list,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -690,6 +693,7 @@ class IntronClassifier:
                 eff_C_pos_range=self.eff_C_pos_range,
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
+                features_list=self.features_list,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 

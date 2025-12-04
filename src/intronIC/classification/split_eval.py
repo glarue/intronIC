@@ -14,14 +14,15 @@ Key features:
 
 from dataclasses import dataclass
 from typing import Sequence
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score, average_precision_score, precision_recall_curve
 
-from intronIC.core.intron import Intron
+import numpy as np
+from sklearn.metrics import average_precision_score, f1_score, precision_recall_curve
+from sklearn.model_selection import train_test_split
+
 from intronIC.classification.optimizer import SVMOptimizer
-from intronIC.classification.trainer import SVMTrainer
 from intronIC.classification.predictor import SVMPredictor
+from intronIC.classification.trainer import SVMTrainer
+from intronIC.core.intron import Intron
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,17 +48,17 @@ class SplitEvalResult:
     def __str__(self) -> str:
         """Format results for display."""
         lines = [
-            "\n" + "="*80,
+            "\n" + "=" * 80,
             "Train/Validation/Test Split Evaluation",
-            "="*80,
+            "=" * 80,
             "",
             "Data Split:",
             f"  Train: {self.n_u2_train} U2, {self.n_u12_train} U12 "
-            f"({self.train_fraction*100:.0f}%)",
+            f"({self.train_fraction * 100:.0f}%)",
             f"  Val:   {self.n_u2_val} U2, {self.n_u12_val} U12 "
-            f"({self.val_fraction*100:.0f}%)",
+            f"({self.val_fraction * 100:.0f}%)",
             f"  Test:  {self.n_u2_test} U2, {self.n_u12_test} U12 "
-            f"({self.test_fraction*100:.0f}%)",
+            f"({self.test_fraction * 100:.0f}%)",
             "",
             "Hyperparameters:",
             f"  Optimized C: {self.optimized_C:.6e}",
@@ -66,8 +67,8 @@ class SplitEvalResult:
             "Test Set Performance (Honest Evaluation):",
             f"  F1 Score:    {self.test_f1:.4f}",
             f"  PR-AUC:      {self.test_pr_auc:.4f}",
-            "="*80,
-            ""
+            "=" * 80,
+            "",
         ]
 
         return "\n".join(lines)
@@ -98,7 +99,7 @@ class SplitEvaluator:
         fixed_c: float | None = None,
         cv_folds: int = 5,
         n_points_initial: int = 13,
-        scoring_metric: str = 'balanced_accuracy',
+        scoring_metric: str = "balanced_accuracy",
         penalty_options: list | None = None,
         loss_options: list | None = None,
         class_weight_multipliers: list | None = None,
@@ -106,7 +107,8 @@ class SplitEvaluator:
         param_grid_override: dict | None = None,
         eff_C_pos_range: tuple = (1e-3, 1e3),
         eff_C_neg_max: float | None = None,
-        progress_tracker = None
+        progress_tracker=None,
+        features_list: list | None = None,
     ):
         """
         Initialize split evaluator.
@@ -169,11 +171,10 @@ class SplitEvaluator:
         self.eff_C_pos_range = eff_C_pos_range
         self.eff_C_neg_max = eff_C_neg_max
         self.progress_tracker = progress_tracker
+        self.features_list = features_list
 
     def evaluate(
-        self,
-        u12_reference: Sequence[Intron],
-        u2_reference: Sequence[Intron]
+        self, u12_reference: Sequence[Intron], u2_reference: Sequence[Intron]
     ) -> SplitEvalResult:
         """
         Run train/val/test split evaluation.
@@ -186,23 +187,25 @@ class SplitEvaluator:
             SplitEvalResult with honest test set performance
         """
         if self.verbose:
-            print("\n" + "="*80)
+            print("\n" + "=" * 80)
             print("Train/Validation/Test Split Evaluation")
-            print("="*80)
+            print("=" * 80)
             print(f"Reference data: {len(u12_reference)} U12, {len(u2_reference)} U2")
-            print("="*80 + "\n")
+            print("=" * 80 + "\n")
 
         # Prepare data for stratified splitting
         all_introns = list(u2_reference) + list(u12_reference)
         labels = np.array([0] * len(u2_reference) + [1] * len(u12_reference))
 
         # First split: separate test set
-        train_val_introns, test_introns, train_val_labels, test_labels = train_test_split(
-            all_introns,
-            labels,
-            test_size=self.test_fraction,
-            stratify=labels,
-            random_state=self.random_state
+        train_val_introns, test_introns, train_val_labels, test_labels = (
+            train_test_split(
+                all_introns,
+                labels,
+                test_size=self.test_fraction,
+                stratify=labels,
+                random_state=self.random_state,
+            )
         )
 
         # Second split: separate validation from training
@@ -214,15 +217,23 @@ class SplitEvaluator:
             train_val_labels,
             test_size=val_fraction_adjusted,
             stratify=train_val_labels,
-            random_state=self.random_state + 1
+            random_state=self.random_state + 1,
         )
 
         # Separate each set into U2 and U12
-        train_u2 = [intron for intron, label in zip(train_introns, train_labels) if label == 0]
-        train_u12 = [intron for intron, label in zip(train_introns, train_labels) if label == 1]
+        train_u2 = [
+            intron for intron, label in zip(train_introns, train_labels) if label == 0
+        ]
+        train_u12 = [
+            intron for intron, label in zip(train_introns, train_labels) if label == 1
+        ]
 
-        val_u2 = [intron for intron, label in zip(val_introns, val_labels) if label == 0]
-        val_u12 = [intron for intron, label in zip(val_introns, val_labels) if label == 1]
+        val_u2 = [
+            intron for intron, label in zip(val_introns, val_labels) if label == 0
+        ]
+        val_u12 = [
+            intron for intron, label in zip(val_introns, val_labels) if label == 1
+        ]
 
         n_u12_train = len(train_u12)
         n_u2_train = len(train_u2)
@@ -232,25 +243,33 @@ class SplitEvaluator:
         n_u2_test = int(np.sum(test_labels == 0))
 
         if self.verbose:
-            print(f"Train: {n_u2_train} U2, {n_u12_train} U12 ({self.train_fraction*100:.0f}%)")
-            print(f"Val:   {n_u2_val} U2, {n_u12_val} U12 ({self.val_fraction*100:.0f}%)")
-            print(f"Test:  {n_u2_test} U2, {n_u12_test} U12 ({self.test_fraction*100:.0f}%)")
+            print(
+                f"Train: {n_u2_train} U2, {n_u12_train} U12 ({self.train_fraction * 100:.0f}%)"
+            )
+            print(
+                f"Val:   {n_u2_val} U2, {n_u12_val} U12 ({self.val_fraction * 100:.0f}%)"
+            )
+            print(
+                f"Test:  {n_u2_test} U2, {n_u12_test} U12 ({self.test_fraction * 100:.0f}%)"
+            )
 
         # Optimize hyperparameters on training set
         # Note: We could use train+val here, but using only train gives
         # a more conservative estimate
         # Even with fixed C, we optimize include_max/dual/intercept_scaling/calibration_method
         if self.verbose:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Hyperparameter Optimization (training set)")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
 
         # If C is fixed, constrain the grid to that single value
         param_grid = self.param_grid_override.copy() if self.param_grid_override else {}
         if not self.optimize_c:
-            param_grid['estimator__svc__C'] = [self.fixed_c]
+            param_grid["estimator__svc__C"] = [self.fixed_c]
             if self.verbose:
-                print(f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method")
+                print(
+                    f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method"
+                )
 
         optimizer = SVMOptimizer(
             n_rounds=self.n_optimization_rounds,
@@ -266,44 +285,45 @@ class SplitEvaluator:
             use_multiplier_tiebreaker=self.use_multiplier_tiebreaker,
             param_grid_override=param_grid if param_grid else None,
             verbose=self.verbose,
-            progress_tracker=self.progress_tracker
+            progress_tracker=self.progress_tracker,
+            features_list=self.features_list,
         )
         parameters = optimizer.optimize(
             train_u12,
             train_u2,
             eff_C_pos_range=self.eff_C_pos_range,
-            eff_C_neg_max=self.eff_C_neg_max
+            eff_C_neg_max=self.eff_C_neg_max,
         )
 
         # Train ensemble on training data
         if self.verbose:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Model Training (training set)")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
 
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
             random_state=self.random_state,
             max_iter=self.max_iter,
-            progress_tracker=self.progress_tracker
+            progress_tracker=self.progress_tracker,
+            features_list=self.features_list,
         )
         ensemble = trainer.train_ensemble(
             train_u12,
             train_u2,
             parameters,
             subsample_u2=self.subsample_u2,
-            subsample_ratio=self.subsample_ratio
+            subsample_ratio=self.subsample_ratio,
         )
 
         # Predict on test set (honest evaluation)
         if self.verbose:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Test Evaluation (test set)")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
 
         predictor = SVMPredictor(
-            threshold=self.classification_threshold,
-            n_jobs=self.n_jobs
+            threshold=self.classification_threshold, n_jobs=self.n_jobs
         )
         predicted_introns = list(predictor.predict(ensemble, test_introns))
 
@@ -313,7 +333,7 @@ class SplitEvaluator:
         for intron in predicted_introns:
             if intron.scores and intron.scores.svm_score is not None:
                 y_proba.append(intron.scores.svm_score / 100.0)  # Convert to 0-1 range
-                y_pred.append(1 if intron.type_id == 'u12' else 0)
+                y_pred.append(1 if intron.type_id == "u12" else 0)
             else:
                 # Shouldn't happen, but handle gracefully
                 y_proba.append(0.0)
@@ -344,10 +364,11 @@ class SplitEvaluator:
             val_fraction=self.val_fraction,
             test_fraction=self.test_fraction,
             optimized_C=parameters.C,
-            calibration_method=parameters.calibration_method
+            calibration_method=parameters.calibration_method,
         )
 
         if self.verbose:
             print(result)
 
+        return result
         return result
