@@ -4010,7 +4010,10 @@ def classify_introns(
             )
             messenger.log_only("Successfully generated training reference plots")
         except Exception as plot_error:
+            import traceback
+
             messenger.warning(f"Failed to generate training plots: {plot_error}")
+            messenger.warning(f"Traceback: {traceback.format_exc()}")
             # Continue even if plotting fails
 
     # Log learned coefficients from ensemble
@@ -4755,10 +4758,27 @@ def main_classify(config: IntronICConfig):
             with open(metrics_path, "w") as f:
                 json.dump(summary, f, indent=2)
 
-            # Generate visualization plots
-            # Note: In true streaming mode, we don't have all introns in memory
-            # so we skip plot generation (or could read from output files)
-            messenger.log_only("Skipping plots (true streaming mode)")
+            # Generate visualization plots from output file
+            messenger.log_only("Generating visualization plots")
+            try:
+                from intronIC.visualization.plots import plot_classification_results_from_file
+                
+                score_file = config.output.get_output_path(".score_info.iic")
+                if score_file.exists():
+                    plot_classification_results_from_file(
+                        score_file=score_file,
+                        output_dir=config.output.output_dir,
+                        species_name=config.output.base_filename,
+                        threshold=config.scoring.threshold,
+                        fig_dpi=300,
+                    )
+                    messenger.log_only("Successfully generated classification plots")
+                else:
+                    messenger.warning(f"Score file not found: {score_file}")
+            except Exception as plot_error:
+                import traceback
+                messenger.warning(f"Failed to generate plots: {plot_error}")
+                messenger.warning(f"Traceback: {traceback.format_exc()}")
 
             # Calculate and log total runtime
             elapsed_seconds = time.time() - start_time
@@ -5021,7 +5041,10 @@ def main_classify(config: IntronICConfig):
             )
             messenger.log_only("Successfully generated classification plots")
         except Exception as plot_error:
+            import traceback
+
             messenger.warning(f"Failed to generate plots: {plot_error}")
+            messenger.warning(f"Traceback: {traceback.format_exc()}")
             # Continue even if plotting fails
 
         # Step 5: Write outputs

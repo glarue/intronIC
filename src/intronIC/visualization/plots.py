@@ -22,6 +22,108 @@ from typing import List, Optional, Tuple
 from intronIC.core.intron import Intron
 
 
+def plot_classification_results_from_file(
+    score_file: Path,
+    output_dir: Path,
+    species_name: str,
+    threshold: float,
+    fig_dpi: int = 300
+):
+    """
+    Generate classification plots by reading scores from output file.
+    
+    This is used in streaming mode where introns are not kept in memory.
+    Reads the .score_info.iic file to extract z-scores and SVM scores.
+    
+    Args:
+        score_file: Path to .score_info.iic file
+        output_dir: Directory to save plots
+        species_name: Species name for plot titles
+        threshold: U12 classification threshold
+        fig_dpi: Figure DPI for output images
+    """
+    # Read scores from file
+    five_z_scores = []
+    bp_z_scores = []
+    svm_scores = []
+    
+    with open(score_file, 'r') as f:
+        header = f.readline().strip().split('\t')
+        
+        # Find column indices
+        try:
+            five_z_idx = header.index("5'_z")
+            bp_z_idx = header.index("bp_z")
+            svm_idx = header.index("svm_score")
+        except ValueError as e:
+            raise ValueError(f"Missing required column in score file: {e}")
+        
+        for line in f:
+            fields = line.strip().split('\t')
+            if len(fields) <= max(five_z_idx, bp_z_idx, svm_idx):
+                continue
+                
+            # Parse z-scores (may be "NA")
+            five_z = fields[five_z_idx]
+            bp_z = fields[bp_z_idx]
+            svm = fields[svm_idx]
+            
+            if five_z != "NA" and bp_z != "NA":
+                try:
+                    five_z_scores.append(float(five_z))
+                    bp_z_scores.append(float(bp_z))
+                except ValueError:
+                    continue
+            
+            if svm != "NA":
+                try:
+                    svm_scores.append(float(svm))
+                except ValueError:
+                    continue
+    
+    if not five_z_scores:
+        # No valid scores to plot
+        return
+    
+    score_vector = np.array(list(zip(five_z_scores, bp_z_scores)))
+    
+    # 1. Density hexplot
+    hexplot_path = output_dir / f"{species_name}.plot.hex.iic.png"
+    density_hexplot(
+        score_vector,
+        species_name=species_name,
+        output_path=hexplot_path,
+        xlab="5' z-score",
+        ylab="BPS z-score",
+        fig_dpi=fig_dpi
+    )
+    
+    # 2. Scatter plot with U12 classification
+    # Create minimal data structure for scatter plot
+    scatter_path = output_dir / f"{species_name}.plot.scatter.iic.png"
+    scatter_plot_from_arrays(
+        score_vector=score_vector,
+        svm_scores=svm_scores,
+        species_name=species_name,
+        output_path=scatter_path,
+        xlab="5' z-score",
+        ylab="BPS z-score",
+        threshold=threshold,
+        fig_dpi=fig_dpi
+    )
+    
+    # 3. Score histogram
+    if svm_scores:
+        hist_path = output_dir / f"{species_name}.plot.score_histogram.iic.png"
+        histogram(
+            svm_scores,
+            threshold=threshold,
+            species_name=species_name,
+            output_path=hist_path,
+            fig_dpi=fig_dpi
+        )
+
+
 def plot_classification_results(
     introns: List[Intron],
     output_dir: Path,
@@ -283,6 +385,133 @@ def scatter_plot(
     fig.suptitle(f'{species_name} - U12 Classification Results', fontsize=fsize+2, y=0.98, weight='bold')
 
     # Save figure
+    plt.savefig(output_path, dpi=fig_dpi, bbox_inches='tight')
+    plt.close()
+
+
+def scatter_plot_from_arrays(
+    score_vector: np.ndarray,
+    svm_scores: List[float],
+    species_name: str,
+    output_path: Path,
+    xlab: str,
+    ylab: str,
+    threshold: float,
+    fsize: int = 14,
+    fig_dpi: int = 300
+):
+    """
+    Create a scatter plot from raw score arrays (for streaming mode).
+    
+    This is a simplified version of scatter_plot that works with arrays
+    instead of Intron objects, for use when introns aren't in memory.
+    
+    Args:
+        score_vector: Nx2 array of (5' z-score, BP z-score)
+        svm_scores: List of SVM scores (same length as score_vector)
+        species_name: Species name for title
+        output_path: Full path where plot should be saved
+        xlab: X-axis label
+        ylab: Y-axis label
+        threshold: U12 classification threshold
+        fsize: Font size
+        fig_dpi: Figure DPI
+    """
+    # Create figure with GridSpec for marginal distributions
+    fig = plt.figure(figsize=(10, 10))
+    gs = gridspec.GridSpec(
+        3, 3,
+        figure=fig,
+        width_ratios=[1, 4, 0.8],
+        height_ratios=[1, 4, 0.1],
+        hspace=0.02,
+        wspace=0.02,
+        top=0.95,
+        bottom=0.05,
+        left=0.05,
+        right=0.95
+    )
+
+    ax_main = fig.add_subplot(gs[1, 1])
+    ax_top = fig.add_subplot(gs[0, 1], sharex=ax_main)
+    ax_right = fig.add_subplot(gs[1, 2], sharey=ax_main)
+
+    # Calculate threshold boundaries
+    score_stdev = np.std(svm_scores) if svm_scores else 10.0
+    high_val = threshold
+    med_val = threshold - score_stdev
+
+    # Assign colors based on SVM score
+    cluster_colors = []
+    u2_count, u12_low, u12_med, u12_high = 0, 0, 0, 0
+
+    for i, score in enumerate(svm_scores):
+        if i >= len(score_vector):
+            break
+            
+        if score < 50:  # U2 classification (raw classifier threshold)
+            u2_count += 1
+            color = 'xkcd:medium grey'
+        elif score > high_val:
+            u12_high += 1
+            color = 'xkcd:green'
+        elif med_val < score <= high_val:
+            u12_med += 1
+            color = 'xkcd:orange'
+        else:
+            u12_low += 1
+            color = 'xkcd:red'
+
+        cluster_colors.append(color)
+
+    # Trim score_vector to match colors if needed
+    n_points = len(cluster_colors)
+    plot_scores = score_vector[:n_points]
+
+    # Create legend
+    legend_colors = ['xkcd:medium grey', 'xkcd:red', 'xkcd:orange', 'xkcd:green']
+    legend_labels = [
+        'U2',
+        f'U12<={int(med_val)}',
+        f'{int(med_val)}<U12<={int(high_val)}',
+        f'U12>{int(high_val)}'
+    ]
+    legend_counts = [u2_count, u12_low, u12_med, u12_high]
+
+    legend_patches = []
+    for label, count, color in zip(legend_labels, legend_counts, legend_colors):
+        label_with_count = f'{label} ({count})'
+        patch = mpatches.Patch(color=color, label=label_with_count)
+        legend_patches.append(patch)
+
+    # Plot main scatter
+    ax_main.scatter(
+        *plot_scores[:, :2].T,
+        s=20,
+        c=cluster_colors,
+        alpha=0.5,
+        rasterized=True
+    )
+
+    ax_main.legend(handles=legend_patches, fontsize=fsize-2)
+    ax_main.set_xlabel(xlab, fontsize=fsize)
+    ax_main.set_ylabel(ylab, fontsize=fsize)
+
+    # Plot marginal distributions
+    ax_top.hist(plot_scores[:, 0], bins=50, color='steelblue', alpha=0.7, edgecolor='none')
+    ax_top.set_ylabel('Count', fontsize=fsize-2)
+    ax_top.tick_params(labelbottom=False)
+    ax_top.spines['top'].set_visible(False)
+    ax_top.spines['right'].set_visible(False)
+
+    ax_right.hist(plot_scores[:, 1], bins=50, orientation='horizontal', color='steelblue', alpha=0.7, edgecolor='none')
+    ax_right.set_xlabel('Count', fontsize=fsize-2)
+    ax_right.tick_params(labelleft=False, labelrotation=45)
+    ax_right.spines['top'].set_visible(False)
+    ax_right.spines['right'].set_visible(False)
+
+    fig.suptitle(f'{species_name} - U12 Classification Results', fontsize=fsize+2, y=0.98, weight='bold')
+
     plt.savefig(output_path, dpi=fig_dpi, bbox_inches='tight')
     plt.close()
 
