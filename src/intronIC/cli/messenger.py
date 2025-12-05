@@ -29,10 +29,10 @@ class UnifiedMessenger:
 
     # Message type configurations: emoji, palette color key, bold flag
     _MESSAGE_TYPES = {
-        "info":    ("ℹ", "info",    False),
+        "info": ("ℹ", "info", False),
         "success": ("✓", "success", False),
         "warning": ("⚠", "warning", False),
-        "error":   ("✗", "error",   True),
+        "error": ("✗", "error", True),
     }
 
     def __init__(
@@ -83,12 +83,16 @@ class UnifiedMessenger:
             or (now - self.last_timestamp).total_seconds() >= 1.0
         ):
             self.last_timestamp = now
-            ts_color = PALETTE.timestamp["log"] if for_log else PALETTE.timestamp["console"]
+            ts_color = (
+                PALETTE.timestamp["log"] if for_log else PALETTE.timestamp["console"]
+            )
             return f"[{ts_color}][{now.strftime('%H:%M:%S')}][/{ts_color}] "
 
         return ""
 
-    def _styled(self, text: str, color_key: str, for_log: bool = False, bold: bool = False) -> str:
+    def _styled(
+        self, text: str, color_key: str, for_log: bool = False, bold: bool = False
+    ) -> str:
         """
         Wrap text with Rich markup using appropriate color scheme.
 
@@ -120,7 +124,9 @@ class UnifiedMessenger:
         # Console output
         if not self.quiet:
             ts = self._get_timestamp(force=with_timestamp, for_log=False)
-            styled = self._styled(f"{emoji} {message}", color_key, for_log=False, bold=bold)
+            styled = self._styled(
+                f"{emoji} {message}", color_key, for_log=False, bold=bold
+            )
             self.console.print(f"{ts}{styled}")
 
         # Log output
@@ -166,14 +172,17 @@ class UnifiedMessenger:
 
             # Section divider
             self.console.print()
-            self.console.rule(f"[{header_c}]Step {step_num}: {step_name}", style=header_c)
+            self.console.rule(
+                f"[{header_c}]Step {step_num}: {step_name}", style=header_c
+            )
 
             # Optional: Show pipeline tree with current step highlighted
             if show_tree:
                 from rich.tree import Tree
 
                 tree = Tree(
-                    f"🔄 [{PALETTE.highlight['console']}]Pipeline Steps", guide_style="dim"
+                    f"🔄 [{PALETTE.highlight['console']}]Pipeline Steps",
+                    guide_style="dim",
                 )
 
                 for i, step in enumerate(all_steps, 1):
@@ -192,7 +201,9 @@ class UnifiedMessenger:
         timestamp = self._get_timestamp(force=True, for_log=True)
         self.log_console.print("")  # Blank line
         self.log_console.print(self._styled(sep_line, "header", for_log=True))
-        self.log_console.print(self._styled(step_text, "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled(step_text, "header", for_log=True, bold=True)
+        )
         self.log_console.print(self._styled(sep_line, "header", for_log=True))
         self.log_console.print(
             f"{timestamp}{self._styled(f'Starting step {step_num} of {len(all_steps)}', 'info', for_log=True)}"
@@ -276,7 +287,7 @@ class UnifiedMessenger:
         # Console: Rich panel with metadata
         if not self.quiet:
             header = Text()
-            header.append("intronIC ", style=f"bold {PALETTE.highlight["console"]}")
+            header.append("intronIC ", style=f"bold {PALETTE.highlight['console']}")
             header.append(f"v{ver}\n\n", style="dim")
             header.append("Run name: ", style=PALETTE.table_value["console"])
             header.append(f"{species_name}\n", style=PALETTE.warning["console"])
@@ -299,20 +310,31 @@ class UnifiedMessenger:
             header.append(f"{timestamp}", style=PALETTE.timestamp["console"])
 
             panel = Panel(
-                header, border_style=PALETTE.highlight["console"], box=box.DOUBLE, padding=(1, 2)
+                header,
+                border_style=PALETTE.highlight["console"],
+                box=box.DOUBLE,
+                padding=(1, 2),
             )
             self.console.print(panel)
 
         # Log: Clean text format with full paths and color
         sep_line = "=" * 80
         self.log_console.print(self._styled(sep_line, "header", for_log=True))
-        self.log_console.print(self._styled(f"intronIC v{ver}", "highlight", for_log=True, bold=True))
-        self.log_console.print(self._styled(f"Started: {timestamp}", "timestamp", for_log=True))
+        self.log_console.print(
+            self._styled(f"intronIC v{ver}", "highlight", for_log=True, bold=True)
+        )
+        self.log_console.print(
+            self._styled(f"Started: {timestamp}", "timestamp", for_log=True)
+        )
         self.log_console.print(self._styled(sep_line, "header", for_log=True))
         self.log_console.print("")
 
         # Combined Command and Configuration section
-        self.log_console.print(self._styled("Command and Configuration:", "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled(
+                "Command and Configuration:", "header", for_log=True, bold=True
+            )
+        )
 
         # Helper for labeled log lines
         def log_item(label: str, value: str, value_style: str = None):
@@ -423,16 +445,25 @@ class UnifiedMessenger:
             table = Table(
                 title="Intron Filtering Summary",
                 box=box.ROUNDED,
-                title_style=f"bold {PALETTE.highlight["console"]}",
+                title_style=f"bold {PALETTE.highlight['console']}",
             )
             table.add_column(
-                "Category", style=PALETTE.table_header["console"], no_wrap=False, width=28
+                "Category",
+                style=PALETTE.table_header["console"],
+                no_wrap=False,
+                width=28,
             )
             table.add_column(
-                "Included", style=PALETTE.table_value["console"], justify="right", width=10
+                "Included",
+                style=PALETTE.table_value["console"],
+                justify="right",
+                width=10,
             )
             table.add_column(
-                "Excluded", style=PALETTE.table_value["console"], justify="right", width=10
+                "Excluded",
+                style=PALETTE.table_value["console"],
+                justify="right",
+                width=10,
             )
 
             # Always show all categories to indicate which checks were performed
@@ -449,13 +480,13 @@ class UnifiedMessenger:
                 "Total excluded",
                 "",
                 f"{total_excluded:,}",
-                style=f"bold {PALETTE.warning["console"]}",
+                style=f"bold {PALETTE.warning['console']}",
             )
             table.add_row(
                 "Retained for scoring",
                 "",
                 f"{kept:,}",
-                style=f"bold {PALETTE.success["console"]}",
+                style=f"bold {PALETTE.success['console']}",
             )
 
             self.console.print()
@@ -470,28 +501,103 @@ class UnifiedMessenger:
         tbl = "table_header"
 
         self.log_console.print("")
-        self.log_console.print(self._styled("Intron Filtering Summary:", "highlight", for_log=True, bold=True))
-        self.log_console.print(border("┌────────────────────────────┬────────────┬────────────┐", tbl, for_log=True))
-        self.log_console.print(border("│ Category                   │ Included   │ Excluded   │", tbl, for_log=True))
-        self.log_console.print(border("├────────────────────────────┼────────────┼────────────┤", tbl, for_log=True))
+        self.log_console.print(
+            self._styled(
+                "Intron Filtering Summary:", "highlight", for_log=True, bold=True
+            )
+        )
+        self.log_console.print(
+            border(
+                "┌────────────────────────────┬────────────┬────────────┐",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                "│ Category                   │ Included   │ Excluded   │",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                "├────────────────────────────┼────────────┼────────────┤",
+                tbl,
+                for_log=True,
+            )
+        )
 
-        # Data rows (no styling on data for clarity)
-        self.log_console.print(f"│   Duplicates               │ {pad(dup_inc)} │ {pad(dup_exc)} │")
-        self.log_console.print(f"│   Too short                │ {pad(short_inc)} │ {pad(short_exc)} │")
-        self.log_console.print(f"│   Ambiguous bases          │ {pad(ambig_inc)} │ {pad(ambig_exc)} │")
-        self.log_console.print(f"│   Non-canonical            │ {pad(nc_inc)} │ {pad(nc_exc)} │")
-        self.log_console.print(f"│   Overlapping              │ {pad(overlap_inc)} │ {pad(overlap_exc)} │")
-        self.log_console.print(f"│   Alternative isoform      │ {pad(iso_inc)} │ {pad(iso_exc)} │")
+        # Data rows (styled consistently with table borders)
+        self.log_console.print(
+            border(
+                f"│   Duplicates               │ {pad(dup_inc)} │ {pad(dup_exc)} │",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                f"│   Too short                │ {pad(short_inc)} │ {pad(short_exc)} │",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                f"│   Ambiguous bases          │ {pad(ambig_inc)} │ {pad(ambig_exc)} │",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                f"│   Non-canonical            │ {pad(nc_inc)} │ {pad(nc_exc)} │",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                f"│   Overlapping              │ {pad(overlap_inc)} │ {pad(overlap_exc)} │",
+                tbl,
+                for_log=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                f"│   Alternative isoform      │ {pad(iso_inc)} │ {pad(iso_exc)} │",
+                tbl,
+                for_log=True,
+            )
+        )
 
-        self.log_console.print(border("├────────────────────────────┼────────────┼────────────┤", tbl, for_log=True))
-        # Summary rows with highlighting
+        self.log_console.print(
+            border(
+                "├────────────────────────────┼────────────┼────────────┤",
+                tbl,
+                for_log=True,
+            )
+        )
+        # Summary rows with highlighting (borders styled, values highlighted)
+        border_char = self._styled("│", tbl, for_log=True)
         warn = self._styled("Total excluded", "warning", for_log=True)
         warn_val = self._styled(f"{total_excluded:>10,}", "warning", for_log=True)
-        self.log_console.print(f"│ {warn}             │            │ {warn_val} │")
+        self.log_console.print(
+            f"{border_char} {warn}             {border_char}            {border_char} {warn_val} {border_char}"
+        )
         succ = self._styled("Retained for scoring", "success", for_log=True)
         succ_val = self._styled(f"{kept:>10,}", "success", for_log=True)
-        self.log_console.print(f"│ {succ}       │            │ {succ_val} │")
-        self.log_console.print(border("└────────────────────────────┴────────────┴────────────┘", tbl, for_log=True))
+        self.log_console.print(
+            f"{border_char} {succ}       {border_char}            {border_char} {succ_val} {border_char}"
+        )
+        self.log_console.print(
+            border(
+                "└────────────────────────────┴────────────┴────────────┘",
+                tbl,
+                for_log=True,
+            )
+        )
         self.log_console.print("")
 
     def print_classification_results(
@@ -521,21 +627,27 @@ class UnifiedMessenger:
             table = Table(
                 title=f"Classification Results (threshold: {threshold}%)",
                 box=box.DOUBLE_EDGE,
-                title_style=f"bold {PALETTE.highlight["console"]}",
+                title_style=f"bold {PALETTE.highlight['console']}",
             )
-            table.add_column("Type", style=PALETTE.table_header["console"], no_wrap=True)
-            table.add_column("Count", style=PALETTE.table_value["console"], justify="right")
-            table.add_column("Percentage", style=PALETTE.table_value["console"], justify="right")
+            table.add_column(
+                "Type", style=PALETTE.table_header["console"], no_wrap=True
+            )
+            table.add_column(
+                "Count", style=PALETTE.table_value["console"], justify="right"
+            )
+            table.add_column(
+                "Percentage", style=PALETTE.table_value["console"], justify="right"
+            )
 
             table.add_row(
-                f"[{PALETTE.u12_highlight["log"]}]U12-type (total)",
-                f"[{PALETTE.u12_highlight["log"]}]{u12_count:,}",
-                f"[{PALETTE.u12_highlight["log"]}]{u12_pct:.2f}%",
+                f"[{PALETTE.u12_highlight['log']}]U12-type (total)",
+                f"[{PALETTE.u12_highlight['log']}]{u12_count:,}",
+                f"[{PALETTE.u12_highlight['log']}]{u12_pct:.2f}%",
             )
             table.add_row(
-                f"[{PALETTE.u12_highlight["log"]}]U12-type (AT-AC)",
-                f"[{PALETTE.u12_highlight["log"]}]{atac_count:,}",
-                f"[{PALETTE.u12_highlight["log"]}]{atac_pct:.2f}%",
+                f"[{PALETTE.u12_highlight['log']}]U12-type (AT-AC)",
+                f"[{PALETTE.u12_highlight['log']}]{atac_count:,}",
+                f"[{PALETTE.u12_highlight['log']}]{atac_pct:.2f}%",
             )
             table.add_row("U2-type", f"{u2_count:,}", f"{u2_pct:.2f}%")
             table.add_row("[bold]Total", f"[bold]{total:,}", "[bold]100.00%")
@@ -548,16 +660,51 @@ class UnifiedMessenger:
         u12 = lambda t: self._styled(t, "u12_highlight", for_log=True)
 
         self.log_console.print("")
-        self.log_console.print(self._styled(f"Classification Results (threshold: {threshold}%):", "highlight", for_log=True, bold=True))
-        self.log_console.print(border("┌──────────────────────┬───────────┬────────────┐", tbl, for_log=True))
-        self.log_console.print(border("│ Type                 │ Count     │ Percentage │", tbl, for_log=True))
-        self.log_console.print(border("├──────────────────────┼───────────┼────────────┤", tbl, for_log=True))
-        self.log_console.print(f"│ {u12('U12-type (total)')}     │ {u12(f'{u12_count:>9,}')} │ {u12(f'{u12_pct:>9.2f}%')} │")
-        self.log_console.print(f"│ {u12('U12-type (AT-AC)')}     │ {u12(f'{atac_count:>9,}')} │ {u12(f'{atac_pct:>9.2f}%')} │")
-        self.log_console.print(f"│ U2-type              │ {u2_count:>9,} │ {u2_pct:>9.2f}% │")
-        self.log_console.print(border("├──────────────────────┼───────────┼────────────┤", tbl, for_log=True))
-        self.log_console.print(f"│ [bold]Total[/bold]                │ [bold]{total:>9,}[/bold] │ [bold]{100.0:>9.2f}%[/bold] │")
-        self.log_console.print(border("└──────────────────────┴───────────┴────────────┘", tbl, for_log=True))
+        self.log_console.print(
+            self._styled(
+                f"Classification Results (threshold: {threshold}%):",
+                "highlight",
+                for_log=True,
+                bold=True,
+            )
+        )
+        self.log_console.print(
+            border(
+                "┌──────────────────────┬───────────┬────────────┐", tbl, for_log=True
+            )
+        )
+        self.log_console.print(
+            border(
+                "│ Type                 │ Count     │ Percentage │", tbl, for_log=True
+            )
+        )
+        self.log_console.print(
+            border(
+                "├──────────────────────┼───────────┼────────────┤", tbl, for_log=True
+            )
+        )
+        self.log_console.print(
+            f"│ {u12('U12-type (total)')}     │ {u12(f'{u12_count:>9,}')} │ {u12(f'{u12_pct:>9.2f}%')} │"
+        )
+        self.log_console.print(
+            f"│ {u12('U12-type (AT-AC)')}     │ {u12(f'{atac_count:>9,}')} │ {u12(f'{atac_pct:>9.2f}%')} │"
+        )
+        self.log_console.print(
+            f"│ U2-type              │ {u2_count:>9,} │ {u2_pct:>9.2f}% │"
+        )
+        self.log_console.print(
+            border(
+                "├──────────────────────┼───────────┼────────────┤", tbl, for_log=True
+            )
+        )
+        self.log_console.print(
+            f"│ [bold]Total[/bold]                │ [bold]{total:>9,}[/bold] │ [bold]{100.0:>9.2f}%[/bold] │"
+        )
+        self.log_console.print(
+            border(
+                "└──────────────────────┴───────────┴────────────┘", tbl, for_log=True
+            )
+        )
         self.log_console.print("")
 
     def print_dinucleotide_boundaries(
@@ -582,12 +729,20 @@ class UnifiedMessenger:
             table = Table(
                 title=f"Top {top_n} Splice Site Boundaries ({intron_type} introns)",
                 box=box.ROUNDED,
-                title_style=f"bold {PALETTE.highlight["console"]}",
+                title_style=f"bold {PALETTE.highlight['console']}",
             )
-            table.add_column("Rank", style=PALETTE.table_header["console"], justify="right")
-            table.add_column("Dinucleotide", style=PALETTE.table_value["console"], justify="right")
-            table.add_column("Count", style=PALETTE.table_value["console"], justify="right")
-            table.add_column("Percent", style=PALETTE.table_value["console"], justify="right")
+            table.add_column(
+                "Rank", style=PALETTE.table_header["console"], justify="right"
+            )
+            table.add_column(
+                "Dinucleotide", style=PALETTE.table_value["console"], justify="right"
+            )
+            table.add_column(
+                "Count", style=PALETTE.table_value["console"], justify="right"
+            )
+            table.add_column(
+                "Percent", style=PALETTE.table_value["console"], justify="right"
+            )
 
             for i, (dnts, count) in enumerate(boundaries_to_show, 1):
                 pct = (count / total * 100) if total > 0 else 0
@@ -601,16 +756,33 @@ class UnifiedMessenger:
         tbl = "table_header"
 
         self.log_console.print("")
-        self.log_console.print(self._styled(f"Top {top_n} Splice Site Boundaries ({intron_type} introns):", "highlight", for_log=True, bold=True))
-        self.log_console.print(border("┌──────┬──────────────┬──────────┬───────────┐", tbl, for_log=True))
-        self.log_console.print(border("│ Rank │ Dinucleotide │ Count    │ Percent   │", tbl, for_log=True))
-        self.log_console.print(border("├──────┼──────────────┼──────────┼───────────┤", tbl, for_log=True))
+        self.log_console.print(
+            self._styled(
+                f"Top {top_n} Splice Site Boundaries ({intron_type} introns):",
+                "highlight",
+                for_log=True,
+                bold=True,
+            )
+        )
+        self.log_console.print(
+            border("┌──────┬──────────────┬──────────┬───────────┐", tbl, for_log=True)
+        )
+        self.log_console.print(
+            border("│ Rank │ Dinucleotide │ Count    │ Percent   │", tbl, for_log=True)
+        )
+        self.log_console.print(
+            border("├──────┼──────────────┼──────────┼───────────┤", tbl, for_log=True)
+        )
 
         for i, (dnts, count) in enumerate(boundaries_to_show, 1):
             pct = (count / total * 100) if total > 0 else 0
-            self.log_console.print(f"│ {i:>4} │ {dnts:>12} │ {count:>8,} │ {pct:>8.2f}% │")
+            self.log_console.print(
+                f"│ {i:>4} │ {dnts:>12} │ {count:>8,} │ {pct:>8.2f}% │"
+            )
 
-        self.log_console.print(border("└──────┴──────────────┴──────────┴───────────┘", tbl, for_log=True))
+        self.log_console.print(
+            border("└──────┴──────────────┴──────────┴───────────┘", tbl, for_log=True)
+        )
         self.log_console.print("")
 
     def print_file_tree(self, output_files: dict[str, str]):
@@ -624,7 +796,10 @@ class UnifiedMessenger:
         if not self.quiet:
             from rich.tree import Tree
 
-            tree = Tree(f"📁 [bold {PALETTE.highlight['console']}]Output Files", guide_style="dim")
+            tree = Tree(
+                f"📁 [bold {PALETTE.highlight['console']}]Output Files",
+                guide_style="dim",
+            )
 
             for file_type, filepath in output_files.items():
                 tree.add(
@@ -635,7 +810,9 @@ class UnifiedMessenger:
 
         # Log: ASCII tree with box-drawing characters
         self.log_console.print("")
-        self.log_console.print(self._styled("Output Files:", "highlight", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled("Output Files:", "highlight", for_log=True, bold=True)
+        )
 
         # Convert dict to list for easier handling of first/last items
         items = list(output_files.items())
@@ -691,12 +868,16 @@ class UnifiedMessenger:
     ):
         """Print training configuration summary to log only."""
         self.log_console.print("")
-        self.log_console.print(self._styled("Training Configuration:", "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled("Training Configuration:", "header", for_log=True, bold=True)
+        )
         self.log_console.print(f"  Species: {species}")
         self.log_console.print(f"  Classification threshold: {threshold}%")
         self.log_console.print(f"  Random seed: {seed}")
         self.log_console.print(f"  Max iterations: {max_iter:,}")
-        self.log_console.print(f"  Reference data: {u12_count:,} U12-type, {u2_count:,} U2-type")
+        self.log_console.print(
+            f"  Reference data: {u12_count:,} U12-type, {u2_count:,} U2-type"
+        )
         self.log_console.print(f"  Ensemble models: {n_models}")
         self.log_console.print(f"  Evaluation mode: {eval_mode}")
         if fixed_c:
@@ -704,7 +885,9 @@ class UnifiedMessenger:
         else:
             self.log_console.print(f"  C parameter: Optimized via grid search")
             if n_optimization_rounds:
-                self.log_console.print(f"  Optimization rounds: {n_optimization_rounds}")
+                self.log_console.print(
+                    f"  Optimization rounds: {n_optimization_rounds}"
+                )
         self.log_console.print("")
 
     def print_hyperparameter_results(
@@ -717,7 +900,11 @@ class UnifiedMessenger:
     ):
         """Print hyperparameter optimization results to log only."""
         self.log_console.print("")
-        self.log_console.print(self._styled("Hyperparameter Optimization:", "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled(
+                "Hyperparameter Optimization:", "header", for_log=True, bold=True
+            )
+        )
         self.log_console.print(f"  Optimized C: {optimized_c:.6e}")
         self.log_console.print(f"  CV score (balanced accuracy): {cv_score:.4f}")
         self.log_console.print(f"  Calibration method: {calibration_method}")
@@ -746,7 +933,14 @@ class UnifiedMessenger:
                 fold_idx, f1_score, pr_auc, n_u12_train, n_u2_train, n_u12_test, n_u2_test
         """
         self.log_console.print("")
-        self.log_console.print(self._styled(f"Nested Cross-Validation Results ({n_folds} folds):", "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled(
+                f"Nested Cross-Validation Results ({n_folds} folds):",
+                "header",
+                for_log=True,
+                bold=True,
+            )
+        )
         self.log_console.print(f"  Mean F1 score: {mean_f1:.4f} ± {std_f1:.4f}")
         self.log_console.print(f"  Mean PR-AUC: {mean_pr_auc:.4f} ± {std_pr_auc:.4f}")
         self.log_console.print("")
@@ -845,7 +1039,11 @@ class UnifiedMessenger:
     ):
         """Print train/test split evaluation results to log only."""
         self.log_console.print("")
-        self.log_console.print(self._styled("Train/Test Split Evaluation:", "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled(
+                "Train/Test Split Evaluation:", "header", for_log=True, bold=True
+            )
+        )
         self.log_console.print(
             f"  Training set: {n_u12_train + n_u2_train:,} introns "
             f"({n_u2_train:,} U2, {n_u12_train:,} U12)"
@@ -874,7 +1072,14 @@ class UnifiedMessenger:
                 train_size, u12_count, u2_count, parameters.C
         """
         self.log_console.print("")
-        self.log_console.print(self._styled(f"Trained Ensemble ({n_models} models):", "header", for_log=True, bold=True))
+        self.log_console.print(
+            self._styled(
+                f"Trained Ensemble ({n_models} models):",
+                "header",
+                for_log=True,
+                bold=True,
+            )
+        )
 
         for i, model in enumerate(models, 1):
             self.log_console.print(f"  Model {i}/{n_models}:")
