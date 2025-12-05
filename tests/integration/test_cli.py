@@ -116,21 +116,14 @@ class TestArgumentParser:
         assert args.cv_processes == 4
 
     def test_training_options(self, tmp_path):
-        """Test training-related options."""
-        genome = tmp_path / "genome.fa"
-        annotation = tmp_path / "annotation.gff3"
-        genome.write_text(">chr1\nACTG\n")
-        annotation.write_text("chr1\t.\tgene\t1\t100\t.\t+\t.\tID=gene1\n")
-
+        """Test training-related options (train subcommand)."""
         parser = IntronICArgumentParser()
+        # Training options are now under the 'train' subcommand
         args = parser.parse_args(
             [
+                "train",
                 "-n",
                 "species",
-                "-g",
-                str(genome),
-                "-a",
-                str(annotation),
                 "-C",
                 "0.1",
                 "--n_models",
@@ -140,6 +133,7 @@ class TestArgumentParser:
             ]
         )
 
+        assert args.command == "train"
         assert args.C == 0.1
         assert args.n_models == 5
         assert args.seed == 123
@@ -359,21 +353,14 @@ class TestConfiguration:
         assert config.extraction.no_intron_overlap is True
 
     def test_config_training_options(self, tmp_path):
-        """Test configuration with training options."""
-        genome = tmp_path / "genome.fa"
-        annotation = tmp_path / "annotation.gff3"
-        genome.write_text(">chr1\nACTG\n")
-        annotation.write_text("chr1\t.\tgene\t1\t100\t.\t+\t.\tID=gene1\n")
-
+        """Test configuration with training options (train subcommand)."""
         parser = IntronICArgumentParser()
+        # Training options are now under the 'train' subcommand
         args = parser.parse_args(
             [
+                "train",
                 "-n",
                 "species",
-                "-g",
-                str(genome),
-                "-a",
-                str(annotation),
                 "-C",
                 "0.5",
                 "--n_models",
@@ -495,16 +482,18 @@ class TestTrueStreamingClassification:
 
     def test_true_streaming_requires_pretrained_model(self):
         """Test that true streaming mode requires a pre-trained model."""
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, PropertyMock
 
-        from intronIC.cli.config import IntronICConfig
+        from intronIC.cli.config import IntronICConfig, TrainingConfig, InputConfig
         from intronIC.cli.main import classify_streaming_per_contig
         from intronIC.cli.messenger import UnifiedMessenger
         from intronIC.cli.progress import IntronICProgressReporter
 
-        # Create config without pretrained model
-        config = MagicMock(spec=IntronICConfig)
+        # Create config without pretrained model using proper nested mocks
+        config = MagicMock()
+        config.training = MagicMock(spec=TrainingConfig)
         config.training.pretrained_model_path = None
+        config.input = MagicMock(spec=InputConfig)
         config.input.mode = "annotation"
 
         messenger = MagicMock(spec=UnifiedMessenger)
@@ -518,21 +507,20 @@ class TestTrueStreamingClassification:
         from pathlib import Path
         from unittest.mock import MagicMock
 
-        from intronIC.cli.config import IntronICConfig
+        from intronIC.cli.config import IntronICConfig, TrainingConfig, InputConfig
         from intronIC.cli.main import classify_streaming_per_contig
         from intronIC.cli.messenger import UnifiedMessenger
         from intronIC.cli.progress import IntronICProgressReporter
 
-        # Create config with pretrained model but BED mode
-        config = MagicMock(spec=IntronICConfig)
+        # Create config with pretrained model but BED mode using proper nested mocks
+        config = MagicMock()
+        config.training = MagicMock(spec=TrainingConfig)
         config.training.pretrained_model_path = Path("/fake/model.pkl")
+        config.input = MagicMock(spec=InputConfig)
         config.input.mode = "bed"
 
         messenger = MagicMock(spec=UnifiedMessenger)
         reporter = IntronICProgressReporter(quiet=True)
-
-        with pytest.raises(ValueError, match="annotation input mode"):
-            classify_streaming_per_contig(config, messenger, reporter)
 
         with pytest.raises(ValueError, match="annotation input mode"):
             classify_streaming_per_contig(config, messenger, reporter)

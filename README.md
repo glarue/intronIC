@@ -173,7 +173,7 @@ intronIC -h
 
 `intronIC` requires Python 3.10+ and the following packages:
 
-* **[numpy](https://numpy.org/)** `>=1.19.0, <2.0` - Numerical operations
+* **[numpy](https://numpy.org/)** `>=1.19.0` - Numerical operations
 * **[scipy](https://scipy.org/)** `>=1.5.0` - Scientific computing
 * **[scikit-learn](https://scikit-learn.org/)** `>=0.22, <2.0` - SVM classifier
 * **[matplotlib](https://matplotlib.org/)** `>=3.3.0` - Plotting
