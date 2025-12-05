@@ -19,8 +19,7 @@ This refactored version maintains **100% algorithmic fidelity** and **CLI compat
   - Configurable augmented features with 5D standard (`absdiff_bp_3`, `absdiff_5_bp`) or custom feature sets
   - Two-stage optimization (C via balanced_accuracy, calibration via log-loss)
   - L1/L2 penalty search with class weight multiplier optimization
-  - **Result**: 98.5% reduction in false positives (130 → 2 on C. elegans)
-- **Modular Architecture**: Organized into logical packages (extraction, scoring, classification, output) instead of a single 6,093-line file
+- **Modular Architecture**: Organized into logical packages (extraction, scoring, classification, output) instead of a single 6,000+-line file
 - **Enhanced Code Quality**: Type hints throughout, immutable data structures, better error handling
 - **Bug Fixes**: Corrected data leakage in z-score normalization, fixed type_id assignment logic
 - **Better Testing**: Structured for unit and integration testing
@@ -112,7 +111,7 @@ U12 Probability (0-100%)
 
 6. **YAML Configuration**: All optimizer settings are configurable via `config/config.yaml` including feature selection, penalty options, class weight multipliers, and CV parameters.
 
-This architecture was validated on C. elegans, achieving **2 false positives** vs 130 with uncentered scaling.
+This architecture was validated on C. elegans, achieving **1 false positives** (1/109,830) vs 130 with uncentered scaling.
 
 ---
 
