@@ -4761,8 +4761,10 @@ def main_classify(config: IntronICConfig):
             # Generate visualization plots from output file
             messenger.log_only("Generating visualization plots")
             try:
-                from intronIC.visualization.plots import plot_classification_results_from_file
-                
+                from intronIC.visualization.plots import (
+                    plot_classification_results_from_file,
+                )
+
                 score_file = config.output.get_output_path(".score_info.iic")
                 if score_file.exists():
                     plot_classification_results_from_file(
@@ -4777,6 +4779,7 @@ def main_classify(config: IntronICConfig):
                     messenger.warning(f"Score file not found: {score_file}")
             except Exception as plot_error:
                 import traceback
+
                 messenger.warning(f"Failed to generate plots: {plot_error}")
                 messenger.warning(f"Traceback: {traceback.format_exc()}")
 
@@ -5263,6 +5266,8 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
+if __name__ == "__main__":
+    sys.exit(main())
 if __name__ == "__main__":
     sys.exit(main())
 if __name__ == "__main__":

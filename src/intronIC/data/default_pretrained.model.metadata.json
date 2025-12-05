@@ -1,6 +1,6 @@
 {
-  "model_name": "homo_sapiens.default.model",
-  "training_date": "2025-11-25 14:43:57",
+  "model_name": "homo_sapiens.full_train.model",
+  "training_date": "2025-12-04 18:03:38",
   "reference_data": {
     "u12": {
       "file": "/home/glarue/code/intronIC/src/intronIC/data/u12_reference.introns.iic.gz",
@@ -15,18 +15,18 @@
     "total": 21077
   },
   "hyperparameters": {
-    "C": 56.29709515754969,
-    "cv_score": 0.00017172483670854625,
+    "C": 20.97201495064262,
+    "cv_score": 0.00018805116668794232,
     "kernel": "linear",
     "calibration_method": "isotonic",
     "max_iter": 50000,
-    "n_models": 15,
+    "n_models": 16,
     "threshold": 90.0,
     "random_seed": 42
   },
   "evaluation": {
     "method": "nested_cv",
-    "n_folds": 6,
+    "n_folds": 7,
     "mean_f1": 1.0,
     "std_f1": 0.0,
     "mean_pr_auc": 1.0,
