@@ -194,133 +194,190 @@ All dependencies are automatically installed by `pixi`, `uv`, or `pip`.
 
 ## Quick Start
 
-### Running on Test Data (Human Chromosome 19)
+### Installation (30 seconds)
 
-The repository includes test data for human chromosome 19 (Ensembl 91) in `intronIC/test_data/`:
-
-**With pixi (fastest setup):**
 ```bash
-cd intronIC/intronIC_refactored
-pixi run test-small  # Fast test with small reference sets (~2-5 min)
-pixi run test-full   # Full test with complete reference sets (~5-15 min)
+# Clone and install
+git clone https://github.com/glarue/intronIC.git
+cd intronIC
+pip install -e .
+
+# Verify installation
+intronIC --version
 ```
 
-**With pip:**
-```bash
-cd intronIC/intronIC_refactored
+### Basic Commands
 
-# After installing with pip install -e .
-intronIC -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-         -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
-         -n homo_sapiens
+```bash
+# Classify introns (train on-the-fly)
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name -p 8
+
+# Use pretrained model (faster)
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name --model model.pkl -p 8
+
+# Extract sequences only (no classification)
+intronIC extract -g genome.fa.gz -a annotation.gff3.gz -n species_name -p 8
+
+# Train a model (no genome needed)
+intronIC train -n my_model -p 8
 ```
 
-This will:
-1. Extract all introns from the annotation
-2. Score them using PWM matrices
-3. Classify them as U2 or U12 type
-4. Generate output files (`.meta.iic`, `.bed.iic`, `.seqs.iic`, `.scores.iic`, `.png`)
+### Test Run (Human Chr19)
 
-### Expected Results
+```bash
+# With test data included in repository
+intronIC -g test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+         -a test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+         -n homo_sapiens_chr19 -p 4
+```
 
-For the Chr19 test data, you should find approximately:
-- **29,000+** total introns extracted
-- **~30** U12-type introns at >90% confidence
+Expected results:
+- **~29,000** introns extracted
+- **~30** U12-type introns (score ≥90%)
 - **~8** AT-AC type U12 introns
-- Multiple output files named `homo_sapiens.*`
+- Output files: `homo_sapiens_chr19.*.iic`
 
 ---
 
 ## Usage
 
+### Commands
+
+intronIC supports three subcommands:
+
+| Command | Description |
+|---------|-------------|
+| (default) | Classify introns from genome + annotation |
+| `train` | Train a model on reference data (no genome needed) |
+| `extract` | Extract sequences only (no classification) |
+
+### Default Mode: Classify Introns
+
+The default mode extracts introns and classifies them as U12 or U2 type:
+
+```bash
+# Basic usage (trains model on-the-fly)
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name
+
+# With pretrained model (faster, recommended)
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
+  --model homo_sapiens.model.pkl -p 8
+
+# Memory-efficient streaming mode
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
+  --model homo_sapiens.model.pkl --streaming -p 8
+```
+
+### Train Subcommand
+
+Train a classifier model without needing a genome:
+
+```bash
+# Basic training with built-in references
+intronIC train -n my_model -p 8
+
+# With custom configuration
+intronIC --config config/config.yaml train -n my_model -p 12
+
+# With custom reference sequences
+intronIC train -n my_model -p 8 \
+  --reference_u12s custom_u12.iic \
+  --reference_u2s custom_u2.iic
+
+# Quick training (skip nested CV evaluation)
+intronIC train -n my_model --eval_mode none -p 8
+```
+
+Output: `my_model.model.pkl` - use with `--model` for classification.
+
+### Extract Subcommand
+
+Extract intron sequences without classification:
+
+```bash
+# Extract from annotation (streaming mode by default)
+intronIC extract -g genome.fa.gz -a annotation.gff3.gz -n species_name
+
+# Extract from BED file
+intronIC extract -g genome.fa.gz -b introns.bed -n species_name
+
+# With custom flank length
+intronIC extract -g genome.fa.gz -a annotation.gff3.gz -n species_name --flank-len 20
+```
+
+Output: `.introns.iic`, `.meta.iic`, `.bed.iic` files (no classification scores).
+
 ### Required Arguments
 
-For any classification run, you need a species name **and** one of the following input combinations:
+| Argument | Short | Description |
+|----------|-------|-------------|
+| `--genome` | `-g` | Genome FASTA file (gzip supported) |
+| `--annotation` | `-a` | GFF3/GTF annotation file (gzip supported) |
+| `--species-name` | `-n` | Species name / output prefix |
 
-* **Option 1**: Genome + Annotation
-  - `-g genome.fa.gz` (FASTA genome file, gzip supported)
-  - `-a annotation.gff3.gz` (GFF3/GTF annotation, gzip supported)
-
-* **Option 2**: Genome + BED coordinates
-  - `-g genome.fa.gz`
-  - `-b coordinates.bed` (BED file with intron coordinates)
-
-* **Option 3**: Pre-extracted sequences
-  - `-q sequences.iic` (Intron sequences file, see [wiki](https://github.com/glarue/intronIC/wiki/Training-data-and-PWMs) for format)
-
-**All runs require:**
-* `-n species_name` (Species name, typically in binomial format like `homo_sapiens`)
+Alternative inputs (instead of `-a`):
+- `-b FILE` - BED file with intron coordinates
+- `-q FILE` - Pre-extracted sequences file
 
 ### Common Options
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `-s` | Extract sequences only (skip classification) | False |
-| `-p N` | Use N parallel processes for scoring | 1 |
-| `-t N` | Probability threshold for calling U12-type introns (0-100) | 90 |
-| `-i` | Include multiple isoforms per gene | False (longest only) |
-| `-v` | Exclude overlapping introns | False |
-| `--no_nc` | Exclude non-canonical introns | False (include) |
-| `-f cds` | Use only CDS features (not exon) | Both CDS and exon |
-| `--model FILE` | Use pretrained model (skip training) | None (train on-the-fly) |
-| `--config FILE` | Custom YAML configuration file | Auto-discovered |
-| `--streaming` | Enable memory-efficient streaming mode | False |
-| `--reference_u12s FILE` | Custom U12 reference sequences | Built-in |
-| `--reference_u2s FILE` | Custom U2 reference sequences | Built-in |
-| `--recursive` | Perform recursive training pass | False |
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--processes` | `-p` | Number of CPU cores | 1 |
+| `--threshold` | `-t` | U12 probability threshold (0-100) | 90 |
+| `--model` | | Pretrained model file | None |
+| `--config` | | YAML configuration file | Auto-discovered |
+| `--streaming` | | Memory-efficient mode | False |
+| `--sequences-only` | `-s` | Skip classification | False |
+| `--feature-type` | `-f` | Feature type: `cds`, `exon`, or `both` | both |
+| `--allow-multiple-isoforms` | `-i` | Include all isoforms | False (longest only) |
+| `--exclude-overlapping` | `-v` | Exclude overlapping introns | False |
+| `--no-nc` | | Exclude non-canonical introns | False |
+| `--recursive` | | Recursive training | False |
 
 ### Usage Examples
 
-**1. Basic classification with default settings:**
-```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species
-```
-
-**2. Fast classification with parallel processing:**
+**1. Basic classification:**
 ```bash
 intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species -p 8
 ```
 
-**3. Extract sequences only (no classification):**
-```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species -s
-```
-
-**4. Classification with stricter threshold (95%):**
-```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species -t 95
-```
-
-**5. Include all isoforms and use only CDS features:**
-```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species -i -f cds
-```
-
-**6. Use custom reference sequences:**
+**2. With pretrained model (recommended for speed):**
 ```bash
 intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species \
-  --reference_u12s my_u12_refs.iic \
-  --reference_u2s my_u2_refs.iic
+  --model homo_sapiens.model.pkl -p 8
 ```
 
-**7. Classify from BED coordinates:**
+**3. Streaming mode for large genomes:**
 ```bash
-intronIC -g genome.fa.gz -b intron_coordinates.bed -n my_species
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species \
+  --model homo_sapiens.model.pkl --streaming -p 8
 ```
 
-**8. Classify pre-extracted sequences:**
+**4. Extract sequences only:**
 ```bash
-intronIC -q intron_sequences.iic -n my_species
+intronIC extract -g genome.fa.gz -a annotation.gff3.gz -n my_species -p 8
 ```
 
-### Pixi Task Shortcuts
-
-If using `pixi`, these convenient shortcuts are available:
-
+**5. Train custom model:**
 ```bash
-pixi run test-small      # Fast test with small references
-pixi run test-full       # Test with full references
-pixi run test-seqs-only  # Extract sequences only (no classification)
+intronIC train -n my_trained_model -p 8 --config config/config.yaml
+```
+
+**6. Stricter threshold (95%):**
+```bash
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species -t 95 -p 8
+```
+
+**7. Include all isoforms, CDS only:**
+```bash
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n my_species -i -f cds -p 8
+```
+
+**8. Classify from BED coordinates:**
+```bash
+intronIC -g genome.fa.gz -b intron_coordinates.bed -n my_species \
+  --model homo_sapiens.model.pkl
 ```
 
 ---
@@ -550,43 +607,13 @@ Configuration files are auto-discovered from (in priority order):
 4. Built-in defaults
 
 Key configurable parameters include:
-- **Feature selection**: Choose which augmented features to use (4D standard or custom)
+- **Feature selection**: Choose which augmented features to use (5D standard or custom)
 - **Penalty options**: L1, L2, or both for regularization search
 - **Class weight multipliers**: Fine-tune precision/recall tradeoff
 - **CV parameters**: Number of folds, optimization rounds
 - **Ensemble settings**: Number of models, subsampling ratio
 
 See `config/config.yaml` for full documentation of all options.
-
-### Training Custom Models
-
-The `train` subcommand trains a model on reference sequences without classifying experimental data:
-
-```bash
-# Train a model using default references
-intronIC train -n my_trained_model -p 8
-
-# Train with custom configuration
-intronIC train -n my_trained_model -p 8 --config config/profiles/production.yaml
-
-# Train with custom references
-intronIC train -n my_trained_model -p 8 \
-  --reference_u12s my_u12_refs.iic \
-  --reference_u2s my_u2_refs.iic
-```
-
-This produces a `.model.pkl` file that can be used with `--model` for classification:
-
-```bash
-# Use the trained model
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n target_species \
-  --model my_trained_model.model.pkl
-```
-
-The trained model includes:
-- Optimized SVM ensemble
-- Frozen scaler (for cross-species normalization)
-- Training metadata (hyperparameters, feature configuration, performance metrics)
 
 ### Recursive Training
 
