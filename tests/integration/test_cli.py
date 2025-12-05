@@ -484,7 +484,7 @@ class TestTrueStreamingClassification:
         """Test that true streaming mode requires a pre-trained model."""
         from unittest.mock import MagicMock, PropertyMock
 
-        from intronIC.cli.config import IntronICConfig, TrainingConfig, InputConfig
+        from intronIC.cli.config import InputConfig, IntronICConfig, TrainingConfig
         from intronIC.cli.main import classify_streaming_per_contig
         from intronIC.cli.messenger import UnifiedMessenger
         from intronIC.cli.progress import IntronICProgressReporter
@@ -507,7 +507,7 @@ class TestTrueStreamingClassification:
         from pathlib import Path
         from unittest.mock import MagicMock
 
-        from intronIC.cli.config import IntronICConfig, TrainingConfig, InputConfig
+        from intronIC.cli.config import InputConfig, IntronICConfig, TrainingConfig
         from intronIC.cli.main import classify_streaming_per_contig
         from intronIC.cli.messenger import UnifiedMessenger
         from intronIC.cli.progress import IntronICProgressReporter

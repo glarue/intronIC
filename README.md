@@ -829,12 +829,17 @@ For complete details, see [REFACTOR_SUMMARY.md](REFACTOR_SUMMARY.md).
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Submit a pull request
+**Quick start for contributors:**
+
+```bash
+git clone https://github.com/glarue/intronIC.git
+cd intronIC
+make install    # Set up development environment
+make test       # Run tests
+make help       # See all available commands
+```
 
 For major changes, please open an issue first to discuss the proposed changes.
 

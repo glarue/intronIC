@@ -70,7 +70,7 @@ comparison_test/
 test_verification/
 *.log
 
-# Documentation (keep only README.md and QUICKSTART.md tracked)
+# Documentation (keep only specific .md files tracked)
 /docs/
 /*.md
 !/README.md
@@ -78,6 +78,7 @@ test_verification/
 !/SRC_LAYOUT_MIGRATION.md
 !/TODO.md
 !/FEATURE_SELECTION_IMPLEMENTATION_PLAN.md
+!/CONTRIBUTING.md
 
 # Test output directories
 run_tests/
