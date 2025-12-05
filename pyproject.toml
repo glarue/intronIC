@@ -11,14 +11,12 @@ license = {text = "GPL-3.0"}
 authors = [
     {name = "Graham E. Larue", email = "egrahamlarue@gmail.com"}
 ]
-requires-python = ">=3.8,<3.13"
+requires-python = ">=3.10,<3.13"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -33,7 +31,6 @@ dependencies = [
     "networkx>=2.5.1",
     "rich>=10.0",
     "smart-open>=5.0.0",
-    "tomli>=1.1.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

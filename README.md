@@ -171,7 +171,7 @@ intronIC -h
 
 ## Dependencies
 
-`intronIC` requires Python 3.8-3.12 and the following packages:
+`intronIC` requires Python 3.10+ and the following packages:
 
 * **[numpy](https://numpy.org/)** `>=1.19.0, <2.0` - Numerical operations
 * **[scipy](https://scipy.org/)** `>=1.5.0` - Scientific computing
