@@ -98,7 +98,7 @@ training:
   # IMPORTANT: Should match optimizer.cv_folds (below) per expert guidance
   # Both outer and inner loops should use k=5 for optimal balance
   # Recommendation: Keep synchronized with optimizer.cv_folds
-  n_cv_folds: 6  # Test with per-multiplier C grid fix
+  n_cv_folds: 7  # Test with per-multiplier C grid fix
 
   # Test set fraction for split evaluation
   # Only used when eval_mode = "split"
@@ -109,7 +109,7 @@ training:
   # Controls iterative refinement rounds during hyperparameter optimization
   # Each round narrows search range around best C value
   # More rounds = finer granularity but longer optimization time
-  n_optimization_rounds: 9
+  n_optimization_rounds: 10
 
   # Fixed SVM C parameter (soft-margin penalty)
   # If set, skips hyperparameter optimization and uses this value directly
@@ -124,7 +124,7 @@ training:
     # - 3-5 = typical ensemble (good balance)
     # - 10+ = very robust but slower
     # Recommendation: 10 for production, 1 for fast testing
-    n_models: 15
+    n_models: 16
 
     # Whether to subsample U2 set for each model
     # - true: Each model sees different random U2 subset (more diversity)
@@ -137,7 +137,7 @@ training:
     # - 1.0 = use all U2s (no subsampling)
     # Only applies when subsample_u2=true
     # Recommendation: 0.7-0.9 for good diversity without losing too much data
-    subsample_ratio: 0.85
+    subsample_ratio: 0.8
 
     # Maximum iterations for LinearSVC convergence
     # Separate from optimizer.max_iter (which is for parameter search)
@@ -192,7 +192,7 @@ optimizer:
   # Note: CalibratedClassifierCV adds another 5-fold internal CV
   # Total model fits per parameter set ≈ cv_folds × 5 (calibration wrapper)
   # KEEP SYNCHRONIZED: training.n_cv_folds = optimizer.cv_folds = 5
-  cv_folds: 6  # Test with per-multiplier C grid fix
+  cv_folds: 7  # Test with per-multiplier C grid fix
 
   # Random seed for reproducibility
   # Ensures same train/test splits across runs
@@ -239,7 +239,7 @@ optimizer:
   # L1 with max_iter=65000 can take minutes per fit vs seconds for L2
   # Recommendation: Use ['l2'] only for production (sufficient for robustness)
   # Advanced: Try ['l1', 'l2'] with reduced max_iter (10000) and lower n_jobs (4-8)
-  penalty_options: ['l2']
+  penalty_options: ['l1', 'l2']
 
   # Loss functions to search
   # IMPORTANT: With dual=False (our default), only 'squared_hinge' is supported
@@ -307,7 +307,7 @@ optimizer:
   #              'absdiff_5_3', 'absdiff_bp_3', 'max_5_bp', 'max_5_3']
   feature_transform:
     # List of composite features to include (standard: 4D recommended set)
-    features: ['absdiff_bp_3']
+    features: ['absdiff_bp_3', 'absdiff_5_bp']
 
   # Gamma scaling for imbalance features (nudges L2 toward L1 behavior)
   # Scales all absdiff_* features by this factor before training
@@ -380,7 +380,7 @@ performance:
   # Uses multiprocessing to speed up SVM prediction on experimental introns
   # Set to number of CPU cores for maximum speed (e.g., 8 for 8-core system)
   # Memory usage scales linearly with processes (~1-2GB per process)
-  processes: 1
+  processes: 5
 
   # Number of processes for cross-validation (if different from classification)
   # Controls parallelization during hyperparameter optimization
