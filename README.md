@@ -16,8 +16,9 @@ This refactored version maintains **100% algorithmic fidelity** and **CLI compat
 
 - **Corrected ML Architecture (v2.0)**: Fixed double-scaling issue and train/test mismatch
   - Single scaling step via RobustScaler with centering (removes composition bias)
-  - 7D augmented features (min_all + neg_absdiff) suppress one-end-strong false positives
+  - Configurable augmented features with 4D standard (absdiff_bp_3) or custom feature sets
   - Two-stage optimization (C via balanced_accuracy, calibration via log-loss)
+  - L1/L2 penalty search with class weight multiplier optimization
   - **Result**: 98.5% reduction in false positives (130 → 2 on C. elegans)
 - **Modular Architecture**: Organized into logical packages (extraction, scoring, classification, output) instead of a single 6,093-line file
 - **Enhanced Code Quality**: Type hints throughout, immutable data structures, better error handling
@@ -80,14 +81,13 @@ Z-Scores [five_z_score, bp_z_score, three_z_score]
          ↓
 ML Pipeline (NO scaler inside)
   ├─ BothEndsStrongTransformer
-  │  └─ Augments 3D → 7D features:
+  │  └─ Augments 3D → 4D features (standard config):
   │     • Pass-through: five_z, bp_z, three_z
-  │     • min_all = min(five_z, bp_z, three_z)
-  │     • neg_absdiff_5_bp = -|five_z - bp_z|
-  │     • neg_absdiff_5_3 = -|five_z - three_z|
-  │     • neg_absdiff_bp_3 = -|bp_z - three_z|
+  │     • absdiff_bp_3 = |bp_z - three_z| (imbalance penalty)
+  │  └─ Or custom 5D-7D with additional features:
+  │     • min_all, absdiff_5_bp, absdiff_5_3, etc.
   ├─ LinearSVC
-  │  └─ L2 penalty, balanced class weights
+  │  └─ L1 or L2 penalty (grid-searched), balanced class weights
   └─ CalibratedClassifierCV
      └─ External calibration (sigmoid or isotonic)
          ↓
@@ -102,11 +102,14 @@ U12 Probability (0-100%)
 
 3. **Domain Adaptation**: ScoreNormalizer can be refitted per-species (adaptive mode) or reused from training species (human mode) for cross-species classification.
 
-4. **Feature Engineering**: BothEndsStrongTransformer adds 4 synthetic features (min_all and 3 neg_absdiff) that explicitly penalize imbalanced signals, reducing false positives from "one-end-strong" U2 introns.
+4. **Feature Engineering**: BothEndsStrongTransformer adds configurable composite features. The standard 4D configuration adds `absdiff_bp_3` (BP/3' imbalance penalty) based on L1 regularization analysis showing this feature is most informative.
 
-5. **Two-Stage Optimization**:
-   - **Stage 1**: Optimize C parameter using balanced_accuracy (discrimination quality)
+5. **Hyperparameter Optimization**:
+   - **Grid search over**: C parameter, L1/L2 penalty, class weight multipliers
+   - **Stage 1**: Optimize C using balanced_accuracy (discrimination quality)
    - **Stage 2**: Select calibration method (sigmoid vs isotonic) using log-loss (probability quality)
+
+6. **YAML Configuration**: All optimizer settings are configurable via `config/config.yaml` including feature selection, penalty options, class weight multipliers, and CV parameters.
 
 This architecture was validated on C. elegans, achieving **2 false positives** vs 130 with uncentered scaling.
 
@@ -259,9 +262,11 @@ For any classification run, you need a species name **and** one of the following
 | `-v` | Exclude overlapping introns | False |
 | `--no_nc` | Exclude non-canonical introns | False (include) |
 | `-f cds` | Use only CDS features (not exon) | Both CDS and exon |
+| `--model FILE` | Use pretrained model (skip training) | None (train on-the-fly) |
+| `--config FILE` | Custom YAML configuration file | Auto-discovered |
+| `--streaming` | Enable memory-efficient streaming mode | False |
 | `--reference_u12s FILE` | Custom U12 reference sequences | Built-in |
 | `--reference_u2s FILE` | Custom U2 reference sequences | Built-in |
-| `--pretrained` | Use pretrained models (skip training) | False |
 | `--recursive` | Perform recursive training pass | False |
 
 ### Usage Examples
@@ -466,22 +471,24 @@ Memory usage scales with the number of annotated introns in the genome:
 * **Typical genomes** (50,000-200,000 introns): 1-3 GB
 * **Large genomes** (>200,000 introns): 3-5 GB
 * **Human genome** (Ensembl 95, ~1 million introns): ~5 GB
+* **Streaming mode** (with `--model --streaming`): ~0.5 GB regardless of genome size
 
-Most modern computers should handle even large genomes without issue.
+Most modern computers should handle even large genomes without issue. For memory-constrained environments, use streaming mode with a pretrained model.
 
 ### Runtime
 
 Runtime depends on genome size, annotation density, and whether models are pre-trained:
 
-| Genome | Introns | Single Process | 8 Processes (-p 8) |
-|--------|---------|----------------|-------------------|
-| Chr19 (test) | ~29,000 | 5-15 min | 2-5 min |
-| Small genome | ~50,000 | 10-30 min | 3-10 min |
+| Genome | Introns | Train Mode | Pretrained (`--model`) |
+|--------|---------|------------|------------------------|
+| Chr19 (test) | ~29,000 | 5-15 min | 1-3 min |
+| Small genome | ~50,000 | 10-30 min | 2-5 min |
 | Human (full) | ~1,000,000 | 20-40 min | 5-10 min |
 
 **Tips for faster runs:**
+- Use `--model` with a pretrained model to skip training (fastest)
 - Use `-p N` for parallel processing (recommended: 4-8 cores)
-- Use `--pretrained` to skip model training (if using default references)
+- Use `--streaming` with `--model` for large genomes with memory constraints
 - Use small reference sets for testing (`--reference_u12s`, `--reference_u2s`)
 - Extract sequences first with `-s`, then classify separately if iterating on parameters
 
@@ -491,13 +498,95 @@ Runtime depends on genome size, annotation density, and whether models are pre-t
 
 ### Using Pretrained Models
 
-If you're using the default reference sequences and want to skip training:
+For cross-species classification using a model trained on another species:
 
 ```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name --pretrained
+# Use a specific trained model file
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
+  --model /path/to/trained_species.model.pkl
 ```
 
-This loads pre-trained models from the `intronIC/data/` directory, significantly reducing runtime.
+This is the recommended approach for:
+- Classifying species without curated U12 references
+- Applying a human-trained model to other vertebrates
+- Fast classification when training data is unavailable
+
+The pretrained model contains:
+- Trained SVM ensemble with optimized hyperparameters
+- Frozen scaler from training species (for cross-species normalization)
+- Model metadata (training parameters, feature configuration)
+
+### Streaming Mode
+
+For large genomes with memory constraints, streaming mode processes introns per-chromosome:
+
+```bash
+# Memory-efficient streaming with pretrained model
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
+  --model trained.model.pkl --streaming -p 8
+```
+
+Streaming mode provides ~90% memory savings by:
+- Processing one chromosome at a time
+- Writing results immediately (not accumulating in memory)
+- Using the frozen scaler from the pretrained model
+
+**Requirements**: Streaming mode requires `--model` (pretrained model with frozen scaler).
+
+### Configuration Files
+
+intronIC uses YAML configuration files for advanced parameter tuning:
+
+```bash
+# Use custom configuration
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name \
+  --config config/profiles/production.yaml
+```
+
+Configuration files are auto-discovered from (in priority order):
+1. `--config PATH` (explicit CLI argument)
+2. `./.intronIC.yaml` (current directory)
+3. `~/.config/intronIC/config.yaml` (XDG config)
+4. Built-in defaults
+
+Key configurable parameters include:
+- **Feature selection**: Choose which augmented features to use (4D standard or custom)
+- **Penalty options**: L1, L2, or both for regularization search
+- **Class weight multipliers**: Fine-tune precision/recall tradeoff
+- **CV parameters**: Number of folds, optimization rounds
+- **Ensemble settings**: Number of models, subsampling ratio
+
+See `config/config.yaml` for full documentation of all options.
+
+### Training Custom Models
+
+The `train` subcommand trains a model on reference sequences without classifying experimental data:
+
+```bash
+# Train a model using default references
+intronIC train -n my_trained_model -p 8
+
+# Train with custom configuration
+intronIC train -n my_trained_model -p 8 --config config/profiles/production.yaml
+
+# Train with custom references
+intronIC train -n my_trained_model -p 8 \
+  --reference_u12s my_u12_refs.iic \
+  --reference_u2s my_u2_refs.iic
+```
+
+This produces a `.model.pkl` file that can be used with `--model` for classification:
+
+```bash
+# Use the trained model
+intronIC -g genome.fa.gz -a annotation.gff3.gz -n target_species \
+  --model my_trained_model.model.pkl
+```
+
+The trained model includes:
+- Optimized SVM ensemble
+- Frozen scaler (for cross-species normalization)
+- Training metadata (hyperparameters, feature configuration, performance metrics)
 
 ### Recursive Training
 
