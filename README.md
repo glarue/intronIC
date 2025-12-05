@@ -4,7 +4,7 @@
 
 **Version 2.0.0** - Refactored Edition with Corrected Architecture
 
-`intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine (SVM) trained on position-weight matrix (PWM) scores. It can be used with a genome and annotation file, or with pre-extracted intron sequences. Alternatively, `intronIC` can extract all annotated intron sequences without classification (using `-s`).
+`intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine (SVM) trained on position-weight matrix (PWM) scores. It can be used with a genome and annotation file, or with pre-extracted intron sequences. Alternatively, `intronIC` can extract all annotated intron sequences without classification (using the `extract` subcommand).
 
 ---
 
@@ -447,7 +447,7 @@ Per-intron breakdown of all scores:
 **7. Log Files**
 
 - `.log` - Main log file with pipeline progress and summary statistics
-- `.training.log` - Detailed training log (when models are trained, not with `--pretrained`)
+- `.training.log` - Detailed training log (when models are trained, not with `--model`)
 
 ### Identifying U12-type Introns
 
@@ -547,7 +547,7 @@ Runtime depends on genome size, annotation density, and whether models are pre-t
 - Use `-p N` for parallel processing (recommended: 4-8 cores)
 - Use `--streaming` with `--model` for large genomes with memory constraints
 - Use small reference sets for testing (`--reference_u12s`, `--reference_u2s`)
-- Extract sequences first with `-s`, then classify separately if iterating on parameters
+- Extract sequences first with `extract` subcommand, then classify separately if iterating on parameters
 
 ---
 
@@ -646,13 +646,13 @@ For large genomes or parameter tuning, you can separate extraction from classifi
 
 **Stage 1: Extract sequences only**
 ```bash
-intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name -s
-# Produces: species_name.seqs.iic
+intronIC extract -g genome.fa.gz -a annotation.gff3.gz -n species_name
+# Produces: species_name.introns.iic (and .meta.iic, .bed.iic)
 ```
 
 **Stage 2: Classify extracted sequences**
 ```bash
-intronIC -q species_name.seqs.iic -n species_name -t 95
+intronIC -q species_name.introns.iic -n species_name -t 95
 # Much faster for testing different thresholds or references
 ```
 
@@ -681,9 +681,9 @@ intronIC -q species_name.seqs.iic -n species_name -t 95
 
 **Slow performance**
 - Use parallel processing: `-p 4` or `-p 8`
-- Use `--pretrained` to skip model training
+- Use `--model` to skip model training
 - Use smaller reference sets for testing
-- Consider extracting sequences first (`-s`), then classify separately
+- Consider extracting sequences first (`extract` subcommand), then classify separately
 
 **Classification results differ from original intronIC**
 - Minor differences can occur due to:
