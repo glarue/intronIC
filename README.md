@@ -16,7 +16,7 @@ This refactored version maintains **100% algorithmic fidelity** and **CLI compat
 
 - **Corrected ML Architecture (v2.0)**: Fixed double-scaling issue and train/test mismatch
   - Single scaling step via RobustScaler with centering (removes composition bias)
-  - Configurable augmented features with 4D standard (absdiff_bp_3) or custom feature sets
+  - Configurable augmented features with 5D standard (`absdiff_bp_3`, `absdiff_5_bp`) or custom feature sets
   - Two-stage optimization (C via balanced_accuracy, calibration via log-loss)
   - L1/L2 penalty search with class weight multiplier optimization
   - **Result**: 98.5% reduction in false positives (130 → 2 on C. elegans)
@@ -81,11 +81,12 @@ Z-Scores [five_z_score, bp_z_score, three_z_score]
          ↓
 ML Pipeline (NO scaler inside)
   ├─ BothEndsStrongTransformer
-  │  └─ Augments 3D → 4D features (standard config):
+  │  └─ Augments 3D → 5D features (standard config):
   │     • Pass-through: five_z, bp_z, three_z
-  │     • absdiff_bp_3 = |bp_z - three_z| (imbalance penalty)
-  │  └─ Or custom 5D-7D with additional features:
-  │     • min_all, absdiff_5_bp, absdiff_5_3, etc.
+  │     • absdiff_bp_3 = |bp_z - three_z| (BP/3' imbalance penalty)
+  │     • absdiff_5_bp = |five_z - bp_z| (5'/BP imbalance penalty)
+  │  └─ Or custom 4D-7D with different features:
+  │     • min_all, absdiff_5_3, min_5_bp, max_5_bp, etc.
   ├─ LinearSVC
   │  └─ L1 or L2 penalty (grid-searched), balanced class weights
   └─ CalibratedClassifierCV
@@ -102,7 +103,7 @@ U12 Probability (0-100%)
 
 3. **Domain Adaptation**: ScoreNormalizer can be refitted per-species (adaptive mode) or reused from training species (human mode) for cross-species classification.
 
-4. **Feature Engineering**: BothEndsStrongTransformer adds configurable composite features. The standard 4D configuration adds `absdiff_bp_3` (BP/3' imbalance penalty) based on L1 regularization analysis showing this feature is most informative.
+4. **Feature Engineering**: BothEndsStrongTransformer adds configurable composite features. The standard 5D configuration adds `absdiff_bp_3` and `absdiff_5_bp` (BP/3' and 5'/BP imbalance penalties) based on L1 regularization analysis. See `config/config.yaml` for all available features.
 
 5. **Hyperparameter Optimization**:
    - **Grid search over**: C parameter, L1/L2 penalty, class weight multipliers
