@@ -117,58 +117,53 @@ This architecture was validated on C. elegans, achieving **1 false positives** (
 
 ## Installation
 
-### Method 1: Using `pixi` (Recommended)
+### Quick Install (Recommended)
 
-[Pixi](https://pixi.sh/) is a modern package manager that handles all dependencies automatically:
+```bash
+pip install intronIC
+```
+
+That's it! This installs intronIC and all dependencies from PyPI.
+
+### From Source (Development/Latest)
+
+For the latest development version or to contribute:
+
+```bash
+git clone https://github.com/glarue/intronIC.git
+cd intronIC
+pip install -e .
+```
+
+### Using `pixi` (Reproducible Environments)
+
+[Pixi](https://pixi.sh/) provides fully reproducible environments with locked dependencies—ideal for HPC clusters or when exact reproducibility is required:
 
 ```bash
 # Install pixi (if not already installed)
 curl -fsSL https://pixi.sh/install.sh | bash
 
-# Clone the repository
+# Clone and install
 git clone https://github.com/glarue/intronIC.git
-cd intronIC/intronIC_refactored
-
-# Install dependencies and set up environment
+cd intronIC
 pixi install
 
-# Run on test data
+# Run intronIC through pixi
+pixi run intronIC -h
+
+# Or run the included test
 pixi run test-small
 ```
 
-### Method 2: Using `pip`
+**When to use pixi:**
+- HPC/cluster environments with strict reproducibility requirements
+- When you need isolated, self-contained environments
+- If you prefer conda-style environment management
 
-Traditional Python installation:
-
-```bash
-# Clone the repository
-git clone https://github.com/glarue/intronIC.git
-cd intronIC/intronIC_refactored
-
-# Install in development mode
-pip install -e .
-
-# intronIC is now callable from command line
-intronIC -h
-```
-
-### Method 3: Using `uv` (Fast Alternative)
-
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer:
+### Verify Installation
 
 ```bash
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Clone and set up
-git clone https://github.com/glarue/intronIC.git
-cd intronIC/intronIC_refactored
-
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e .
-
-# Run intronIC
+intronIC --version
 intronIC -h
 ```
 
@@ -194,16 +189,10 @@ All dependencies are automatically installed by `pixi`, `uv`, or `pip`.
 
 ## Quick Start
 
-### Installation (30 seconds)
+### Installation (One Command)
 
 ```bash
-# Clone and install
-git clone https://github.com/glarue/intronIC.git
-cd intronIC
-pip install -e .
-
-# Verify installation
-intronIC --version
+pip install intronIC
 ```
 
 ### Basic Commands
@@ -704,21 +693,23 @@ For refactoring-specific questions, see [REFACTOR_SUMMARY.md](REFACTOR_SUMMARY.m
 
 ## Testing the Installation
 
-To verify your installation works correctly:
+To verify your installation works correctly, download the test data and run:
 
 ```bash
-# With pixi
-cd intronIC_refactored
-pixi run test-small  # Should complete in 2-5 minutes
+# Download test data (if not cloned from repo)
+# Or use your own genome + annotation files
 
-# With pip
-intronIC -g ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-         -a ../intronIC/test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
-         -n test_run
+# Run on Human Chr19 test data
+intronIC -g test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
+         -a test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
+         -n test_run -p 4
+
+# With pixi (from cloned repo)
+pixi run test-small
 ```
 
 Expected output:
-- Several `.iic` files named `test_run.*` or `homo_sapiens_test_small.*`
+- Several `.iic` files named `test_run.*`
 - A `.log` file with classification summary
 - PNG plots showing score distributions
 - Console output showing ~30 U12-type introns found
@@ -727,12 +718,13 @@ Expected output:
 
 ## Project Structure
 
-The refactored codebase is organized into logical modules:
+The codebase is organized into logical modules under `src/intronIC/`:
 
 ```
-intronIC_refactored/
+src/intronIC/
 ├── cli/                 # Command-line interface and orchestration
 │   ├── main.py          # Pipeline entry point
+│   ├── args.py          # Argument parsing
 │   ├── config.py        # Configuration management
 │   └── reporter.py      # Progress reporting
 ├── core/                # Core data structures
@@ -761,10 +753,7 @@ intronIC_refactored/
 │   ├── genome.py        # Genome file handling
 │   ├── logging_utils.py # Enhanced logging
 │   └── sequences.py     # Sequence utilities
-├── __main__.py          # Module entry point
-├── pixi.toml            # Pixi configuration
-├── pyproject.toml       # Python project metadata
-└── README.md            # This file
+└── __main__.py          # Module entry point
 ```
 
 ---
