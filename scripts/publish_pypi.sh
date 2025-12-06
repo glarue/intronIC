@@ -96,14 +96,15 @@ ls -la dist/
 echo ""
 
 # Step 4: Upload
+# Note: twine is in the dev environment
 if [ "$DRY_RUN" = true ]; then
     echo -e "${YELLOW}Dry run mode - skipping upload${NC}"
     echo ""
     echo "To upload manually:"
     if [ "$USE_PROD" = true ]; then
-        echo "  pixi run twine upload dist/*"
+        echo "  pixi run -e dev twine upload dist/*"
     else
-        echo "  pixi run twine upload --repository testpypi dist/*"
+        echo "  pixi run -e dev twine upload --repository testpypi dist/*"
     fi
 else
     if [ "$USE_PROD" = true ]; then
@@ -118,10 +119,10 @@ else
             exit 1
         fi
         echo ""
-        pixi run twine upload dist/*
+        pixi run -e dev twine upload dist/*
     else
         echo -e "${YELLOW}Step 4: Uploading to TestPyPI...${NC}"
-        pixi run twine upload --repository testpypi dist/*
+        pixi run -e dev twine upload --repository testpypi dist/*
     fi
 fi
 
