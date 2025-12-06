@@ -5,12 +5,12 @@ This module handles quality control filtering, duplicate detection,
 longest isoform identification, and overlap detection for introns.
 """
 
-from typing import List, Dict, Set, Tuple, Optional
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Set, Tuple
 
 from intronIC.core.intron import Intron, OmissionReason
-from intronIC.utils.sequences import is_valid_dna, has_ambiguous_bases
+from intronIC.utils.sequences import has_ambiguous_bases, is_valid_dna
 
 
 @dataclass
@@ -20,6 +20,7 @@ class FilterStats:
     Tracks counts for each exclusion category. Categories are mutually exclusive
     with duplicates taking priority (most specific reason for exclusion).
     """
+
     # Counts by category (mutually exclusive)
     duplicates: int = 0
     short: int = 0
@@ -63,7 +64,7 @@ class IntronFilter:
         allow_noncanonical: bool = False,
         allow_overlap: bool = False,
         longest_only: bool = False,
-        include_duplicates: bool = False
+        include_duplicates: bool = False,
     ):
         """
         Initialize the intron filter.
@@ -79,7 +80,7 @@ class IntronFilter:
         """
         self.min_length = min_length
         self.bp_matrix_length = bp_matrix_length
-        self.scoring_regions = scoring_regions or ['five', 'three']
+        self.scoring_regions = scoring_regions or ["five", "three"]
         self.allow_noncanonical = allow_noncanonical
         self.allow_overlap = allow_overlap
         self.longest_only = longest_only
@@ -88,8 +89,8 @@ class IntronFilter:
         # Tracking structures
         self.intron_index: Dict[Tuple, Dict] = defaultdict(lambda: defaultdict(dict))
         self.longest_isoforms: Dict[str, str] = {}
-        self.duplicate_map: Dict[int, Set[str]] = defaultdict(set)
-        self.overlap_map: Dict[int, Set[str]] = defaultdict(set)
+        self.duplicate_map: Dict[str, Set[str]] = defaultdict(set)
+        self.overlap_map: Dict[str, Set[str]] = defaultdict(set)
         self.stats = FilterStats()
 
     def filter_introns(self, introns: List[Intron]) -> List[Intron]:
@@ -160,13 +161,13 @@ class IntronFilter:
         return sorted(
             introns,
             key=lambda i: (
-                i.metadata.defined_by or '',         # CDS before exon
-                -(i.metadata.parent_length or 0),   # Descending by parent length
-                i.metadata.parent or '',             # Transcript ID
-                -(i.metadata.family_size or 0),     # Descending by family size
-                i.metadata.index or 0,               # Intron index
-                i.metadata.line_number or 0          # Final tiebreaker
-            )
+                i.metadata.defined_by or "",  # CDS before exon
+                -(i.metadata.parent_length or 0),  # Descending by parent length
+                i.metadata.parent or "",  # Transcript ID
+                -(i.metadata.family_size or 0),  # Descending by family size
+                i.metadata.index or 0,  # Intron index
+                i.metadata.line_number or 0,  # Final tiebreaker
+            ),
         )
 
     def _identify_longest_isoforms(self, introns: List[Intron]) -> None:
@@ -215,11 +216,11 @@ class IntronFilter:
         # Check for ambiguous bases in scoring regions
         if intron.sequences:
             for region in self.scoring_regions:
-                if region == 'five' and intron.sequences.five_seq:
+                if region == "five" and intron.sequences.five_seq:
                     if has_ambiguous_bases(intron.sequences.five_seq):
                         intron.metadata.omitted = OmissionReason.AMBIGUOUS
                         return
-                elif region == 'three' and intron.sequences.three_seq:
+                elif region == "three" and intron.sequences.three_seq:
                     if has_ambiguous_bases(intron.sequences.three_seq):
                         intron.metadata.omitted = OmissionReason.AMBIGUOUS
                         return
@@ -267,7 +268,8 @@ class IntronFilter:
             Length of longest valid stretch
         """
         import re
-        matches = re.findall(r'[ATCG]+', seq.upper())
+
+        matches = re.findall(r"[ATCG]+", seq.upper())
         if matches:
             return len(max(matches, key=len))
         return 0
@@ -283,7 +285,7 @@ class IntronFilter:
         region_id = (
             intron.coordinates.chromosome,
             intron.coordinates.strand,
-            intron.metadata.omitted == OmissionReason.NONE
+            intron.metadata.omitted == OmissionReason.NONE,
         )
 
         # Create coordinate key
@@ -293,6 +295,7 @@ class IntronFilter:
 
         # Check for duplicate (skip for sequence-only introns without real coordinates)
         from intronIC.core.intron import IntronFlags
+
         is_sequence_only = IntronFlags.SEQUENCE_ONLY in intron.metadata.flags
 
         if is_sequence_only:
@@ -302,16 +305,20 @@ class IntronFilter:
             # First occurrence of these coordinates
             intron.metadata.duplicate = None
             region_idx[coord_key] = {
-                'parent_length': intron.metadata.parent_length or 0,
-                'family_size': intron.metadata.family_size or 0,
-                'unique_id': id(intron)  # Unique identifier for this intron
+                "parent_length": intron.metadata.parent_length or 0,
+                "family_size": intron.metadata.family_size or 0,
+                "unique_id": id(intron),  # Unique identifier for this intron
+                "intron_id": intron.intron_id,  # Store ID for duplicate mapping
             }
         else:
             # Duplicate found - reference the original
-            intron.metadata.duplicate = region_idx[coord_key]['unique_id']
+            intron.metadata.duplicate = region_idx[coord_key]["unique_id"]
             intron.metadata.overlap = intron.metadata.duplicate
             # Add dynamic tag for duplicates
-            intron.metadata.dynamic_tags.add('[d]')
+            intron.metadata.dynamic_tags.add("[d]")
+            # Record the duplicate mapping (representative -> duplicate)
+            representative_id = region_idx[coord_key]["intron_id"]
+            self.duplicate_map[representative_id].add(intron.intron_id)
 
         # Check for longest isoform
         # longest_isoforms dictionary already populated by _identify_longest_isoforms
@@ -321,31 +328,38 @@ class IntronFilter:
         if grandparent and grandparent in self.longest_isoforms:
             # Check if this intron's transcript is the "longest" (first seen) for its gene
             longest_transcript = self.longest_isoforms[grandparent]
-            intron.metadata.longest_isoform = (parent == longest_transcript)
+            intron.metadata.longest_isoform = parent == longest_transcript
             # Add dynamic tag for alternative isoforms
             if not intron.metadata.longest_isoform:
-                intron.metadata.dynamic_tags.add('[i]')
+                intron.metadata.dynamic_tags.add("[i]")
         else:
             # No grandparent info, assume longest
             intron.metadata.longest_isoform = True
 
         # Check for coordinate overlap (only if not duplicate and not omitted)
-        if not intron.metadata.duplicate and intron.metadata.omitted == OmissionReason.NONE:
-            if (not intron.metadata.longest_isoform and
-                not self.allow_overlap and
-                not self.longest_only):
+        if (
+            not intron.metadata.duplicate
+            and intron.metadata.omitted == OmissionReason.NONE
+        ):
+            if (
+                not intron.metadata.longest_isoform
+                and not self.allow_overlap
+                and not self.longest_only
+            ):
                 # Check if coordinates overlap with any existing intron
                 seen_coords = list(region_idx.keys())
                 overlap = self._check_coord_overlap(coord_key, seen_coords)
                 if overlap:
-                    intron.metadata.overlap = region_idx[overlap]['unique_id']
+                    intron.metadata.overlap = region_idx[overlap]["unique_id"]
+                    # Record the overlap mapping (representative -> overlapping)
+                    representative_id = region_idx[overlap]["intron_id"]
+                    self.overlap_map[representative_id].add(intron.intron_id)
                 else:
                     intron.metadata.overlap = None
 
     @staticmethod
     def _check_coord_overlap(
-        coord: Tuple[int, int],
-        seen_coords: List[Tuple[int, int]]
+        coord: Tuple[int, int], seen_coords: List[Tuple[int, int]]
     ) -> Optional[Tuple[int, int]]:
         """
         Check if coordinates overlap with any seen coordinates.
@@ -459,7 +473,7 @@ def should_extract_sequences_for(
     longest_only: bool,
     longest_isoforms: Dict[str, str],
     seen_coordinates: Set[Tuple[int, int]],
-    include_duplicates: bool
+    include_duplicates: bool,
 ) -> bool:
     """
     Determine if sequences should be extracted for this intron based on metadata only.
@@ -490,7 +504,7 @@ def should_extract_sequences_for(
         grandparent = intron.metadata.grandparent
         parent = intron.metadata.parent
         if grandparent and grandparent in longest_isoforms:
-            is_longest = (parent == longest_isoforms[grandparent])
+            is_longest = parent == longest_isoforms[grandparent]
             if not is_longest:
                 return False
 
@@ -509,16 +523,17 @@ def should_extract_sequences_for(
 @dataclass
 class PrefilterResult:
     """Result of pre-filtering introns before sequence extraction."""
+
     extract_list: List[Intron]  # Introns that need sequences extracted
-    skip_list: List[Intron]     # Introns that can skip extraction
-    stats: Dict[str, int]        # Statistics about filtering decisions
+    skip_list: List[Intron]  # Introns that can skip extraction
+    stats: Dict[str, int]  # Statistics about filtering decisions
 
 
 def prefilter_introns(
     introns: List[Intron],
     min_length: int = 30,
     longest_only: bool = False,
-    include_duplicates: bool = False
+    include_duplicates: bool = False,
 ) -> PrefilterResult:
     """
     Pre-filter introns before sequence extraction based on metadata only.
@@ -548,12 +563,12 @@ def prefilter_introns(
     extract_list = []
     skip_list = []
     stats = {
-        'total': len(introns),
-        'too_short': 0,
-        'not_longest_isoform': 0,
-        'duplicate': 0,
-        'extract': 0,
-        'skip': 0
+        "total": len(introns),
+        "too_short": 0,
+        "not_longest_isoform": 0,
+        "duplicate": 0,
+        "extract": 0,
+        "skip": 0,
     }
 
     # Sort introns using same hierarchical sort as filtering
@@ -584,35 +599,31 @@ def prefilter_introns(
             longest_only=longest_only,
             longest_isoforms=longest_isoforms,
             seen_coordinates=seen_coords,
-            include_duplicates=include_duplicates
+            include_duplicates=include_duplicates,
         )
 
         if should_extract:
             extract_list.append(intron)
-            stats['extract'] += 1
+            stats["extract"] += 1
             # Mark coordinates as seen AFTER deciding
             seen_by_region[region_key].add(coord_key)
         else:
             skip_list.append(intron)
-            stats['skip'] += 1
+            stats["skip"] += 1
 
             # Track why it was skipped (for statistics)
             if intron.length < min_length:
-                stats['too_short'] += 1
+                stats["too_short"] += 1
             elif longest_only:
                 grandparent = intron.metadata.grandparent
                 parent = intron.metadata.parent
                 if grandparent and grandparent in longest_isoforms:
                     if parent != longest_isoforms[grandparent]:
-                        stats['not_longest_isoform'] += 1
+                        stats["not_longest_isoform"] += 1
             elif coord_key in seen_coords:
-                stats['duplicate'] += 1
+                stats["duplicate"] += 1
 
-    return PrefilterResult(
-        extract_list=extract_list,
-        skip_list=skip_list,
-        stats=stats
-    )
+    return PrefilterResult(extract_list=extract_list, skip_list=skip_list, stats=stats)
 
 
 def filter_introns(
@@ -620,7 +631,7 @@ def filter_introns(
     min_length: int = 30,
     allow_noncanonical: bool = False,
     allow_overlap: bool = False,
-    longest_only: bool = False
+    longest_only: bool = False,
 ) -> List[Intron]:
     """
     Convenience function to filter introns.
@@ -645,6 +656,6 @@ def filter_introns(
         min_length=min_length,
         allow_noncanonical=allow_noncanonical,
         allow_overlap=allow_overlap,
-        longest_only=longest_only
+        longest_only=longest_only,
     )
     return filter_obj.filter_introns(introns)

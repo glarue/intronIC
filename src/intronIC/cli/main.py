@@ -2832,6 +2832,8 @@ def _process_contig_streaming_classify_worker(
         "boundaries_u12": Counter(),
         "boundaries_u2": Counter(),
         "filter_stats": FilterStats(),  # Initialize empty, will be updated if filtering occurs
+        "duplicate_map": {},  # Initialize empty, will be updated if filtering occurs
+        "overlap_map": {},  # Initialize empty, will be updated if filtering occurs
     }
 
     # Open annotation store (read-only, each worker gets own connection)
@@ -2944,8 +2946,10 @@ def _process_contig_streaming_classify_worker(
     # Filter introns
     filtered_introns = intron_filter.filter_introns(contig_with_seqs)
 
-    # Capture filter statistics
+    # Capture filter statistics and maps
     stats["filter_stats"] = intron_filter.stats
+    stats["duplicate_map"] = intron_filter.get_duplicate_map()
+    stats["overlap_map"] = intron_filter.get_overlap_map()
 
     # Filter to only scorable introns
     scorable = [
@@ -3042,7 +3046,7 @@ def classify_streaming_per_contig(
     from intronIC.file_io.annotation_store import StreamingAnnotationStore
     from intronIC.file_io.indexed_genome import IndexedGenomeReader
     from intronIC.file_io.parsers import BioGLAnnotationParser
-    from intronIC.file_io.writers import StreamingOutputWriter
+    from intronIC.file_io.writers import MappingWriter, StreamingOutputWriter
     from intronIC.scoring.scorer import score_and_normalize_batch
 
     # Validate requirements
@@ -3171,6 +3175,10 @@ def classify_streaming_per_contig(
 
     accumulated_filter_stats = FilterStats()
 
+    # Accumulated duplicate and overlap maps
+    accumulated_duplicate_map: Dict[str, Set[str]] = {}
+    accumulated_overlap_map: Dict[str, Set[str]] = {}
+
     # Get contig lengths for length-weighted progress reporting
     import numpy as np
 
@@ -3277,6 +3285,10 @@ def classify_streaming_per_contig(
                     accumulated_filter_stats.isoform += filter_stats.isoform
                     accumulated_filter_stats.total_introns += filter_stats.total_introns
                     accumulated_filter_stats.kept_introns += filter_stats.kept_introns
+
+                    # Accumulate duplicate and overlap maps
+                    accumulated_duplicate_map.update(stats["duplicate_map"])
+                    accumulated_overlap_map.update(stats["overlap_map"])
 
                     # Update progress bar based on this contig's length
                     contig_idx = contig_to_index[contig_name]
@@ -3451,6 +3463,10 @@ def classify_streaming_per_contig(
                     intron_filter.stats.kept_introns
                 )
 
+                # Accumulate duplicate and overlap maps
+                accumulated_duplicate_map.update(intron_filter.get_duplicate_map())
+                accumulated_overlap_map.update(intron_filter.get_overlap_map())
+
                 # Filter to only scorable introns (have sequences and aren't omitted)
                 scorable = [
                     i
@@ -3577,6 +3593,27 @@ def classify_streaming_per_contig(
         sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))
         messenger.print_dinucleotide_boundaries(
             intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
+        )
+
+    # Write duplicate and overlap mapping files if there are any mappings
+    if accumulated_duplicate_map:
+        dupe_map_path = (
+            config.output.output_dir / f"{config.output.base_filename}.dupe_map.iic"
+        )
+        with MappingWriter(dupe_map_path) as dupe_writer:
+            dupe_writer.write_mappings(accumulated_duplicate_map)
+        messenger.log_only(
+            f"Wrote {dupe_writer.mappings_written:,} duplicate mappings to {dupe_map_path}"
+        )
+
+    if accumulated_overlap_map:
+        overlap_map_path = (
+            config.output.output_dir / f"{config.output.base_filename}.overlap_map.iic"
+        )
+        with MappingWriter(overlap_map_path) as overlap_writer:
+            overlap_writer.write_mappings(accumulated_overlap_map)
+        messenger.log_only(
+            f"Wrote {overlap_writer.mappings_written:,} overlap mappings to {overlap_map_path}"
         )
 
     # Clean up temporary annotation database
