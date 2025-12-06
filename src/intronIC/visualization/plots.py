@@ -261,15 +261,9 @@ def scatter_plot(
     fig_dpi: int = 300,
 ):
     """
-    Create a scatter plot with U12s colored by confidence level and marginal density distributions.
+    Create a scatter plot with U12s colored by confidence level and marginal distributions.
 
-    U12 confidence levels:
-    - High (green): score > threshold
-    - Medium (orange): (threshold - stdev) < score <= threshold
-    - Low (red): score <= (threshold - stdev)
-    - U2 (grey): classified as U2
-
-    Marginal density distributions are shown on the top and right axes.
+    Wrapper around scatter_plot_from_arrays that extracts scores from Intron objects.
 
     Args:
         introns: List of classified introns
@@ -282,130 +276,27 @@ def scatter_plot(
         fsize: Font size
         fig_dpi: Figure DPI
     """
-    # Create figure with GridSpec for marginal distributions
-    fig = plt.figure(figsize=(10, 10))
-    gs = gridspec.GridSpec(
-        3,
-        3,
-        figure=fig,
-        width_ratios=[1, 4, 0.8],  # Increased right margin width for count labels
-        height_ratios=[1, 4, 0.1],
-        hspace=0.02,
-        wspace=0.02,
-        top=0.95,  # Leave space for suptitle
-        bottom=0.05,
-        left=0.05,
-        right=0.95,
-    )
-
-    # Main scatter plot (center)
-    ax_main = fig.add_subplot(gs[1, 1])
-    # Top marginal (x distribution)
-    ax_top = fig.add_subplot(gs[0, 1], sharex=ax_main)
-    # Right marginal (y distribution)
-    ax_right = fig.add_subplot(gs[1, 2], sharey=ax_main)
-
-    # Calculate threshold boundaries
-    svm_scores = [
-        i.scores.svm_score
-        for i in introns
-        if i.scores and i.scores.svm_score is not None
-    ]
-    score_stdev = np.std(svm_scores)
-    high_val = threshold
-    med_val = threshold - score_stdev
-
-    # Assign colors based on classification and confidence
-    cluster_colors = []
-    u2_count, u12_low, u12_med, u12_high = 0, 0, 0, 0
-
+    # Extract SVM scores and type classifications from introns
+    svm_scores = []
+    type_ids = []
     for intron in introns:
-        if not intron.metadata or not intron.scores:
-            continue
+        if intron.scores and intron.scores.svm_score is not None:
+            svm_scores.append(intron.scores.svm_score)
+            type_id = intron.metadata.type_id if intron.metadata else None
+            type_ids.append(type_id)
 
-        itype = intron.metadata.type_id
-        score = intron.scores.svm_score
-
-        if itype == "u2":
-            u2_count += 1
-            color = "xkcd:medium grey"
-        elif score > high_val:
-            u12_high += 1
-            color = "xkcd:green"
-        elif med_val < score <= high_val:
-            u12_med += 1
-            color = "xkcd:orange"
-        else:  # score <= med_val
-            u12_low += 1
-            color = "xkcd:red"
-
-        cluster_colors.append(color)
-
-    # Create legend
-    legend_colors = ["xkcd:medium grey", "xkcd:red", "xkcd:orange", "xkcd:green"]
-    legend_labels = [
-        "U2",
-        f"U12<={int(med_val)}",
-        f"{int(med_val)}<U12<={int(high_val)}",
-        f"U12>{int(high_val)}",
-    ]
-    legend_counts = [u2_count, u12_low, u12_med, u12_high]
-
-    legend_patches = []
-    for label, count, color in zip(legend_labels, legend_counts, legend_colors):
-        label_with_count = f"{label} ({count})"
-        patch = mpatches.Patch(color=color, label=label_with_count)
-        legend_patches.append(patch)
-
-    # Plot main scatter
-    ax_main.scatter(
-        *scores[:, :2].T, s=20, c=cluster_colors, alpha=0.5, rasterized=True
+    scatter_plot_from_arrays(
+        score_vector=scores,
+        svm_scores=svm_scores,
+        species_name=species_name,
+        output_path=output_path,
+        xlab=xlab,
+        ylab=ylab,
+        threshold=threshold,
+        type_ids=type_ids,
+        fsize=fsize,
+        fig_dpi=fig_dpi,
     )
-
-    ax_main.legend(handles=legend_patches, fontsize=fsize - 2)
-    ax_main.set_xlabel(xlab, fontsize=fsize)
-    ax_main.set_ylabel(ylab, fontsize=fsize)
-
-    # Note: Don't set aspect='equal' here - z-scores can have different ranges
-    # (BP variance is often 3× higher than 5' variance in training data)
-    # Original v1.5.1 used auto aspect for classification plots
-
-    # Plot marginal distributions
-    # Top: X distribution (5' z-score)
-    ax_top.hist(scores[:, 0], bins=50, color="steelblue", alpha=0.7, edgecolor="none")
-    ax_top.set_ylabel("Count", fontsize=fsize - 2)
-    ax_top.tick_params(labelbottom=False)
-    ax_top.spines["top"].set_visible(False)
-    ax_top.spines["right"].set_visible(False)
-
-    # Right: Y distribution (BP z-score)
-    ax_right.hist(
-        scores[:, 1],
-        bins=50,
-        orientation="horizontal",
-        color="steelblue",
-        alpha=0.7,
-        edgecolor="none",
-    )
-    ax_right.set_xlabel("Count", fontsize=fsize - 2)
-    ax_right.tick_params(
-        labelleft=False, labelrotation=45
-    )  # Rotate labels to prevent overlap
-    ax_right.spines["top"].set_visible(False)
-    ax_right.spines["right"].set_visible(False)
-
-    # Add figure-level title above marginal distributions
-    # Clean title: species_name + description
-    fig.suptitle(
-        f"{species_name} - U12 Classification Results",
-        fontsize=fsize + 2,
-        y=0.98,
-        weight="bold",
-    )
-
-    # Save figure
-    plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
-    plt.close()
 
 
 def scatter_plot_from_arrays(
@@ -416,14 +307,12 @@ def scatter_plot_from_arrays(
     xlab: str,
     ylab: str,
     threshold: float,
+    type_ids: Optional[List[Optional[str]]] = None,
     fsize: int = 14,
     fig_dpi: int = 300,
 ):
     """
-    Create a scatter plot from raw score arrays (for streaming mode).
-
-    This is a simplified version of scatter_plot that works with arrays
-    instead of Intron objects, for use when introns aren't in memory.
+    Create a scatter plot with U12s colored by confidence level and marginal distributions.
 
     Args:
         score_vector: Nx2 array of (5' z-score, BP z-score)
@@ -433,35 +322,38 @@ def scatter_plot_from_arrays(
         xlab: X-axis label
         ylab: Y-axis label
         threshold: U12 classification threshold
+        type_ids: Optional list of type classifications ('u2', 'u12', or None).
+            If provided, uses these for U2/U12 classification instead of score threshold.
         fsize: Font size
         fig_dpi: Figure DPI
     """
     # Create figure with GridSpec for marginal distributions
-    fig = plt.figure(figsize=(10, 10))
+    # Use 2x2 grid with symmetric ratios so the main plot region is square
+    fig = plt.figure(figsize=(8, 8))
     gs = gridspec.GridSpec(
-        3,
-        3,
+        2,
+        2,
         figure=fig,
-        width_ratios=[1, 4, 0.8],
-        height_ratios=[1, 4, 0.1],
+        width_ratios=[4, 1],  # Main plot : right marginal
+        height_ratios=[1, 4],  # Top marginal : main plot
         hspace=0.02,
         wspace=0.02,
-        top=0.95,
-        bottom=0.05,
-        left=0.05,
+        top=0.92,  # Leave space for suptitle
+        bottom=0.08,
+        left=0.10,
         right=0.95,
     )
 
-    ax_main = fig.add_subplot(gs[1, 1])
-    ax_top = fig.add_subplot(gs[0, 1], sharex=ax_main)
-    ax_right = fig.add_subplot(gs[1, 2], sharey=ax_main)
+    ax_main = fig.add_subplot(gs[1, 0])
+    ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
+    ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
-    # Calculate threshold boundaries
+    # Calculate threshold boundaries for U12 confidence levels
     score_stdev = np.std(svm_scores) if svm_scores else 10.0
     high_val = threshold
     med_val = threshold - score_stdev
 
-    # Assign colors based on SVM score
+    # Assign colors based on classification and confidence
     cluster_colors = []
     u2_count, u12_low, u12_med, u12_high = 0, 0, 0, 0
 
@@ -469,7 +361,13 @@ def scatter_plot_from_arrays(
         if i >= len(score_vector):
             break
 
-        if score < 50:  # U2 classification (raw classifier threshold)
+        # Determine if U2 or U12 based on type_ids if provided, else use score
+        if type_ids is not None and i < len(type_ids):
+            is_u2 = type_ids[i] == "u2"
+        else:
+            is_u2 = score < 50  # Raw classifier threshold
+
+        if is_u2:
             u2_count += 1
             color = "xkcd:medium grey"
         elif score > high_val:
@@ -513,10 +411,39 @@ def scatter_plot_from_arrays(
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
-    # Plot marginal distributions
+    # First calculate symmetric limits BEFORE plotting anything
+    x_data = plot_scores[:, 0]
+    y_data = plot_scores[:, 1]
+    x_range = x_data.max() - x_data.min()
+    y_range = y_data.max() - y_data.min()
+    max_range = max(x_range, y_range)
+
+    # Center on data and extend by max range
+    x_center = (x_data.max() + x_data.min()) / 2
+    y_center = (y_data.max() + y_data.min()) / 2
+    margin = max_range * 0.05  # 5% margin
+
+    # Calculate the symmetric limits
+    xlim = (x_center - max_range / 2 - margin, x_center + max_range / 2 + margin)
+    ylim = (y_center - max_range / 2 - margin, y_center + max_range / 2 + margin)
+
+    # Set limits on main plot first
+    ax_main.set_xlim(xlim)
+    ax_main.set_ylim(ylim)
+
+    # Set equal aspect with adjustable='box' to make plot physically square
+    ax_main.set_aspect("equal", adjustable="box")
+
+    # Plot marginal distributions with explicit range to match symmetric limits
     ax_top.hist(
-        plot_scores[:, 0], bins=50, color="steelblue", alpha=0.7, edgecolor="none"
+        plot_scores[:, 0],
+        bins=50,
+        range=xlim,
+        color="steelblue",
+        alpha=0.7,
+        edgecolor="none",
     )
+    ax_top.set_xlim(xlim)  # Explicitly set to match main plot
     ax_top.set_ylabel("Count", fontsize=fsize - 2)
     ax_top.tick_params(labelbottom=False)
     ax_top.spines["top"].set_visible(False)
@@ -525,11 +452,13 @@ def scatter_plot_from_arrays(
     ax_right.hist(
         plot_scores[:, 1],
         bins=50,
+        range=ylim,
         orientation="horizontal",
         color="steelblue",
         alpha=0.7,
         edgecolor="none",
     )
+    ax_right.set_ylim(ylim)  # Explicitly set to match main plot
     ax_right.set_xlabel("Count", fontsize=fsize - 2)
     ax_right.tick_params(labelleft=False, labelrotation=45)
     ax_right.spines["top"].set_visible(False)
@@ -778,7 +707,5 @@ def ref_scatter(
     plt.tight_layout()
 
     output_path = output_dir / f"{species_name}.plot.training_scatter.iic.png"
-    plt.savefig(output_path, format="png", dpi=fig_dpi)
-    plt.close()
     plt.savefig(output_path, format="png", dpi=fig_dpi)
     plt.close()
