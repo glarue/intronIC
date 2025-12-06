@@ -189,9 +189,6 @@ Classify mode examples:
   # With pretrained model
   intronIC classify -g genome.fa -a annotation.gff -n species --model species.model.pkl
 
-  # Extract sequences only (no classification)
-  intronIC classify -g genome.fa -a annotation.gff -n species -s
-
   # From BED file
   intronIC classify -g genome.fa -b introns.bed -n species --model species.model.pkl
 
@@ -726,13 +723,6 @@ Note: This command extracts intron sequences but does not perform classification
         # === Scoring Parameters ===
         scoring = parser.add_argument_group("scoring parameters")
         scoring.add_argument(
-            "-s",
-            "--sequences-only",
-            "--sequences_only",
-            action="store_true",
-            help="Extract sequences only, skip classification",
-        )
-        scoring.add_argument(
             "-t",
             "--threshold",
             type=float,
@@ -921,10 +911,14 @@ Note: This command extracts intron sequences but does not perform classification
                 self.parser.error("train: test_fraction must be between 0 and 1")
 
             # Validate custom reference files exist
-            self._validate_files(args, "train", [
-                ("reference_u12s", "U12 reference file"),
-                ("reference_u2s", "U2 reference file"),
-            ])
+            self._validate_files(
+                args,
+                "train",
+                [
+                    ("reference_u12s", "U12 reference file"),
+                    ("reference_u2s", "U2 reference file"),
+                ],
+            )
 
         # ===============================================================
         # EXTRACT MODE VALIDATION
@@ -957,11 +951,15 @@ Note: This command extracts intron sequences but does not perform classification
                 )
 
             # Validate file paths exist
-            self._validate_files(args, "extract", [
-                ("genome", "genome file"),
-                ("annotation", "annotation file"),
-                ("bed", "BED file"),
-            ])
+            self._validate_files(
+                args,
+                "extract",
+                [
+                    ("genome", "genome file"),
+                    ("annotation", "annotation file"),
+                    ("bed", "BED file"),
+                ],
+            )
 
         # ===============================================================
         # CLASSIFY MODE VALIDATION
@@ -1004,38 +1002,41 @@ Note: This command extracts intron sequences but does not perform classification
                 mode = "annotation (-a)" if has_annotation else "BED (-b)"
                 self.parser.error(f"classify: {mode} requires genome file (-g)")
 
-            # Model source validation (skip if sequences_only mode)
-            if not args.sequences_only:
-                has_model = hasattr(args, "model") and args.model is not None
+            # Model source validation
+            has_model = hasattr(args, "model") and args.model is not None
 
-                if not has_model:
-                    # Try to use default pretrained model if available
-                    from intronIC.cli.config import get_default_pretrained_model_path
+            if not has_model:
+                # Try to use default pretrained model if available
+                from intronIC.cli.config import get_default_pretrained_model_path
 
-                    default_model = get_default_pretrained_model_path()
+                default_model = get_default_pretrained_model_path()
 
-                    if default_model:
-                        # Auto-populate with default model
-                        args.model = default_model
-                        has_model = True
-                    else:
-                        # No default model available - require explicit specification
-                        self.parser.error(
-                            "classify: must specify model:\n"
-                            "  --model PATH  (path to pretrained model)\n"
-                            "\n"
-                            "To train a new model, use: intronIC train -n species_name\n"
-                            "Note: Default pretrained model not found at data/default_pretrained.model.pkl"
-                        )
+                if default_model:
+                    # Auto-populate with default model
+                    args.model = default_model
+                    has_model = True
+                else:
+                    # No default model available - require explicit specification
+                    self.parser.error(
+                        "classify: must specify model:\n"
+                        "  --model PATH  (path to pretrained model)\n"
+                        "\n"
+                        "To train a new model, use: intronIC train -n species_name\n"
+                        "Note: Default pretrained model not found at data/default_pretrained.model.pkl"
+                    )
 
             # Validate file paths exist
-            self._validate_files(args, "classify", [
-                ("genome", "genome file"),
-                ("annotation", "annotation file"),
-                ("bed", "BED file"),
-                ("sequence_file", "sequence file"),
-                ("model", "model file"),
-            ])
+            self._validate_files(
+                args,
+                "classify",
+                [
+                    ("genome", "genome file"),
+                    ("annotation", "annotation file"),
+                    ("bed", "BED file"),
+                    ("sequence_file", "sequence file"),
+                    ("model", "model file"),
+                ],
+            )
 
             # Threshold validation
             if not 0 <= args.threshold <= 100:

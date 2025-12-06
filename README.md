@@ -317,7 +317,6 @@ Alternative inputs (instead of `-a`):
 | `--model` | | Pretrained model file | None |
 | `--config` | | YAML configuration file | Auto-discovered |
 | `--streaming` | | Memory-efficient mode | False |
-| `--sequences-only` | `-s` | Skip classification | False |
 | `--feature-type` | `-f` | Feature type: `cds`, `exon`, or `both` | both |
 | `--allow-multiple-isoforms` | `-i` | Include all isoforms | False (longest only) |
 | `--exclude-overlapping` | `-v` | Exclude overlapping introns | False |

@@ -81,7 +81,6 @@ class ExtractionConfig:
 class ScoringConfig:
     """Configuration for scoring and classification."""
 
-    sequences_only: bool = False
     threshold: float = 90.0
     exclude_noncanonical: bool = False
     scoring_regions: ScoringRegions = field(
@@ -511,7 +510,6 @@ class IntronICConfig:
 
         # Scoring configuration
         scoring_config = ScoringConfig(
-            sequences_only=args.sequences_only,
             threshold=args.threshold,
             exclude_noncanonical=args.no_nc,
             scoring_regions=scoring_regions,

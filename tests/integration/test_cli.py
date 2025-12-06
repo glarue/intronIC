@@ -81,13 +81,11 @@ class TestArgumentParser:
                 "-t",
                 "95",
                 "--no_nc",
-                "-s",
             ]
         )
 
         assert args.threshold == 95.0
         assert args.no_nc is True
-        assert args.sequences_only is True
 
     def test_performance_options(self, tmp_path):
         """Test performance-related options."""

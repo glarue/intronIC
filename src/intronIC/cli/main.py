@@ -2113,14 +2113,9 @@ def extract_introns_from_bed(
     # as omitted during filtering (see intronIC.py lines 4772-4786)
     introns = introns_all
 
-    if config.scoring.sequences_only:
-        messenger.log_only(
-            "Sequences-only mode: all introns will be output regardless of length"
-        )
-    else:
-        messenger.log_only(
-            f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)"
-        )
+    messenger.log_only(
+        f"Extracted {len(introns):,} introns (length filtering during scoring filter phase)"
+    )
 
     return introns
 
@@ -4192,8 +4187,6 @@ def write_outputs(
 
     # Filter duplicates if not including them
     # Port from: intronIC.py:4806-4807
-    # Note: For normal mode, duplicates are already excluded by merge_scored_and_omitted_introns()
-    # This is only needed for sequences_only mode where we don't call that merge function
     if not config.extraction.include_duplicates:
         original_count = len(introns)
         introns = [i for i in introns if not (i.metadata and i.metadata.duplicate)]
@@ -4783,7 +4776,6 @@ def main_classify(config: IntronICConfig):
             config.performance.streaming
             and config.training.pretrained_model_path
             and config.input.mode == "annotation"
-            and not config.scoring.sequences_only
         ):
             total_classified, summary = classify_streaming_per_contig(
                 config, messenger, reporter
@@ -4861,24 +4853,6 @@ def main_classify(config: IntronICConfig):
             introns = load_introns_from_sequences(config, messenger)
         else:
             raise ValueError(f"Unknown input mode: {config.input.mode}")
-
-        # If sequences only, skip to output
-        if config.scoring.sequences_only:
-            messenger.warning("Sequences-only mode: Skipping classification")
-            # In sequences-only mode, no introns are scored, so scored_only=None
-            # This means .score_info.iic will be empty or contain all introns (but they have no scores)
-            # Original behavior: writes all to .bed/.meta/.seqs, exits before .score_info is created
-            # Sequences already written during extraction (streaming mode)
-            write_outputs(
-                introns,
-                config,
-                messenger,
-                reporter,
-                scored_only=[],
-                skip_sequences=True,
-            )
-            messenger.success("Pipeline complete!")
-            return
 
         # Filter introns before scoring (duplicates, short introns, longest isoform)
         # This matches original intronIC behavior where filtering happens BEFORE scoring
