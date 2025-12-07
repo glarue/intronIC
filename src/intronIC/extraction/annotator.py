@@ -295,6 +295,26 @@ class AnnotationHierarchyBuilder:
                                 feature_id=grandparent_name, coordinates=dummy_coord
                             )
 
+        # Step 1b: Create placeholder genes for transcripts with missing parent genes
+        # This handles cases like C_gene_segment -> gene where the gene feature
+        # exists in the annotation but wasn't created (because parent=[])
+        dummy_coord = GenomicCoordinate(
+            chromosome="unknown",
+            start=1,
+            stop=2,
+            strand="+",
+            system="1-based",
+        )
+        for name, feat in list(feat_index.items()):
+            if isinstance(feat, Transcript):
+                parent_id = getattr(feat, "parent_id", None)
+                if parent_id and parent_id not in feat_index:
+                    # Create placeholder Gene for this transcript's parent
+                    feat_index[parent_id] = Gene(
+                        feature_id=parent_id, coordinates=dummy_coord
+                    )
+                    feat_graph.add_edge(parent_id, name)
+
         # Step 2: Remove cycles if any
         self._remove_cycles(feat_graph)
 

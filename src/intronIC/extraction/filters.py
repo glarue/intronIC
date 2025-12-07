@@ -97,18 +97,26 @@ class IntronFilter:
         """
         Filter a list of introns based on quality criteria.
 
+        All introns are processed and returned with their metadata updated:
+        - metadata.omitted set to appropriate OmissionReason for filtered introns
+        - metadata.duplicate set for coordinate duplicates
+        - metadata.longest_isoform set for isoform filtering
+
+        This allows callers to include omitted introns in output files (matching
+        original intronIC behavior where .meta.iic includes both scored and omitted).
+
         Args:
             introns: List of Intron objects
 
         Returns:
-            List of filtered Intron objects
+            List of ALL Intron objects (with metadata updated)
 
         Examples:
             >>> filter_obj = IntronFilter(min_length=50)
-            >>> filtered = filter_obj.filter_introns(intron_list)
-            >>> print(f"Kept {len(filtered)}/{len(intron_list)} introns")
+            >>> all_introns = filter_obj.filter_introns(intron_list)
+            >>> kept = [i for i in all_introns if filter_obj._should_keep(i)]
+            >>> print(f"Kept {len(kept)}/{len(all_introns)} introns")
         """
-        filtered_introns = []
         self.stats.total_introns = len(introns)
 
         # Sort introns using hierarchical sort (matching original's get_sub_seqs sorting)
@@ -132,12 +140,12 @@ class IntronFilter:
             # Step 4: Update statistics
             self._update_stats(intron)
 
-            # Step 5: Decide if intron should be kept
+            # Step 5: Track kept count
             if self._should_keep(intron):
-                filtered_introns.append(intron)
                 self.stats.kept_introns += 1
 
-        return filtered_introns
+        # Return ALL introns (callers can filter by _should_keep if needed)
+        return sorted_introns
 
     @staticmethod
     def _sort_introns(introns: List[Intron]) -> List[Intron]:

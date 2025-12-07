@@ -2785,18 +2785,20 @@ def _init_streaming_classify_worker(
 
 def _process_contig_streaming_classify_worker(
     contig_input: tuple[str, int],
-) -> tuple[str, List[Intron], dict]:
+) -> tuple[str, List[Intron], List[Intron], dict]:
     """
     Worker function for parallel streaming classification.
 
     Processes a single contig: extracts sequences, scores, normalizes, and classifies.
-    Returns contig name, classified introns and statistics for this contig.
+    Returns contig name, classified introns, all filtered introns, and statistics.
 
     Args:
         contig_input: Tuple of (contig_name, contig_annotation_count)
 
     Returns:
-        Tuple of (contig_name, classified_introns, stats_dict)
+        Tuple of (contig_name, classified_introns, filtered_introns, stats_dict)
+        - classified_introns: Introns that were scored and classified
+        - filtered_introns: ALL introns including omitted ones (for output files)
     """
     contig, contig_annotation_count = contig_input
     from collections import Counter
@@ -2844,7 +2846,7 @@ def _process_contig_streaming_classify_worker(
     if not contig_annotations or all(
         a.feat_type == "region" for a in contig_annotations
     ):
-        return contig, [], stats
+        return contig, [], [], stats
 
     # Build gene hierarchy
     builder = AnnotationHierarchyBuilder(
@@ -2857,13 +2859,13 @@ def _process_contig_streaming_classify_worker(
         contig_genes = builder.build_from_annotations(contig_annotations)
     except ValueError as e:
         if "Could not establish parent-child relationships" in str(e):
-            return contig, [], stats
+            return contig, [], [], stats
         raise
 
     del contig_annotations
 
     if not contig_genes:
-        return contig, [], stats
+        return contig, [], [], stats
 
     stats["genes"] = len(contig_genes)
 
@@ -2891,7 +2893,7 @@ def _process_contig_streaming_classify_worker(
 
     if not contig_introns:
         del contig_genes, builder
-        return contig, [], stats
+        return contig, [], [], stats
 
     # Get worker's genome reader and create extractor
     indexed_genome = get_worker_genome()
@@ -2955,8 +2957,9 @@ def _process_contig_streaming_classify_worker(
     ]
 
     if not scorable:
-        del contig_genes, builder, contig_introns, contig_with_seqs, filtered_introns
-        return contig, [], stats
+        del contig_genes, builder, contig_introns, contig_with_seqs
+        # Return filtered_introns even when no scorable - these are omitted introns
+        return contig, [], filtered_introns, stats
 
     # Create scorer
     scorer = IntronScorer(
@@ -2998,9 +3001,9 @@ def _process_contig_streaming_classify_worker(
 
     # Clean up
     del contig_genes, builder, contig_introns, contig_with_seqs
-    del filtered_introns, scorable, scored_introns
+    del scorable, scored_introns
 
-    return contig, classified_introns, stats
+    return contig, classified_introns, filtered_introns, stats
 
 
 def classify_streaming_per_contig(
@@ -3230,6 +3233,7 @@ def classify_streaming_per_contig(
 
         # Process contigs in parallel with progress bar
         all_classified_introns = []
+        all_filtered_introns = []  # Includes omitted introns for output files
         completed = 0
         completed_length = 0
 
@@ -3256,11 +3260,12 @@ def classify_streaming_per_contig(
             try:
                 # Use imap_unordered to get results as soon as any worker completes
                 # This provides better visual feedback - small contigs update progress immediately
-                for contig_name, classified_introns, stats in pool.imap_unordered(
+                for contig_name, classified_introns, filtered_introns, stats in pool.imap_unordered(
                     _process_contig_streaming_classify_worker, worker_inputs
                 ):
                     completed += 1
                     all_classified_introns.extend(classified_introns)
+                    all_filtered_introns.extend(filtered_introns)
 
                     # Accumulate statistics
                     total_genes += stats["genes"]
@@ -3298,9 +3303,15 @@ def classify_streaming_per_contig(
                 messenger.error(f"Error: {e}")
                 raise
 
+        # Merge classified introns with omitted introns for complete output
+        # classified_introns have scores, filtered_introns includes omitted ones without scores
+        all_introns_for_output = merge_scored_and_omitted_introns(
+            all_classified_introns, all_filtered_introns, messenger
+        )
+
         # Write outputs sequentially (maintains deterministic order by sorting)
         # Sort by coordinates for consistent output order
-        all_classified_introns.sort(
+        all_introns_for_output.sort(
             key=lambda i: (
                 i.coordinates.chromosome,
                 i.coordinates.start,
@@ -3309,10 +3320,10 @@ def classify_streaming_per_contig(
         )
 
         with output_writer:
-            for intron in all_classified_introns:
+            for intron in all_introns_for_output:
                 output_writer.write_intron(intron)
 
-        del all_classified_introns
+        del all_classified_introns, all_filtered_introns, all_introns_for_output
         gc.collect()
 
     else:
@@ -3473,6 +3484,10 @@ def classify_streaming_per_contig(
                 ]
 
                 if not scorable:
+                    # Still write omitted introns even when no scorable introns
+                    for intron in filtered_introns:
+                        if intron.metadata and intron.metadata.omitted != OmissionReason.NONE:
+                            output_writer.write_intron(intron)
                     progress.update(task, advance=contig_annotation_count)
                     del (
                         contig_genes,
@@ -3496,7 +3511,17 @@ def classify_streaming_per_contig(
                 )
                 total_classified += len(classified_introns)
 
-                # Write outputs and track statistics
+                # Get omitted introns from filtered_introns (those not in scorable)
+                scored_ids = {id(intron) for intron in classified_introns}
+                omitted_introns = [
+                    intron
+                    for intron in filtered_introns
+                    if id(intron) not in scored_ids
+                    and intron.metadata
+                    and intron.metadata.omitted != OmissionReason.NONE
+                ]
+
+                # Write classified introns and track statistics
                 for intron in classified_introns:
                     output_writer.write_intron(intron)
 
@@ -3516,9 +3541,13 @@ def classify_streaming_per_contig(
                         else:
                             boundaries_u2[dnts] += 1
 
+                # Write omitted introns (those with omission reasons)
+                for intron in omitted_introns:
+                    output_writer.write_intron(intron)
+
                 # Free contig memory
                 del contig_genes, builder, contig_introns, contig_with_seqs
-                del filtered_introns, scorable, scored_introns, classified_introns
+                del filtered_introns, scorable, scored_introns, classified_introns, omitted_introns
                 gc.collect()
 
                 progress.update(task, advance=contig_annotation_count)
@@ -5132,8 +5161,9 @@ def main_classify(config: IntronICConfig):
         # Merge classified introns with omitted introns for complete meta output
         # This matches original intronIC behavior where .meta.iic includes all introns
         # (scored + omitted), not just the ones that went through classification
+        # Note: Use filtered_introns (not introns) because omission reasons are set during filtering
         all_introns_for_output = merge_scored_and_omitted_introns(
-            classified_introns, introns, messenger
+            classified_introns, filtered_introns, messenger
         )
 
         # STANDARD MODE: Write sequences with SVM scores now that classification is done
