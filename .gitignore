@@ -96,3 +96,6 @@ homo_sapiens.default*.model.*
 
 # Archive (not tracked)
 archive/
+
+# Old refactored directory (purged from history)
+intronIC_refactored/
