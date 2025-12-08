@@ -1,0 +1,81 @@
+# ============================================================================
+# intronIC - Quick Testing Profile
+# ============================================================================
+# Fast configuration for development and validation testing
+# Runtime: ~10-20 minutes on Chr19 (~2-3 hours full genome)
+#
+# Compared to production:
+# - Fewer optimization rounds (2 vs 5)
+# - Fewer CV folds (3 vs 7)
+# - Smaller ensemble (3 vs 10 models)
+# - Reduced iterations
+#
+# Usage:
+#   intronIC train -n test_model --config config/profiles/quick.yaml
+#
+# ============================================================================
+
+# Inherit most settings from base config, override key parameters
+scoring:
+  threshold: 90.0
+  feature_type: "both"
+  exclude_noncanonical: false
+  pseudocount: 0.0001
+  ignore_nc_dinucleotides: true
+  u12_boundary_correction: true
+  regions:
+    five_prime: {start: -3, end: 9}
+    branch_point: {start: -55, end: -5}
+    three_prime: {start: -6, end: 4}
+
+training:
+  eval_mode: "nested_cv"
+  n_cv_folds: 3               # Quick: 3 folds (vs 7 production)
+  test_fraction: 0.2
+  n_optimization_rounds: 2    # Quick: 2 rounds (vs 5 production)
+  # fixed_C: null
+
+  ensemble:
+    n_models: 3               # Quick: 3 models (vs 10 production)
+    subsample_u2: true
+    subsample_ratio: 0.85
+    max_iter: 20000           # Quick: 20k (vs 40k production)
+    random_state: 42
+
+  use_fold_averaged_params: false
+
+optimizer:
+  n_rounds: 2                 # Quick: 2 rounds (vs 5 production)
+  n_points_initial: 13
+  n_points_refine: 50         # Quick: 50 points (vs 100 production)
+  cv_folds: 3                 # Quick: 3 folds (vs 9 production)
+  random_state: 42
+  n_jobs: -1
+  verbose: true
+  max_iter: 30000             # Quick: 30k (vs 60k production)
+
+# param_grid not needed - architecture uses hardcoded values
+# (include_max=false, include_pairwise_mins=false)
+# C parameter is auto-optimized via grid search
+# Calibration method (sigmoid vs isotonic) is auto-selected in Stage 2
+param_grid: {}
+
+performance:
+  processes: 1
+  min_intron_length: 30
+
+isoform:
+  allow_multiple_isoforms: false
+  exclude_overlapping: false
+  include_duplicates: false
+
+output:
+  clean_names: true
+
+extraction:
+  flank_length: 50
+
+advanced:
+  random_seed: 42
+  quiet: false
+  debug: false

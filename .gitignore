@@ -1,0 +1,101 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local config files (for testing)
+config/full_training_config.yaml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+**/CLAUDE.md
+
+# Temporary files
+*.tmp
+*.bak
+
+# Validation and test outputs
+validation_outputs/
+*.iic
+*.iic.png
+intronIC_patched.py
+run.log
+comparison_outputs/
+homo_sapiens_*.log
+homo_sapiens_*.*
+# Test run logs
+tiny_*.log
+small_*.log
+micro_*.log
+refactored_*.log
+original_*.log
+*_output.log
+*_test.log
+*_fix.log 
+comparison_test/
+test_verification/
+*.log
+
+# Documentation (keep only specific .md files tracked)
+/docs/
+/*.md
+!/README.md
+!/QUICKSTART.md
+!/SRC_LAYOUT_MIGRATION.md
+!/TODO.md
+!/FEATURE_SELECTION_IMPLEMENTATION_PLAN.md
+!/CONTRIBUTING.md
+
+# Test output directories
+run_tests/
+test_*_output/
+*_test/
+*_validation*/
+celegans_*/
+test_chr19_output/
+
+# Model files from development
+*.model.pkl
+*.model.metadata.json
+homo_sapiens.d*.model.*
+homo_sapiens.default*.model.*
+
+# Archive (not tracked)
+archive/
+
+# Old refactored directory (purged from history)
+intronIC_refactored/
