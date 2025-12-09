@@ -19,6 +19,7 @@ pip = "*"
 smart-open = ">=5.0.0"
 tomli = ">=2.3.0,<3"
 pyyaml = "*"
+joblib = ">=1.0.0"
 pytest = ">=9.0.1,<10"
 psutil = ">=7.1.3,<8"
 
