@@ -1,6 +1,6 @@
 [workspace]
 name = "intronic-refactored"
-version = "2.0.4"
+version = "2.0.5"
 description = "Intron classification tool for identifying U2-type and U12-type introns using SVM (refactored version)"
 authors = ["Graham E. Larue <egrahamlarue@gmail.com>"]
 channels = ["conda-forge"]

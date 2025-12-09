@@ -90,6 +90,7 @@ test_chr19_output/
 
 # Model files from development
 *.model.pkl
+!src/intronIC/data/default_pretrained.model.pkl
 *.model.metadata.json
 homo_sapiens.d*.model.*
 homo_sapiens.default*.model.*
