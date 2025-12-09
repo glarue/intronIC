@@ -395,39 +395,42 @@ class IntronICConfig:
         Only updates args that have their default values (weren't explicitly set on CLI).
 
         Args:
-            args: Argparse namespace
+            args: Argparse namespace with _arg_defaults attribute from parser
             yaml_config: YAML config dictionary
 
         Returns:
             Updated args namespace
         """
-        # Map YAML paths to arg attributes
-        # Format: (yaml_path, arg_attr, converter, default_value)
-        # yaml_path uses dots for nesting: "scoring.threshold"
+        # Map YAML paths to arg attributes and their types
+        # Format: (yaml_path, arg_attr, converter)
+        # Default values are extracted from args._arg_defaults (single source of truth)
         mappings = [
             # Scoring
-            ("scoring.threshold", "threshold", float, 90.0),
-            ("scoring.feature_type", "feature", str, "both"),
-            ("scoring.exclude_noncanonical", "no_nc", bool, False),
-            ("scoring.pseudocount", "pseudocount", float, 0.0001),
-            ("scoring.normalizer_mode", "normalizer_mode", str, "auto"),  # Match argparse default
+            ("scoring.threshold", "threshold", float),
+            ("scoring.feature_type", "feature", str),
+            ("scoring.exclude_noncanonical", "no_nc", bool),
+            ("scoring.pseudocount", "pseudocount", float),
+            ("scoring.normalizer_mode", "normalizer_mode", str),
             # Extraction
-            ("extraction.flank_length", "flank_len", int, 100),
-            ("extraction.min_intron_length", "min_intron_len", int, 30),  # Match argparse default
+            ("extraction.flank_length", "flank_len", int),
+            ("extraction.min_intron_length", "min_intron_len", int),
             # Performance
-            ("performance.processes", "processes", int, None),
-            ("performance.cv_processes", "cv_processes", int, None),
+            ("performance.processes", "processes", int),
+            ("performance.cv_processes", "cv_processes", int),
             # Training
-            ("training.n_models", "n_models", int, 1),  # Match argparse default
-            ("training.max_iterations", "max_iter", int, 50000),
-            ("training.eval_mode", "eval_mode", str, "nested_cv"),
-            ("training.n_cv_folds", "n_cv_folds", int, None),  # Match argparse default
-            ("training.fixed_C", "C", float, None),
+            ("training.n_models", "n_models", int),
+            ("training.max_iterations", "max_iter", int),
+            ("training.eval_mode", "eval_mode", str),
+            ("training.n_cv_folds", "n_cv_folds", int),
+            ("training.fixed_C", "C", float),
             # Advanced
-            ("advanced.random_seed", "seed", int, 42),
+            ("advanced.random_seed", "seed", int),
         ]
 
-        for yaml_path, arg_attr, converter, default in mappings:
+        # Get argparse defaults from the namespace (single source of truth)
+        arg_defaults = getattr(args, "_arg_defaults", {})
+
+        for yaml_path, arg_attr, converter in mappings:
             # Get value from YAML (handle nested paths)
             yaml_value = yaml_config
             for key in yaml_path.split("."):
@@ -439,6 +442,9 @@ class IntronICConfig:
 
             if yaml_value is None:
                 continue
+
+            # Get the argparse default for this argument (single source of truth)
+            default = arg_defaults.get(arg_attr)
 
             # Only apply if arg still has default value (CLI didn't override)
             # For None defaults, check if attribute is None

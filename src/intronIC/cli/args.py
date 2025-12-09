@@ -37,6 +37,13 @@ class IntronICArgumentParser:
 
         parsed = self.parser.parse_args(args)
 
+        # Store argparse defaults in the namespace for config merge logic
+        # This provides a single source of truth for default values
+        parsed._arg_defaults = {}
+        for action in self.parser._actions:
+            if action.dest != 'help' and hasattr(action, 'default'):
+                parsed._arg_defaults[action.dest] = action.default
+
         # Backward compatibility: if no subcommand, default to classify
         if not hasattr(parsed, "command") or parsed.command is None:
             parsed.command = "classify"
