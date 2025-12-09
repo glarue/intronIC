@@ -410,18 +410,18 @@ class IntronICConfig:
             ("scoring.feature_type", "feature", str, "both"),
             ("scoring.exclude_noncanonical", "no_nc", bool, False),
             ("scoring.pseudocount", "pseudocount", float, 0.0001),
-            ("scoring.normalizer_mode", "normalizer_mode", str, "human"),
+            ("scoring.normalizer_mode", "normalizer_mode", str, "auto"),  # Match argparse default
             # Extraction
             ("extraction.flank_length", "flank_len", int, 100),
-            ("extraction.min_intron_length", "min_intron_len", int, 10),
+            ("extraction.min_intron_length", "min_intron_len", int, 30),  # Match argparse default
             # Performance
             ("performance.processes", "processes", int, None),
             ("performance.cv_processes", "cv_processes", int, None),
             # Training
-            ("training.n_models", "n_models", int, 15),
+            ("training.n_models", "n_models", int, 1),  # Match argparse default
             ("training.max_iterations", "max_iter", int, 50000),
             ("training.eval_mode", "eval_mode", str, "nested_cv"),
-            ("training.n_cv_folds", "n_cv_folds", int, 6),
+            ("training.n_cv_folds", "n_cv_folds", int, None),  # Match argparse default
             ("training.fixed_C", "C", float, None),
             # Advanced
             ("advanced.random_seed", "seed", int, 42),
