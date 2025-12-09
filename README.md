@@ -522,15 +522,15 @@ Most modern computers should handle even large genomes without issue. For memory
 
 Runtime depends on genome size, annotation density, and whether models are pre-trained:
 
-| Genome | Introns | Train Mode | Pretrained (`--model`) |
+| Genome | Introns | Train Mode | Pretrained (`--model -p 5`) |
 |--------|---------|------------|------------------------|
-| Chr19 (test) | ~29,000 | 5-15 min | 1-3 min |
-| Small genome | ~50,000 | 10-30 min | 2-5 min |
-| Human (full) | ~1,000,000 | 20-40 min | 5-10 min |
+| Chr19 (test) | ~29,000 | 5-15 min | <1 min |
+| Small genome | ~50,000 | 10-30 min | 1-2 min |
+| Human (full) | ~200,000 | 20-40 min | ~3 min |
 
 **Tips for faster runs:**
 - Use `--model` with a pretrained model to skip training (fastest)
-- Use `-p N` for parallel processing (recommended: 4-8 cores)
+- Use `-p N` for parallel processing (recommended: 5-8 cores)
 - Use `--streaming` with `--model` for large genomes with memory constraints
 - Use small reference sets for testing (`--reference_u12s`, `--reference_u2s`)
 - Extract sequences first with `extract` subcommand, then classify separately if iterating on parameters
