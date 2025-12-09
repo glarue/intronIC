@@ -636,8 +636,10 @@ Note: This command extracts intron sequences but does not perform classification
             metavar="PRIOR",
             help="""Expected U12 prior for target species (0 to 1). Adjusts classification
               probabilities via Bayes rule to account for different U12 base rates.
-              Recommended values:
-                - 0.005: Human-like species (default if not specified)
+              By default (None), no adjustment is applied - classifier uses raw probabilities
+              from the model trained on human data without making assumptions about target species.
+              Recommended values when adjustment is desired:
+                - 0.005: Human-like species (similar to training data)
                 - 1e-6: U12-absent species (C. elegans, many fungi)
                 - 1e-4: U12-poor species
               Lower values reduce false positives in U12-free lineages.""",
