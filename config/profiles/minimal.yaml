@@ -2,7 +2,7 @@
 # intronIC - Minimal Testing Profile
 # ============================================================================
 # Ultra-fast configuration for smoke testing and development
-# Runtime: ~5-10 minutes on Chr19 (~1 hour full genome)
+# Runtime: Training time varies based on system and configuration
 #
 # Compared to production:
 # - Minimal optimization (1 round vs 5)

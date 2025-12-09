@@ -43,7 +43,7 @@ run = "python -m intronIC"
 # Show help
 help = "intronIC --help"
 
-# Test with default pretrained model (fast, ~2-5 minutes)
+# Test with default pretrained model (fast, 1-2 minutes with -p 4)
 test-small = """
 python __main__.py \
   -g ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
@@ -52,7 +52,7 @@ python __main__.py \
   -p 4
 """
 
-# Test with training from scratch (~5-15 minutes)
+# Test with training from scratch (training time varies widely)
 test-full = """
 python __main__.py \
   -g ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
@@ -62,7 +62,7 @@ python __main__.py \
   -p 4
 """
 
-# Extract sequences only (no classification, ~1-2 minutes)
+# Extract sequences only (no classification, ~1 minute)
 test-seqs-only = """
 python __main__.py \
   -g ../data/test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \

@@ -2,7 +2,7 @@
 # intronIC - Quick Testing Profile
 # ============================================================================
 # Fast configuration for development and validation testing
-# Runtime: ~10-20 minutes on Chr19 (~2-3 hours full genome)
+# Runtime: Training can vary widely (minutes to hours) depending on system
 #
 # Compared to production:
 # - Fewer optimization rounds (2 vs 5)

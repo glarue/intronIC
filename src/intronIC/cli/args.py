@@ -341,7 +341,7 @@ Note: This command extracts intron sequences but does not perform classification
             "-p",
             "--processes",
             type=int,
-            default=1,
+            default=None,
             help="Number of parallel processes (default: 1)",
         )
 
@@ -481,7 +481,7 @@ Note: This command extracts intron sequences but does not perform classification
             "-p",
             "--processes",
             type=int,
-            default=1,
+            default=None,
             help="Number of parallel processes for scoring reference sequences (default: 1)",
         )
         training.add_argument(
@@ -781,7 +781,7 @@ Note: This command extracts intron sequences but does not perform classification
             "-p",
             "--processes",
             type=int,
-            default=1,
+            default=None,
             help="Parallel processes for scoring (default: 1)",
         )
         perf.add_argument(
@@ -1043,7 +1043,7 @@ Note: This command extracts intron sequences but does not perform classification
                 self.parser.error("classify: threshold must be between 0 and 100")
 
             # Process count validation
-            if args.processes < 1:
+            if args.processes is not None and args.processes < 1:
                 self.parser.error("classify: processes must be >= 1")
 
         # Create output directory

@@ -415,7 +415,7 @@ class IntronICConfig:
             ("extraction.flank_length", "flank_len", int, 100),
             ("extraction.min_intron_length", "min_intron_len", int, 10),
             # Performance
-            ("performance.processes", "processes", int, 1),
+            ("performance.processes", "processes", int, None),
             ("performance.cv_processes", "cv_processes", int, None),
             # Training
             ("training.n_models", "n_models", int, 15),
@@ -440,9 +440,16 @@ class IntronICConfig:
             if yaml_value is None:
                 continue
 
-            # Only apply if arg still has default value
+            # Only apply if arg still has default value (CLI didn't override)
+            # For None defaults, check if attribute is None
+            # For other defaults, check if value equals default
             current_value = getattr(args, arg_attr, default)
-            if current_value == default:
+            if default is None:
+                should_apply = current_value is None
+            else:
+                should_apply = current_value == default
+
+            if should_apply:
                 try:
                     setattr(args, arg_attr, converter(yaml_value))
                 except (ValueError, TypeError):
@@ -587,9 +594,13 @@ class IntronICConfig:
         # Performance configuration
         streaming = getattr(args, "streaming", False)
 
+        # Handle processes: CLI args override YAML, default to 1 if neither specified
+        processes = args.processes if args.processes is not None else yaml_config.get("performance", {}).get("processes", 1)
+        cv_processes = args.cv_processes if args.cv_processes is not None else yaml_config.get("performance", {}).get("cv_processes")
+
         performance_config = PerformanceConfig(
-            processes=args.processes,
-            cv_processes=args.cv_processes,
+            processes=processes,
+            cv_processes=cv_processes if cv_processes is not None else processes,
             streaming=streaming,
         )
 
