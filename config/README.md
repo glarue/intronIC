@@ -34,9 +34,9 @@ intronIC --generate-config > my_config.yaml
 
 **Use a custom config:**
 ```bash
-# Specify config file location
-intronIC classify -g genome.fa -a annotation.gff -n species \
-  --config path/to/my_config.yaml
+# Specify config file location (--config must come BEFORE subcommand)
+intronIC --config path/to/my_config.yaml \
+  classify -g genome.fa -a annotation.gff -n species
 
 # Or place in one of the auto-detected locations (in order of precedence):
 # 1. --config PATH (explicit CLI argument)
@@ -67,8 +67,8 @@ scoring:
 
 Then run:
 ```bash
-intronIC classify -g genome.fa -a annotation.gff -n species \
-  --config my_config.yaml
+intronIC --config my_config.yaml \
+  classify -g genome.fa -a annotation.gff -n species
 ```
 
 ### Training a New Model
@@ -97,7 +97,7 @@ optimizer:
 
 Then run:
 ```bash
-intronIC train -n homo_sapiens --config fast_test.yaml -p 8
+intronIC --config fast_test.yaml train -n homo_sapiens -p 8
 ```
 
 ### Parallel Processing
