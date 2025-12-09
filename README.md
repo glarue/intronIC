@@ -35,8 +35,6 @@ This refactored version maintains **100% algorithmic fidelity** and **CLI compat
 - **Same Performance**: Comparable runtime and memory usage to original
 - **Validated Accuracy**: Identical classification results on test data
 
-For detailed information about the refactoring approach, see [REFACTOR_SUMMARY.md](REFACTOR_SUMMARY.md).
-
 ---
 
 ## Scientific Background
