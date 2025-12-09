@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "intronIC"
-version = "2.0.3"
+version = "2.0.4"
 description = "Intron classification tool for identifying U2-type and U12-type introns using SVM"
 readme = "README.md"
 license = {text = "GPL-3.0"}
@@ -61,6 +61,12 @@ intronIC = "intronIC.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/intronIC"]
+artifacts = [
+    "src/intronIC/data/*.pkl",
+    "src/intronIC/data/*.json",
+    "src/intronIC/data/*.iic.gz",
+    "src/intronIC/data/*.log",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
