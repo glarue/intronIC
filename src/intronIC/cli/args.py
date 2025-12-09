@@ -92,7 +92,7 @@ class IntronICArgumentParser:
 
             __version__ = version("intronIC")
         except:
-            __version__ = "2.0.1"
+            __version__ = "dev"
 
         # Main parser
         parser = argparse.ArgumentParser(

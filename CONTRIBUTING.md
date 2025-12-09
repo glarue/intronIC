@@ -10,6 +10,7 @@ Thank you for your interest in contributing to intronIC! This document provides 
 - [Code Style](#code-style)
 - [Testing](#testing)
 - [Submitting Changes](#submitting-changes)
+- [Releasing a New Version](#releasing-a-new-version)
 - [Project Structure](#project-structure)
 
 ---
@@ -328,6 +329,73 @@ docs: update README with new CLI options
 test: add integration tests for BED input mode
 build: allow numpy 2.0 (compatibility verified)
 ```
+
+---
+
+## Releasing a New Version
+
+### Version Bumping
+
+We provide a script to update the version across all project files:
+
+```bash
+# Bump version to 2.0.2
+./scripts/bump_version.sh 2.0.2
+
+# Review changes
+git diff
+
+# Commit the version bump
+git commit -am "chore: bump version to 2.0.2"
+```
+
+The script updates version in:
+- `pyproject.toml` (PyPI package version)
+- `pixi.toml` (Pixi workspace version)
+
+**Note**: Version strings in source code (`src/intronIC/cli/args.py`, `src/intronIC/cli/progress.py`) are dynamically loaded from package metadata at runtime. The fallback is `"dev"` for development environments.
+
+### Release Process
+
+1. **Update version**:
+   ```bash
+   ./scripts/bump_version.sh 2.0.2
+   git commit -am "chore: bump version to 2.0.2"
+   ```
+
+2. **Tag the release**:
+   ```bash
+   git tag v2.0.2
+   ```
+
+3. **Push to GitHub**:
+   ```bash
+   git push origin main v2.0.2
+   ```
+
+4. **Build distribution packages**:
+   ```bash
+   rm -rf dist/
+   python -m build
+   ```
+
+5. **Upload to PyPI**:
+   ```bash
+   python -m twine upload dist/*
+   ```
+
+### Release Checklist
+
+- [ ] All tests pass: `make test`
+- [ ] Linting passes: `make lint`
+- [ ] Lock files updated: `make lock`
+- [ ] CHANGELOG updated (if applicable)
+- [ ] Version bumped: `./scripts/bump_version.sh X.Y.Z`
+- [ ] Changes committed and tagged
+- [ ] Pushed to GitHub
+- [ ] Distribution built: `python -m build`
+- [ ] Uploaded to PyPI: `python -m twine upload dist/*`
+- [ ] GitHub release created with release notes
 
 ---
 
