@@ -14,7 +14,7 @@ try:
     from importlib.metadata import version
     __version__ = version("intronIC")
 except Exception:
-    __version__ = "2.0.0"  # Fallback
+    __version__ = "2.0.1"  # Fallback
 from rich.progress import (
     Progress,
     SpinnerColumn,
