@@ -441,16 +441,16 @@ U12-type introns are identified by their **relative score > 0** (equivalent to S
 
 ```bash
 # Extract U12-type introns from meta file
-awk '($2!="." && $2>0)' species_name.meta.iic
+awk '($2!="NA" && $2>0)' species_name.meta.iic
 
 # Count U12-type introns
-awk '($2!="." && $2>0)' species_name.meta.iic | wc -l
+awk '($2!="NA" && $2>0)' species_name.meta.iic | wc -l
 
 # Get U12-type intron names
-awk '($2!="." && $2>0) {print $1}' species_name.meta.iic
+awk '($2!="NA" && $2>0) {print $1}' species_name.meta.iic
 
 # Filter by higher confidence (relative score > 10)
-awk '($2!="." && $2>10)' species_name.meta.iic
+awk '($2!="NA" && $2>10)' species_name.meta.iic
 ```
 
 ### Understanding the Scores
