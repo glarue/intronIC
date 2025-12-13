@@ -2,7 +2,7 @@
 
 # intronIC - (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-**Version 2.0** - Refactored Edition with Corrected ML Architecture
+**Version 2.0** - Refactored Edition with Streamlined ML Architecture
 
 `intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine trained on position-weight matrix scores.
 
