@@ -38,7 +38,7 @@ intronIC -g test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
          -n homo_sapiens_chr19 -p 4
 ```
 
-**Expected:** ~29,000 introns extracted, ~30 U12-type introns found (runtime: 1-2 minutes with `-p 4`).
+**Expected:** ~29,000 introns extracted, ~30 U12-type introns found (runtime: ~1 min with `-p 4`).
 
 ---
 

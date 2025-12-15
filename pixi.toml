@@ -1,14 +1,14 @@
 [workspace]
 name = "intronic-refactored"
-version = "2.0.5"
+version = "2.0.6"
 description = "Intron classification tool for identifying U2-type and U12-type introns using SVM (refactored version)"
 authors = ["Graham E. Larue <egrahamlarue@gmail.com>"]
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 
 [dependencies]
-python = ">=3.8,<3.13"
-numpy = "<2.0"
+python = ">=3.8"
+numpy = "*"
 scipy = "*"
 scikit-learn = ">=0.22"
 matplotlib = "*"
