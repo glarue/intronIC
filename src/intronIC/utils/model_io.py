@@ -78,7 +78,11 @@ def load_model(model_path: Path) -> Any:
         raise FileNotFoundError(f"Model file not found: {model_path}")
 
     try:
-        model = joblib.load(model_path)
+        # Suppress sklearn version warnings - LinearSVC is stable across minor versions
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+            model = joblib.load(model_path)
         return model
     except Exception as e:
         raise Exception(f"Failed to load model from {model_path}: {str(e)}")

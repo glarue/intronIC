@@ -5315,6 +5315,8 @@ def main_test(args):
         if meta_file.exists():
             # Parse metadata to get counts
             import json
+            total_introns = "?"
+            u12_introns = "?"
             with open(meta_file) as f:
                 for line in f:
                     if line.startswith("#"):
@@ -5324,8 +5326,7 @@ def main_test(args):
                             u12_introns = meta.get("u12_introns", "?")
                             break
                         except:
-                            total_introns = "?"
-                            u12_introns = "?"
+                            pass
 
             console.print(f"\n[bold green]✓ Test completed successfully![/bold green]")
             console.print(f"  Runtime: {elapsed:.1f}s")
