@@ -15,6 +15,9 @@ pip install -e .
 ## Basic Commands
 
 ```bash
+# Test installation
+intronIC test -p 4
+
 # Classify introns (train on-the-fly)
 intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name -p 8
 
