@@ -2,7 +2,7 @@
 
 # intronIC - (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-**Version 2.0** - Refactored Edition with Streamlined ML Architecture
+**Version 2.1** - Refactored Edition with Streamlined ML Architecture
 
 `intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine trained on position-weight matrix scores.
 
@@ -43,6 +43,8 @@ intronIC test --show-only
 
 ## Documentation
 
+* **[Changelog](CHANGELOG.md)** - Release notes and version history
+
 For complete documentation, see the **[intronIC Wiki](https://github.com/glarue/intronIC/wiki)**:
 
 * **[Quick Start Guide](https://github.com/glarue/intronIC/wiki/Quick-start)** - Installation, dependencies, resource usage
@@ -55,7 +57,16 @@ For complete documentation, see the **[intronIC Wiki](https://github.com/glarue/
 
 ---
 
-## What's New in Version 2.0
+## What's New
+
+### Version 2.1 (Latest)
+
+- **Improved cross-species model**: Default model now uses isotonic calibration for better accuracy
+- **`intronIC test` command**: Quick installation validation with bundled test data
+- **Bug fixes**: Test command metrics, sklearn warnings completely suppressed
+- See [CHANGELOG.md](CHANGELOG.md) for full release history
+
+### Version 2.0
 
 This refactored version maintains **100% algorithmic fidelity** and **CLI compatibility** with the original intronIC while providing a modernized, maintainable codebase:
 
