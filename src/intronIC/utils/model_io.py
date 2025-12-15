@@ -81,7 +81,7 @@ def load_model(model_path: Path) -> Any:
         # Suppress sklearn version warnings - LinearSVC is stable across minor versions
         import warnings
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+            warnings.filterwarnings("ignore", message=".*sklearn.*")
             model = joblib.load(model_path)
         return model
     except Exception as e:

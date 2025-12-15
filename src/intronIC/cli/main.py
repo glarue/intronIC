@@ -41,6 +41,7 @@ from intronIC.utils.metadata import (
     generate_training_metadata,
     write_metadata,
 )
+from intronIC.utils.model_io import load_model
 from intronIC.visualization.plots import plot_classification_results
 
 from .args import IntronICArgumentParser
@@ -3066,7 +3067,7 @@ def classify_streaming_per_contig(
     messenger.info(
         f"Loading pretrained model from {config.training.pretrained_model_path}"
     )
-    model_data = joblib.load(config.training.pretrained_model_path)
+    model_data = load_model(config.training.pretrained_model_path)
 
     # Handle both old and new model format
     if isinstance(model_data, dict):
@@ -3696,7 +3697,7 @@ def classify_with_pretrained_model(
     if not model_path.exists():
         raise FileNotFoundError(f"Pretrained model not found: {model_path}")
 
-    model_data = joblib.load(model_path)
+    model_data = load_model(model_path)
 
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
@@ -3744,7 +3745,7 @@ def classify_with_pretrained_model(
             messenger.info(
                 f"Loading saved normalizer from {config.scoring.load_normalizer}"
             )
-            normalizer = joblib.load(config.scoring.load_normalizer)
+            normalizer = load_model(config.scoring.load_normalizer)
             messenger.log_only("Using saved normalizer for reproducible normalization")
         else:
             # Fit normalizer on experimental data (feature re-scaling)
