@@ -5311,27 +5311,26 @@ def main_test(args):
         elapsed = time.time() - start_time
 
         # Check results
-        meta_file = output_dir / "test_chr19.meta.iic"
-        if meta_file.exists():
-            # Parse metadata to get counts
+        metrics_file = output_dir / "test_chr19.metrics.iic.json"
+        if metrics_file.exists():
+            # Parse metrics to get counts
             import json
             total_introns = "?"
             u12_introns = "?"
-            with open(meta_file) as f:
-                for line in f:
-                    if line.startswith("#"):
-                        try:
-                            meta = json.loads(line[1:].strip())
-                            total_introns = meta.get("total_introns", "?")
-                            u12_introns = meta.get("u12_introns", "?")
-                            break
-                        except:
-                            pass
+            try:
+                with open(metrics_file) as f:
+                    metrics = json.load(f)
+                    # Use total_scored (introns after filtering) not total_introns_generated
+                    total_introns = metrics.get("total_scored", "?")
+                    # Use high_confidence_u12 (matches what's shown in results table)
+                    u12_introns = metrics.get("high_confidence_u12", "?")
+            except Exception:
+                pass
 
             console.print(f"\n[bold green]✓ Test completed successfully![/bold green]")
             console.print(f"  Runtime: {elapsed:.1f}s")
-            console.print(f"  Total introns: {total_introns}")
-            console.print(f"  U12 introns: {u12_introns}")
+            console.print(f"  Total introns: {total_introns:,}" if isinstance(total_introns, int) else f"  Total introns: {total_introns}")
+            console.print(f"  U12 introns: {u12_introns:,}" if isinstance(u12_introns, int) else f"  U12 introns: {u12_introns}")
 
             if not args.output_dir:
                 console.print(f"\n[dim]Output saved to: {output_dir}[/dim]")
