@@ -5241,6 +5241,107 @@ def main_classify(config: IntronICConfig):
         raise
 
 
+def main_test(args):
+    """Run installation test with bundled test data.
+
+    Args:
+        args: Parsed arguments from argparse
+    """
+    from rich.console import Console
+
+    console = Console()
+
+    # Find bundled test data
+    data_dir = Path(__file__).parent.parent / "data" / "test_data"
+    genome_file = data_dir / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
+    annotation_file = data_dir / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
+
+    # Check if test data exists
+    if not genome_file.exists() or not annotation_file.exists():
+        console.print(
+            "[red]Error: Bundled test data not found![/red]", style="bold"
+        )
+        console.print(f"Expected location: {data_dir}")
+        console.print("\nTest data should include:")
+        console.print(f"  - {genome_file.name}")
+        console.print(f"  - {annotation_file.name}")
+        return 1
+
+    # Show test data location
+    console.print("\n[bold cyan]intronIC Installation Test[/bold cyan]")
+    console.print(f"Test data location: [green]{data_dir}[/green]")
+    console.print(f"  Genome:     {genome_file.name}")
+    console.print(f"  Annotation: {annotation_file.name}")
+
+    # If --show-only, exit here
+    if getattr(args, "show_only", False):
+        console.print("\n[bold]To run test manually:[/bold]")
+        console.print(f"  intronIC classify -g {genome_file} \\")
+        console.print(f"                    -a {annotation_file} \\")
+        console.print(f"                    -n homo_sapiens_chr19 -p 4")
+        return 0
+
+    # Run quick classification test
+    console.print("\n[bold]Running classification test...[/bold]")
+
+    # Use temporary directory or user-specified output directory
+    if args.output_dir:
+        output_dir = args.output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        import tempfile
+        output_dir = Path(tempfile.mkdtemp(prefix="intronic_test_"))
+
+    console.print(f"Output directory: [green]{output_dir}[/green]")
+
+    # Build command-line args for classify mode
+    test_args = [
+        "classify",
+        "-g", str(genome_file),
+        "-a", str(annotation_file),
+        "-n", "test_chr19",
+        "-o", str(output_dir),
+        "-p", str(args.processes),
+    ]
+
+    # Run classification
+    start_time = time.time()
+    try:
+        main(test_args)
+        elapsed = time.time() - start_time
+
+        # Check results
+        meta_file = output_dir / "test_chr19.meta.iic"
+        if meta_file.exists():
+            # Parse metadata to get counts
+            import json
+            with open(meta_file) as f:
+                for line in f:
+                    if line.startswith("#"):
+                        try:
+                            meta = json.loads(line[1:].strip())
+                            total_introns = meta.get("total_introns", "?")
+                            u12_introns = meta.get("u12_introns", "?")
+                            break
+                        except:
+                            total_introns = "?"
+                            u12_introns = "?"
+
+            console.print(f"\n[bold green]✓ Test completed successfully![/bold green]")
+            console.print(f"  Runtime: {elapsed:.1f}s")
+            console.print(f"  Total introns: {total_introns}")
+            console.print(f"  U12 introns: {u12_introns}")
+
+            if not args.output_dir:
+                console.print(f"\n[dim]Output saved to: {output_dir}[/dim]")
+        else:
+            console.print("[yellow]Warning: Test completed but results file not found[/yellow]")
+
+    except Exception as e:
+        console.print(f"[red]Test failed: {str(e)}[/red]")
+        raise
+
+
 def main(args=None):
     """Main entry point for intronIC CLI.
 
@@ -5272,13 +5373,17 @@ def main(args=None):
             print("Edit this file to customize your intronIC settings.")
             return 0
 
+        # Route to appropriate entry point based on command
+        command = getattr(parsed_args, "command", "classify")
+
+        # Test mode doesn't need config - handle it directly
+        if command == "test":
+            return main_test(parsed_args)
+
         # Create unified configuration from YAML config + CLI args
         # CLI args take precedence over YAML values
         # This creates a single source of truth for the entire run
         config = IntronICConfig.from_yaml_and_args(parsed_args)
-
-        # Route to appropriate entry point based on command
-        command = getattr(parsed_args, "command", "classify")
 
         if command == "train":
             # Train mode: Train model on reference sequences

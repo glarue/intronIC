@@ -32,13 +32,12 @@ intronIC train -n my_model -p 8
 ### Test Run
 
 ```bash
-# Download test data or use the included test files
-intronIC -g test_data/Homo_sapiens.Chr19.Ensembl_91.fa.gz \
-         -a test_data/Homo_sapiens.Chr19.Ensembl_91.gff3.gz \
-         -n homo_sapiens_chr19 -p 4
-```
+# Quick installation test using bundled test data
+intronIC test -p 4
 
-**Expected:** ~29,000 introns extracted, ~30 U12-type introns found (runtime: ~1 min with `-p 4`).
+# Or show where test data is located
+intronIC test --show-only
+```
 
 ---
 

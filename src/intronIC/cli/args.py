@@ -71,7 +71,7 @@ class IntronICArgumentParser:
         subcommand_idx = None
 
         for idx, arg in enumerate(args):
-            if arg in ("train", "classify", "extract"):
+            if arg in ("train", "classify", "extract", "test"):
                 subcommand_idx = idx
                 break
 
@@ -231,6 +231,30 @@ Note: This command extracts intron sequences but does not perform classification
 """,
         )
         self._add_extract_arguments(extract_parser)
+
+        # ===================================================================
+        # TEST SUBCOMMAND
+        # ===================================================================
+        test_parser = subparsers.add_parser(
+            "test",
+            help="Run a quick installation test with bundled test data",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Test mode examples:
+  # Show test data location only
+  intronIC test --show-only
+
+  # Run quick classification test (default)
+  intronIC test
+
+  # Run test with custom number of processes
+  intronIC test -p 4
+
+Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
+      your intronIC installation is working correctly (runtime: ~1 min with -p 4)
+""",
+        )
+        self._add_test_arguments(test_parser)
 
         # ===================================================================
         # BACKWARD COMPATIBILITY
@@ -405,6 +429,31 @@ Note: This command extracts intron sequences but does not perform classification
             type=int,
             default=42,
             help="Random seed for reproducibility (default: 42)",
+        )
+
+    def _add_test_arguments(self, parser: argparse.ArgumentParser):
+        """Add arguments specific to test subcommand."""
+
+        parser.add_argument(
+            "--show-only",
+            "--show_only",
+            action="store_true",
+            help="Show test data location without running test",
+        )
+        parser.add_argument(
+            "-p",
+            "--processes",
+            type=int,
+            default=1,
+            help="Number of parallel processes (default: 1)",
+        )
+        parser.add_argument(
+            "-o",
+            "--output-dir",
+            "--output_dir",
+            type=Path,
+            default=None,
+            help="Output directory (default: temporary directory)",
         )
 
     def _add_train_arguments(self, parser: argparse.ArgumentParser):
@@ -1055,5 +1104,6 @@ Note: This command extracts intron sequences but does not perform classification
             if args.processes is not None and args.processes < 1:
                 self.parser.error("classify: processes must be >= 1")
 
-        # Create output directory
-        args.output_dir.mkdir(parents=True, exist_ok=True)
+        # Create output directory (skip for test command which may have None output_dir)
+        if hasattr(args, 'output_dir') and args.output_dir is not None:
+            args.output_dir.mkdir(parents=True, exist_ok=True)
