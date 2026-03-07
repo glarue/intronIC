@@ -826,14 +826,13 @@ def setup_logging(config: IntronICConfig) -> tuple[logging.Logger, "Console"]:
     # Clear any existing handlers
     logger.handlers.clear()
 
-    # Create Rich console for log file — plain text, no ANSI color codes.
-    # Log files should be universally readable (text editors, less, cat, etc.)
-    # without requiring ANSI-aware viewers. The box-drawing characters and
-    # table formatting still provide good visual structure without color.
+    # Create Rich console for log file — plain text, no wrapping.
+    # no_color: no ANSI escape codes, universally readable in any viewer
+    # soft_wrap: no line wrapping, let the viewer handle it
     log_console = Console(
         file=open(log_file, "w", encoding="utf-8"),
         no_color=True,
-        width=120,
+        soft_wrap=True,
         highlight=False,
     )
 
