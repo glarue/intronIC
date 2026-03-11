@@ -91,15 +91,22 @@ class IndexedGenomeReader:
                 self._index_status_logged = True
 
             # pyfastx automatically creates index if missing
+            # If the index is corrupt (e.g. from a killed process), delete and retry
+            fxi_path = Path(str(self.file_path) + ".fxi")
             try:
                 self._fasta = pyfastx.Fasta(str(self.file_path))
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to load genome file '{self.file_path}' with pyfastx. "
-                    f"Error: {e}. "
-                    f"This may happen if the file is corrupted, not a valid FASTA, "
-                    f"or if there are permission issues."
-                ) from e
+            except Exception:
+                if fxi_path.exists():
+                    fxi_path.unlink()
+                    try:
+                        self._fasta = pyfastx.Fasta(str(self.file_path))
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"Failed to load genome file '{self.file_path}' with pyfastx "
+                            f"(even after rebuilding index). Error: {e}"
+                        ) from e
+                else:
+                    raise
         return self._fasta
 
     def fetch(self, chromosome: str, start: int, stop: int) -> str:
