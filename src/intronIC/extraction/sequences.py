@@ -8,7 +8,7 @@ and scoring region sequences (5'ss, BP, 3'ss) from genome FASTA files.
 from collections import defaultdict
 from typing import Dict, Iterator, List, Optional, Tuple
 
-from intronIC.core.intron import Intron, IntronSequences
+from intronIC.core.intron import Intron, IntronSequences, OmissionReason
 from intronIC.file_io.genome import GenomeReader
 from intronIC.utils.sequences import reverse_complement
 
@@ -114,8 +114,14 @@ class SequenceExtractor:
                     region_seq = self.genome_reader.get_sequence(region_name).upper()
                 except KeyError:
                     print(
-                        f"[!] Warning: Region '{region_name}' not found in genome, skipping"
+                        f"[!] Warning: Region '{region_name}' not found in genome, "
+                        f"marking {len(region_introns)} intron(s) as omitted"
                     )
+                    for intron in region_introns:
+                        if intron.metadata is not None:
+                            intron.metadata.omitted = OmissionReason.NO_SEQUENCE
+                            intron.metadata.dynamic_tags.add("[x]")
+                        yield intron
                     continue
 
             # Process each intron in this region
@@ -176,8 +182,14 @@ class SequenceExtractor:
                 region_seq = self.genome_reader.get_sequence(region_name).upper()
             except KeyError:
                 print(
-                    f"[!] Warning: Region '{region_name}' not found in genome, skipping"
+                    f"[!] Warning: Region '{region_name}' not found in genome, "
+                    f"marking {len(region_introns)} intron(s) as omitted"
                 )
+                for intron in region_introns:
+                    if intron.metadata is not None:
+                        intron.metadata.omitted = OmissionReason.NO_SEQUENCE
+                        intron.metadata.dynamic_tags.add("[x]")
+                    yield intron
                 continue
 
             # Group introns by coordinates within this region

@@ -918,7 +918,7 @@ class SequenceWriter(BaseWriter):
         self._require_open()
 
         if not intron.sequences or not intron.sequences.seq:
-            raise ValueError(f"Intron {intron.intron_id} has no sequence data")
+            return  # Skip introns without sequence data (e.g. omitted_no_sequence)
 
         # Generate intron name using shared function
         name = generate_intron_name(

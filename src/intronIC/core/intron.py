@@ -50,6 +50,7 @@ class OmissionReason(IntEnum):
     ISOFORM = 4  # 'i' - Not from longest isoform
     OVERLAP = 5  # 'v' - Overlapping coordinates
     DUPLICATE = 6  # 'd' - Duplicate coordinates
+    NO_SEQUENCE = 7  # 'x' - No sequence data (e.g. region missing from genome)
 
     @property
     def code(self) -> str:
@@ -62,6 +63,7 @@ class OmissionReason(IntEnum):
             OmissionReason.ISOFORM: "i",
             OmissionReason.OVERLAP: "v",
             OmissionReason.DUPLICATE: "d",
+            OmissionReason.NO_SEQUENCE: "x",
         }
         return _CODE_MAP[self]
 
@@ -76,6 +78,7 @@ class OmissionReason(IntEnum):
             OmissionReason.ISOFORM: "omitted_not_longest_isoform",
             OmissionReason.OVERLAP: "omitted_overlap",
             OmissionReason.DUPLICATE: "duplicate",
+            OmissionReason.NO_SEQUENCE: "omitted_no_sequence",
         }
         return _VERBOSE_MAP[self]
 
@@ -89,6 +92,7 @@ class OmissionReason(IntEnum):
             "i": cls.ISOFORM,
             "v": cls.OVERLAP,
             "d": cls.DUPLICATE,
+            "x": cls.NO_SEQUENCE,
         }
         return _REVERSE_MAP.get(code, cls.NONE)
 
