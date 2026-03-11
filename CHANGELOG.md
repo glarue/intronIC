@@ -5,6 +5,26 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.3] - 2026-03-10
+
+### Added
+- New `NO_SEQUENCE` omission reason (`[x]` tag) for introns on genome regions missing from the FASTA (e.g. organellar genes referencing contigs not included in nuclear assemblies)
+
+### Fixed
+- Pipeline no longer crashes when introns reference contigs absent from the genome FASTA
+  - `SequenceExtractor` now yields these introns marked as `omitted_no_sequence` instead of silently dropping them
+  - `SequenceWriter` skips introns without sequence data instead of raising `ValueError`
+  - Affected species include those with mitochondrial/plastid gene annotations (e.g. *Manihot esculenta*, *Protopterus annectens*, *Spinacia oleracea*)
+
+### Dependencies
+- Bump pillow from 12.0.0 to 12.1.1
+
+## [2.1.2] - 2026-02-15
+
+### Fixed
+- Log files no longer contain ANSI color codes
+- Disabled line wrapping in log file output
+
 ## [2.1.0] - 2024-12-15
 
 ### Added
@@ -98,6 +118,8 @@ Previous monolithic version. See git history for details.
 
 ---
 
+[2.1.3]: https://github.com/glarue/intronIC/compare/v2.1.2...v2.1.3
+[2.1.2]: https://github.com/glarue/intronIC/compare/v2.1.0...v2.1.2
 [2.1.0]: https://github.com/glarue/intronIC/compare/v2.0.10...v2.1.0
 [2.0.10]: https://github.com/glarue/intronIC/compare/v2.0.9...v2.0.10
 [2.0.9]: https://github.com/glarue/intronIC/compare/v2.0.8...v2.0.9
