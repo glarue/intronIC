@@ -1795,6 +1795,16 @@ def extract_introns_streaming(
     assert config.input.genome is not None, "Genome path required"
     contig_lengths = get_contig_lengths(config.input.genome)
 
+    # Filter out contigs missing from the genome FASTA
+    missing = [c for c in contigs if c not in contig_lengths]
+    if missing:
+        messenger.warning(
+            f"Skipping {len(missing)} contig(s) not found in genome FASTA: "
+            + ", ".join(missing[:5])
+            + (f" ... and {len(missing) - 5} more" if len(missing) > 5 else "")
+        )
+        contigs = [c for c in contigs if c in contig_lengths]
+
     # Prepare length-weighted progress tracking
     contig_length_list = [contig_lengths[c] for c in contigs]
     cumulative_lengths = np.cumsum(contig_length_list)
@@ -3184,6 +3194,26 @@ def classify_streaming_per_contig(
 
     assert config.input.genome is not None, "Genome path required"
     contig_lengths = get_contig_lengths(config.input.genome)
+
+    # Filter out annotation contigs missing from the genome FASTA
+    # (e.g. organellar genes referencing contigs not in nuclear assemblies)
+    missing_contigs = [
+        (contig, count) for contig, count in contigs_with_counts
+        if contig not in contig_lengths
+    ]
+    if missing_contigs:
+        total_missing_annotations = sum(c for _, c in missing_contigs)
+        missing_names = [c for c, _ in missing_contigs]
+        messenger.warning(
+            f"Skipping {len(missing_contigs)} contig(s) not found in genome FASTA "
+            f"({total_missing_annotations:,} annotations): "
+            + ", ".join(missing_names[:5])
+            + (f" ... and {len(missing_names) - 5} more" if len(missing_names) > 5 else "")
+        )
+        contigs_with_counts = [
+            (contig, count) for contig, count in contigs_with_counts
+            if contig in contig_lengths
+        ]
 
     # Prepare length-weighted progress tracking
     contig_names = [contig for contig, _ in contigs_with_counts]
