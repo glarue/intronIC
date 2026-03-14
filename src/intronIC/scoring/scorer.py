@@ -226,6 +226,21 @@ class IntronScorer:
 
         return ignore_five, ignore_three
 
+    def _u2_falls_back(self, dnts: str, region: str) -> bool:
+        """
+        Check whether U2 PWM selection for a given dinucleotide class
+        requires a fallback (e.g., AT-AC intron scored against U2 GT-AG).
+
+        Returns True if no direct U2 match exists for these dinucleotides.
+        """
+        pwm_set = self.pwm_sets.get(region)
+        if pwm_set is None:
+            return False
+        return not any(
+            len(key) >= 2 and key[0] == 'u2' and key[1] == dnts
+            for key in pwm_set.matrices
+        )
+
     def _get_terminal_dinucleotides(self, intron: Intron) -> str:
         """
         Get terminal dinucleotides for PWM selection.
@@ -287,6 +302,16 @@ class IntronScorer:
         # Pass the starting position of the 5' region (first coordinate)
         seq_start_pos = self.five_coords[0]  # e.g., -3
 
+        # When U2 has no PWM for these dinucleotides (e.g., AT-AC) and falls
+        # back to a different class (GT-AG), the fallback PWM expects different
+        # bases at the dinucleotide positions and produces near-zero scores.
+        # Mask the 5' dinucleotide positions (0, 1) on the U2 side only so the
+        # log-ratio reflects flanking-context similarity, not a dnt mismatch.
+        u2_ignore = ignore_positions
+        if self._u2_falls_back(dnts, "five"):
+            fallback_mask = {0, 1}
+            u2_ignore = (ignore_positions | fallback_mask) if ignore_positions else fallback_mask
+
         # Try all U12 PWM versions and keep the best score
         best_u12_score = 0.0
         for u12_pwm in u12_pwms:
@@ -304,7 +329,7 @@ class IntronScorer:
             score = u2_pwm.score_sequence(
                 five_region,
                 seq_start_position=seq_start_pos,
-                ignore_positions=ignore_positions,
+                ignore_positions=u2_ignore,
             )
             if score > best_u2_score:
                 best_u2_score = score
@@ -343,6 +368,15 @@ class IntronScorer:
         # Pass the starting position of the 3' region (first coordinate)
         seq_start_pos = self.three_coords[0]  # e.g., -6
 
+        # When U2 has no PWM for these dinucleotides (e.g., AT-AC) and falls
+        # back to a different class (GT-AG), mask the 3' dinucleotide
+        # positions (-2, -1) on the U2 side only.
+        # See _score_five_site for full rationale.
+        u2_ignore = ignore_positions
+        if self._u2_falls_back(dnts, "three"):
+            fallback_mask = {-2, -1}
+            u2_ignore = (ignore_positions | fallback_mask) if ignore_positions else fallback_mask
+
         # Try all U12 PWM versions and keep the best score
         best_u12_score = 0.0
         for u12_pwm in u12_pwms:
@@ -360,7 +394,7 @@ class IntronScorer:
             score = u2_pwm.score_sequence(
                 three_region,
                 seq_start_position=seq_start_pos,
-                ignore_positions=ignore_positions,
+                ignore_positions=u2_ignore,
             )
             if score > best_u2_score:
                 best_u2_score = score
