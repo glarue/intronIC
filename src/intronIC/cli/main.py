@@ -3178,6 +3178,13 @@ def classify_streaming_per_contig(
     boundaries_u12: Counter = Counter()
     boundaries_u2: Counter = Counter()
 
+    # Lightweight score accumulation for post-hoc cluster validation
+    # Only stores 3 floats per classified intron (~24 bytes each)
+    accumulated_five_z: list = []
+    accumulated_bp_z: list = []
+    accumulated_svm_scores: list = []
+    accumulated_type_ids: list = []
+
     # Accumulated filter statistics
     from intronIC.extraction.filters import FilterStats
 
@@ -3319,6 +3326,21 @@ def classify_streaming_per_contig(
                     # Accumulate duplicate and overlap maps
                     accumulated_duplicate_map.update(stats["duplicate_map"])
                     accumulated_overlap_map.update(stats["overlap_map"])
+
+                    # Accumulate scores for cluster validation
+                    for intron in classified_introns:
+                        if (
+                            intron.scores
+                            and intron.scores.five_z_score is not None
+                            and intron.scores.bp_z_score is not None
+                            and intron.scores.svm_score is not None
+                            and intron.metadata
+                            and intron.metadata.type_id in ('u12', 'u2')
+                        ):
+                            accumulated_five_z.append(intron.scores.five_z_score)
+                            accumulated_bp_z.append(intron.scores.bp_z_score)
+                            accumulated_svm_scores.append(intron.scores.svm_score)
+                            accumulated_type_ids.append(intron.metadata.type_id)
 
                     # Update progress bar based on this contig's length
                     contig_idx = contig_to_index[contig_name]
@@ -3555,6 +3577,20 @@ def classify_streaming_per_contig(
                 for intron in classified_introns:
                     output_writer.write_intron(intron)
 
+                    # Accumulate scores for cluster validation
+                    if (
+                        intron.scores
+                        and intron.scores.five_z_score is not None
+                        and intron.scores.bp_z_score is not None
+                        and intron.scores.svm_score is not None
+                        and intron.metadata
+                        and intron.metadata.type_id in ('u12', 'u2')
+                    ):
+                        accumulated_five_z.append(intron.scores.five_z_score)
+                        accumulated_bp_z.append(intron.scores.bp_z_score)
+                        accumulated_svm_scores.append(intron.scores.svm_score)
+                        accumulated_type_ids.append(intron.metadata.type_id)
+
                     # Track boundary statistics
                     if (
                         intron.metadata
@@ -3589,6 +3625,48 @@ def classify_streaming_per_contig(
     annotation_store.cleanup()  # Delete SQLite annotation database
     gc.collect()
 
+    # =========================================================================
+    # POST-HOC CLUSTER VALIDATION
+    # Compute kNN-median silhouette to assess whether the SVM's U12 calls
+    # form a coherent cluster separate from U2. Reports a species-level
+    # confidence metric and adjusted prior.
+    # =========================================================================
+    cluster_validation_result = None
+    if accumulated_five_z:
+        from intronIC.scoring.cluster_validation import validate_u12_cluster
+
+        cluster_validation_result = validate_u12_cluster(
+            five_z_scores=np.array(accumulated_five_z),
+            bp_z_scores=np.array(accumulated_bp_z),
+            svm_scores=np.array(accumulated_svm_scores),
+            type_ids=np.array(accumulated_type_ids),
+            confidence_threshold=config.scoring.threshold,
+        )
+
+        silh = cluster_validation_result['silhouette']
+        regime = cluster_validation_result['regime']
+        adj_prior = cluster_validation_result['adjusted_prior']
+
+        if not np.isnan(silh):
+            messenger.info(
+                f"Cluster validation: silhouette={silh:.3f} ({regime}), "
+                f"n_confident_u12={cluster_validation_result['n_confident_u12']}, "
+                f"adjusted_prior={adj_prior:.6f}"
+            )
+            if silh <= 0:
+                messenger.warning(
+                    f"Negative silhouette ({silh:.3f}): U12 calls may not form a "
+                    f"distinct cluster. Consider reviewing calls with caution."
+                )
+        else:
+            messenger.info(
+                f"Cluster validation: insufficient confident U12 calls "
+                f"(n={cluster_validation_result['n_confident_u12']}) to compute silhouette"
+            )
+
+    # Free accumulated score data
+    del accumulated_five_z, accumulated_bp_z, accumulated_svm_scores, accumulated_type_ids
+
     # Build summary
     summary = output_writer.get_summary()
     summary.update(
@@ -3603,6 +3681,16 @@ def classify_streaming_per_contig(
             "u2_boundaries": dict(boundaries_u2.most_common(20)),
         }
     )
+
+    # Add cluster validation to summary
+    if cluster_validation_result is not None:
+        summary["cluster_validation"] = {
+            "silhouette": cluster_validation_result['silhouette'],
+            "regime": cluster_validation_result['regime'],
+            "adjusted_prior": cluster_validation_result['adjusted_prior'],
+            "n_confident_u12": cluster_validation_result['n_confident_u12'],
+            "empirical_prior": cluster_validation_result['empirical_prior'],
+        }
 
     messenger.info(
         f"Streaming classification complete: {total_classified:,} introns classified"
