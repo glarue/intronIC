@@ -1,123 +1,208 @@
 """
-Species-level U12 cluster validation using kNN-median silhouette score.
+Species-level U12 cluster validation using multi-bandwidth density valley detection.
 
-Computes whether the SVM's confident U12 calls form a coherent cluster
-separate from the U2 distribution. This provides a species-level confidence
-measure that can be used to adjust the classification prior.
+Assesses whether the SVM's confident U12 calls form a distinct cluster
+separated from the U2 distribution by a density valley. Projects all scored
+introns onto the U2→U12 discriminating axis (2D: 5'z, BPz), estimates
+1D density at multiple KDE bandwidths, and checks for a valley between
+the clusters that persists under smoothing.
 
 Two-regime prior framework:
-  - Positive silhouette (> 0): U12 cluster detected, trust SVM as-is
-  - Negative silhouette (≤ 0): No confident U12 cluster, discount prior
+  - Valley detected (median depth > 0.3): U12 cluster confirmed, trust SVM
+  - No valley (median depth ≤ 0.3): No distinct U12 cluster, discount prior
     to suppress borderline false positives
 
-The kNN-median silhouette is a robust variant of the standard silhouette
-coefficient that uses k-nearest-neighbor distances (robust to outliers
-with degraded motifs) and median aggregation (robust to individual
-outlier introns).
+Feature space: 2D (5'z, BPz) — the two dimensions where U12 and U2 populations
+are most distinct, corresponding to the two U12-specific spliceosomal recognition
+events (U11 snRNA ↔ 5'SS, U12 snRNA ↔ BPS). The 3' z-score adds within-U12
+variance (AT-AC vs GT-AG subtype variation) that degrades the valley signal.
 
-Validated on 30 species spanning vertebrates, insects, plants, fungi,
-protists, and known U12-absent lineages. All confirmed U12 species
-score positive; all confirmed U12-absent species score negative.
+Validated on 10 species: all confirmed U12 species show median depth ≥ 0.645;
+all confirmed U12-absent species show median depth ≤ 0.001.
 """
 
 import numpy as np
-from scipy.spatial import cKDTree
-from typing import Tuple, Optional
+from scipy.stats import gaussian_kde
+from typing import Optional
 
 
-def compute_knn_median_silhouette(
+def compute_valley_depth(
     u12_points: np.ndarray,
     u2_points: np.ndarray,
-    k: int = 5,
-) -> float:
+    bandwidth_multipliers: tuple = (0.5, 1.0, 1.5, 2.0, 3.0, 5.0),
+    n_eval: int = 300,
+    max_u2_sample: int = 10000,
+    random_seed: int = 42,
+) -> dict:
     """
-    Compute the kNN-median silhouette score for U12 calls.
+    Multi-bandwidth density valley detection between U12 and U2 clusters.
 
-    For each U12 point:
-      a_i = distance to k-th nearest U12 neighbor (intra-cluster)
-      b_i = distance to k-th nearest U2 neighbor (inter-cluster)
-      s_i = (b_i - a_i) / max(a_i, b_i)
-
-    Returns the median of per-point silhouette values.
+    Projects all points onto the U2→U12 centroid axis, then estimates 1D
+    density at multiple bandwidths. A real valley persists across bandwidths;
+    tail artifacts vanish under smoothing.
 
     Args:
         u12_points: (n_u12, 2) array of [5'z, BPz] for confident U12 calls
         u2_points: (n_u2, 2) array of [5'z, BPz] for U2 introns
-        k: Number of nearest neighbors (default: 5)
+        bandwidth_multipliers: Multipliers of Silverman bandwidth to test
+        n_eval: Number of points for density evaluation
+        max_u2_sample: Max U2 introns to subsample for KDE
+        random_seed: Random seed for subsampling
 
     Returns:
-        Median silhouette score in [-1, 1].
-        Positive = U12 calls form a distinct cluster.
-        Negative = U12 calls are dispersed in the U2 tail.
-        NaN if fewer than 3 U12 points.
+        Dictionary with:
+        - median_depth: Median valley depth across bandwidths [0, 1]
+        - per_bandwidth_depths: List of depths at each bandwidth
+        - has_valley: True if median_depth > 0.3
+        - gap_width: Distance between U2 99th pctl and U12 25th pctl on projection axis
+        - centroid_sigma: U12 centroid distance from U2 in U2 std units
     """
     if u12_points is None or len(u12_points) < 3:
-        return float('nan')
+        return {
+            'median_depth': float('nan'),
+            'per_bandwidth_depths': [],
+            'has_valley': None,
+            'gap_width': float('nan'),
+            'centroid_sigma': float('nan'),
+            'reason': 'insufficient U12 points',
+        }
 
-    k_use = min(k, len(u12_points) - 1)
-    if k_use < 1:
-        return float('nan')
+    # Direction vector from U2 centroid to U12 centroid (2D)
+    u2_centroid = u2_points.mean(axis=0)
+    u12_centroid = u12_points.mean(axis=0)
+    direction = u12_centroid - u2_centroid
+    norm = np.linalg.norm(direction)
+    if norm < 1e-10:
+        return {
+            'median_depth': 0.0,
+            'per_bandwidth_depths': [],
+            'has_valley': False,
+            'gap_width': 0.0,
+            'centroid_sigma': 0.0,
+            'reason': 'U12 and U2 centroids coincide',
+        }
+    direction = direction / norm
 
-    # Inter-cluster: distance from each U12 to k-th nearest U2
-    u2_tree = cKDTree(u2_points)
-    inter_dists, _ = u2_tree.query(u12_points, k=k_use)
-    b_vals = inter_dists[:, -1]  # k-th nearest
+    # Project all points onto discriminating axis
+    all_points = np.vstack([u2_points, u12_points])
+    projections = (all_points - u2_centroid) @ direction
+    u2_proj = projections[:len(u2_points)]
+    u12_proj = projections[len(u2_points):]
 
-    # Intra-cluster: distance from each U12 to k-th nearest other U12
-    u12_tree = cKDTree(u12_points)
-    intra_dists, _ = u12_tree.query(u12_points, k=min(k_use + 1, len(u12_points)))
-    a_vals = intra_dists[:, -1]  # k-th nearest (query includes self, so -1 is k-th neighbor)
+    # Define gap region
+    u2_p95 = np.percentile(u2_proj, 95)
+    u2_p99 = np.percentile(u2_proj, 99)
+    u12_p25 = np.percentile(u12_proj, 25)
+    u12_median = np.median(u12_proj)
 
-    # Per-point silhouette
-    per_point = (b_vals - a_vals) / np.maximum(a_vals, b_vals)
+    # Centroid distance in U2 std units
+    u2_std = np.std(u2_proj)
+    centroid_sigma = (np.mean(u12_proj) - np.mean(u2_proj)) / u2_std if u2_std > 0 else 0
 
-    return float(np.median(per_point))
+    gap_width = u12_p25 - u2_p99
+
+    # Check for overlap
+    if u12_p25 < u2_p95:
+        return {
+            'median_depth': 0.0,
+            'per_bandwidth_depths': [],
+            'has_valley': False,
+            'gap_width': gap_width,
+            'centroid_sigma': centroid_sigma,
+            'reason': 'U12 cluster overlaps with U2 bulk',
+        }
+
+    # Subsample U2 for KDE
+    np.random.seed(random_seed)
+    if len(u2_proj) > max_u2_sample:
+        u2_sample = u2_proj[np.random.choice(len(u2_proj), max_u2_sample, replace=False)]
+    else:
+        u2_sample = u2_proj
+    all_sample = np.concatenate([u2_sample, u12_proj])
+
+    # Silverman bandwidth (data-driven)
+    silverman_bw = 1.06 * np.std(all_sample) * len(all_sample) ** (-1 / 5)
+
+    # Evaluate density at each bandwidth
+    x_eval = np.linspace(u2_p95, u12_median, n_eval)
+
+    depths = []
+    for mult in bandwidth_multipliers:
+        bw = silverman_bw * mult
+        try:
+            kde = gaussian_kde(all_sample, bw_method=bw / np.std(all_sample))
+            density = kde(x_eval)
+        except Exception:
+            depths.append(0.0)
+            continue
+
+        # Find gap boundaries in evaluation grid
+        gap_start = np.searchsorted(x_eval, u2_p99)
+        gap_end = np.searchsorted(x_eval, u12_p25)
+
+        if gap_end <= gap_start + 3:
+            depths.append(0.0)
+            continue
+
+        # Valley depth: proportional drop relative to min of both sides
+        density_u2_side = density[gap_start]
+        density_u12_side = density[gap_end] if gap_end < len(density) else density[-1]
+        gap_min = density[gap_start:gap_end].min()
+
+        reference = min(density_u2_side, density_u12_side)
+        if reference > 0:
+            depth = max(0.0, 1.0 - gap_min / reference)
+        else:
+            depth = 0.0
+
+        depths.append(depth)
+
+    median_depth = float(np.median(depths)) if depths else 0.0
+
+    return {
+        'median_depth': median_depth,
+        'per_bandwidth_depths': depths,
+        'has_valley': median_depth > 0.3,
+        'gap_width': gap_width,
+        'centroid_sigma': centroid_sigma,
+    }
 
 
-def compute_silhouette_adjusted_prior(
-    silhouette: float,
+def compute_valley_adjusted_prior(
+    valley_result: dict,
     empirical_prior: float,
     k: float = 5.0,
 ) -> float:
     """
-    Map silhouette score to an adjusted prior for Bayesian probability correction.
+    Map valley depth to an adjusted prior for Bayesian probability correction.
 
     Two-regime framework:
-      silhouette > 0:  return 0.5 (no adjustment, trust SVM calibration)
-      silhouette ≤ 0:  return empirical_prior × sigmoid(k × silhouette)
-
-    For positive silhouette, the SVM's own calibration is appropriate —
-    there IS a real U12 cluster and the decision boundary is meaningful.
-    A prior of 0.5 means no Bayesian adjustment (the SVM operates as trained).
-
-    For negative silhouette, the SVM is likely calling U2 tail introns.
-    The sigmoid-scaled empirical prior requires very high SVM confidence
-    (>99.9%) for a call to survive, effectively suppressing borderline FPs.
+      Valley detected (median depth > 0.3): return 0.5 (no adjustment, trust SVM)
+      No valley (median depth ≤ 0.3): return discounted prior via sigmoid
 
     Args:
-        silhouette: kNN-median silhouette score (from compute_knn_median_silhouette)
-        empirical_prior: Observed U12 fraction in this species (n_u12 / n_total)
-        k: Sigmoid steepness parameter (default: 5.0).
-           Higher k = sharper transition at silhouette=0.
+        valley_result: Output from compute_valley_depth()
+        empirical_prior: Observed U12 fraction in this species
+        k: Sigmoid steepness for negative-regime discounting
 
     Returns:
-        Adjusted prior for use with adjust_probabilities_for_prior().
-        Range: [~0, 0.5]
+        Adjusted prior for use with adjust_probabilities_for_prior()
     """
-    if np.isnan(silhouette):
-        # Too few U12 calls to compute silhouette — use empirical prior
-        # with a conservative discount
+    median_depth = valley_result.get('median_depth', 0.0)
+
+    if np.isnan(median_depth):
+        # Too few U12 calls — conservative discount
         return min(empirical_prior, 0.01)
 
-    if silhouette > 0:
-        # Positive silhouette: U12 cluster detected, trust SVM
+    if valley_result.get('has_valley', False):
+        # Valley detected — trust the SVM
         return 0.5
 
-    # Negative silhouette: discount the prior via sigmoid
-    scale = 1.0 / (1.0 + np.exp(-k * silhouette))
+    # No valley — discount the prior
+    # Use median_depth as a continuous confidence measure
+    scale = 1.0 / (1.0 + np.exp(-k * (median_depth - 0.3)))
     adjusted = empirical_prior * scale
 
-    # Floor to prevent exactly zero (which breaks Bayes' rule)
     return max(adjusted, 1e-10)
 
 
@@ -127,35 +212,23 @@ def validate_u12_cluster(
     svm_scores: np.ndarray,
     type_ids: np.ndarray,
     confidence_threshold: float = 90.0,
-    k: int = 5,
-    sigmoid_k: float = 5.0,
 ) -> dict:
     """
-    Full cluster validation pipeline: compute silhouette and adjusted prior.
+    Full cluster validation pipeline: compute valley depth and adjusted prior.
 
-    This is the main entry point for species-level U12 cluster validation.
-    It extracts confident U12 calls, computes the kNN-median silhouette,
+    Main entry point for species-level U12 cluster validation. Extracts
+    confident U12 calls, computes the multi-bandwidth density valley depth,
     and returns an adjusted prior suitable for Bayesian probability correction.
 
     Args:
         five_z_scores: Array of 5' z-scores for all scored introns
         bp_z_scores: Array of BP z-scores for all scored introns
         svm_scores: Array of SVM scores (0-100) for all scored introns
-        type_ids: Array of type assignments ('u12' or 'u2') for all scored introns
-        confidence_threshold: SVM score threshold for "confident" calls (default: 90.0)
-        k: kNN parameter for silhouette (default: 5)
-        sigmoid_k: Steepness for silhouette-to-prior mapping (default: 5.0)
+        type_ids: Array of type assignments ('u12' or 'u2')
+        confidence_threshold: SVM score threshold for confident calls (default: 90.0)
 
     Returns:
-        Dictionary with:
-        - silhouette: kNN-median silhouette score
-        - n_confident_u12: Number of confident U12 calls
-        - n_u2: Number of U2 calls
-        - empirical_prior: Observed U12 fraction
-        - adjusted_prior: Prior for Bayesian adjustment
-        - regime: 'positive' or 'negative' or 'insufficient'
-        - u12_5z_mean: Mean 5' z-score of confident U12 calls
-        - u12_bpz_mean: Mean BP z-score of confident U12 calls
+        Dictionary with valley depth, regime, adjusted prior, and diagnostics
     """
     # Separate confident U12 and all U2
     u12_mask = (type_ids == 'u12') & (svm_scores >= confidence_threshold)
@@ -170,39 +243,39 @@ def validate_u12_cluster(
 
     if n_u12_conf < 3 or n_u2 < 10:
         return {
-            'silhouette': float('nan'),
+            'valley_depth': float('nan'),
+            'has_valley': None,
             'n_confident_u12': n_u12_conf,
             'n_u12_total': n_u12_total,
             'n_u2': n_u2,
             'empirical_prior': empirical_prior,
             'adjusted_prior': min(empirical_prior, 0.01),
             'regime': 'insufficient',
-            'u12_5z_mean': float('nan'),
-            'u12_bpz_mean': float('nan'),
+            'centroid_sigma': float('nan'),
         }
 
-    # Extract 2D points
+    # Extract 2D points (5'z, BPz)
     u12_points = np.column_stack([five_z_scores[u12_mask], bp_z_scores[u12_mask]])
     u2_points = np.column_stack([five_z_scores[u2_mask], bp_z_scores[u2_mask]])
 
-    # Compute silhouette
-    silhouette = compute_knn_median_silhouette(u12_points, u2_points, k=k)
+    # Compute valley depth
+    valley_result = compute_valley_depth(u12_points, u2_points)
 
     # Compute adjusted prior
-    adjusted_prior = compute_silhouette_adjusted_prior(
-        silhouette, empirical_prior, k=sigmoid_k
-    )
+    adjusted_prior = compute_valley_adjusted_prior(valley_result, empirical_prior)
 
-    regime = 'positive' if silhouette > 0 else 'negative'
+    regime = 'valley' if valley_result.get('has_valley', False) else 'no_valley'
 
     return {
-        'silhouette': silhouette,
+        'valley_depth': valley_result['median_depth'],
+        'has_valley': valley_result.get('has_valley', False),
+        'per_bandwidth_depths': valley_result.get('per_bandwidth_depths', []),
         'n_confident_u12': n_u12_conf,
         'n_u12_total': n_u12_total,
         'n_u2': n_u2,
         'empirical_prior': empirical_prior,
         'adjusted_prior': adjusted_prior,
         'regime': regime,
-        'u12_5z_mean': float(u12_points[:, 0].mean()),
-        'u12_bpz_mean': float(u12_points[:, 1].mean()),
+        'centroid_sigma': valley_result.get('centroid_sigma', float('nan')),
+        'gap_width': valley_result.get('gap_width', float('nan')),
     }

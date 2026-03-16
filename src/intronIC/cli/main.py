@@ -3627,9 +3627,9 @@ def classify_streaming_per_contig(
 
     # =========================================================================
     # POST-HOC CLUSTER VALIDATION
-    # Compute kNN-median silhouette to assess whether the SVM's U12 calls
-    # form a coherent cluster separate from U2. Reports a species-level
-    # confidence metric and adjusted prior.
+    # Compute multi-bandwidth density valley depth to assess whether the
+    # SVM's U12 calls form a distinct cluster separated from U2 by a
+    # density gap. Reports a species-level confidence metric and adjusted prior.
     # =========================================================================
     cluster_validation_result = None
     if accumulated_five_z:
@@ -3643,25 +3643,27 @@ def classify_streaming_per_contig(
             confidence_threshold=config.scoring.threshold,
         )
 
-        silh = cluster_validation_result['silhouette']
+        valley_depth = cluster_validation_result['valley_depth']
         regime = cluster_validation_result['regime']
         adj_prior = cluster_validation_result['adjusted_prior']
 
-        if not np.isnan(silh):
+        if not np.isnan(valley_depth):
             messenger.info(
-                f"Cluster validation: silhouette={silh:.3f} ({regime}), "
+                f"Cluster validation: valley_depth={valley_depth:.3f} ({regime}), "
                 f"n_confident_u12={cluster_validation_result['n_confident_u12']}, "
+                f"centroid_σ={cluster_validation_result['centroid_sigma']:.1f}, "
                 f"adjusted_prior={adj_prior:.6f}"
             )
-            if silh <= 0:
+            if not cluster_validation_result.get('has_valley', False):
                 messenger.warning(
-                    f"Negative silhouette ({silh:.3f}): U12 calls may not form a "
-                    f"distinct cluster. Consider reviewing calls with caution."
+                    f"No density valley detected (depth={valley_depth:.3f}): "
+                    f"U12-type intron calls may not form a distinct cluster. "
+                    f"Consider reviewing calls with caution."
                 )
         else:
             messenger.info(
-                f"Cluster validation: insufficient confident U12 calls "
-                f"(n={cluster_validation_result['n_confident_u12']}) to compute silhouette"
+                f"Cluster validation: insufficient confident U12-type intron calls "
+                f"(n={cluster_validation_result['n_confident_u12']}) to compute valley depth"
             )
 
     # Free accumulated score data
@@ -3685,11 +3687,13 @@ def classify_streaming_per_contig(
     # Add cluster validation to summary
     if cluster_validation_result is not None:
         summary["cluster_validation"] = {
-            "silhouette": cluster_validation_result['silhouette'],
+            "valley_depth": cluster_validation_result['valley_depth'],
+            "has_valley": cluster_validation_result.get('has_valley'),
             "regime": cluster_validation_result['regime'],
             "adjusted_prior": cluster_validation_result['adjusted_prior'],
             "n_confident_u12": cluster_validation_result['n_confident_u12'],
             "empirical_prior": cluster_validation_result['empirical_prior'],
+            "centroid_sigma": cluster_validation_result.get('centroid_sigma'),
         }
 
     messenger.info(
