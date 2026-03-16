@@ -35,7 +35,7 @@ from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.metrics import make_scorer, balanced_accuracy_score, log_loss, fbeta_score
+from sklearn.metrics import make_scorer, balanced_accuracy_score, log_loss, f1_score, fbeta_score
 from scipy.stats import gmean
 from tqdm.auto import tqdm
 
@@ -293,7 +293,7 @@ class SVMOptimizer:
             verbose: Whether to print detailed progress (default: True)
             max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
             scoring_metric: Metric for evaluating parameters (default: 'balanced_accuracy').
-                          Options: 'balanced_accuracy', 'f_beta_0.5', 'f_beta_0.75'
+                          Options: 'balanced_accuracy', 'f1', 'f_beta_0.5', 'f_beta_0.75'
             penalty_options: Penalty types to search (default: ['l1', 'l2'])
             loss_options: Loss functions to search (default: ['hinge', 'squared_hinge'])
             class_weight_multipliers: Class weight multipliers to search (default: [0.8, 1.0, 1.2])
@@ -338,11 +338,14 @@ class SVMOptimizer:
 
         Supported metrics:
             - 'balanced_accuracy': (TPR + TNR) / 2, treats both classes equally
+            - 'f1': F1 score, harmonic mean of precision and recall
             - 'f_beta_0.5': F_0.5 score, heavily weights precision (minimizes FPs)
             - 'f_beta_0.75': F_0.75 score, slightly weights precision
         """
         if self.scoring_metric == 'balanced_accuracy':
             return make_scorer(balanced_accuracy_score)
+        elif self.scoring_metric == 'f1':
+            return make_scorer(f1_score)
         elif self.scoring_metric.startswith('f_beta_'):
             # Extract beta value from string (e.g., 'f_beta_0.5' -> 0.5)
             beta_str = self.scoring_metric.split('_')[-1]
@@ -357,7 +360,7 @@ class SVMOptimizer:
         else:
             raise ValueError(
                 f"Unsupported scoring_metric: '{self.scoring_metric}'. "
-                f"Options: 'balanced_accuracy', 'f_beta_0.5', 'f_beta_0.75'"
+                f"Options: 'balanced_accuracy', 'f1', 'f_beta_0.5', 'f_beta_0.75'"
             )
 
     def optimize(
@@ -747,7 +750,7 @@ class SVMOptimizer:
             # Grid size: len(C_grid) × len(penalty_options) × 1 loss × len(class_weight_multipliers) × len(gamma_imbalance_options)
 
         # Create scorer based on configured metric
-        # Options: balanced_accuracy, f_beta_0.5, f_beta_0.75
+        # Options: balanced_accuracy, f1, f_beta_0.5, f_beta_0.75
         scorer = self._create_scorer()
 
         grid_search = GridSearchCV(
