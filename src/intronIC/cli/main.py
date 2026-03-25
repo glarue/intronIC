@@ -25,7 +25,7 @@ from smart_open import open as smart_open  # type: ignore[import-unresolved]
 from intronIC.classification.classifier import IntronClassifier
 
 # Import pipeline components
-from intronIC.core.intron import Intron, IntronSequences, OmissionReason
+from intronIC.core.intron import Intron, IntronMetadata, IntronSequences, OmissionReason
 from intronIC.extraction.annotator import AnnotationHierarchyBuilder
 from intronIC.extraction.filters import IntronFilter, prefilter_introns
 from intronIC.extraction.intronator import IntronGenerator
@@ -2035,7 +2035,7 @@ def extract_introns_from_bed(
         # Use BED name if provided, otherwise just the index number
         # (output formatting adds "i" prefix, so "intron_" is redundant)
         intron_id = bed_line.name if bed_line.name != "." else str(i + 1)
-        intron = Intron(intron_id=intron_id, coordinates=coord)
+        intron = Intron(intron_id=intron_id, coordinates=coord, metadata=IntronMetadata())
         introns_no_seq.append(intron)
 
     # Extract sequences
