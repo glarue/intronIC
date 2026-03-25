@@ -247,7 +247,7 @@ class IntronFilter:
                     return
 
         # Check noncanonical
-        if not self.allow_noncanonical and intron.metadata.noncanonical:
+        if not self.allow_noncanonical and intron.metadata and intron.metadata.noncanonical:
             intron.metadata.omitted = OmissionReason.NONCANONICAL
             return
 
@@ -420,9 +420,9 @@ class IntronFilter:
             self.stats.ambiguous += 1
         # For optional categories, check the property itself (not just omission)
         # This way we count them even when user includes them
-        elif intron.metadata.noncanonical:
+        elif intron.metadata and intron.metadata.noncanonical:
             self.stats.noncanonical += 1
-        elif intron.metadata.overlap:
+        elif intron.metadata and intron.metadata.overlap:
             self.stats.overlap += 1
         elif intron.metadata.longest_isoform is False:
             self.stats.isoform += 1
