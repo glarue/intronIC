@@ -57,7 +57,7 @@ For complete documentation, see the **[intronIC Wiki](https://github.com/glarue/
 
 ## What's New in v2.2
 
-- **New 8D RBF SVM default model** trained on expanded reference data (472 U12 + 30,155 U2 introns)
+- **New 8D RBF SVM default model** trained on expanded reference data (472 U12-type + 30,155 U2-type introns)
 - **Five new classification features**: branch point offset, BPS motif sharpness, polypyrimidine tract metrics, and multi-site support scoring
 - **Reduced false positives**: 0 confident false calls in *C. elegans* (was 2), 1 in *Ascaris* (was 47)
 - See [CHANGELOG.md](CHANGELOG.md) for full release history
