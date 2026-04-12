@@ -723,6 +723,7 @@ class MetaWriter(BaseWriter):
             "dnts",
             "motif_schematic",
             "bp_context",
+            "bp_offset",
             "length",
             "parent",
             "grandparent",
@@ -783,6 +784,11 @@ class MetaWriter(BaseWriter):
         # Branch point context (using new formatting function)
         bp_context = generate_bp_context(intron)
 
+        # BP offset (distance from branch point to 3' splice site)
+        bp_offset_val = null
+        if intron.scores and intron.scores.bp_offset is not None:
+            bp_offset_val = str(intron.scores.bp_offset)
+
         # Length
         length = str(intron.length)
 
@@ -834,6 +840,7 @@ class MetaWriter(BaseWriter):
             dnts,
             motif,
             bp_context,
+            bp_offset_val,
             length,
             parent,
             grandparent,
@@ -1073,6 +1080,18 @@ class ScoreWriter(BaseWriter):
             "max(5,bp)",
             "max(5,3)",
             "decision_dist",
+            "bp_offset",
+            "ppt_ct",
+            "ppt_raw",
+            "core_3'_raw",
+            "fit_u12",
+            "fit_u2",
+            "fit_u12_5'",
+            "fit_u12_bp",
+            "fit_u12_3'",
+            "min_fit_bp_3",
+            "ppt_longest_run",
+            "ppt_t_weighted",
         ]
         self.file.write("\t".join(header_fields) + "\n")
 
@@ -1117,6 +1136,18 @@ class ScoreWriter(BaseWriter):
         min_5_3 = null
         max_5_bp = null
         max_5_3 = null
+        bp_offset = null
+        ppt_ct = null
+        ppt_raw = null
+        core_three_raw = null
+        fit_u12 = null
+        fit_u2 = null
+        fit_u12_five = null
+        fit_u12_bp = null
+        fit_u12_three = null
+        min_fit_bp_3 = null
+        ppt_longest_run = null
+        ppt_t_weighted = null
 
         # Fill in scores if available
         if intron.scores:
@@ -1155,6 +1186,32 @@ class ScoreWriter(BaseWriter):
             if intron.scores.max_5_3 is not None:
                 max_5_3 = str(round(intron.scores.max_5_3, 4))
 
+            # PPT decomposition, BP offset, absolute fit
+            if intron.scores.bp_offset is not None:
+                bp_offset = str(intron.scores.bp_offset)
+            if intron.scores.ppt_score is not None:
+                ppt_ct = str(round(intron.scores.ppt_score, 4))
+            if intron.scores.ppt_raw_score is not None:
+                ppt_raw = str(round(intron.scores.ppt_raw_score, 6))
+            if intron.scores.core_three_raw_score is not None:
+                core_three_raw = str(round(intron.scores.core_three_raw_score, 6))
+            if intron.scores.fit_u12 is not None:
+                fit_u12 = str(round(intron.scores.fit_u12, 4))
+            if intron.scores.fit_u2 is not None:
+                fit_u2 = str(round(intron.scores.fit_u2, 4))
+            if intron.scores.fit_u12_five is not None:
+                fit_u12_five = str(round(intron.scores.fit_u12_five, 4))
+            if intron.scores.fit_u12_bp is not None:
+                fit_u12_bp = str(round(intron.scores.fit_u12_bp, 4))
+            if intron.scores.fit_u12_three is not None:
+                fit_u12_three = str(round(intron.scores.fit_u12_three, 4))
+            if intron.scores.min_fit_bp_3 is not None:
+                min_fit_bp_3 = str(round(intron.scores.min_fit_bp_3, 4))
+            if intron.scores.ppt_longest_run is not None:
+                ppt_longest_run = str(intron.scores.ppt_longest_run)
+            if intron.scores.ppt_t_weighted is not None:
+                ppt_t_weighted = str(round(intron.scores.ppt_t_weighted, 4))
+
         # Fill in sequences if available
         if intron.sequences:
             if intron.sequences.five_seq:
@@ -1185,6 +1242,18 @@ class ScoreWriter(BaseWriter):
             max_5_bp,
             max_5_3,
             decision_dist,
+            bp_offset,
+            ppt_ct,
+            ppt_raw,
+            core_three_raw,
+            fit_u12,
+            fit_u2,
+            fit_u12_five,
+            fit_u12_bp,
+            fit_u12_three,
+            min_fit_bp_3,
+            ppt_longest_run,
+            ppt_t_weighted,
         ]
 
         self.file.write("\t".join(fields) + "\n")

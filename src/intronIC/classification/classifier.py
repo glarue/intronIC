@@ -154,6 +154,11 @@ class IntronClassifier:
         use_multiplier_tiebreaker: bool = True,
         features_list: Optional[list] = None,
         gamma_imbalance_options: Optional[list] = None,
+        early_stop_on_plateau: bool = True,
+        plateau_rounds: int = 3,
+        kernel: str = 'rbf',
+        gamma_search: Optional[list] = None,
+        extra_feature_names: Optional[list] = None,
     ):
         """
         Initialize classifier.
@@ -240,6 +245,11 @@ class IntronClassifier:
         self.gamma_imbalance_options = (
             gamma_imbalance_options if gamma_imbalance_options is not None else [1.0]
         )
+        self.early_stop_on_plateau = early_stop_on_plateau
+        self.plateau_rounds = plateau_rounds
+        self.kernel = kernel
+        self.gamma_search = gamma_search
+        self.extra_feature_names = extra_feature_names or []
 
         # Debug: Log features being used
         if features_list is not None:
@@ -330,6 +340,8 @@ class IntronClassifier:
             penalty="l2",  # Default: L2 (most common in search space)
             class_weight_multiplier=1.0,  # Default: balanced (middle of search range)
             loss="squared_hinge",  # Fixed: only valid option for dual=False
+            kernel=self.kernel,  # Use configured kernel
+            gamma=0.0,  # 0.0 = sentinel for 'scale' (resolved at fit time)
             dual=False,  # Corrected arch: primal formulation
             intercept_scaling=1.0,  # Corrected arch: fixed
             cv_score=nested_cv_result.mean_f1,  # Use mean F1 from nested CV
@@ -414,6 +426,9 @@ class IntronClassifier:
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
                 features_list=self.features_list,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -445,6 +460,9 @@ class IntronClassifier:
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
                 features_list=self.features_list,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -495,11 +513,11 @@ class IntronClassifier:
                 # Force C to the fixed value, but still search other parameters
                 param_grid["svc__C"] = [self.fixed_c]
                 print(
-                    f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method"
+                    f"C fixed at {self.fixed_c:.6e}, optimizing calibration_method"
                 )
             else:
                 print(
-                    "Optimizing C, include_max, dual, intercept_scaling, and calibration_method"
+                    f"Optimizing C and calibration_method (kernel={self.kernel})"
                 )
 
             optimizer = SVMOptimizer(
@@ -517,6 +535,11 @@ class IntronClassifier:
                 gamma_imbalance_options=self.gamma_imbalance_options,
                 param_grid_override=param_grid if param_grid else None,
                 progress_tracker=progress_tracker,
+                early_stop_on_plateau=self.early_stop_on_plateau,
+                plateau_rounds=self.plateau_rounds,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             parameters = optimizer.optimize(
                 u12_reference,
@@ -525,7 +548,7 @@ class IntronClassifier:
                 eff_C_neg_max=self.eff_C_neg_max,
             )
             print(
-                f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}"
+                f"Best parameters: C={parameters.C:.6e}, kernel={parameters.kernel}, CV score={parameters.cv_score:.4f}"
             )
 
         # Stage 2: Train ensemble
@@ -533,10 +556,12 @@ class IntronClassifier:
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
             random_state=self.random_state,
+            kernel=self.kernel,
             max_iter=self.max_iter,
             features_list=self.features_list,
             gamma_imbalance_options=self.gamma_imbalance_options,
             progress_tracker=progress_tracker,
+            extra_feature_names=self.extra_feature_names,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
@@ -663,6 +688,9 @@ class IntronClassifier:
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
                 features_list=self.features_list,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -694,6 +722,9 @@ class IntronClassifier:
                 eff_C_neg_max=self.eff_C_neg_max,
                 progress_tracker=progress_tracker,
                 features_list=self.features_list,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -744,11 +775,11 @@ class IntronClassifier:
                 # Force C to the fixed value, but still search other parameters
                 param_grid["svc__C"] = [self.fixed_c]
                 print(
-                    f"C fixed at {self.fixed_c:.6e}, optimizing include_max/dual/intercept_scaling/calibration_method"
+                    f"C fixed at {self.fixed_c:.6e}, optimizing calibration_method"
                 )
             else:
                 print(
-                    "Optimizing C, include_max, dual, intercept_scaling, and calibration_method"
+                    f"Optimizing C and calibration_method (kernel={self.kernel})"
                 )
 
             optimizer = SVMOptimizer(
@@ -766,6 +797,11 @@ class IntronClassifier:
                 gamma_imbalance_options=self.gamma_imbalance_options,
                 param_grid_override=param_grid if param_grid else None,
                 progress_tracker=progress_tracker,
+                early_stop_on_plateau=self.early_stop_on_plateau,
+                plateau_rounds=self.plateau_rounds,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             parameters = optimizer.optimize(
                 u12_reference,
@@ -774,7 +810,7 @@ class IntronClassifier:
                 eff_C_neg_max=self.eff_C_neg_max,
             )
             print(
-                f"Best parameters: C={parameters.C:.6e}, include_max={parameters.include_max}, CV score={parameters.cv_score:.4f}"
+                f"Best parameters: C={parameters.C:.6e}, kernel={parameters.kernel}, CV score={parameters.cv_score:.4f}"
             )
 
         # Stage 2: Train ensemble
@@ -782,10 +818,12 @@ class IntronClassifier:
         trainer = SVMTrainer(
             n_models=self.n_ensemble_models,
             random_state=self.random_state,
+            kernel=self.kernel,
             max_iter=self.max_iter,
             features_list=self.features_list,
             gamma_imbalance_options=self.gamma_imbalance_options,
             progress_tracker=progress_tracker,
+            extra_feature_names=self.extra_feature_names,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,

@@ -86,10 +86,10 @@ class ScoringConfig:
     scoring_regions: ScoringRegions = field(
         default_factory=lambda: ScoringRegions(
             five_start=-3,
-            five_end=9,
+            five_end=10,
             bp_start=-55,
             bp_end=-5,
-            three_start=-6,
+            three_start=-14,
             three_end=4,
         )
     )
@@ -159,13 +159,23 @@ class OptimizerConfig:
 
     # Feature transformation
     features: Optional[tuple] = None  # None = default 4D (absdiff_bp_3)
+    extra_features: Optional[tuple] = None  # Additional IntronScores fields for classifier
 
     # Gamma imbalance scaling
     gamma_imbalance_options: Optional[tuple] = None
 
+    # SVM kernel configuration
+    kernel: str = 'rbf'  # 'rbf' or 'linear'
+    gamma: str = 'scale'  # RBF gamma: 'scale', 'auto', or float (ignored for linear)
+    gamma_search: Optional[tuple] = None  # Grid search values for gamma (RBF only)
+
     # C parameter bounds
     eff_C_pos_range: tuple = (1e-3, 1e3)
     eff_C_neg_max: Optional[float] = None
+
+    # Early stopping
+    early_stop_on_plateau: bool = True
+    plateau_rounds: int = 3
 
     # Parameter grid override (for custom grids)
     param_grid_override: Optional[dict] = None
@@ -199,6 +209,10 @@ class OptimizerConfig:
         if features is not None:
             features = tuple(features) if isinstance(features, list) else (features,)
 
+        extra_features = ft.get("extra_features")
+        if extra_features is not None:
+            extra_features = tuple(extra_features) if isinstance(extra_features, list) else (extra_features,)
+
         return cls(
             n_rounds=opt.get("n_rounds", 5),
             n_points_initial=opt.get("n_points_initial", 13),
@@ -216,11 +230,19 @@ class OptimizerConfig:
             ),
             use_multiplier_tiebreaker=opt.get("use_multiplier_tiebreaker", True),
             features=features,
+            extra_features=extra_features,
             gamma_imbalance_options=to_tuple(opt.get("gamma_imbalance_options"), None)
             if opt.get("gamma_imbalance_options")
             else None,
+            kernel=opt.get("kernel", "rbf"),
+            gamma=str(opt.get("gamma", "scale")),
+            gamma_search=to_tuple(opt.get("gamma_search"), None)
+            if opt.get("gamma_search")
+            else None,
             eff_C_pos_range=tuple(c_bounds.get("eff_C_pos_range", [1e-3, 1e3])),
             eff_C_neg_max=c_bounds.get("eff_C_neg_max"),
+            early_stop_on_plateau=opt.get("early_stop_on_plateau", True),
+            plateau_rounds=opt.get("plateau_rounds", 3),
             param_grid_override=yaml_config.get("param_grid"),
         )
 
@@ -460,6 +482,25 @@ class IntronICConfig:
                     setattr(args, arg_attr, converter(yaml_value))
                 except (ValueError, TypeError):
                     pass  # Silently skip invalid values
+
+        # Handle scoring region overrides (list-valued, can't use scalar mapping)
+        regions = yaml_config.get("scoring", {}).get("regions", {})
+        if regions:
+            region_mappings = [
+                ("five_prime", "five_score_coords"),
+                ("branch_point", "bp_region_coords"),
+                ("three_prime", "three_score_coords"),
+            ]
+            for yaml_key, arg_attr in region_mappings:
+                region = regions.get(yaml_key)
+                if region and isinstance(region, dict):
+                    start = region.get("start")
+                    end = region.get("end")
+                    if start is not None and end is not None:
+                        default = arg_defaults.get(arg_attr)
+                        current = getattr(args, arg_attr, default)
+                        if current == default:
+                            setattr(args, arg_attr, [int(start), int(end)])
 
         return args
 

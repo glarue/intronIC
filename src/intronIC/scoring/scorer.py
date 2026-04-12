@@ -47,9 +47,9 @@ class IntronScorer:
     def __init__(
         self,
         pwm_sets: Dict[str, PWMSet],
-        five_coords: Tuple[int, int] = (-3, 9),
+        five_coords: Tuple[int, int] = (-3, 10),
         bp_coords: Tuple[int, int] = (-55, -5),
-        three_coords: Tuple[int, int] = (-6, 4),
+        three_coords: Tuple[int, int] = (-14, 4),
         ignore_nc_dnts: bool = True,
     ):
         """
@@ -59,11 +59,11 @@ class IntronScorer:
             pwm_sets: Dictionary with keys 'five', 'bp', 'three'
                      Values are PWMSet objects with u2/u12 canonical/noncanonical PWMs
             five_coords: Coordinates for 5' scoring region relative to intron start
-                        Default: (-3, 9) matches original intronIC
+                        Default: (-3, 10) — positions -3 to +9 (13bp)
             bp_coords: Coordinates for branch point search relative to intron 3' end
                       Default: (-55, -5) matches original intronIC
             three_coords: Coordinates for 3' scoring region relative to intron stop
-                         Default: (-6, 4) matches original intronIC
+                         Default: (-14, 4) — positions -14 to +3 (18bp, captures PPT)
             ignore_nc_dnts: If True, ignore dinucleotide positions when scoring
                            non-canonical introns (default: True)
         """
@@ -160,11 +160,71 @@ class IntronScorer:
         if bp_u12_match is None:
             # When match is None, bp_u2_score already contains pseudocount
             # Use same pseudocount for U12 score for consistency
+            bp_u12_score_val = bp_u2_score
             bp_raw_score = self._calculate_log_ratio(bp_u2_score, bp_u2_score)
         else:
+            bp_u12_score_val = bp_u12_match.score
             bp_raw_score = self._calculate_log_ratio(bp_u12_match.score, bp_u2_score)
 
         three_raw_score = self._calculate_log_ratio(three_u12_score, three_u2_score)
+
+        # Compute absolute fit scores (summed log-likelihoods)
+        def _safe_log2(x):
+            return math.log2(x) if x > 0 else 0.0
+
+        five_u12_log = _safe_log2(five_u12_score)
+        five_u2_log = _safe_log2(five_u2_score)
+        bp_u12_log = _safe_log2(bp_u12_score_val)
+        bp_u2_log = _safe_log2(bp_u2_score)
+        three_u12_log = _safe_log2(three_u12_score)
+        three_u2_log = _safe_log2(three_u2_score)
+
+        fit_u12 = five_u12_log + bp_u12_log + three_u12_log
+        fit_u2 = five_u2_log + bp_u2_log + three_u2_log
+
+        # Non-donor fit: "ignoring the 5'SS, is the rest of the intron
+        # actually a decent U12 match?" Directly targets residual FPs
+        # that have strong donor but weak BP/3' absolute fit.
+        min_fit_bp_3 = min(bp_u12_log, three_u12_log)
+
+        # Compute BP offset: distance from branch point adenosine to 3' splice site.
+        # bp_u12_match.position is the match start (first base of the PWM window)
+        # relative to the intron 3' end. The branch A is at a fixed offset within
+        # the PWM, defined by the PWM's reference_offset (the array index of
+        # biological position 0, i.e., the branch point adenosine position).
+        # For a 10bp PWM spanning positions -7 to +2, reference_offset = 7.
+        # Result is a negative integer (e.g., -12 means the branch A is 12nt
+        # upstream of the 3' splice site).
+        # U12 introns typically cluster at -10 to -15; U2 at -20 to -35.
+        # Note: the "A" position is the PWM's defined reference point (position 0);
+        # the actual base at this position is usually but not always adenosine.
+        bp_offset = None
+        bp_scan_confidence = None
+        if bp_u12_match is not None:
+            bp_pwm = self.pwm_sets["bp"].get_all_versions(
+                "u12", self._get_terminal_dinucleotides(intron)
+            )[0]
+            bp_offset = bp_u12_match.position + bp_pwm.reference_offset
+
+            # BPS scan confidence: how much the best match stands out from the
+            # background. log2(best/mean) is high when the BPS motif is sharp
+            # and well-defined (U12-like), low when the landscape is flat (U2-like).
+            if (bp_u12_match.scan_mean_score is not None
+                    and bp_u12_match.scan_mean_score > 0
+                    and bp_u12_match.score > 0):
+                bp_scan_confidence = math.log2(
+                    bp_u12_match.score / bp_u12_match.scan_mean_score
+                )
+
+        # Compute PPT decomposition (legacy)
+        ppt_score, ppt_raw_score, core_three_raw_score = self._compute_ppt_and_core(
+            intron
+        )
+
+        # Compute PPT features (fixed 20nt window anchored at 3'SS boundary)
+        ppt_longest_run, ppt_t_weighted = self._compute_masked_ppt(
+            intron, bp_u12_match  # bp_match kept in signature for future use
+        )
 
         # Update intron with scores
         # Port from: intronIC.py:3099-3111
@@ -173,6 +233,19 @@ class IntronScorer:
             five_raw_score=five_raw_score,
             bp_raw_score=bp_raw_score,
             three_raw_score=three_raw_score,
+            ppt_score=ppt_score,
+            ppt_raw_score=ppt_raw_score,
+            core_three_raw_score=core_three_raw_score,
+            bp_offset=bp_offset,
+            bp_scan_confidence=bp_scan_confidence,
+            ppt_longest_run=ppt_longest_run,
+            ppt_t_weighted=ppt_t_weighted,
+            fit_u12=fit_u12,
+            fit_u2=fit_u2,
+            fit_u12_five=five_u12_log,
+            fit_u12_bp=bp_u12_log,
+            fit_u12_three=three_u12_log,
+            min_fit_bp_3=min_fit_bp_3,
         )
 
         # Update sequences with BP information if match was found
@@ -257,7 +330,7 @@ class IntronScorer:
         if intron.motifs and intron.motifs.terminal_dnts:
             return intron.motifs.terminal_dnts.replace("-", "").lower()
 
-        # Default mode: get from sequences
+        # Default mode: get from sequences attributes
         if (
             intron.sequences
             and intron.sequences.five_prime_dnt
@@ -266,6 +339,11 @@ class IntronScorer:
             return (
                 intron.sequences.five_prime_dnt + intron.sequences.three_prime_dnt
             ).lower()
+
+        # Extract from intron sequence directly
+        if intron.sequences and intron.sequences.seq and len(intron.sequences.seq) >= 4:
+            seq = intron.sequences.seq
+            return (seq[:2] + seq[-2:]).lower()
 
         # Fallback to GT-AG
         return "gtag"
@@ -300,7 +378,7 @@ class IntronScorer:
         u2_pwms = self.pwm_sets["five"].get_all_versions("u2", dnts)
 
         # Pass the starting position of the 5' region (first coordinate)
-        seq_start_pos = self.five_coords[0]  # e.g., -3
+        seq_start_pos = self.five_coords[0]  # e.g., -3 (first position in extracted sequence)
 
         # When U2 has no PWM for these dinucleotides (e.g., AT-AC) and falls
         # back to a different class (GT-AG), the fallback PWM expects different
@@ -366,7 +444,7 @@ class IntronScorer:
         u2_pwms = self.pwm_sets["three"].get_all_versions("u2", dnts)
 
         # Pass the starting position of the 3' region (first coordinate)
-        seq_start_pos = self.three_coords[0]  # e.g., -6
+        seq_start_pos = self.three_coords[0]  # e.g., -14 (first position in extracted sequence)
 
         # When U2 has no PWM for these dinucleotides (e.g., AT-AC) and falls
         # back to a different class (GT-AG), mask the 3' dinucleotide
@@ -596,6 +674,188 @@ class IntronScorer:
         else:
             # All from intron
             return intron_part
+
+    def _extract_ppt_region(self, intron: Intron) -> Optional[str]:
+        """
+        Extract the polypyrimidine tract region (positions -14 to -7 from 3' end).
+
+        This is extracted independently of the 3'SS scoring window so that
+        PPT features work regardless of whether the 3'SS window is narrow
+        (core-only, -6 to +3) or extended (-14 to +3).
+
+        Returns:
+            8bp PPT region string, or None if intron too short
+        """
+        # Streaming mode: use pre-extracted motif's three_region if it covers -14
+        if intron.motifs is not None and intron.motifs.three_region:
+            # The motif three_region was extracted with the configured three_coords.
+            # If three_coords starts at -14, we can slice directly.
+            # Otherwise, we need the full intron sequence which isn't available
+            # in streaming mode — fall back to None.
+            if self.three_coords[0] <= -14:
+                offset = -14 - self.three_coords[0]
+                region = intron.motifs.three_region[offset:offset + 8]
+                return region if len(region) == 8 else None
+            # For narrow 3'SS windows in streaming mode, the PPT region
+            # isn't in the motif — we'd need the full intron sequence.
+            # Return None; PPT features will be None for streaming + narrow window.
+            if intron.sequences is None or intron.sequences.seq is None:
+                return None
+
+        # Default mode: extract from full intron sequence
+        if intron.sequences is None or intron.sequences.seq is None:
+            return None
+
+        seq = intron.sequences.seq
+        intron_length = len(seq)
+
+        # PPT region: positions -14 to -7 from intron 3' end
+        ppt_start = intron_length - 14
+        ppt_end = intron_length - 6  # -7 inclusive → -6 exclusive
+
+        if ppt_start < 0:
+            return None
+
+        region = seq[ppt_start:ppt_end]
+        return region if len(region) == 8 else None
+
+    def _compute_ppt_and_core(
+        self, intron: Intron
+    ) -> tuple[Optional[float], Optional[float], Optional[float]]:
+        """
+        Compute PPT metrics and core 3'SS score independently of the 3'SS scoring window.
+
+        PPT region (-14 to -7) is extracted directly from the intron sequence,
+        NOT from the 3'SS scoring window. This allows the 3'SS window to be
+        narrow (core-only, -6 to +3) while PPT features still work.
+
+        Returns:
+            Tuple of (ppt_ct, ppt_raw_score, core_three_raw_score)
+        """
+        ppt_region = self._extract_ppt_region(intron)
+        if ppt_region is None:
+            return None, None, None
+
+        # PPT C+T fraction (simple sequence metric, 0-1 scale)
+        ppt_ct = sum(b in 'CT' for b in ppt_region.upper()) / len(ppt_region)
+
+        # Get dinucleotides for PWM selection
+        dnts = self._get_terminal_dinucleotides(intron)
+
+        # Score PPT region with 3'SS PWMs at positions -14 to -7
+        u12_pwms = self.pwm_sets["three"].get_all_versions("u12", dnts)
+        u2_pwms = self.pwm_sets["three"].get_all_versions("u2", dnts)
+
+        best_ppt_u12 = 0.0
+        for pwm in u12_pwms:
+            score = pwm.score_sequence(ppt_region, seq_start_position=-14)
+            if score > best_ppt_u12:
+                best_ppt_u12 = score
+
+        best_ppt_u2 = 0.0
+        for pwm in u2_pwms:
+            score = pwm.score_sequence(ppt_region, seq_start_position=-14)
+            if score > best_ppt_u2:
+                best_ppt_u2 = score
+
+        ppt_raw_score = self._calculate_log_ratio(best_ppt_u12, best_ppt_u2) if best_ppt_u2 > 0 else None
+
+        # Core 3'SS is now just the regular 3'SS score when three_coords = (-6, 4).
+        # Only compute separately if the 3'SS window is extended (includes PPT).
+        core_three_raw_score = None
+        if self.three_coords[0] <= -14:
+            # Extended window: extract core (-6 to +3) separately
+            three_region = self._extract_three_region(intron)
+            ppt_start_offset = -14 - self.three_coords[0]
+            core_region = three_region[ppt_start_offset + 8:ppt_start_offset + 18]
+
+            if len(core_region) >= 10:
+                best_core_u12 = 0.0
+                for pwm in u12_pwms:
+                    score = pwm.score_sequence(core_region, seq_start_position=-6)
+                    if score > best_core_u12:
+                        best_core_u12 = score
+
+                best_core_u2 = 0.0
+                for pwm in u2_pwms:
+                    score = pwm.score_sequence(core_region, seq_start_position=-6)
+                    if score > best_core_u2:
+                        best_core_u2 = score
+
+                core_three_raw_score = self._calculate_log_ratio(best_core_u12, best_core_u2) if best_core_u2 > 0 else None
+
+        return ppt_ct, ppt_raw_score, core_three_raw_score
+
+    def _compute_masked_ppt(
+        self, intron: Intron, bp_match
+    ) -> tuple[Optional[int], Optional[float]]:
+        """
+        Compute PPT features over a fixed 20nt window at the 3' end.
+
+        The window spans 20nt immediately upstream of the 3'SS scoring boundary
+        (e.g., positions -26 to -7 from intron end for three_coords=(-6, 4)).
+        Capped at the 5'SS boundary for short introns.
+
+        No BPS masking is applied. Although the window overlaps with the BPS
+        region in most introns, this overlap is beneficial: U12 BPS motifs
+        (TTCCTTAAC) contain internal purines that break pyrimidine runs and
+        lower t_weighted, while U2 BPS contexts in the same positions tend to
+        be more pyrimidine-rich. The "impure" measurement captures compositional
+        differences between U12 and U2 branch point environments, not just PPT
+        presence in the strict biological sense.
+
+        Returns:
+            Tuple of (longest_run, t_weighted):
+            - longest_run: longest uninterrupted C/T run (int)
+            - t_weighted: T-weighted pyrimidine score (T=1.0, C=0.5, purine=0),
+              normalized by window length (float, 0-1 scale)
+        """
+        # Need intron sequence (not available in streaming mode with narrow motifs)
+        if intron.sequences is None or intron.sequences.seq is None:
+            return None, None
+
+        seq = intron.sequences.seq
+        intron_len = len(seq)
+
+        # Fixed 20nt window anchored at the 3'SS scoring boundary.
+        # Ends where the 3'SS scoring region begins (avoids feature overlap),
+        # extends 20nt upstream from there.
+        # For three_coords = (-6, 4): window covers positions -26 to -7 from intron end.
+        three_region_start = self.three_coords[0]  # e.g., -6
+        window_end = intron_len + three_region_start  # e.g., intron_len - 6
+        window_start = window_end - 20
+
+        # Cap for short introns: don't overlap into 5'SS scoring region
+        five_end = self.five_coords[1]  # e.g., 9 for (-3, 9)
+        window_start = max(window_start, five_end)
+
+        if window_start >= window_end:
+            return None, None
+
+        region = seq[window_start:window_end].upper()
+        region_len = len(region)
+
+        # Minimum window length for meaningful statistics
+        if region_len < 5:
+            return None, None
+
+        # Compute T-weighted pyrimidine score (T=1.0, C=0.5, purine=0)
+        t_weighted = sum(
+            1.0 if b == 'T' else 0.5 if b == 'C' else 0.0 for b in region
+        ) / region_len
+
+        # Compute longest uninterrupted pyrimidine run
+        max_run = 0
+        current_run = 0
+        for b in region:
+            if b in 'CT':
+                current_run += 1
+                if current_run > max_run:
+                    max_run = current_run
+            else:
+                current_run = 0
+
+        return max_run, t_weighted
 
     @staticmethod
     def _calculate_log_ratio(u12_score: float, u2_score: float) -> float:

@@ -37,7 +37,7 @@ scoring:
   # Exclude non-canonical introns from scoring
   # When true, only GT-AG, GC-AG, and AT-AC introns are scored
   # When false, all intron types are scored (including rare boundaries)
-  # Note: Most U12 introns are AT-AC, so excluding NC may miss some U12s
+  # Note: ~25% of U12 introns are AT-AC; the majority are GT-AG
   exclude_noncanonical: false
 
   # Pseudocount for PWM scoring (log(0) prevention)
@@ -98,7 +98,7 @@ training:
   # IMPORTANT: Should match optimizer.cv_folds (below) per expert guidance
   # Both outer and inner loops should use k=5 for optimal balance
   # Recommendation: Keep synchronized with optimizer.cv_folds
-  n_cv_folds: 7  # Test with per-multiplier C grid fix
+  n_cv_folds: 7
 
   # Test set fraction for split evaluation
   # Only used when eval_mode = "split"
@@ -106,10 +106,6 @@ training:
   test_fraction: 0.2
 
   # Number of optimization rounds for C parameter search
-  # Controls iterative refinement rounds during hyperparameter optimization
-  # Each round narrows search range around best C value
-  # More rounds = finer granularity but longer optimization time
-  n_optimization_rounds: 10
 
   # Fixed SVM C parameter (soft-margin penalty)
   # If set, skips hyperparameter optimization and uses this value directly
@@ -124,7 +120,7 @@ training:
     # - 3-5 = typical ensemble (good balance)
     # - 10+ = very robust but slower
     # Recommendation: 10 for production, 1 for fast testing
-    n_models: 16
+    n_models: 15
 
     # Whether to subsample U2 set for each model
     # - true: Each model sees different random U2 subset (more diversity)
@@ -137,7 +133,7 @@ training:
     # - 1.0 = use all U2s (no subsampling)
     # Only applies when subsample_u2=true
     # Recommendation: 0.7-0.9 for good diversity without losing too much data
-    subsample_ratio: 0.8
+    subsample_ratio: 0.85
 
     # Maximum iterations for LinearSVC convergence
     # Separate from optimizer.max_iter (which is for parameter search)
@@ -175,7 +171,7 @@ optimizer:
   # Number of C values to test in first round
   # More points = better coverage but slower
   # Production: 11-13 points, Fast testing: 3-7 points
-  n_points_initial: 20
+  n_points_initial: 25
 
   # Refinement grid points for rounds 2+ (20-100 typical)
   # Number of C values to test in refinement rounds
@@ -192,7 +188,7 @@ optimizer:
   # Note: CalibratedClassifierCV adds another 5-fold internal CV
   # Total model fits per parameter set ≈ cv_folds × 5 (calibration wrapper)
   # KEEP SYNCHRONIZED: training.n_cv_folds = optimizer.cv_folds = 5
-  cv_folds: 7  # Test with per-multiplier C grid fix
+  cv_folds: 7
 
   # Random seed for reproducibility
   # Ensures same train/test splits across runs
@@ -216,22 +212,25 @@ optimizer:
   # Higher = allows convergence on difficult datasets
   # Lower = faster but may not converge (warns if hit)
   # Production: 60000-75000, Fast testing: 3000-10000
-  max_iter: 65000
+  max_iter: 75000
 
   # Scoring metric for hyperparameter optimization
   # Metric used during grid search to evaluate parameter combinations
   # Options:
   # - 'balanced_accuracy': (TPR + TNR) / 2 - treats both classes equally (DEFAULT)
   #   Good for imbalanced data, no precision/recall bias
+  # - 'f1': F1 score - harmonic mean of precision and recall
+  #   Penalizes both FPs and FNs equally
   # - 'f_beta_0.5': F_0.5 score - heavily weights precision over recall
   #   Best for minimizing false positives (conservative U12 calls)
   # - 'f_beta_0.75': F_0.75 score - slightly weights precision over recall
   #   Moderate precision focus, closer to balanced
+  # - 'neg_log_loss': Negative log-loss (cross-entropy) - optimizes probability calibration
+  #   Requires CalibratedClassifierCV wrapper (~5x slower), penalizes uncertain predictions
   #
-  # Expert recommendation: Try 'f_beta_0.5' for precision-focused training
-  # This encourages the optimizer to find hyperparameters that minimize false positives
-  # while still maintaining reasonable recall on true U12s.
-  scoring_metric: 'balanced_accuracy'
+  # Recommendation: 'balanced_accuracy' or 'f1' for general use,
+  # 'f_beta_0.5' for precision-focused training (fewer false positives)
+  scoring_metric: 'f1'
 
   # Robustness improvements (2025-01-19)
   # Penalty types to search (L1 = feature selection, L2 = full weighting)
@@ -259,7 +258,7 @@ optimizer:
   # Grid search explores (C, alpha) combinations to find best balanced accuracy
   # Default: [0.8, 1.0, 1.2] to test precision/recall tradeoffs
   # For fastest search or to disable multiplier search: [1.0]
-  class_weight_multipliers: [0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2]
+  class_weight_multipliers: [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
   # Tie-breaking for class_weight_multiplier selection
   # When multiple multipliers achieve the same best score:
@@ -276,38 +275,21 @@ optimizer:
   # Base features (ALWAYS included): s5, sBP, s3 (3D z-scores)
   #
   # Specify list of composite features to add (beyond base 3D features):
-  # Available features:
-  #   - 'min_5_bp':      min(s5, sBP) - both 5' and BP must be strong
-  #   - 'min_5_3':       min(s5, s3) - both 5' and 3' must be strong
-  #   - 'min_all':       min(s5, sBP, s3) - ALL THREE must be strong
-  #   - 'absdiff_5_bp':  |s5 - sBP| - penalty for 5'/BP imbalance (expects negative coef)
-  #   - 'absdiff_5_3':   |s5 - s3| - penalty for 5'/3' imbalance (expects negative coef)
-  #   - 'absdiff_bp_3':  |sBP - s3| - penalty for BP/3' imbalance (expects negative coef)
-  #   - 'max_5_bp':      max(s5, sBP) - at least one of 5'/BP strong
-  #   - 'max_5_3':       max(s5, s3) - at least one of 5'/3' strong
   #
-  # Note: Old models used 'neg_absdiff_*' (negative values) which caused models
-  # to learn positive coefficients that rewarded imbalance. New models use
-  # 'absdiff_*' (positive values) so negative coefficients properly penalize it.
+  # Recommended (rectified corroboration + one-sided discordance):
+  #   - 'corr_5_bp':    min(max(0,5z), max(0,BPz)) - rectified 5'/BP corroboration
+  #   - 'corr_bp_3':    min(max(0,BPz), max(0,3z)) - rectified BP/3' corroboration
+  #   - 'corr_all':     min(max(0,5z), max(0,BPz), max(0,3z)) - all-three corroboration
+  #   - 'gap_5_bp':     max(0, 5z - BPz) - strong 5' without BP support (discordance)
+  #   - 'gap_5_rest':   max(0, 5z - max(BPz,3z)) - strong 5' without ANY support
   #
-  # Standard (4D): Base 3 z-scores + BP/3' imbalance penalty (RECOMMENDED)
-  #   Based on L1 regularization analysis showing absdiff_bp_3 is most informative
-  # Extended (7D): Adds min_all and all three imbalance terms
-  # Custom: Specify exactly which features you want
-  #
-  # Examples:
-  #   # Standard 4D (RECOMMENDED - based on L1 coefficient analysis)
-  #   features: ['absdiff_bp_3']
-  #
-  #   # Extended 7D (more features, may help edge cases)
-  #   features: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3']
-  #
-  #   # Full 11D (all composite features - for experimentation)
-  #   features: ['min_5_bp', 'min_5_3', 'min_all', 'absdiff_5_bp',
-  #              'absdiff_5_3', 'absdiff_bp_3', 'max_5_bp', 'max_5_3']
+  # Other available features:
+  #   - 'min_5_bp', 'min_5_3', 'min_bp_3', 'min_all': pairwise/3-way min
+  #   - 'sqrt_5_bp':    sqrt(max(0,5z)*max(0,BPz)) - geometric mean of positive parts
+  #   - 'max_5_bp', 'max_5_3': pairwise max
+  #   - 'absdiff_*':    absolute differences (legacy, not recommended)
   feature_transform:
-    # List of composite features to include (standard: 4D recommended set)
-    features: ['absdiff_bp_3', 'absdiff_5_bp']
+    features: ['min_5_bp', 'sqrt_5_bp', 'min_bp_3']
 
   # Gamma scaling for imbalance features (nudges L2 toward L1 behavior)
   # Scales all absdiff_* features by this factor before training
@@ -321,6 +303,34 @@ optimizer:
   # Example: gamma=2.0 doubles the weight of imbalance penalties,
   # making the model more sensitive to signal inconsistencies.
   # gamma_imbalance_options: [1.0, 2.0, 3.0]
+
+  # SVM kernel type
+  # - 'rbf': Radial basis function kernel (default, curved boundary)
+  # - 'linear': Linear kernel (straight boundary, faster training)
+  kernel: 'rbf'
+
+  # RBF gamma parameter (ignored for linear kernel)
+  # - 'scale': 1 / (n_features * X.var()) — sklearn default
+  # - 'auto': 1 / n_features
+  # - float: explicit value
+  gamma: 'scale'
+
+  # Gamma values to grid search (RBF only, ignored for linear)
+  # Set to null to use gamma value directly without searching
+  gamma_search: [0.001, 0.01, 0.1, 0.5, 'scale']
+
+  # Early stopping on score plateau
+  # When enabled, optimization stops if the best CV score does not improve
+  # by more than 1 standard error for N consecutive rounds.
+  # This avoids wasting rounds on a flat score landscape.
+  # - true (default): Stop when score plateaus
+  # - false: Always run all n_rounds
+  early_stop_on_plateau: true
+
+  # Number of consecutive rounds without meaningful improvement before stopping
+  # Only used when early_stop_on_plateau is true
+  # Higher = more conservative (less likely to stop prematurely)
+  plateau_rounds: 4
 
   # C parameter bounds (optional - uses auto-computed bounds if not specified)
   # Controls range of C (soft-margin penalty) values to search
@@ -380,7 +390,7 @@ performance:
   # Uses multiprocessing to speed up SVM prediction on experimental introns
   # Set to number of CPU cores for maximum speed (e.g., 8 for 8-core system)
   # Memory usage scales linearly with processes (~1-2GB per process)
-  processes: 5
+  processes: 6
 
   # Number of processes for cross-validation (if different from classification)
   # Controls parallelization during hyperparameter optimization

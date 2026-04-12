@@ -28,7 +28,7 @@ from typing import Sequence
 
 import numpy as np
 
-from intronIC.classification.trainer import SVMEnsemble
+from intronIC.classification.trainer import SVMEnsemble, _extract_feature_vector
 from intronIC.core.intron import Intron, IntronMetadata, IntronScores
 
 
@@ -55,32 +55,13 @@ def _predict_chunk_worker(
     if not introns:
         return []
 
-    # CORRECTED: Extract z-scores from introns (already scaled by ScoreNormalizer)
-    # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
-    #
-    # Data flow:
-    # 1. ScoreNormalizer (in main.py) fits RobustScaler on reference LLRs
-    # 2. ScoreNormalizer transforms experimental LLRs → z-scores (five_z_score, bp_z_score, three_z_score)
-    # 3. Predictor extracts z-scores and passes to model
-    # 4. Pipeline has NO scaler (would cause double-scaling)
+    # Extract extra feature names from model parameters (backward compatible)
+    extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
+
+    # Extract z-scores + extra features from introns (already scaled by ScoreNormalizer)
     features = []
     for intron in introns:
-        if intron.scores is None:
-            raise ValueError(f"Intron {intron.intron_id} has no scores")
-        if (
-            intron.scores.five_z_score is None
-            or intron.scores.bp_z_score is None
-            or intron.scores.three_z_score is None
-        ):
-            raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-        features.append(
-            [
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score,
-            ]
-        )
+        features.append(_extract_feature_vector(intron, extra_names))
 
     X_z = np.array(features)
 
@@ -307,26 +288,13 @@ class SVMPredictor:
         if not introns:
             return []
 
-        # CORRECTED: Extract z-scores from introns (already scaled by ScoreNormalizer)
-        # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
+        # Extract extra feature names from model parameters (backward compatible)
+        extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
+
+        # Extract z-scores + extra features from introns (already scaled by ScoreNormalizer)
         features = []
         for intron in introns:
-            if intron.scores is None:
-                raise ValueError(f"Intron {intron.intron_id} has no scores")
-            if (
-                intron.scores.five_z_score is None
-                or intron.scores.bp_z_score is None
-                or intron.scores.three_z_score is None
-            ):
-                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-            features.append(
-                [
-                    intron.scores.five_z_score,
-                    intron.scores.bp_z_score,
-                    intron.scores.three_z_score,
-                ]
-            )
+            features.append(_extract_feature_vector(intron, extra_names))
 
         X_z = np.array(features)
 
@@ -553,27 +521,12 @@ def classify_introns_streaming(
     except AttributeError:
         weights = np.ones(len(ensemble.models)) / len(ensemble.models)
 
-    for intron in introns:
-        # Validate intron has z-scores
-        if intron.scores is None:
-            raise ValueError(f"Intron {intron.intron_id} has no scores")
-        if (
-            intron.scores.five_z_score is None
-            or intron.scores.bp_z_score is None
-            or intron.scores.three_z_score is None
-        ):
-            raise ValueError(f"Intron {intron.intron_id} missing z-scores")
+    # Extract extra feature names from model parameters (backward compatible)
+    extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
 
-        # Build feature vector
-        X_z = np.array(
-            [
-                [
-                    intron.scores.five_z_score,
-                    intron.scores.bp_z_score,
-                    intron.scores.three_z_score,
-                ]
-            ]
-        )
+    for intron in introns:
+        # Build feature vector (validates z-scores internally)
+        X_z = np.array([_extract_feature_vector(intron, extra_names)])
 
         # Get predictions from each model
         probas = []

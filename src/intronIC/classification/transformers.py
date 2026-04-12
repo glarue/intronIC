@@ -94,8 +94,9 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         self,
         include_max: bool = False,
         include_pairwise_mins: bool = False,
-        features: Optional[list] = ['absdiff_bp_3'],  # Default: minimal 4D set from L1 analysis
+        features: Optional[list] = ['corr_5_bp', 'corr_bp_3', 'gap_5_bp'],
         gamma_imbalance: float = 1.0,
+        extra_feature_names: Optional[list] = None,
         gamma_5_bp=None,  # Deprecated - kept for backward compatibility
         gamma_5_3=None    # Deprecated - kept for backward compatibility
     ):
@@ -108,14 +109,22 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             include_pairwise_mins: Whether to include pairwise min features (default: False)
                         DEPRECATED: Use features parameter instead for fine-grained control
             features: List of composite feature names to include
-                     DEFAULT: ['absdiff_bp_3'] - minimal 4D set identified by L1 regularization
-                     Set to None for legacy 7D behavior (backward compatibility with old models)
-                     Available features: 'min_5_bp', 'min_5_3', 'min_all',
-                                        'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
-                                        'max_5_bp', 'max_5_3'
-                     Deprecated (backward compat): 'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3'
-                     Example: ['absdiff_bp_3'] for minimal 4D feature space (DEFAULT)
-                     Example: ['min_all', 'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3'] for 7D
+                     DEFAULT: ['corr_5_bp', 'corr_bp_3', 'gap_5_bp']
+                     Set to None for legacy behavior (backward compatibility with old models)
+
+                     Recommended (rectified corroboration + one-sided discordance):
+                       'corr_5_bp':   min(max(0,5z), max(0,BPz)) — rectified 5'/BP corroboration
+                       'corr_bp_3':   min(max(0,BPz), max(0,3z)) — rectified BP/3' corroboration
+                       'corr_all':    min(max(0,5z), max(0,BPz), max(0,3z)) — all-three corroboration
+                       'gap_5_bp':    max(0, 5z - BPz) — one-sided: strong 5' without BP support
+                       'gap_5_rest':  max(0, 5z - max(BPz,3z)) — strong 5' without ANY support
+
+                     Other available features:
+                       'min_5_bp', 'min_5_3', 'min_bp_3', 'min_all': pairwise/3-way min
+                       'sqrt_5_bp':  sqrt(max(0,5z)*max(0,BPz)) — geometric mean of positive parts
+                       'max_5_bp', 'max_5_3': pairwise max
+                       'absdiff_*':  absolute differences (legacy, not recommended)
+                     Deprecated: 'neg_absdiff_*' names accepted for backward compatibility
             gamma_imbalance: Scaling factor for imbalance features (default: 1.0)
                            Multiplies all absdiff_* features to increase penalty for imbalance.
                            Higher values (e.g., 2.0, 4.0) make imbalance more costly.
@@ -127,16 +136,28 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         self.include_max = include_max
         self.include_pairwise_mins = include_pairwise_mins
         self.gamma_imbalance = gamma_imbalance
+        self.extra_feature_names = extra_feature_names
 
         # If features is explicitly None, use the default
         if features is None:
-            features = ['absdiff_bp_3']
+            features = ['corr_5_bp', 'corr_bp_3', 'gap_5_bp']
 
         # Validate feature names
         valid_features = {
-            'min_5_bp', 'min_5_3', 'min_all',
+            'min_5_bp', 'min_5_3', 'min_bp_3', 'min_all',
             'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
-            'max_5_bp', 'max_5_3'
+            'max_5_bp', 'max_5_3',
+            'sqrt_5_bp',       # sqrt(max(0,5z) * max(0,BPz))
+            'sqrt_bp_3',       # sqrt(max(0,BPz) * max(0,3z))
+            'sqrt_5_3',        # sqrt(max(0,5z) * max(0,3z))
+            'corr_5_bp',       # min(max(0,5z), max(0,BPz)) — rectified corroboration
+            'corr_bp_3',       # min(max(0,BPz), max(0,3z)) — rectified corroboration
+            'corr_all',        # min(max(0,5z), max(0,BPz), max(0,3z))
+            'gap_5_bp',        # max(0, 5z - BPz) — one-sided: strong 5' without BP
+            'gap_5_rest',      # max(0, 5z - max(BPz, 3z)) — strong 5' without ANY support
+            'support2',        # second_largest(p5, pBP, p3) — at least 2 sites supportive
+            'support_rest',    # sum(p) - max(p) — evidence besides strongest site
+            'concentration',   # max(p) / (eps + sum(p)) — 1 dominant site = FP pattern
         }
         invalid = set(features) - valid_features
         if invalid:
@@ -200,12 +221,15 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         # Ensure input is numpy array
         X = np.asarray(X)
 
-        # Validate input shape
-        if X.shape[1] != 3:
+        # Validate input shape (at least 3 base features required)
+        if X.shape[1] < 3:
             raise ValueError(
-                f"BothEndsStrongTransformer expects 3 input features "
+                f"BothEndsStrongTransformer expects at least 3 input features "
                 f"[s5, sBP, s3], got {X.shape[1]}"
             )
+
+        # Separate extra columns (beyond the 3 base z-scores)
+        extra = X[:, 3:] if X.shape[1] > 3 else np.empty((X.shape[0], 0))
 
         # Extract base features
         s5 = X[:, 0]
@@ -225,14 +249,51 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         absdiff_5_3 = np.abs(s5 - s3)
         min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
 
-        # 3-way AND: ALL THREE must be strong (NEW)
-        # min_all = min(s5, sBP, s3)
+        # BPS-3'SS pairwise min
+        min_bp_3 = np.minimum(sBP, s3)
+
+        # 3-way AND: ALL THREE must be strong
         min_all = np.minimum(np.minimum(s5, sBP), s3)
 
-        # Imbalance penalties (CORRECTED 2025-01-20)
-        # Absolute difference = penalty for inconsistency
-        # Model should learn negative weights → penalizes imbalanced signals
-        # (Previously used neg_absdiff which caused wrong sign on coefficients)
+        # Geometric mean of positive parts: sqrt(max(0, a) * max(0, b))
+        # Rewards introns where BOTH signals are positive and strong.
+        # Zero when either score is <= 0.
+        sqrt_5_bp = np.sqrt(np.maximum(s5, 0) * np.maximum(sBP, 0))
+        sqrt_bp_3 = np.sqrt(np.maximum(sBP, 0) * np.maximum(s3, 0))
+        sqrt_5_3 = np.sqrt(np.maximum(s5, 0) * np.maximum(s3, 0))
+
+        # Rectified positive parts (used by corroboration and gap features)
+        s5_pos = np.maximum(s5, 0)
+        sBP_pos = np.maximum(sBP, 0)
+        s3_pos = np.maximum(s3, 0)
+
+        # Rectified corroboration: min of positive parts
+        # High only when BOTH signals are positive and strong.
+        # Zero when either signal is <= 0.
+        corr_5_bp = np.minimum(s5_pos, sBP_pos)
+        corr_bp_3 = np.minimum(sBP_pos, s3_pos)
+        corr_all = np.minimum(np.minimum(s5_pos, sBP_pos), s3_pos)
+
+        # One-sided discordance: penalizes strong 5' without BP/3' support.
+        # Directly encodes the hard-negative failure mode.
+        # High when 5'z >> BPz; zero when BPz >= 5'z.
+        gap_5_bp = np.maximum(s5 - sBP, 0)
+        gap_5_rest = np.maximum(s5 - np.maximum(sBP, s3), 0)
+
+        # Order-statistic / support-distribution features over positive site scores.
+        # These encode "how many sites support U12" and "how concentrated is the evidence",
+        # which directly targets the residual FP pattern of one dominant donor score.
+        p_stack = np.column_stack([s5_pos, sBP_pos, s3_pos])  # (n, 3)
+        p_max = np.max(p_stack, axis=1)
+        p_sum = np.sum(p_stack, axis=1)
+        # Second-largest positive score: sort descending, take index 1
+        p_sorted = np.sort(p_stack, axis=1)[:, ::-1]
+        support2 = p_sorted[:, 1]  # "at least two sites genuinely supportive"
+        support_rest = p_sum - p_max  # evidence besides the strongest site
+        eps = 1e-10
+        concentration = p_max / (eps + p_sum)  # high when one site dominates
+
+        # Imbalance features (kept for backward compatibility with old models)
         absdiff_5_bp_feat = absdiff_5_bp
         absdiff_5_3_feat = absdiff_5_3
         absdiff_bp_3 = np.abs(sBP - s3)
@@ -256,7 +317,19 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         composite_feature_map = {
             'min_5_bp': min_5_bp[:, np.newaxis],
             'min_5_3': min_5_3[:, np.newaxis],
+            'min_bp_3': min_bp_3[:, np.newaxis],
             'min_all': min_all[:, np.newaxis],
+            'sqrt_5_bp': sqrt_5_bp[:, np.newaxis],
+            'sqrt_bp_3': sqrt_bp_3[:, np.newaxis],
+            'sqrt_5_3': sqrt_5_3[:, np.newaxis],
+            'corr_5_bp': corr_5_bp[:, np.newaxis],
+            'corr_bp_3': corr_bp_3[:, np.newaxis],
+            'corr_all': corr_all[:, np.newaxis],
+            'gap_5_bp': gap_5_bp[:, np.newaxis],
+            'gap_5_rest': gap_5_rest[:, np.newaxis],
+            'support2': support2[:, np.newaxis],
+            'support_rest': support_rest[:, np.newaxis],
+            'concentration': concentration[:, np.newaxis],
             'absdiff_5_bp': self.gamma_imbalance * absdiff_5_bp_feat[:, np.newaxis],
             'absdiff_5_3': self.gamma_imbalance * absdiff_5_3_feat[:, np.newaxis],
             'absdiff_bp_3': self.gamma_imbalance * absdiff_bp_3[:, np.newaxis],
@@ -267,11 +340,19 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             composite_feature_map['max_5_3'] = max_5_3[:, np.newaxis]
 
         # Add features in canonical order (not self.features order)
-        for feature_name in ['min_5_bp', 'min_5_3', 'min_all',
+        for feature_name in ['min_5_bp', 'min_5_3', 'min_bp_3', 'min_all',
+                             'sqrt_5_bp', 'sqrt_bp_3', 'sqrt_5_3',
+                             'corr_5_bp', 'corr_bp_3', 'corr_all',
+                             'gap_5_bp', 'gap_5_rest',
+                             'support2', 'support_rest', 'concentration',
                              'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
                              'max_5_bp', 'max_5_3']:
             if feature_name in self.features:
                 features.append(composite_feature_map[feature_name])
+
+        # Append extra features (passed through unchanged)
+        if extra.shape[1] > 0:
+            features.append(extra)
 
         return np.hstack(features)
 
@@ -294,8 +375,12 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
         # Handle old pickled models that don't have 'features' attribute
         if hasattr(self, 'features') and self.features is not None:
             # Use explicit feature list in canonical order
-            # Support both new (absdiff_*) and deprecated (neg_absdiff_*) names
-            for feature_name in ['min_5_bp', 'min_5_3', 'min_all',
+            # Support both new and deprecated (neg_absdiff_*) names
+            for feature_name in ['min_5_bp', 'min_5_3', 'min_bp_3', 'min_all',
+                                 'sqrt_5_bp', 'sqrt_bp_3', 'sqrt_5_3',
+                                 'corr_5_bp', 'corr_bp_3', 'corr_all',
+                                 'gap_5_bp', 'gap_5_rest',
+                                 'support2', 'support_rest', 'concentration',
                                  'absdiff_5_bp', 'absdiff_5_3', 'absdiff_bp_3',
                                  'neg_absdiff_5_bp', 'neg_absdiff_5_3', 'neg_absdiff_bp_3',
                                  'max_5_bp', 'max_5_3']:
@@ -318,5 +403,10 @@ class BothEndsStrongTransformer(BaseEstimator, TransformerMixin):
             # Optional: max features
             if self.include_max:
                 names.extend(['max_5_bp', 'max_5_3'])
+
+        # Append extra feature names
+        extra_names = getattr(self, 'extra_feature_names', [])
+        if extra_names:
+            names.extend(extra_names)
 
         return np.array(names)

@@ -47,6 +47,7 @@ class PWM:
     length: int
     pseudocount: float = 0.0001
     start_index: int = 0
+    reference_offset: int = 0  # Array index of the reference position (e.g., branch A at position 0 in BPS PWMs)
 
     def __post_init__(self):
         """Validate PWM structure."""
@@ -536,25 +537,18 @@ class PWMLoader:
         """
         Parse JSON format PWM file into raw frequency dictionaries.
 
-        JSON format uses grouped matrices with metadata:
-        {
-            "format_version": "1.0",
-            "matrix_groups": [
-                {
-                    "description": ["comment1", "comment2", ...],
-                    "matrices": {
-                        "u12_atac_five": {
-                            "bases": ["A", "C", "G", "T"],
-                            "start_index": -20,
-                            "sample_size": 114,
-                            "matrix": [[0.26, 0.21, ...], ...]
-                        },
-                        ...
-                    }
-                },
-                ...
-            ]
-        }
+        Supports two formats:
+
+        v1.0 — array-indexed matrix:
+            "matrix": [[A, C, G, T], [A, C, G, T], ...]
+
+        v2.0 — dict-keyed with biological positions:
+            "matrix": {"-1": {"A": .., "C": .., "G": .., "T": ..}, "+1": {...}, ...}
+            Position keys use biological conventions:
+              5'SS/3'SS: no position 0 (skip from -1 to +1)
+              BPS: position 0 = branch point adenosine
+
+        Both formats include start_index for internal array construction.
 
         Args:
             filepath: Path to JSON PWM file
@@ -572,30 +566,47 @@ class PWMLoader:
         # Flatten grouped matrices
         for group in data.get('matrix_groups', []):
             for matrix_name, matrix_data in group.get('matrices', {}).items():
-                # Parse matrix name into components
                 parsed_name = PWMLoader._parse_matrix_name(matrix_name)
 
-                # Convert JSON matrix format to internal format
-                # JSON format: [[A, C, G, T], [A, C, G, T], ...]
-                # Internal format: {'A': {0: val, 1: val}, 'C': {0: val}, ...}
-
-                bases = matrix_data.get('bases', ['A', 'C', 'G', 'T'])
                 json_matrix = matrix_data.get('matrix', [])
                 start_index = matrix_data.get('start_index')
                 if start_index is None:
                     start_index = 0
 
-                # Build internal matrix structure
-                internal_matrix = {base: {} for base in bases}
+                internal_matrix = {}
 
-                for pos_idx, row in enumerate(json_matrix):
-                    for base_idx, base in enumerate(bases):
-                        internal_matrix[base][pos_idx] = row[base_idx]
+                if isinstance(json_matrix, dict):
+                    # v2.0 dict-keyed format: {"pos_label": {"A": .., ...}, ...}
+                    # Sort by numeric position to build contiguous array indices
+                    sorted_keys = sorted(json_matrix.keys(), key=lambda k: int(k))
+                    bases = list(next(iter(json_matrix.values())).keys())
+                    internal_matrix = {base: {} for base in bases}
+                    for arr_idx, pos_key in enumerate(sorted_keys):
+                        freqs = json_matrix[pos_key]
+                        for base in bases:
+                            internal_matrix[base][arr_idx] = freqs[base]
 
-                # Store with metadata
+                    # Compute reference_offset: array index of biological position 0.
+                    # For BPS PWMs with positions -7 to +2, position 0 (branch A)
+                    # maps to array index 7. For PWMs without position 0 in their
+                    # labels (e.g., 5'SS/3'SS which skip 0), defaults to 0.
+                    bio_positions = [int(k) for k in sorted_keys]
+                    if 0 in bio_positions:
+                        reference_offset = bio_positions.index(0)
+                    else:
+                        reference_offset = 0
+                else:
+                    # v1.0 array-indexed format: [[A, C, G, T], ...]
+                    bases = matrix_data.get('bases', ['A', 'C', 'G', 'T'])
+                    internal_matrix = {base: {} for base in bases}
+                    for pos_idx, row in enumerate(json_matrix):
+                        for base_idx, base in enumerate(bases):
+                            internal_matrix[base][pos_idx] = row[base_idx]
+
                 matrices[parsed_name] = {
                     'matrix': internal_matrix,
-                    'start_index': start_index
+                    'start_index': start_index,
+                    'reference_offset': reference_offset if isinstance(json_matrix, dict) else 0,
                 }
 
         return matrices
@@ -686,7 +697,8 @@ class PWMLoader:
                 name='_'.join(name_tuple),
                 matrix_dict=data['matrix'],
                 start_index=data['start_index'],
-                pseudocount=pseudocount
+                pseudocount=pseudocount,
+                reference_offset=data.get('reference_offset', 0),
             )
 
             # Store by (intron_type, boundary, version?) key
@@ -717,7 +729,8 @@ class PWMLoader:
         name: str,
         matrix_dict: Dict[str, Dict[int, float]],
         start_index: int,
-        pseudocount: float = 0.0001
+        pseudocount: float = 0.0001,
+        reference_offset: int = 0,
     ) -> PWM:
         """
         Convert parsed dictionary to PWM object with numpy array.
@@ -759,5 +772,6 @@ class PWMLoader:
             matrix=matrix,
             length=length,
             pseudocount=pseudocount,
-            start_index=start_index
+            start_index=start_index,
+            reference_offset=reference_offset,
         )

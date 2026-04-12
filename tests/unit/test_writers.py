@@ -316,7 +316,7 @@ class TestMetaWriter:
         assert len(lines) == 2  # header + 1 intron
 
         fields = lines[1].split("\t")
-        assert len(fields) == 15  # 15 metadata fields (including attributes)
+        assert len(fields) == 16  # 16 metadata fields (including bp_offset and attributes)
 
     def test_write_full_intron(self, tmp_path, full_intron):
         """Test writing fully populated intron."""
@@ -333,12 +333,12 @@ class TestMetaWriter:
         assert "TRANS001_3" in fields[0]  # name
         assert fields[1] == "5.5"  # relative score
         assert "GT-AG" in fields[2]  # terminal dinucleotides
-        assert fields[5] == "1000"  # length
-        assert fields[6] == "TRANS001"  # parent
-        assert fields[7] == "GENE001"  # grandparent
-        assert fields[8] == "3"  # index
-        assert fields[9] == "5"  # family_size
-        assert fields[12] == "u12"  # type_id
+        assert fields[6] == "1000"  # length
+        assert fields[7] == "TRANS001"  # parent
+        assert fields[8] == "GENE001"  # grandparent
+        assert fields[9] == "3"  # index
+        assert fields[10] == "5"  # family_size
+        assert fields[13] == "u12"  # type_id
 
     def test_null_values(self, tmp_path, basic_intron):
         """Test that missing values are replaced with null placeholder."""
@@ -352,7 +352,7 @@ class TestMetaWriter:
 
         # Many fields should be 'NA' for basic intron
         assert fields[1] == "NA"  # rel_score (no scores)
-        assert fields[6] == "NA"  # parent (no metadata)
+        assert fields[7] == "NA"  # parent (no metadata)
 
     def test_fractional_position(self, tmp_path, full_intron):
         """Test fractional position output in meta.iic."""
@@ -365,7 +365,7 @@ class TestMetaWriter:
         fields = lines[0].split("\t")
 
         # Fractional position is stored field, set to 0.5 in fixture
-        assert fields[10] == "0.5"
+        assert fields[11] == "0.5"
 
     def test_write_multiple_introns(self, tmp_path, basic_intron, full_intron):
         """Test writing multiple introns."""
@@ -534,10 +534,11 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[1].split("\t")
 
-        assert len(fields) == 18
+        assert len(fields) == 30
         # Header: name, rel_score, svm_score, 5'_seq, 5'_raw, 5'_z,
         #         bp_seq, bp_seq_u2, bp_raw, bp_z, 3'_seq, 3'_raw, 3'_z,
-        #         min(5,bp), min(5,3), max(5,bp), max(5,3), decision_dist
+        #         min(5,bp), min(5,3), max(5,bp), max(5,3), decision_dist,
+        #         bp_offset, ppt_ct, ppt_raw, core_3'_raw, fit_u12, fit_u2
         # Check scores are rounded correctly
         assert fields[1] == "5.5"  # rel_score
         assert fields[2] == "95.5"  # svm_score
@@ -562,8 +563,8 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[0].split("\t")
 
-        # Check that we have all 18 fields
-        assert len(fields) == 18
+        # Check that we have all 24 fields
+        assert len(fields) == 30
         # Relative and SVM scores should be available
         assert fields[1] == "2.3"  # rel_score available
         assert fields[2] == "12.3"  # svm_score available

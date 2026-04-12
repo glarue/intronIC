@@ -78,8 +78,8 @@ class SequenceExtractor:
         self,
         introns: List[Intron],
         flank_size: int | Tuple[int, int] = 200,
-        five_score_coords: Tuple[int, int] = (-3, 9),
-        three_score_coords: Tuple[int, int] = (-6, 4),
+        five_score_coords: Tuple[int, int] = (-3, 10),
+        three_score_coords: Tuple[int, int] = (-14, 4),
         bp_coords: Tuple[int, int] = (-55, -5),
     ) -> Iterator[Intron]:
         """
@@ -142,8 +142,8 @@ class SequenceExtractor:
         self,
         introns: List[Intron],
         flank_size: int | Tuple[int, int] = 200,
-        five_score_coords: Tuple[int, int] = (-3, 9),
-        three_score_coords: Tuple[int, int] = (-6, 4),
+        five_score_coords: Tuple[int, int] = (-3, 10),
+        three_score_coords: Tuple[int, int] = (-14, 4),
         bp_coords: Tuple[int, int] = (-55, -5),
     ) -> Iterator[Intron]:
         """
@@ -497,8 +497,8 @@ def extract_sequences_for_introns(
     introns: List[Intron],
     genome_file: str,
     flank_size: int = 200,
-    five_score_coords: Tuple[int, int] = (-3, 9),
-    three_score_coords: Tuple[int, int] = (-6, 4),
+    five_score_coords: Tuple[int, int] = (-3, 10),
+    three_score_coords: Tuple[int, int] = (-14, 4),
     bp_coords: Tuple[int, int] = (-55, -5),
 ) -> Iterator[Intron]:
     """

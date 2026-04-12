@@ -351,8 +351,8 @@ class TestRealDataPipeline:
             fields = line.split("\t")
             assert len(fields) == 7
 
-        # Each metadata line should have 15 fields (including attributes)
+        # Each metadata line should have 16 fields (including bp_offset and attributes)
         for line in meta_lines[1:]:  # Skip header
             fields = line.split("\t")
-            assert len(fields) == 15
-            assert len(fields) == 15
+            assert len(fields) == 16
+            assert len(fields) == 16

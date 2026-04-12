@@ -171,6 +171,44 @@ class IntronScores:
     relative_score: Optional[float] = None
     decision_distance: Optional[float] = None
 
+    # PPT decomposition
+    ppt_score: Optional[float] = None  # C+T fraction at 3'SS positions -14 to -7 (legacy)
+    ppt_raw_score: Optional[float] = None  # PWM log-ratio for PPT region (-14 to -7)
+    core_three_raw_score: Optional[float] = None  # PWM log-ratio for core 3'SS (-6 to +3)
+
+    # PPT features (fixed 20nt window anchored at 3'SS scoring boundary, unmasked)
+    # Measures pyrimidine density in the near-3' region including BPS context.
+    # BPS overlap is intentional: U12 BPS (TTCCTTAAC) has internal purines that
+    # lower pyrimidine metrics, while U2 BPS contexts are more pyrimidine-rich.
+    # This compositional difference aids U12/U2 discrimination.
+    ppt_longest_run: Optional[int] = None  # longest uninterrupted C/T run in 20nt window
+    ppt_t_weighted: Optional[float] = None  # T-weighted pyrimidine score: T=1.0, C=0.5, purine=0 (0-1 scale)
+
+    # Branch point adenosine position relative to 3' splice site (negative integer).
+    # E.g., -12 means the branch A is 12nt upstream of the 3' end.
+    # U12 introns typically cluster at -10 to -15; U2 at -20 to -35.
+    # Computed from the best U12 BP PWM match position + branch A index within the PWM.
+    # Note: the "A" position is defined as the PWM column with highest A probability;
+    # the actual base at this position is usually but not always adenosine.
+    bp_offset: Optional[int] = None
+
+    # Absolute fit (summed log-likelihoods across all regions)
+    fit_u12: Optional[float] = None  # sum(log2(P_U12)) across 5', BP, 3'
+    fit_u2: Optional[float] = None  # sum(log2(P_U2)) across 5', BP, 3'
+
+    # Per-site absolute fit (log2 of raw probability per region)
+    fit_u12_five: Optional[float] = None  # log2(P_U12) for 5'SS
+    fit_u12_bp: Optional[float] = None  # log2(P_U12) for BP
+    fit_u12_three: Optional[float] = None  # log2(P_U12) for 3'SS
+
+    # Non-donor fit composites (ignoring the often-dominant 5'SS signal)
+    min_fit_bp_3: Optional[float] = None  # min(fit_u12_bp, fit_u12_three)
+
+    # BPS scan confidence: log2(best_score / mean_score) across the BP search window.
+    # High values indicate a sharp, well-defined BPS motif (U12-like).
+    # Low values indicate a flat landscape with no clear motif (U2-like).
+    bp_scan_confidence: Optional[float] = None
+
     def is_high_confidence(self, threshold: float = 90.0) -> bool:
         """
         Check if this intron has high-confidence U12 classification.
@@ -325,9 +363,9 @@ class ScoringMotifs:
 
     Attributes:
         five_region: 5' splice site region for PWM scoring
-                     Default coords (-3, 9): 12bp (3bp exon + 9bp intron)
+                     Default coords (-3, 10): 13bp (3bp exon + 10bp intron)
         three_region: 3' splice site region for PWM scoring
-                      Default coords (-6, 4): 10bp (6bp intron + 4bp exon)
+                      Default coords (-14, 4): 18bp (14bp intron + 4bp exon)
         bp_region: Branch point search region for PWM scoring
                    Default coords (-55, -5): 50bp from intron 3' end
         terminal_dnts: Terminal dinucleotides (e.g., 'GT-AG') for matrix selection
@@ -555,7 +593,7 @@ class Intron:
         True
 
         >>> # In streaming mode, extract motifs before clearing sequences
-        >>> motifs = intron2.extract_scoring_motifs((-3, 9), (-55, -5), (-6, 4))
+        >>> motifs = intron2.extract_scoring_motifs((-3, 10), (-55, -5), (-14, 4))
         >>> intron3 = replace(motifs, sequences=None)  # Clear full sequences
         >>> intron3.motifs.five_region  # Still available for scoring
         'CAGGTAAGT...'
@@ -903,11 +941,11 @@ class Intron:
 
         Args:
             five_coords: (start, stop) for 5' region relative to intron start
-                         e.g., (-3, 9) means 3bp upstream + 9bp into intron
+                         e.g., (-3, 10) means 3bp upstream + 10bp into intron
             bp_coords: (start, stop) for BP region relative to intron 3' end
                        e.g., (-55, -5) means positions -55 to -5 from end
             three_coords: (start, stop) for 3' region relative to intron end
-                          e.g., (-6, 4) means 6bp from intron + 4bp downstream
+                          e.g., (-14, 4) means 14bp from intron + 4bp downstream
 
         Returns:
             New Intron with motifs populated (sequences unchanged)
@@ -917,9 +955,9 @@ class Intron:
 
         Example:
             >>> intron_with_motifs = intron.extract_scoring_motifs(
-            ...     five_coords=(-3, 9),
+            ...     five_coords=(-3, 10),
             ...     bp_coords=(-55, -5),
-            ...     three_coords=(-6, 4)
+            ...     three_coords=(-14, 4)
             ... )
             >>> # Now safe to clear full sequences
             >>> lightweight = intron_with_motifs.with_sequences(None)
@@ -989,7 +1027,7 @@ class Intron:
         # where five_end is the end position of the 5' scoring region.
         # This prevents the BP search from overlapping with the 5' splice site,
         # which is critical for short introns.
-        five_end = five_coords[1]  # e.g., 9 for (-3, 9) - end of 5' region
+        five_end = five_coords[1]  # e.g., 10 for (-3, 10) - end of 5' region
         bp_start_idx = max(bp_start_idx, five_end)
         bp_stop_idx = max(0, min(intron_length, bp_stop_idx))
 

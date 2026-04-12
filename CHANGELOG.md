@@ -5,6 +5,35 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-04-11
+
+### Changed
+- **Default model upgraded from 4D linear SVM to 8D RBF SVM**
+  - Kernel: RBF (C=65.88, gamma=0.01), 15-model ensemble with isotonic calibration
+  - 8 features: s5z, BPz, s3z, support2, bp_offset, ppt_t_weighted, ppt_longest_run, bp_scan_confidence
+  - Training data expanded to 472 U12 + 30,155 U2 reference introns (was 387 U12 + 20,690 U2)
+  - U12 gold standard derived from IPA-conserved introns with CoLa-seq empirical branch points
+  - U2 training set merges original human introns with IPA-conserved hard negatives
+  - Cross-species false positive reduction: 0 in C. elegans (was 2), 1 in Ascaris (was 47)
+- 3'SS scoring window narrowed to core-only (-6 to +3) to cleanly separate PPT signal from acceptor motif
+- BPS search region no longer overlaps with 3'SS scoring region (was 1bp overlap)
+
+### Added
+- New scoring features computed for all introns and written to score_info output:
+  - `support2`: second-largest positive z-score — encodes "at least two sites support U12"
+  - `bp_offset`: branch point adenosine position relative to 3'SS (definitional, using PWM reference position)
+  - `ppt_t_weighted`: T-weighted pyrimidine score (T=1.0, C=0.5, purine=0) over fixed 20nt window anchored at 3'SS boundary
+  - `ppt_longest_run`: longest uninterrupted C/T run in the same 20nt window
+  - `bp_scan_confidence`: BPS motif sharpness — log2(best/mean) of U12 PWM scores across the BP search window
+  - Per-site absolute fit scores: `fit_u12_5'`, `fit_u12_bp`, `fit_u12_3'`, `min_fit_bp_3`
+- New composite features in BothEndsStrongTransformer: `support2`, `support_rest`, `concentration`
+- `reference_offset` field on PWM for definitional branch point adenosine position
+- Extra features pipeline: `extra_feature_names` parameter threaded through classifier, optimizer, trainer, predictor, and transformer for configurable feature sets beyond the 3 base z-scores
+
+### Fixed
+- BED input mode crash when introns lack metadata (missing `IntronMetadata` initialization)
+- BP search region properly excluded from 3'SS scoring region boundary
+
 ## [2.1.3] - 2026-03-10
 
 ### Added

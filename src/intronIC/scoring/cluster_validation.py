@@ -21,9 +21,18 @@ Validated on 10 species: all confirmed U12 species show median depth ≥ 0.645;
 all confirmed U12-absent species show median depth ≤ 0.001.
 """
 
+import csv
+import math
+import tempfile
+import shutil
 import numpy as np
+from dataclasses import replace
+from pathlib import Path
 from scipy.stats import gaussian_kde
-from typing import Optional
+from typing import Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from intronIC.core.intron import Intron
 
 
 def compute_valley_depth(
@@ -279,3 +288,233 @@ def validate_u12_cluster(
         'centroid_sigma': valley_result.get('centroid_sigma', float('nan')),
         'gap_width': valley_result.get('gap_width', float('nan')),
     }
+
+
+def apply_valley_prior_adjustment(
+    introns: List["Intron"],
+    validation_result: dict,
+    threshold: float = 90.0,
+) -> List["Intron"]:
+    """
+    Apply valley-based prior adjustment to classified introns.
+
+    If the valley detection found no distinct U12-type cluster (no_valley or
+    insufficient regime), adjusts SVM probabilities downward using the
+    computed adjusted prior. Introns whose adjusted probability drops below
+    50% are reclassified as U2-type.
+
+    If a valley was detected (valley regime), returns introns unchanged.
+
+    Args:
+        introns: List of classified Intron objects
+        validation_result: Output from validate_u12_cluster()
+        threshold: Original classification threshold (default: 90.0)
+
+    Returns:
+        List of Intron objects with potentially adjusted scores and type_ids
+    """
+    from intronIC.scoring.prior_adjustment import adjust_probabilities_for_prior
+    from intronIC.core.intron import IntronScores, IntronMetadata
+
+    adjusted_prior = validation_result.get('adjusted_prior', 0.5)
+
+    # No adjustment needed if valley detected (prior = 0.5)
+    if adjusted_prior >= 0.5:
+        return introns
+
+    training_prior = 0.5  # SVM's implicit balanced prior
+
+    result = []
+    for intron in introns:
+        # Only adjust scored introns with U12-type calls
+        if (intron.scores is None or
+                intron.scores.svm_score is None or
+                intron.metadata is None or
+                intron.metadata.type_id != 'u12'):
+            result.append(intron)
+            continue
+
+        # Apply Bayesian prior adjustment
+        original_prob = intron.scores.svm_score / 100.0
+        adjusted_prob = adjust_probabilities_for_prior(
+            original_prob, training_prior, adjusted_prior
+        )
+        adjusted_svm = adjusted_prob * 100.0
+        adjusted_rel = adjusted_svm - threshold
+
+        # Reclassify if adjusted probability < 50%
+        if adjusted_prob < 0.5:
+            new_type_id = 'u2'
+        else:
+            new_type_id = 'u12'
+
+        # Compute log-odds for adjusted probability
+        if 0 < adjusted_prob < 1:
+            adjusted_dd = math.log(adjusted_prob / (1 - adjusted_prob))
+        elif adjusted_prob >= 1:
+            adjusted_dd = 23.03  # cap
+        else:
+            adjusted_dd = -23.03
+
+        new_scores = replace(
+            intron.scores,
+            svm_score=adjusted_svm,
+            relative_score=adjusted_rel,
+            decision_distance=adjusted_dd,
+        )
+        new_metadata = replace(
+            intron.metadata,
+            type_id=new_type_id,
+        )
+        result.append(replace(intron, scores=new_scores, metadata=new_metadata))
+
+    return result
+
+
+def rewrite_outputs_with_prior_adjustment(
+    meta_path: Path,
+    score_info_path: Path,
+    validation_result: dict,
+    threshold: float = 90.0,
+) -> int:
+    """
+    Rewrite meta.iic and score_info.iic files with valley-adjusted scores.
+
+    For the sequential streaming path where introns are written per-contig
+    and not buffered. Reads the output files, applies prior adjustment to
+    U12-type calls, and rewrites with adjusted scores and type assignments.
+
+    Only modifies files if the valley detection found no distinct cluster
+    (adjusted_prior < 0.5). Returns the number of introns reclassified.
+
+    Args:
+        meta_path: Path to the .meta.iic output file
+        score_info_path: Path to the .score_info.iic output file
+        validation_result: Output from validate_u12_cluster()
+        threshold: Classification threshold (default: 90.0)
+
+    Returns:
+        Number of introns reclassified from U12-type to U2-type
+    """
+    from intronIC.scoring.prior_adjustment import adjust_probabilities_for_prior
+
+    adjusted_prior = validation_result.get('adjusted_prior', 0.5)
+    if adjusted_prior >= 0.5:
+        return 0  # No adjustment needed
+
+    training_prior = 0.5
+    n_reclassified = 0
+
+    # Rewrite meta.iic: adjust type_id and rel_score columns
+    if meta_path.exists():
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.iic',
+                                           dir=meta_path.parent, delete=False)
+        try:
+            with open(meta_path) as f_in:
+                header_line = None
+                type_col = None
+                rel_col = None
+
+                for line in f_in:
+                    if line.startswith('#'):
+                        tmp.write(line)
+                        continue
+
+                    parts = line.rstrip('\n').split('\t')
+
+                    # Parse header
+                    if header_line is None:
+                        header_line = parts
+                        try:
+                            type_col = parts.index('type_id')
+                            rel_col = parts.index('rel_score')
+                        except ValueError:
+                            pass
+                        tmp.write(line)
+                        continue
+
+                    # Adjust U12 calls
+                    if type_col is not None and parts[type_col] == 'u12':
+                        try:
+                            rel_score = float(parts[rel_col])
+                            svm_score = rel_score + threshold
+                            original_prob = svm_score / 100.0
+                            adjusted_prob = adjust_probabilities_for_prior(
+                                original_prob, training_prior, adjusted_prior
+                            )
+                            if adjusted_prob < 0.5:
+                                parts[type_col] = 'u2'
+                                adjusted_svm = adjusted_prob * 100.0
+                                parts[rel_col] = f"{adjusted_svm - threshold:.4f}"
+                                n_reclassified += 1
+                        except (ValueError, IndexError):
+                            pass
+
+                    tmp.write('\t'.join(parts) + '\n')
+
+            tmp.close()
+            shutil.move(tmp.name, meta_path)
+        except Exception:
+            tmp.close()
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
+
+    # Rewrite score_info.iic: adjust svm_score, rel_score, decision_dist
+    if score_info_path.exists():
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.iic',
+                                           dir=score_info_path.parent, delete=False)
+        try:
+            with open(score_info_path) as f_in:
+                header_line = None
+                svm_col = rel_col = dd_col = None
+
+                for line in f_in:
+                    if line.startswith('#'):
+                        tmp.write(line)
+                        continue
+
+                    parts = line.rstrip('\n').split('\t')
+
+                    if header_line is None:
+                        header_line = parts
+                        try:
+                            svm_col = parts.index('svm_score')
+                            rel_col = parts.index('rel_score')
+                            dd_col = parts.index('decision_dist')
+                        except ValueError:
+                            pass
+                        tmp.write(line)
+                        continue
+
+                    # Adjust scores for introns that were reclassified
+                    if svm_col is not None:
+                        try:
+                            svm_score = float(parts[svm_col])
+                            original_prob = svm_score / 100.0
+                            if original_prob >= threshold / 100.0:  # was U12
+                                adjusted_prob = adjust_probabilities_for_prior(
+                                    original_prob, training_prior, adjusted_prior
+                                )
+                                adjusted_svm = adjusted_prob * 100.0
+                                parts[svm_col] = f"{adjusted_svm:.4f}"
+                                if rel_col is not None:
+                                    parts[rel_col] = f"{adjusted_svm - threshold:.4f}"
+                                if dd_col is not None:
+                                    if 0 < adjusted_prob < 1:
+                                        dd = math.log(adjusted_prob / (1 - adjusted_prob))
+                                    else:
+                                        dd = 23.03 if adjusted_prob >= 1 else -23.03
+                                    parts[dd_col] = f"{dd:.4f}"
+                        except (ValueError, IndexError):
+                            pass
+
+                    tmp.write('\t'.join(parts) + '\n')
+
+            tmp.close()
+            shutil.move(tmp.name, score_info_path)
+        except Exception:
+            tmp.close()
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
+
+    return n_reclassified

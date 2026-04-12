@@ -65,6 +65,8 @@ class BranchPointMatch:
     sequence_u2: str | None = None  # U2 BP sequence
     score_u2: float | None = None  # U2 score
     search_region: str | None = None  # The actual search region sequence
+    scan_mean_score: float | None = None  # Mean U12 PWM score across all scan positions
+    scan_n_positions: int | None = None  # Number of positions scanned
 
 
 class BranchPointScorer:
@@ -96,8 +98,8 @@ class BranchPointScorer:
         self,
         intron: Intron,
         search_window: Tuple[int, int] = (-55, -5),
-        five_coords: Tuple[int, int] = (-3, 9),
-        three_coords: Tuple[int, int] = (-6, 4)
+        five_coords: Tuple[int, int] = (-3, 10),
+        three_coords: Tuple[int, int] = (-14, 4)
     ) -> BranchPointMatch | None:
         """
         Find the best branch point match in an intron.
@@ -114,10 +116,10 @@ class BranchPointScorer:
                           Default: (-55, -5) matches original intronIC
             five_coords: 5' splice site scoring region coordinates (start, stop)
                         Used to exclude this region from BP search for short introns
-                        Default: (-3, 9) matches original intronIC
+                        Default: (-3, 10) — positions -3 to +9 (13bp)
             three_coords: 3' splice site scoring region coordinates (start, stop) relative to 3' end
                          Used to exclude this region from BP search for short introns
-                         Default: (-6, 4) matches original intronIC
+                         Default: (-14, 4) — positions -14 to +3 (18bp, captures PPT)
 
         Returns:
             BranchPointMatch with best-scoring sequence and position, or None
@@ -163,39 +165,25 @@ class BranchPointScorer:
 
         # Find best match in search region using U12 PWM
         # Port from: intronIC.py:2920-2944 (multi_matrix_score bp scoring)
-        # Pass search_window[0] so scorer knows the genomic position of the search region
         u12_match = self._find_best_in_sequence(search_region, self.u12_pwm, search_window_start=search_window[0])
 
         # Calculate position relative to 3' end
         if use_streaming_mode:
             # In streaming mode, search_window coordinates are already relative to 3' end
-            # So position = search_window[0] + match.start_in_region
-            # e.g., search_window=(-55, -5), match at position 10 in region = -55 + 10 = -45
             position = search_window[0] + u12_match.start_in_region
         else:
             # Default mode: calculate from absolute positions
-            # actual_start_pos is the absolute position in the intron where search region starts (after clamping)
-            # u12_match.start_in_region is offset into the search region
-            # absolute position in intron = actual_start_pos + u12_match.start_in_region
-            # position relative to 3' end = absolute_position - intron_length
             intron_length = len(intron.sequences.seq)
             absolute_position = actual_start_pos + u12_match.start_in_region
             position = absolute_position - intron_length
 
         # Score the SAME sequence (U12's best match) with the U2 PWM
-        # Port from: intronIC.py:3086-3095 (log_ratio using same bp_region_seq)
         # This ensures we get a proper log-odds ratio: log2(P(seq|U12) / P(seq|U2))
-        # CRITICAL: BP PWMs use start_index=0, so use default seq_start_position=0
-        u2_score = self.u2_pwm.score_sequence(u12_match.sequence)  # Use default seq_start_position=0
+        u2_score = self.u2_pwm.score_sequence(u12_match.sequence)
 
         # Also find U2's own best match for bp_seq_u2 (diagnostic/output purposes)
-        # Port from: intronIC.py:3082-3084 (separate U2 BP sequence tracking)
         u2_match = self._find_best_in_sequence(search_region, self.u2_pwm, search_window_start=search_window[0])
 
-        # Create combined match with U12 and U2 results
-        # CRITICAL: score_u2 is the U2 score of the U12's best-match sequence (for log ratio)
-        # sequence_u2 is U2's own best match (for informational purposes only)
-        # Store the actual search_region so it can be saved to bp_region_seq
         return BranchPointMatch(
             sequence=u12_match.sequence,
             score=u12_match.score,
@@ -203,8 +191,10 @@ class BranchPointScorer:
             start_in_region=u12_match.start_in_region,
             stop_in_region=u12_match.stop_in_region,
             sequence_u2=u2_match.sequence,
-            score_u2=u2_score,  # Score of U12's sequence with U2 PWM
-            search_region=search_region  # The actual sequence that was searched
+            score_u2=u2_score,
+            search_region=search_region,
+            scan_mean_score=u12_match.scan_mean_score,
+            scan_n_positions=u12_match.scan_n_positions,
         )
 
     def _extract_search_region(
@@ -235,7 +225,7 @@ class BranchPointScorer:
             - actual_start_position: Absolute position in intron where search region starts (after clamping)
 
         Example:
-            For 100bp intron with window (-55, -5), five_coords=(-3, 9), three_coords=(-6, 4):
+            For 100bp intron with window (-55, -5), five_coords=(-3, 10), three_coords=(-14, 4):
             - start_pos = 100 + (-55) = 45
             - stop_pos = 100 + (-5) = 95
             - five_end = 9 (end of 5' region)
@@ -260,21 +250,17 @@ class BranchPointScorer:
         # Calculate the boundaries of the 5' and 3' scoring regions
         # Port from: intronIC.py:2527-2560 (_short_bp_adjust)
         # 5' region: [0, five_coords[1]) - ends at five_coords[1]
-        five_end = five_coords[1]  # e.g., 9 for (-3, 9)
+        five_end = five_coords[1]  # e.g., 10 for (-3, 10)
 
         # 3' region: [intron_length + three_coords[0], intron_length) - starts at three_coords[0] from end
-        three_start = intron_length + three_coords[0]  # e.g., for 47bp intron and (-6, 4): 47 + (-6) = 41
+        three_start = intron_length + three_coords[0]  # e.g., for 47bp intron and (-14, 4): 47 + (-14) = 33
 
-        # Clamp start position to:
-        # 1. Stay within intron boundaries (>= 0)
-        # 2. Not overlap with 5' scoring region (>= five_end)
-        # Port from: intronIC.py:2608-2612 (_short_bp_adjust only adjusts start, not stop)
+        # Clamp to avoid overlapping with other scoring regions:
+        # 1. Start: don't overlap with 5'SS scoring region
+        # 2. Stop: don't overlap with 3'SS scoring region
+        # This ensures each feature scores a non-overlapping portion of the intron.
         start_pos = max(start_pos, five_end)
-
-        # Note: Original code does NOT clamp stop position to avoid 3' region
-        # BP region is allowed to overlap with 3' scoring region
-        # Only clamp to intron boundaries
-        stop_pos = min(stop_pos, intron_length)
+        stop_pos = min(stop_pos, three_start)
 
         # Extract region (may be empty string if stop_pos <= start_pos)
         search_region = intron.sequences.seq[start_pos:stop_pos]
@@ -320,6 +306,7 @@ class BranchPointScorer:
         best_score = None
         best_coords = None
         best_seq = None
+        all_scores = []  # Collect all position scores for scan statistics
 
         # Sliding window search
         # Port from: intronIC.py:2161-2177
@@ -329,12 +316,13 @@ class BranchPointScorer:
         for sub_seq in self._sliding_window(sequence, window_size):
             # Score this window
             # Port from: intronIC.py:2164
-            # CRITICAL: BP PWMs have start_index=0 and expect positions 0-11
+            # CRITICAL: BP PWMs have start_index=0 and expect positions 0-N
             # The original bp_score() calls seq_score(sub_seq, matrix) with NO start_index,
             # which defaults to 0. We must do the same - seq_start_position=0 (the default).
             # DO NOT pass genomic position here!
             new_score = pwm.score_sequence(sub_seq)  # Use default seq_start_position=0
             new_coords = (start, stop)
+            all_scores.append(new_score)
 
             # Check if this is the best so far
             # Port from: intronIC.py:2166-2174
@@ -348,6 +336,10 @@ class BranchPointScorer:
             start += 1
             stop += 1
 
+        # Compute scan statistics for confidence metric
+        n_positions = len(all_scores)
+        mean_score = sum(all_scores) / n_positions if n_positions > 0 else 0.0
+
         # Return result
         # Port from: intronIC.py:2178
         return BranchPointMatch(
@@ -355,8 +347,53 @@ class BranchPointScorer:
             score=best_score,
             position=0,  # Will be updated by find_best_match
             start_in_region=best_coords[0],
-            stop_in_region=best_coords[1]
+            stop_in_region=best_coords[1],
+            scan_mean_score=mean_score,
+            scan_n_positions=n_positions,
         )
+
+    def _find_top_k_in_sequence(self, sequence: str, pwm: PWM, k: int = 2) -> list[BranchPointMatch]:
+        """
+        Find top-K scoring subsequences by raw PWM score.
+
+        Like _find_best_in_sequence but returns the K highest-scoring
+        positions, enabling the caller to evaluate multiple candidates
+        (e.g., pick the one with the best log-ratio).
+
+        Args:
+            sequence: Search region sequence
+            pwm: PWM to use for scoring
+            k: Number of top positions to return
+
+        Returns:
+            List of up to K BranchPointMatch objects, sorted by score descending
+        """
+        import heapq
+
+        window_size = pwm.length
+        if len(sequence) < window_size:
+            return []
+
+        # Collect all scores
+        all_hits = []
+        for i, sub_seq in enumerate(self._sliding_window(sequence, window_size)):
+            score = pwm.score_sequence(sub_seq)
+            all_hits.append((-score, i, sub_seq))  # negative for min-heap
+
+        # Get top K using partial sort
+        top_k = heapq.nsmallest(k, all_hits)
+
+        results = []
+        for neg_score, start, sub_seq in top_k:
+            results.append(BranchPointMatch(
+                sequence=sub_seq,
+                score=-neg_score,
+                position=0,
+                start_in_region=start,
+                stop_in_region=start + window_size,
+            ))
+
+        return results
 
     @staticmethod
     def _sliding_window(sequence: str, window_size: int) -> Iterator[str]:

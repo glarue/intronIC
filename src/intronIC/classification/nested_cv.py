@@ -122,6 +122,9 @@ class NestedCVEvaluator:
         eff_C_neg_max: float | None = None,
         progress_tracker=None,
         features_list: list | None = None,
+        kernel: str = 'rbf',
+        gamma_search: list | None = None,
+        extra_feature_names: list | None = None,
     ):
         """
         Initialize nested CV evaluator.
@@ -151,6 +154,7 @@ class NestedCVEvaluator:
             eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
             progress_tracker: Optional ProgressTracker for global step counting
             features_list: List of composite feature names for BothEndsStrongTransformer (default: None)
+            extra_feature_names: List of extra feature attribute names to include (default: None)
         """
         self.n_folds = n_folds
         self.n_optimization_rounds = n_optimization_rounds
@@ -176,6 +180,9 @@ class NestedCVEvaluator:
         self.eff_C_neg_max = eff_C_neg_max
         self.progress_tracker = progress_tracker
         self.features_list = features_list
+        self.kernel = kernel
+        self.gamma_search = gamma_search
+        self.extra_feature_names = extra_feature_names or []
 
     def evaluate(
         self, u12_reference: Sequence[Intron], u2_reference: Sequence[Intron]
@@ -279,6 +286,9 @@ class NestedCVEvaluator:
                 verbose=self.verbose,
                 progress_tracker=self.progress_tracker,
                 features_list=self.features_list,
+                kernel=self.kernel,
+                gamma_search=self.gamma_search,
+                extra_feature_names=self.extra_feature_names,
             )
             parameters = optimizer.optimize(
                 train_u12,
@@ -299,6 +309,7 @@ class NestedCVEvaluator:
                 max_iter=self.max_iter,
                 progress_tracker=self.progress_tracker,
                 features_list=self.features_list,
+                extra_feature_names=self.extra_feature_names,
             )
             ensemble = trainer.train_ensemble(
                 train_u12,

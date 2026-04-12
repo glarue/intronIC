@@ -76,11 +76,23 @@ def inspect_ensemble_weights(ensemble: SVMEnsemble, verbose: bool = True) -> Lis
 
         # Extract SVC from calibrated classifier
         # model.model is CalibratedClassifierCV
-        # calibrated_classifiers_[0].estimator is Pipeline(BothEndsStrong -> LinearSVC)
+        # calibrated_classifiers_[0].estimator is Pipeline(BothEndsStrong -> SVC/LinearSVC)
         # NOTE: Scaling happens EXTERNALLY via ScoreNormalizer, NOT inside the pipeline
-        # We need to get the LinearSVC from the end of the pipeline
+        # We need to get the SVC/LinearSVC from the end of the pipeline
         pipeline = model.model.calibrated_classifiers_[0].estimator
-        svc = pipeline.named_steps["svc"]  # Get the LinearSVC from pipeline
+        svc = pipeline.named_steps["svc"]  # Get the SVC/LinearSVC from pipeline
+
+        # For non-linear kernels (RBF), coef_ is not available
+        if not hasattr(svc, "coef_"):
+            if verbose:
+                kernel = getattr(svc, "kernel", "unknown")
+                n_sv = sum(svc.n_support_) if hasattr(svc, "n_support_") else "?"
+                gamma_val = getattr(svc, "_gamma", getattr(svc, "gamma", "?"))
+                print(f"  SVC(kernel='{kernel}'): {n_sv} support vectors, gamma={gamma_val}")
+                if hasattr(svc, "n_support_"):
+                    print(f"  Per-class SVs: {svc.n_support_.tolist()}")
+            continue
+
         coefs = svc.coef_[0]
         intercept = svc.intercept_[0]
 
@@ -148,7 +160,10 @@ def get_coefficient_summary(ensemble: SVMEnsemble) -> dict:
     all_coefs = []
     for model in ensemble.models:
         pipeline = model.model.calibrated_classifiers_[0].estimator
-        svc = pipeline.named_steps["svc"]  # Get LinearSVC from pipeline
+        svc = pipeline.named_steps["svc"]  # Get SVC/LinearSVC from pipeline
+        if not hasattr(svc, "coef_"):
+            # Non-linear kernel (RBF) - no per-feature weights available
+            return {"note": "Per-feature coefficients not available for non-linear kernel"}
         all_coefs.append(svc.coef_[0])
 
     all_coefs = np.array(all_coefs)  # Shape: (n_models, n_features)
