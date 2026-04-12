@@ -2,8 +2,6 @@
 
 # intronIC - (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-**Version 2.1** - Refactored Edition with Streamlined ML Architecture
-
 `intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine trained on position-weight matrix scores.
 
 ---
@@ -57,37 +55,19 @@ For complete documentation, see the **[intronIC Wiki](https://github.com/glarue/
 
 ---
 
-## What's New
+## What's New in v2.2
 
-### Version 2.1 (Latest)
-
-- **Improved cross-species model**: Default model now uses isotonic calibration for better accuracy
-- **`intronIC test` command**: Quick installation validation with bundled test data
-- **Bug fixes**: Test command metrics, sklearn warnings completely suppressed
+- **New 8D RBF SVM default model** trained on expanded reference data (472 U12 + 30,155 U2 introns)
+- **Five new classification features**: branch point offset, BPS motif sharpness, polypyrimidine tract metrics, and multi-site support scoring
+- **Reduced false positives**: 0 confident false calls in *C. elegans* (was 2), 1 in *Ascaris* (was 47)
 - See [CHANGELOG.md](CHANGELOG.md) for full release history
-
-### Version 2.0
-
-This refactored version maintains **100% algorithmic fidelity** and **CLI compatibility** with the original intronIC while providing a modernized, maintainable codebase:
-
-### Key Improvements
-
-- **Corrected ML Architecture**: Fixed double-scaling issue and train/test mismatch
-  - Single scaling step via RobustScaler with centering (removes composition bias)
-  - Configurable augmented features (5D standard or custom)
-  - Two-stage optimization (C via balanced_accuracy, calibration via log-loss)
-- **Modular Architecture**: Organized into logical packages instead of a single 6,000+-line file
-- **Enhanced Code Quality**: Type hints throughout, immutable data structures, better error handling
-- **Bug Fixes**: Corrected data leakage in z-score normalization, fixed type_id assignment
-- **Modern Tooling**: Support for `pixi` and `uv` package managers
-- **Improved Documentation**: Comprehensive wiki and inline documentation
 
 ---
 
 ## Key Features
 
-- **SVM-based classification** with probability scores (0-100%)
-- **Default pretrained model** loaded automatically - works for virtually all species
+- **RBF SVM classification** with probability scores (0-100%) using 8 sequence-derived features
+- **Default pretrained model** loaded automatically — works for virtually all species
 - **Streaming mode** (default) for ~85% memory reduction on large genomes
 - **Parallel processing** for improved performance (`-p 8` recommended)
 - **Fast runtimes**: ~6-10 minutes for human genome with default settings
@@ -105,9 +85,10 @@ Most eukaryotic introns (~99.5%) are spliced by the **major (U2-type) spliceosom
 
 intronIC identifies U12-type introns using:
 
-1. **PWM Scoring**: Apply position-weight matrices to 5' splice site, branch point, and 3' splice site
-2. **Normalization**: Convert raw scores to z-scores (prevents data leakage)
-3. **SVM Classification**: Linear SVM with balanced class weights outputs probability scores
+1. **PWM Scoring**: Apply position-weight matrices to 5' splice site, branch point, and 3' splice site regions
+2. **Normalization**: Convert raw scores to z-scores via robust scaling
+3. **Feature Engineering**: Compute composite features (multi-site corroboration, BP position, PPT metrics, BPS motif sharpness)
+4. **SVM Classification**: RBF SVM ensemble with balanced class weights outputs probability scores
 
 For detailed algorithm description, see the [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) wiki page.
 

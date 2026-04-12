@@ -109,6 +109,9 @@ class SplitEvaluator:
         eff_C_neg_max: float | None = None,
         progress_tracker=None,
         features_list: list | None = None,
+        kernel: str = 'rbf',
+        gamma_search: list | None = None,
+        extra_feature_names: list | None = None,
     ):
         """
         Initialize split evaluator.
@@ -138,6 +141,7 @@ class SplitEvaluator:
             eff_C_pos_range: Target effective penalty range for positive class (default: 1e-3 to 1e3)
             eff_C_neg_max: Optional cap on negative class effective penalty (default: None)
             progress_tracker: Optional ProgressTracker for global step counting
+            extra_feature_names: List of extra feature attribute names to include (default: None)
         """
         self.test_fraction = test_fraction
         self.val_fraction = val_fraction
@@ -172,6 +176,9 @@ class SplitEvaluator:
         self.eff_C_neg_max = eff_C_neg_max
         self.progress_tracker = progress_tracker
         self.features_list = features_list
+        self.kernel = kernel
+        self.gamma_search = gamma_search
+        self.extra_feature_names = extra_feature_names or []
 
     def evaluate(
         self, u12_reference: Sequence[Intron], u2_reference: Sequence[Intron]
@@ -287,6 +294,9 @@ class SplitEvaluator:
             verbose=self.verbose,
             progress_tracker=self.progress_tracker,
             features_list=self.features_list,
+            kernel=self.kernel,
+            gamma_search=self.gamma_search,
+            extra_feature_names=self.extra_feature_names,
         )
         parameters = optimizer.optimize(
             train_u12,
@@ -307,6 +317,7 @@ class SplitEvaluator:
             max_iter=self.max_iter,
             progress_tracker=self.progress_tracker,
             features_list=self.features_list,
+            extra_feature_names=self.extra_feature_names,
         )
         ensemble = trainer.train_ensemble(
             train_u12,

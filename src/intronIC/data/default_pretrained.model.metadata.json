@@ -1,35 +1,197 @@
 {
-  "model_name": "homo_sapiens.full_train.model",
-  "training_date": "2025-12-04 18:03:38",
+  "model_name": "homo_sapiens.model",
+  "training_date": "2026-04-10 06:36:25",
   "reference_data": {
     "u12": {
-      "file": "/home/glarue/code/intronIC/src/intronIC/data/u12_reference.introns.iic.gz",
-      "md5": "3e7d4665a811abf8ab86b11682cbf551",
-      "count": 387
+      "file": "/mnt/data/u12/intronIC_v2_repo/src/intronIC/data/u12_reference.introns.iic.gz",
+      "md5": "9c7639492f73b9d711ede4de45f6cca0",
+      "count": 472
     },
     "u2": {
-      "file": "/home/glarue/code/intronIC/src/intronIC/data/u2_reference.introns.iic.gz",
-      "md5": "b3b0804abeea9d2dbb76f0d59abbdd06",
-      "count": 20690
+      "file": "/mnt/data/u12/intronIC_v2_repo/src/intronIC/data/u2_reference.introns.iic.gz",
+      "md5": "8f5fed45e55af9d76d3270614b19ed78",
+      "count": 30155
     },
-    "total": 21077
+    "total": 30627
   },
   "hyperparameters": {
-    "C": 20.97201495064262,
-    "cv_score": 0.00018805116668794232,
-    "kernel": "linear",
+    "C": 65.88393087415548,
+    "cv_score": 0.0015871790463744336,
+    "kernel": "rbf",
     "calibration_method": "isotonic",
     "max_iter": 50000,
-    "n_models": 16,
+    "n_models": 15,
     "threshold": 90.0,
     "random_seed": 42
   },
   "evaluation": {
     "method": "nested_cv",
     "n_folds": 7,
-    "mean_f1": 1.0,
-    "std_f1": 0.0,
-    "mean_pr_auc": 1.0,
-    "std_pr_auc": 0.0
+    "mean_f1": 0.9947,
+    "std_f1": 0.0065,
+    "mean_pr_auc": 0.9999,
+    "std_pr_auc": 0.0002
+  },
+  "ensemble_coefficients": {
+    "kernel": "rbf",
+    "n_models": 15,
+    "per_model_support_vectors": [
+      {
+        "n_support": [
+          18,
+          12
+        ],
+        "total_support_vectors": 30,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          17,
+          12
+        ],
+        "total_support_vectors": 29,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          19,
+          12
+        ],
+        "total_support_vectors": 31,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          16,
+          9
+        ],
+        "total_support_vectors": 25,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          18,
+          10
+        ],
+        "total_support_vectors": 28,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          17,
+          12
+        ],
+        "total_support_vectors": 29,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          20,
+          10
+        ],
+        "total_support_vectors": 30,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          17,
+          12
+        ],
+        "total_support_vectors": 29,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          14,
+          10
+        ],
+        "total_support_vectors": 24,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          19,
+          10
+        ],
+        "total_support_vectors": 29,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          17,
+          11
+        ],
+        "total_support_vectors": 28,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          17,
+          12
+        ],
+        "total_support_vectors": 29,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          18,
+          12
+        ],
+        "total_support_vectors": 30,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          18,
+          12
+        ],
+        "total_support_vectors": 30,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          18,
+          11
+        ],
+        "total_support_vectors": 29,
+        "gamma": 0.01,
+        "C": 65.88393087415548,
+        "kernel": "rbf"
+      }
+    ],
+    "summary": {
+      "mean_total_sv": 28.666666666666668,
+      "gamma": 0.01,
+      "C": 65.88393087415548,
+      "note": "Per-feature weights not available for non-linear kernels"
+    }
   }
 }

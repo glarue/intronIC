@@ -20,15 +20,16 @@ from typing import Sequence, Tuple, Optional, Any
 import warnings
 import contextlib
 import numpy as np
-from sklearn.svm import LinearSVC
+from sklearn.svm import LinearSVC, SVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from intronIC.core.intron import Intron
 from intronIC.classification.transformers import BothEndsStrongTransformer
+from intronIC.classification.svm_factory import create_svm
 from intronIC.classification.optimizer import SVMParameters
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
@@ -79,6 +80,40 @@ class SVMEnsemble:
         return len(self.models)
 
 
+def _extract_feature_vector(intron: Intron, extra_names: list) -> list:
+    """Extract feature vector from an intron for training or prediction.
+
+    Base features: [five_z_score, bp_z_score, three_z_score]
+    Extra features: additional IntronScores fields by name.
+
+    Args:
+        intron: Intron with scores populated
+        extra_names: List of IntronScores attribute names to append
+
+    Returns:
+        List of floats [z1, z2, z3, ...extra]
+
+    Raises:
+        ValueError: If intron lacks z-scores
+    """
+    if intron.scores is None:
+        raise ValueError(f"Intron {intron.intron_id} has no scores")
+    if (intron.scores.five_z_score is None or
+        intron.scores.bp_z_score is None or
+        intron.scores.three_z_score is None):
+        raise ValueError(f"Intron {intron.intron_id} missing z-scores")
+
+    base = [
+        intron.scores.five_z_score,
+        intron.scores.bp_z_score,
+        intron.scores.three_z_score,
+    ]
+    for name in extra_names:
+        val = getattr(intron.scores, name, None)
+        base.append(float(val) if val is not None else 0.0)
+    return base
+
+
 class SVMTrainer:
     """
     Train ensemble of SVM classifiers with U2 subsampling.
@@ -100,7 +135,8 @@ class SVMTrainer:
         max_iter: int = 20000,
         features_list: Optional[list] = None,
         gamma_imbalance_options: Optional[list] = None,
-        progress_tracker: Optional[Any] = None
+        progress_tracker: Optional[Any] = None,
+        extra_feature_names: Optional[list] = None,
     ):
         """
         Initialize trainer.
@@ -113,6 +149,7 @@ class SVMTrainer:
             features_list: List of composite feature names to include (default: None = use default 7D)
             gamma_imbalance_options: Gamma scaling factors (default: None, uses parameters.gamma_imbalance from SVMParameters)
             progress_tracker: Optional ProgressTracker for global step counting
+            extra_feature_names: Additional IntronScores fields to include as classifier features
         """
         self.n_models = n_models
         self.random_state = random_state
@@ -121,6 +158,7 @@ class SVMTrainer:
         self.features_list = features_list
         self.gamma_imbalance_options = gamma_imbalance_options
         self.progress_tracker = progress_tracker
+        self.extra_feature_names = extra_feature_names or []
 
     def train_ensemble(
         self,
@@ -235,20 +273,25 @@ class SVMTrainer:
         # Key principle: Single scaling step (NOT double-scaling)
         # See: Expert workflow doc, SCALER_ARCHITECTURE_REVIEW.md
 
+        # Resolve gamma: 0.0 sentinel means 'scale' was used during optimization
+        gamma = parameters.gamma if parameters.gamma != 0.0 else 'scale'
+
         base_pipeline = Pipeline([
             ('transform', BothEndsStrongTransformer(
                 features=self.features_list,
-                gamma_imbalance=parameters.gamma_imbalance
+                gamma_imbalance=parameters.gamma_imbalance,
+                extra_feature_names=self.extra_feature_names,
             )),
-            ('svc', LinearSVC(
+            ('scale', StandardScaler()),
+            ('svc', create_svm(
+                kernel=parameters.kernel,
                 C=parameters.C,
-                penalty=parameters.penalty,
-                dual=False,
-                loss=parameters.loss,
+                gamma=gamma,
                 class_weight=class_weight,
+                penalty=parameters.penalty,
+                loss=parameters.loss,
                 max_iter=self.max_iter,
-                tol=1e-4,
-                random_state=seed
+                random_state=seed,
             ))
         ])
 
@@ -401,7 +444,7 @@ class SVMTrainer:
         """
         Extract feature matrix X and labels y.
 
-        Features: [five_z_score, bp_z_score, three_z_score]
+        Features: [five_z_score, bp_z_score, three_z_score, ...extra_features]
         Labels: 0 = U2, 1 = U12
 
         Args:
@@ -409,7 +452,7 @@ class SVMTrainer:
             u2_introns: U2-type introns (normalized)
 
         Returns:
-            X: Feature matrix (n_samples, 3)
+            X: Feature matrix (n_samples, 3 + len(extra_features))
             y: Labels (n_samples,)
 
         Raises:
@@ -418,34 +461,12 @@ class SVMTrainer:
         # Extract U12 features
         u12_features = []
         for intron in u12_introns:
-            if intron.scores is None:
-                raise ValueError(f"Intron {intron.intron_id} has no scores")
-            if (intron.scores.five_z_score is None or
-                intron.scores.bp_z_score is None or
-                intron.scores.three_z_score is None):
-                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-            u12_features.append([
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score
-            ])
+            u12_features.append(_extract_feature_vector(intron, self.extra_feature_names))
 
         # Extract U2 features
         u2_features = []
         for intron in u2_introns:
-            if intron.scores is None:
-                raise ValueError(f"Intron {intron.intron_id} has no scores")
-            if (intron.scores.five_z_score is None or
-                intron.scores.bp_z_score is None or
-                intron.scores.three_z_score is None):
-                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-            u2_features.append([
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score
-            ])
+            u2_features.append(_extract_feature_vector(intron, self.extra_feature_names))
 
         # Combine features and create labels
         # Port from: intronIC.py:5380, 5397

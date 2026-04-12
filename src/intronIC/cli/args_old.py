@@ -303,9 +303,9 @@ Examples:
             '--five_score_coords', '--five-score-coords',
             nargs=2,
             type=int,
-            default=[-3, 9],
+            default=[-3, 10],
             metavar=('START', 'END'),
-            help="5' splice site scoring region (default: -3 9)"
+            help="5' splice site scoring region (default: -3 10)"
         )
         coords_group.add_argument(
             '--bp_region_coords', '--bp-region-coords',
@@ -319,9 +319,9 @@ Examples:
             '--three_score_coords', '--three-score-coords',
             nargs=2,
             type=int,
-            default=[-6, 4],
+            default=[-14, 4],
             metavar=('START', 'END'),
-            help="3' splice site scoring region (default: -6 4)"
+            help="3' splice site scoring region (default: -14 4)"
         )
 
         # Configuration file options

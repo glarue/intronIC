@@ -34,11 +34,12 @@ def get_data_dir() -> Path:
     return Path(__file__).parent.parent / "src" / "intronIC" / "data"
 
 
-def load_and_score_reference_data(normalizer):
+def load_and_score_reference_data(normalizer, extra_names=()):
     """Load reference data, score it, and normalize using the model's normalizer.
 
     Args:
         normalizer: The ScoreNormalizer from the model bundle
+        extra_names: Extra feature names from the model's SVMParameters
 
     Returns:
         Tuple of (X features array, y labels array)
@@ -82,22 +83,19 @@ def load_and_score_reference_data(normalizer):
     u12_normalized = list(normalizer.transform(u12_scored, dataset_type="reference"))
     u2_normalized = list(normalizer.transform(u2_scored, dataset_type="reference"))
 
-    # Extract z-score features
-    def extract_features(introns):
+    # Extract z-score features (plus extra features if model uses them)
+    def extract_features(introns, extra_names=()):
+        from intronIC.classification.trainer import _extract_feature_vector
         features = []
         for intron in introns:
             if (intron.scores.five_z_score is not None and
                 intron.scores.bp_z_score is not None and
                 intron.scores.three_z_score is not None):
-                features.append([
-                    intron.scores.five_z_score,
-                    intron.scores.bp_z_score,
-                    intron.scores.three_z_score,
-                ])
+                features.append(_extract_feature_vector(intron, list(extra_names)))
         return np.array(features)
 
-    X_u12 = extract_features(u12_normalized)
-    X_u2 = extract_features(u2_normalized)
+    X_u12 = extract_features(u12_normalized, extra_names)
+    X_u2 = extract_features(u2_normalized, extra_names)
 
     print(f"Valid features: {len(X_u12)} U12, {len(X_u2)} U2")
 
@@ -130,9 +128,14 @@ def convert_calibration(input_path: Path, method: str, output_path: Path):
         print(f"Model already uses {method} calibration. Nothing to do.")
         return
 
+    # Determine extra features from model parameters
+    extra_names = getattr(first_model.parameters, 'extra_features', ())
+    if extra_names:
+        print(f"Extra features: {extra_names}")
+
     # Load reference data for refitting calibration
     print("Loading and scoring reference data...")
-    X, y = load_and_score_reference_data(normalizer)
+    X, y = load_and_score_reference_data(normalizer, extra_names)
     print(f"Reference data shape: {X.shape}")
 
     # Convert each model in ensemble
@@ -170,21 +173,10 @@ def convert_calibration(input_path: Path, method: str, output_path: Path):
 
         # Update parameters metadata
         old_params = svm_model.parameters
-        new_params = SVMParameters(
-            C=old_params.C,
-            calibration_method=method,
-            saturate_enabled=old_params.saturate_enabled,
-            include_max=old_params.include_max,
-            include_pairwise_mins=old_params.include_pairwise_mins,
-            penalty=old_params.penalty,
-            class_weight_multiplier=old_params.class_weight_multiplier,
-            loss=old_params.loss,
-            gamma_imbalance=old_params.gamma_imbalance,
-            dual=old_params.dual,
-            intercept_scaling=old_params.intercept_scaling,
-            cv_score=old_params.cv_score,
-            round_found=old_params.round_found,
-        )
+        from dataclasses import asdict
+        old_dict = asdict(old_params)
+        old_dict['calibration_method'] = method
+        new_params = SVMParameters(**old_dict)
 
         # Create new SVMModel (frozen dataclass, so we make a new one)
         new_model = SVMModel(

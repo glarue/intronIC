@@ -47,7 +47,9 @@ def plot_classification_results_from_file(
     # Read scores from file
     five_z_scores = []
     bp_z_scores = []
+    three_z_scores = []
     svm_scores = []
+    type_id_list = []
 
     with open(score_file, "r") as f:
         header = f.readline().strip().split("\t")
@@ -60,6 +62,9 @@ def plot_classification_results_from_file(
         except ValueError as e:
             raise ValueError(f"Missing required column in score file: {e}")
 
+        three_z_idx = header.index("3'_z") if "3'_z" in header else None
+        rel_idx = header.index("rel_score") if "rel_score" in header else None
+
         for line in f:
             fields = line.strip().split("\t")
             if len(fields) <= max(five_z_idx, bp_z_idx, svm_idx):
@@ -69,11 +74,13 @@ def plot_classification_results_from_file(
             five_z = fields[five_z_idx]
             bp_z = fields[bp_z_idx]
             svm = fields[svm_idx]
+            three_z = fields[three_z_idx] if three_z_idx is not None else "NA"
 
             if five_z != "NA" and bp_z != "NA":
                 try:
                     five_z_scores.append(float(five_z))
                     bp_z_scores.append(float(bp_z))
+                    three_z_scores.append(float(three_z) if three_z != "NA" else 0.0)
                 except ValueError:
                     continue
 
@@ -88,6 +95,7 @@ def plot_classification_results_from_file(
         return
 
     score_vector = np.array(list(zip(five_z_scores, bp_z_scores)))
+    score_vector_3d = np.array(list(zip(five_z_scores, bp_z_scores, three_z_scores)))
 
     # 1. Density hexplot
     hexplot_path = output_dir / f"{species_name}.plot.hex.iic.png"
@@ -114,7 +122,19 @@ def plot_classification_results_from_file(
         fig_dpi=fig_dpi,
     )
 
-    # 3. Score histogram
+    # 3. 3D scatter plot (5'z, BPz, 3'z)
+    if three_z_idx is not None:
+        scatter_3d_path = output_dir / f"{species_name}.plot.scatter3d.iic.png"
+        scatter_3d(
+            score_vector_3d=score_vector_3d,
+            svm_scores=svm_scores,
+            species_name=species_name,
+            output_path=scatter_3d_path,
+            threshold=threshold,
+            fig_dpi=fig_dpi,
+        )
+
+    # 4. Score histogram
     if svm_scores:
         hist_path = output_dir / f"{species_name}.plot.score_histogram.iic.png"
         histogram(
@@ -184,7 +204,51 @@ def plot_classification_results(
         fig_dpi=fig_dpi,
     )
 
-    # 3. Score histogram
+    # 3. 3D scatter plot (5'z, BPz, 3'z)
+    score_vector_3d = []
+    for intron in introns:
+        if (
+            intron.scores
+            and intron.scores.five_z_score is not None
+            and intron.scores.bp_z_score is not None
+            and intron.scores.three_z_score is not None
+        ):
+            score_vector_3d.append([
+                intron.scores.five_z_score,
+                intron.scores.bp_z_score,
+                intron.scores.three_z_score,
+            ])
+
+    if score_vector_3d:
+        score_vector_3d = np.array(score_vector_3d)
+        svm_scores_for_3d = [
+            i.scores.svm_score
+            for i in introns
+            if i.scores and i.scores.svm_score is not None
+            and i.scores.five_z_score is not None
+            and i.scores.bp_z_score is not None
+            and i.scores.three_z_score is not None
+        ]
+        type_ids_for_3d = [
+            i.metadata.type_id if i.metadata else None
+            for i in introns
+            if i.scores and i.scores.svm_score is not None
+            and i.scores.five_z_score is not None
+            and i.scores.bp_z_score is not None
+            and i.scores.three_z_score is not None
+        ]
+        scatter_3d_path = output_dir / f"{species_name}.plot.scatter3d.iic.png"
+        scatter_3d(
+            score_vector_3d=score_vector_3d,
+            svm_scores=svm_scores_for_3d,
+            species_name=species_name,
+            output_path=scatter_3d_path,
+            threshold=threshold,
+            type_ids=type_ids_for_3d,
+            fig_dpi=fig_dpi,
+        )
+
+    # 4. Score histogram
     svm_scores = [
         i.scores.svm_score
         for i in introns
@@ -475,6 +539,118 @@ def scatter_plot_from_arrays(
     plt.close()
 
 
+def scatter_3d(
+    score_vector_3d: np.ndarray,
+    svm_scores: List[float],
+    species_name: str,
+    output_path: Path,
+    threshold: float,
+    type_ids: Optional[List[Optional[str]]] = None,
+    fsize: int = 12,
+    fig_dpi: int = 300,
+):
+    """
+    Create a 3D scatter plot showing 5'z, BPz, and 3'z simultaneously.
+
+    Displays two viewing angles side by side so all three axes are visible.
+    U12 calls are colored by confidence level; U2 introns are shown as a
+    translucent cloud for context.
+
+    Args:
+        score_vector_3d: Nx3 array of (5'z, BPz, 3'z)
+        svm_scores: List of SVM scores (same length as score_vector_3d)
+        species_name: Species name for title
+        output_path: Full path where plot should be saved
+        threshold: U12 classification threshold
+        type_ids: Optional list of type classifications ('u2', 'u12', or None)
+        fsize: Font size
+        fig_dpi: Figure DPI
+    """
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    n_points = min(len(score_vector_3d), len(svm_scores))
+    scores_3d = score_vector_3d[:n_points]
+    svms = svm_scores[:n_points]
+
+    # Classify points
+    score_stdev = np.std(svms) if svms else 10.0
+    high_val = threshold
+    med_val = threshold - score_stdev
+
+    u2_idx, u12_low_idx, u12_med_idx, u12_high_idx = [], [], [], []
+
+    for i, score in enumerate(svms):
+        if type_ids is not None and i < len(type_ids):
+            is_u2 = type_ids[i] == "u2"
+        else:
+            is_u2 = score < 50
+
+        if is_u2:
+            u2_idx.append(i)
+        elif score > high_val:
+            u12_high_idx.append(i)
+        elif med_val < score <= high_val:
+            u12_med_idx.append(i)
+        else:
+            u12_low_idx.append(i)
+
+    # Subsample U2 for performance (max 20K points)
+    if len(u2_idx) > 20000:
+        rng = np.random.RandomState(42)
+        u2_idx = list(rng.choice(u2_idx, 20000, replace=False))
+
+    fig = plt.figure(figsize=(16, 7))
+
+    # Two viewing angles
+    views = [(25, -50), (25, 40)]
+    view_labels = ["View 1", "View 2"]
+
+    for panel, (elev, azim) in enumerate(views):
+        ax = fig.add_subplot(1, 2, panel + 1, projection="3d")
+
+        # Plot U2 as translucent grey
+        if u2_idx:
+            u2_pts = scores_3d[u2_idx]
+            ax.scatter(
+                u2_pts[:, 0], u2_pts[:, 1], u2_pts[:, 2],
+                s=1, c="xkcd:medium grey", alpha=0.03, rasterized=True,
+            )
+
+        # Plot U12 by confidence tier (low → high so high draws on top)
+        for idx_list, color, label, size in [
+            (u12_low_idx, "xkcd:red", f"U12<={int(med_val)}", 15),
+            (u12_med_idx, "xkcd:orange", f"{int(med_val)}<U12<={int(high_val)}", 20),
+            (u12_high_idx, "xkcd:green", f"U12>{int(high_val)}", 25),
+        ]:
+            if idx_list:
+                pts = scores_3d[idx_list]
+                ax.scatter(
+                    pts[:, 0], pts[:, 1], pts[:, 2],
+                    s=size, c=color, alpha=0.6, edgecolors="none",
+                    label=f"{label} ({len(idx_list)})",
+                )
+
+        ax.set_xlabel("5' z-score", fontsize=fsize, labelpad=8)
+        ax.set_ylabel("BPS z-score", fontsize=fsize, labelpad=8)
+        ax.set_zlabel("3' z-score", fontsize=fsize, labelpad=8)
+        ax.tick_params(labelsize=fsize - 2)
+        ax.view_init(elev=elev, azim=azim)
+
+        if panel == 0:
+            ax.legend(
+                fontsize=fsize - 2, loc="upper left",
+                markerscale=2, framealpha=0.8,
+            )
+
+    fig.suptitle(
+        f"{species_name} - U12 Classification (3D z-scores)",
+        fontsize=fsize + 2, weight="bold", y=0.97,
+    )
+
+    plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
+    plt.close()
+
+
 def histogram(
     data_list: List[float],
     threshold: float,
@@ -709,3 +885,212 @@ def ref_scatter(
     output_path = output_dir / f"{species_name}.plot.training_scatter.iic.png"
     plt.savefig(output_path, format="png", dpi=fig_dpi)
     plt.close()
+
+
+def plot_decision_surface(
+    ensemble,
+    u12_z: np.ndarray,
+    u2_z: np.ndarray,
+    output_dir: Path,
+    species_name: str,
+    hard_neg_threshold: Tuple[float, float] = (2.0, 1.0),
+    fig_dpi: int = 150,
+):
+    """
+    Generate 4-panel decision surface visualization for a trained ensemble.
+
+    Panels:
+    1. Decision boundary with training data density (hexbin U2, scatter U12/hard neg)
+    2. Decision function heatmap with margin contours
+    3. Decision function vs 5'z at fixed BPz values
+    4. Per-feature contribution breakdown for representative intron profiles
+
+    The plot projects the 6D decision surface onto the 5'z × BPz plane,
+    fixing 3'z at the U12 median. Shows the piecewise-linear boundary
+    structure created by min/sqrt composite features.
+
+    Args:
+        ensemble: Trained SVMEnsemble with models
+        u12_z: Nx3 array of U12 z-scores (5'z, BPz, 3'z)
+        u2_z: Mx3 array of U2 z-scores (5'z, BPz, 3'z)
+        output_dir: Directory for output file
+        species_name: Species name for filename
+        hard_neg_threshold: (5'z_min, BPz_max) for identifying hard negatives
+        fig_dpi: Output resolution
+    """
+    from matplotlib.colors import TwoSlopeNorm
+
+    hard_mask = (u2_z[:, 0] > hard_neg_threshold[0]) & (u2_z[:, 1] < hard_neg_threshold[1])
+    s3_u12_med = float(np.median(u12_z[:, 2]))
+
+    # Compute median values for any extra feature columns (beyond the 3 z-scores)
+    n_extra = u12_z.shape[1] - 3
+    if n_extra > 0:
+        extra_medians = np.median(u12_z[:, 3:], axis=0)
+    else:
+        extra_medians = np.array([])
+
+    def ensemble_decision(X_3d):
+        """Mean decision function across ensemble models."""
+        decisions = []
+        for m in ensemble.models:
+            model = m.model
+            if hasattr(model, "calibrated_classifiers_"):
+                pipeline = model.calibrated_classifiers_[0].estimator
+            else:
+                pipeline = model
+            decisions.append(pipeline.decision_function(X_3d))
+        return np.mean(decisions, axis=0)
+
+    # Grid for surface
+    s5_range = np.linspace(-2, 4.5, 200)
+    bp_range = np.linspace(-2, 3.5, 200)
+    s5_grid, bp_grid = np.meshgrid(s5_range, bp_range)
+
+    X_grid = np.column_stack([
+        s5_grid.ravel(), bp_grid.ravel(),
+        np.full(s5_grid.size, s3_u12_med)
+    ])
+    # Pad with median extra-feature values if model uses them
+    if n_extra > 0:
+        extra_cols = np.tile(extra_medians, (X_grid.shape[0], 1))
+        X_grid = np.column_stack([X_grid, extra_cols])
+    dec = ensemble_decision(X_grid).reshape(s5_grid.shape)
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+
+    # Panel 1: Boundary + data density
+    ax = axes[0, 0]
+    ax.hexbin(u2_z[~hard_mask, 0], u2_z[~hard_mask, 1],
+              gridsize=50, cmap="Blues", alpha=0.6, mincnt=1)
+    ax.scatter(u2_z[hard_mask, 0], u2_z[hard_mask, 1],
+               c="darkorange", s=25, alpha=0.9, marker="x", linewidths=1.5,
+               zorder=5, label=f"Hard neg U2 (n={hard_mask.sum()})")
+    ax.scatter(u12_z[:, 0], u12_z[:, 1],
+               c="red", s=12, alpha=0.5, edgecolors="darkred", linewidths=0.3,
+               zorder=6, label=f"U12 (n={len(u12_z)})")
+    ax.contour(s5_range, bp_range, dec, levels=[0], colors="black", linewidths=2.5)
+    ax.plot([-2, 4.5], [-2, 4.5], "k--", alpha=0.3, linewidth=1)
+    ax.set_xlabel("5'z score", fontsize=12)
+    ax.set_ylabel("BPz score", fontsize=12)
+    ax.set_title("Decision boundary with data density", fontsize=12)
+    ax.legend(loc="upper left", fontsize=9)
+    ax.set_xlim(-2, 4.5)
+    ax.set_ylim(-2, 3.5)
+
+    # Panel 2: Decision function heatmap
+    ax = axes[0, 1]
+    vmax = 3
+    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
+    im = ax.pcolormesh(s5_range, bp_range, np.clip(dec, -vmax, vmax),
+                       cmap="RdBu_r", norm=norm, shading="auto")
+    ax.contour(s5_range, bp_range, dec, levels=[0], colors="black", linewidths=2.5)
+    ax.contour(s5_range, bp_range, dec, levels=[-1, 1],
+               colors="gray", linewidths=1, linestyles="dashed")
+    ax.plot([-2, 4.5], [-2, 4.5], "k--", alpha=0.3, linewidth=1)
+    ax.set_xlabel("5'z score", fontsize=12)
+    ax.set_ylabel("BPz score", fontsize=12)
+    ax.set_title(f"Decision function heatmap\n(3'z={s3_u12_med:.2f}, dashed=margin \u00b11)", fontsize=12)
+    plt.colorbar(im, ax=ax, label="Decision function", shrink=0.8)
+    ax.set_xlim(-2, 4.5)
+    ax.set_ylim(-2, 3.5)
+
+    # Panel 3: Decision function slices
+    ax = axes[1, 0]
+    for bp_val, color in [(0.0, "#2166ac"), (1.0, "#4dac26"), (2.0, "#d62728")]:
+        X_line = np.column_stack([
+            s5_range, np.full(len(s5_range), bp_val),
+            np.full(len(s5_range), s3_u12_med)
+        ])
+        if n_extra > 0:
+            X_line = np.column_stack([X_line, np.tile(extra_medians, (len(s5_range), 1))])
+        ax.plot(s5_range, ensemble_decision(X_line),
+                color=color, linewidth=2, label=f"BPz={bp_val:.0f}")
+    ax.axhline(0, color="black", linewidth=1, alpha=0.5)
+    ax.set_xlabel("5'z score", fontsize=12)
+    ax.set_ylabel("Decision function", fontsize=12)
+    ax.set_title("Decision function vs 5'z at fixed BPz", fontsize=12)
+    ax.legend(fontsize=10)
+    ax.set_xlim(-1, 4.5)
+
+    # Panel 4: Per-feature contributions (linear) or decision function histogram (RBF)
+    ax = axes[1, 1]
+    # Get pipeline components from first model
+    m0 = ensemble.models[0].model
+    if hasattr(m0, "calibrated_classifiers_"):
+        pipe = m0.calibrated_classifiers_[0].estimator
+    else:
+        pipe = m0
+    transformer = pipe.named_steps["transform"]
+    scaler = pipe.named_steps.get("scale")
+    svc = pipe.named_steps["svc"]
+
+    if hasattr(svc, "coef_"):
+        # Linear kernel: show per-feature contribution breakdown
+        feature_names = list(transformer.get_feature_names_out())
+        w = svc.coef_[0]
+
+        # Build profiles with extra feature medians appended
+        _em = list(extra_medians) if n_extra > 0 else []
+        profiles = {
+            f"Real U12\n(3.0, 2.5, {s3_u12_med:.1f})": [3.0, 2.5, s3_u12_med] + _em,
+            "Hard neg\n(3.0, 0.0, -0.5)": [3.0, 0.0, -0.5] + _em,
+            "Marginal\n(2.0, 0.5, 0.0)": [2.0, 0.5, 0.0] + _em,
+            "Bulk U2\n(-0.5, -0.5, -0.5)": [-0.5, -0.5, -0.5] + _em,
+        }
+
+        x_pos = np.arange(len(profiles))
+        bar_width = 0.12
+        feat_colors = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#a65628"]
+
+        for f_idx, (fname, fcolor) in enumerate(zip(feature_names, feat_colors)):
+            vals = []
+            for raw_3d in profiles.values():
+                X_3d = np.array([raw_3d])
+                X_t = transformer.transform(X_3d)
+                X_s = scaler.transform(X_t) if scaler else X_t
+                vals.append(w[f_idx] * X_s[0, f_idx])
+            ax.bar(x_pos + f_idx * bar_width, vals, bar_width,
+                   label=fname, color=fcolor, alpha=0.8)
+
+        for i, raw_3d in enumerate(profiles.values()):
+            total = pipe.decision_function(np.array([raw_3d]))[0]
+            ax.plot(i + 2.5 * bar_width, total, "kD", markersize=8, zorder=10)
+
+        ax.axhline(0, color="black", linewidth=1, alpha=0.5)
+        ax.set_xticks(x_pos + 2.5 * bar_width)
+        ax.set_xticklabels(profiles.keys(), fontsize=9)
+        ax.set_ylabel("Weighted contribution (scaled)", fontsize=12)
+        ax.set_title("Per-feature contributions (\u25c6 = total decision)", fontsize=12)
+        ax.legend(fontsize=8, ncol=2, loc="upper right")
+    else:
+        # RBF or other non-linear kernel: show decision function histogram
+        # Compute decision function values for U12 and U2 reference data
+        # Use all columns (z-scores + any extra features)
+        u12_3d = u12_z
+        u2_3d = u2_z
+
+        u12_dec = ensemble_decision(u12_3d)
+        u2_dec = ensemble_decision(u2_3d)
+
+        # Plot overlapping histograms
+        bins = np.linspace(min(u2_dec.min(), u12_dec.min()),
+                          max(u2_dec.max(), u12_dec.max()), 60)
+        ax.hist(u2_dec, bins=bins, alpha=0.6, color="steelblue",
+                label=f"U2 (n={len(u2_dec)})", density=True)
+        ax.hist(u12_dec, bins=bins, alpha=0.6, color="red",
+                label=f"U12 (n={len(u12_dec)})", density=True)
+        ax.axvline(0, color="black", linewidth=1.5, linestyle="--", alpha=0.7,
+                   label="Decision boundary")
+        ax.set_xlabel("Decision function value", fontsize=12)
+        ax.set_ylabel("Density", fontsize=12)
+        kernel_name = getattr(svc, "kernel", "non-linear")
+        n_sv = sum(svc.n_support_) if hasattr(svc, "n_support_") else "?"
+        ax.set_title(f"Decision function distribution ({kernel_name}, {n_sv} SVs)", fontsize=12)
+        ax.legend(fontsize=10)
+
+    plt.tight_layout()
+    output_path = output_dir / f"{species_name}.plot.decision_surface.iic.png"
+    plt.savefig(output_path, format="png", dpi=fig_dpi)
+    plt.close()
+    return output_path

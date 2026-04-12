@@ -31,18 +31,19 @@ import warnings
 import joblib
 import numpy as np
 from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold, ParameterGrid
-from sklearn.svm import LinearSVC
+from sklearn.svm import LinearSVC, SVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.pipeline import Pipeline
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.metrics import make_scorer, balanced_accuracy_score, log_loss, fbeta_score
+from sklearn.metrics import make_scorer, balanced_accuracy_score, log_loss, f1_score, fbeta_score
 from scipy.stats import gmean
 from tqdm.auto import tqdm
 
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from intronIC.core.intron import Intron
 from intronIC.classification.transformers import BothEndsStrongTransformer
+from intronIC.classification.svm_factory import create_svm, get_grid_params
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -198,7 +199,7 @@ def compute_weight_aware_C_bounds(
 
 @dataclass(frozen=True, slots=True)
 class SVMParameters:
-    """Optimized SVM hyperparameters for LinearSVC with BothEndsStrong features (NEW ARCHITECTURE - NO CLIPPING)."""
+    """Optimized SVM hyperparameters for SVC/LinearSVC with BothEndsStrong features (NEW ARCHITECTURE - NO CLIPPING)."""
 
     C: float  # Soft-margin penalty (L2 regularization strength)
     calibration_method: str  # 'sigmoid' or 'isotonic' (isotonic preferred)
@@ -207,17 +208,28 @@ class SVMParameters:
     include_pairwise_mins: bool  # BothEndsStrong pairwise mins (always False in new arch)
 
     # New grid-searched parameters (2025-01-19: robustness improvements)
-    penalty: str  # 'l1' or 'l2'
+    penalty: str  # 'l1' or 'l2' (only used with LinearSVC / linear kernel legacy)
     class_weight_multiplier: float  # Multiplier for balanced weights (0.8, 1.0, 1.2)
-    loss: str  # 'hinge' or 'squared_hinge' (for L2); 'squared_hinge' only (for L1)
+    loss: str  # 'hinge' or 'squared_hinge' (only used with LinearSVC / linear kernel legacy)
     gamma_imbalance: float = 1.0  # Gamma scaling for imbalance features (default: 1.0 = no scaling)
 
+    # SVM kernel configuration
+    kernel: str = 'linear'  # 'rbf' or 'linear'
+    gamma: float = 0.0  # RBF gamma parameter (0.0 means 'scale' was used)
+
     # Fixed parameters (not grid-searched)
-    dual: bool = False  # Always False (primal formulation)
+    dual: bool = False  # Always False (primal formulation for LinearSVC)
     intercept_scaling: float = 1.0  # Fixed to 1.0 (sklearn default; consider 10.0 if L1 intercept issues)
+
+    # Extra features (beyond z-scores) for classifier input
+    extra_features: tuple = ()  # e.g., ('ppt_score', 'bp_offset')
 
     cv_score: float = 0.0  # Cross-validation balanced_accuracy score
     round_found: int = 0  # Which optimization round found these params (-1 = averaged)
+
+    # Calibration comparison (Stage 2)
+    calibration_sigmoid_logloss: float = 0.0  # Log-loss with sigmoid calibration
+    calibration_isotonic_logloss: float = 0.0  # Log-loss with isotonic calibration
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,13 +244,15 @@ class OptimizationRound:
     best_include_max: bool  # BothEndsStrong max features (always False)
     best_include_pairwise_mins: bool  # BothEndsStrong pairwise mins (always False)
     best_score: float  # balanced_accuracy score
+    best_score_std: float  # CV std of best score (for plateau detection)
     rank_one_Cs: list[float]  # All rank-1 C values
 
     # New grid-searched parameters (2025-01-19: robustness improvements)
-    best_penalty: str = 'l2'  # 'l1' or 'l2'
+    best_penalty: str = 'l2'  # 'l1' or 'l2' (legacy, not used with SVC)
     best_class_weight_multiplier: float = 1.0  # Multiplier for balanced weights
-    best_loss: str = 'squared_hinge'  # 'hinge' or 'squared_hinge'
+    best_loss: str = 'squared_hinge'  # 'hinge' or 'squared_hinge' (legacy, not used with SVC)
     best_gamma_imbalance: float = 1.0  # Gamma scaling for imbalance features
+    best_gamma: object = 'scale'  # RBF gamma parameter (str or float)
 
     # Fixed parameters (for backward compatibility, not grid-searched)
     best_dual: bool = False  # Always False (primal formulation)
@@ -278,7 +292,12 @@ class SVMOptimizer:
         features_list: Optional[list] = None,
         gamma_imbalance_options: Optional[list] = None,
         param_grid_override: Optional[Dict[str, list]] = None,
-        progress_tracker: Optional[Any] = None
+        progress_tracker: Optional[Any] = None,
+        early_stop_on_plateau: bool = True,
+        plateau_rounds: int = 3,
+        kernel: str = 'rbf',
+        gamma_search: Optional[list] = None,
+        extra_feature_names: Optional[list] = None,
     ):
         """
         Initialize optimizer.
@@ -293,7 +312,7 @@ class SVMOptimizer:
             verbose: Whether to print detailed progress (default: True)
             max_iter: Maximum iterations for LinearSVC convergence (default: 100000)
             scoring_metric: Metric for evaluating parameters (default: 'balanced_accuracy').
-                          Options: 'balanced_accuracy', 'f_beta_0.5', 'f_beta_0.75'
+                          Options: 'balanced_accuracy', 'f1', 'f_beta_0.5', 'f_beta_0.75'
             penalty_options: Penalty types to search (default: ['l1', 'l2'])
             loss_options: Loss functions to search (default: ['hinge', 'squared_hinge'])
             class_weight_multipliers: Class weight multipliers to search (default: [0.8, 1.0, 1.2])
@@ -309,6 +328,14 @@ class SVMOptimizer:
                                but can specify: 'estimator__augment__include_max',
                                'estimator__svc__dual', 'estimator__svc__intercept_scaling', 'method'
             progress_tracker: Optional ProgressTracker for global step counting
+            early_stop_on_plateau: Stop optimization early when the best CV score
+                                  stops improving (default: True). Improvement is
+                                  measured relative to the CV score's standard error.
+            plateau_rounds: Number of consecutive rounds without meaningful score
+                          improvement before stopping (default: 3)
+            kernel: SVM kernel type: 'rbf' (default) or 'linear'
+            gamma_search: List of gamma values to grid search for RBF kernel
+                         (default: None, uses 'scale'). Example: [0.001, 0.01, 0.1, 0.5, 'scale']
         """
         self.n_rounds = n_rounds
         self.n_points_initial = n_points_initial
@@ -324,9 +351,14 @@ class SVMOptimizer:
         self.class_weight_multipliers = class_weight_multipliers if class_weight_multipliers is not None else [0.8, 1.0, 1.2]
         self.use_multiplier_tiebreaker = use_multiplier_tiebreaker
         self.features_list = features_list
+        self.extra_feature_names = extra_feature_names if extra_feature_names is not None else []
         self.gamma_imbalance_options = gamma_imbalance_options if gamma_imbalance_options is not None else [1.0]
         self.param_grid_override = param_grid_override
         self.progress_tracker = progress_tracker
+        self.early_stop_on_plateau = early_stop_on_plateau
+        self.plateau_rounds = plateau_rounds
+        self.kernel = kernel
+        self.gamma_search = gamma_search
         self.rounds_: list[OptimizationRound] = []
 
     def _create_scorer(self):
@@ -338,11 +370,16 @@ class SVMOptimizer:
 
         Supported metrics:
             - 'balanced_accuracy': (TPR + TNR) / 2, treats both classes equally
+            - 'f1': F1 score, harmonic mean of precision and recall
             - 'f_beta_0.5': F_0.5 score, heavily weights precision (minimizes FPs)
             - 'f_beta_0.75': F_0.75 score, slightly weights precision
         """
         if self.scoring_metric == 'balanced_accuracy':
             return make_scorer(balanced_accuracy_score)
+        elif self.scoring_metric == 'f1':
+            return make_scorer(f1_score)
+        elif self.scoring_metric == 'neg_log_loss':
+            return 'neg_log_loss'  # Built-in sklearn scorer (requires predict_proba)
         elif self.scoring_metric.startswith('f_beta_'):
             # Extract beta value from string (e.g., 'f_beta_0.5' -> 0.5)
             beta_str = self.scoring_metric.split('_')[-1]
@@ -357,7 +394,7 @@ class SVMOptimizer:
         else:
             raise ValueError(
                 f"Unsupported scoring_metric: '{self.scoring_metric}'. "
-                f"Options: 'balanced_accuracy', 'f_beta_0.5', 'f_beta_0.75'"
+                f"Options: 'balanced_accuracy', 'f1', 'f_beta_0.5', 'f_beta_0.75', 'neg_log_loss'"
             )
 
     def optimize(
@@ -413,6 +450,11 @@ class SVMOptimizer:
         # Track ranges to detect oscillation/convergence
         previous_ranges = []
 
+        # Track best score across rounds for plateau detection
+        best_score_overall = -np.inf
+        best_score_std = 0.0  # CV std of the best score (for SE threshold)
+        no_improvement_count = 0
+
         # Run geometric refinement
         early_stop = False
         for round_idx in range(self.n_rounds):
@@ -425,6 +467,41 @@ class SVMOptimizer:
             # Update global progress
             if self.progress_tracker:
                 self.progress_tracker.increment(f"Completed optimization round {round_idx + 1}/{self.n_rounds}")
+
+            # Check for score plateau: stop if best score hasn't meaningfully
+            # improved for N consecutive rounds.  "Meaningful" = improvement
+            # exceeds 1 standard error of the CV estimate (SE = std / sqrt(k)).
+            if self.early_stop_on_plateau and round_idx > 0:
+                current_score = round_result.best_score
+                se = best_score_std / np.sqrt(self.cv_folds)
+                improvement = current_score - best_score_overall
+
+                if improvement > se:
+                    # Genuine improvement — reset counter and update baseline
+                    no_improvement_count = 0
+                    best_score_overall = current_score
+                    best_score_std = round_result.best_score_std
+                else:
+                    no_improvement_count += 1
+                    if self.verbose:
+                        print(f"  Score plateau: {current_score:.6f} vs best {best_score_overall:.6f} "
+                              f"(improvement {improvement:+.6f} < 1 SE = {se:.6f}), "
+                              f"no improvement for {no_improvement_count}/{self.plateau_rounds} rounds",
+                              flush=True)
+
+                    if no_improvement_count >= self.plateau_rounds:
+                        if self.verbose:
+                            print(f"  Stopping early: score plateau for {self.plateau_rounds} "
+                                  f"consecutive rounds (best: {best_score_overall:.6f})",
+                                  flush=True)
+                        early_stop = True
+            elif round_idx == 0:
+                # Initialize baseline from first round
+                best_score_overall = round_result.best_score
+                best_score_std = round_result.best_score_std
+
+            if early_stop:
+                break
 
             # Prepare next round's grid (refine around best)
             if round_idx < self.n_rounds - 1:
@@ -463,14 +540,19 @@ class SVMOptimizer:
         final_loss = self.rounds_[-1].best_loss
         final_class_weight_multiplier = self.rounds_[-1].best_class_weight_multiplier
         final_gamma_imbalance = self.rounds_[-1].best_gamma_imbalance
+        final_gamma = self.rounds_[-1].best_gamma
+
+        # Store best gamma for use in calibration evaluation methods
+        self._best_gamma = final_gamma
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
             print(f"Stage 1 Optimization Complete", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"  C = {final_C:.6e}", flush=True)
-            print(f"  penalty = {final_penalty}", flush=True)
-            print(f"  loss = {final_loss}", flush=True)
+            print(f"  kernel = {self.kernel}", flush=True)
+            if self.kernel == 'rbf':
+                print(f"  gamma = {final_gamma}", flush=True)
             print(f"  class_weight_multiplier = {final_class_weight_multiplier}", flush=True)
             print(f"  gamma_imbalance = {final_gamma_imbalance}", flush=True)
             print(f"{'='*80}\n", flush=True)
@@ -512,9 +594,15 @@ class SVMOptimizer:
             print(f"\n✓ Winner: {final_method} (margin: {winner_margin:.6f})", flush=True)
             print(f"{'='*80}\n", flush=True)
 
-        print(f"Optimal parameters: C={final_C:.6e}, penalty={final_penalty}, loss={final_loss}, "
-              f"class_weight_mult={final_class_weight_multiplier}, gamma={final_gamma_imbalance}, "
+        gamma_str = f", gamma={final_gamma}" if self.kernel == 'rbf' else ""
+        print(f"Optimal parameters: C={final_C:.6e}, kernel={self.kernel}{gamma_str}, "
+              f"class_weight_mult={final_class_weight_multiplier}, gamma_imbalance={final_gamma_imbalance}, "
               f"calibration={final_method}, log-loss={final_score:.6f}", flush=True)
+
+        # Resolve gamma to a float for storage (if it's a string like 'scale', resolve lazily at train time)
+        gamma_value = 0.0  # Sentinel: 0.0 means 'scale' was used (resolved at fit time)
+        if isinstance(final_gamma, (int, float)):
+            gamma_value = float(final_gamma)
 
         return SVMParameters(
             C=final_C,
@@ -526,8 +614,11 @@ class SVMOptimizer:
             class_weight_multiplier=final_class_weight_multiplier,
             loss=final_loss,
             gamma_imbalance=final_gamma_imbalance,
+            kernel=self.kernel,
+            gamma=gamma_value,
             dual=False,  # Fixed: primal formulation (n_features << n_samples)
             intercept_scaling=1.0,  # Fixed: sklearn default (works for L1 and L2)
+            extra_features=tuple(self.extra_feature_names),
             cv_score=final_score,  # log-loss from Stage 2
             round_found=-1  # -1 indicates averaged result
         )
@@ -556,7 +647,7 @@ class SVMOptimizer:
         """
         Extract feature matrix X and labels y.
 
-        Features: [five_z_score, bp_z_score, three_z_score]
+        Features: [five_z_score, bp_z_score, three_z_score, ...extra_features]
         Labels: 0 = U2, 1 = U12
 
         Args:
@@ -564,43 +655,23 @@ class SVMOptimizer:
             u2_introns: U2-type introns (normalized)
 
         Returns:
-            X: Feature matrix (n_samples, 3)
+            X: Feature matrix (n_samples, 3 + len(extra_features))
             y: Labels (n_samples,)
 
         Raises:
             ValueError: If any intron lacks z-scores
         """
+        from intronIC.classification.trainer import _extract_feature_vector
+
         # Extract U12 features
         u12_features = []
         for intron in u12_introns:
-            if intron.scores is None:
-                raise ValueError(f"Intron {intron.intron_id} has no scores")
-            if (intron.scores.five_z_score is None or
-                intron.scores.bp_z_score is None or
-                intron.scores.three_z_score is None):
-                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-            u12_features.append([
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score
-            ])
+            u12_features.append(_extract_feature_vector(intron, self.extra_feature_names))
 
         # Extract U2 features
         u2_features = []
         for intron in u2_introns:
-            if intron.scores is None:
-                raise ValueError(f"Intron {intron.intron_id} has no scores")
-            if (intron.scores.five_z_score is None or
-                intron.scores.bp_z_score is None or
-                intron.scores.three_z_score is None):
-                raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-            u2_features.append([
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score
-            ])
+            u2_features.append(_extract_feature_vector(intron, self.extra_feature_names))
 
         # Combine features and create labels
         X = np.array(u2_features + u12_features)
@@ -657,25 +728,41 @@ class SVMOptimizer:
 
         # Debug: Log features being used
         if self.verbose and round_idx == 0:
-            if self.features_list is not None:
-                n_features = 3 + len(self.features_list)  # 3 base + composites
-                print(f"  Using {n_features}D feature set: [s5, sBP, s3] + {self.features_list}")
-            else:
-                # Using transformer default (which is ['absdiff_bp_3'])
-                print(f"  Using transformer default: 4D feature set [s5, sBP, s3, absdiff_bp_3]")
+            composite = self.features_list if self.features_list is not None else ['corr_5_bp', 'corr_bp_3', 'gap_5_bp']
+            extra = self.extra_feature_names if self.extra_feature_names else []
+            n_features = 3 + len(composite) + len(extra)
+            parts = f"[s5, sBP, s3] + {composite}"
+            if extra:
+                parts += f" + extra{extra}"
+            print(f"  Using {n_features}D feature set: {parts}")
 
-        model = Pipeline([
+        base_pipeline = Pipeline([
             ('transform', BothEndsStrongTransformer(
-                features=self.features_list
+                features=self.features_list,
+                extra_feature_names=self.extra_feature_names,
             )),
-            ('svc', LinearSVC(
-                # Parameters set via grid search
-                dual=False,  # Primal formulation (recommended when n_features < n_samples)
+            ('scale', StandardScaler()),
+            ('svc', create_svm(
+                kernel=self.kernel,
                 max_iter=self.max_iter,
                 tol=1e-4,
-                random_state=self.random_state + round_idx
+                random_state=self.random_state + round_idx,
             ))
         ])
+
+        # For neg_log_loss, wrap in CalibratedClassifierCV so the model
+        # has predict_proba during grid search.  This adds an inner CV
+        # for calibration (standard sklearn approach for probability-
+        # aware optimization of non-probabilistic classifiers).
+        use_calibrated_grid = (self.scoring_metric == 'neg_log_loss')
+        if use_calibrated_grid:
+            model = CalibratedClassifierCV(
+                base_pipeline, method='isotonic', cv=5
+            )
+            param_prefix = 'estimator__'  # CalibratedCV wraps the pipeline
+        else:
+            model = base_pipeline
+            param_prefix = ''  # Direct pipeline access
 
         # Compute balanced class weights with multipliers
         # Uses configured class_weight_multipliers from config
@@ -700,54 +787,53 @@ class SVMOptimizer:
         # - This allows genuine exploration of precision-recall tradeoff
         # - C bounds computed for multiplier=1.0 (balanced weights)
 
+        # Parameter key prefix: when model is wrapped in CalibratedClassifierCV,
+        # pipeline params need 'estimator__' prefix to reach the inner pipeline.
+        svc_key = f'{param_prefix}svc__'
+        transform_key = f'{param_prefix}transform__'
+
         if self.param_grid_override is not None:
             # Use custom parameter grid for fast testing
-            param_grid = {'svc__C': C_grid}  # Direct access (no 'estimator__' prefix)
-            param_grid.update(self.param_grid_override)
+            param_grid = {f'{svc_key}C': C_grid}
+            # Rewrite override keys with correct prefix
+            for k, v in self.param_grid_override.items():
+                prefixed = k.replace('svc__', f'{svc_key}').replace('transform__', f'{transform_key}')
+                param_grid[prefixed] = v
         else:
             # Full parameter grid for production
-            # Uses configured penalty_options, loss_options, class_weight_multipliers
-            #
-            # SKLEARN CONSTRAINTS (dual=False):
-            # - penalty='l1': only supports loss='squared_hinge'
-            # - penalty='l2': only supports loss='squared_hinge' (NOT hinge when dual=False)
-            #
-            # Since we use dual=False, we can only use loss='squared_hinge'
-            # Filter loss_options to only include 'squared_hinge'
-            valid_losses = [loss for loss in self.loss_options if loss == 'squared_hinge']
-            if not valid_losses:
-                # Fallback to squared_hinge if user removed it from config
-                valid_losses = ['squared_hinge']
+            # Kernel-specific params (penalty/loss for linear, gamma for RBF)
+            # handled by get_grid_params factory
+            kernel_params = get_grid_params(
+                kernel=self.kernel,
+                svc_key=svc_key,
+                penalty_options=self.penalty_options,
+                loss_options=self.loss_options,
+                gamma_search=self.gamma_search,
+            )
 
-            # Create list of parameter grids (one per (multiplier, gamma) combination)
-            # GridSearchCV accepts a list of dicts, and will search the union of them
-            # Grid over both class_weight_multipliers and gamma_imbalance_options
+            # Create list of parameter grids (one per multiplier)
             param_grid_list = []
             for multiplier in self.class_weight_multipliers:
-                # Create class_weight dict for this multiplier
-                # CRITICAL: Only scale w_pos (U12), keep w_neg (U2) fixed
-                # This creates a genuine precision-recall tradeoff
                 class_weight = {
                     0: w_neg_base,               # U2 - FIXED
                     1: w_pos_base * multiplier   # U12 - SCALED by multiplier
                 }
 
-                # Create a parameter grid for this multiplier
-                # Use SAME C_grid for all multipliers (no per-multiplier scaling)
-                # Include gamma_imbalance in grid (scales neg_absdiff_* features)
-                param_grid_list.append({
-                    'svc__C': list(C_grid),  # Same C values for all multipliers
-                    'svc__class_weight': [class_weight],  # Single class_weight dict (in a list)
-                    'svc__penalty': self.penalty_options,
-                    'svc__loss': valid_losses,
-                    'transform__gamma_imbalance': self.gamma_imbalance_options  # Grid over gamma
-                })
+                grid_entry = {
+                    f'{svc_key}C': list(C_grid),
+                    f'{svc_key}class_weight': [class_weight],
+                    f'{transform_key}gamma_imbalance': self.gamma_imbalance_options,
+                }
+                # Add kernel-specific parameters
+                grid_entry.update(kernel_params)
+
+                param_grid_list.append(grid_entry)
 
             param_grid = param_grid_list
-            # Grid size: len(C_grid) × len(penalty_options) × 1 loss × len(class_weight_multipliers) × len(gamma_imbalance_options)
+            # Grid size: len(C_grid) × len(class_weight_multipliers) × len(gamma_imbalance_options) [× len(gamma_grid) for RBF]
 
         # Create scorer based on configured metric
-        # Options: balanced_accuracy, f_beta_0.5, f_beta_0.75
+        # Options: balanced_accuracy, f1, f_beta_0.5, f_beta_0.75
         scorer = self._create_scorer()
 
         grid_search = GridSearchCV(
@@ -766,7 +852,11 @@ class SVMOptimizer:
         n_candidates = len(list(ParameterGrid(param_grid)))
         n_cv_folds = cv_splitter.get_n_splits(y)  # Cross-validation folds
         total_tasks = n_candidates * n_cv_folds + 1  # +1 for final refit
-        total_fits = total_tasks  # Each task = one model fit (no calibration wrapper)
+        if use_calibrated_grid:
+            # Each task trains CalibratedClassifierCV with 5 inner folds
+            total_fits = total_tasks * 5
+        else:
+            total_fits = total_tasks  # Each task = one model fit (no calibration wrapper)
 
         if self.verbose:
             print(f"\n{'='*80}", flush=True)
@@ -774,7 +864,10 @@ class SVMOptimizer:
             print(f"ROUND {round_idx + 1}/{self.n_rounds} - Grid Search (C Optimization){global_step_str}", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"Parameter combinations: {n_candidates} (C={len(C_grid)})", flush=True)
-            print(f"Model: UNCALIBRATED LinearSVC (calibration selected later)", flush=True)
+            if use_calibrated_grid:
+                print(f"Model: CalibratedClassifierCV(SVC(kernel='{self.kernel}'), method='isotonic', cv=5)", flush=True)
+            else:
+                print(f"Model: UNCALIBRATED SVC(kernel='{self.kernel}') (calibration selected later)", flush=True)
             print(f"CV folds: {n_cv_folds}", flush=True)
             print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
             print(f"Total model fits: {total_fits:,}", flush=True)
@@ -833,6 +926,17 @@ class SVMOptimizer:
                 stop_monitor.set()
                 monitor_thread.join(timeout=1)
 
+        # If we used CalibratedClassifierCV wrapper, strip the 'estimator__'
+        # prefix from parameter keys so downstream code can use plain
+        # 'svc__' / 'transform__' keys uniformly.
+        if use_calibrated_grid and param_prefix:
+            def _strip_prefix(d):
+                return {k.replace(param_prefix, '', 1): v for k, v in d.items()}
+            grid_search.best_params_ = _strip_prefix(grid_search.best_params_)
+            grid_search.cv_results_['params'] = [
+                _strip_prefix(p) for p in grid_search.cv_results_['params']
+            ]
+
         elapsed = time.time() - start_time
 
         if self.verbose:
@@ -880,11 +984,16 @@ class SVMOptimizer:
         best_include_max = False
         best_include_pairwise_mins = False
         best_score = grid_search.best_score_
+        # CV std of best score (for plateau detection)
+        best_idx = grid_search.best_index_
+        best_score_std = grid_search.cv_results_['std_test_score'][best_idx]
 
         # Extract new parameters from best_params_
-        best_penalty = grid_search.best_params_.get('svc__penalty', 'l2')
-        best_loss = grid_search.best_params_.get('svc__loss', 'squared_hinge')
+        # SVC does not use penalty/loss (those are LinearSVC-specific)
+        best_penalty = grid_search.best_params_.get('svc__penalty', 'l2')  # Not in grid for SVC, use default
+        best_loss = grid_search.best_params_.get('svc__loss', 'squared_hinge')  # Not in grid for SVC, use default
         best_gamma_imbalance = grid_search.best_params_.get('transform__gamma_imbalance', 1.0)
+        best_gamma = grid_search.best_params_.get('svc__gamma', 'scale')  # RBF gamma (if searched)
 
         # Map class_weight dict back to multiplier
         # Extract from best_params_ and compute which multiplier was used
@@ -1002,11 +1111,12 @@ class SVMOptimizer:
             print(f"ROUND {round_idx + 1} SUMMARY", flush=True)
             print(f"{'='*80}", flush=True)
             print(f"Best C (geometric mean of rank-1): {best_C:.6e}", flush=True)
-            print(f"Best penalty: {best_penalty}", flush=True)
-            print(f"Best loss: {best_loss}", flush=True)
+            print(f"Kernel: {self.kernel}", flush=True)
+            if self.kernel == 'rbf':
+                print(f"Best gamma: {best_gamma}", flush=True)
             print(f"Best class_weight_multiplier: {best_class_weight_multiplier:.2f}", flush=True)
             print(f"Effective C_pos: {eff_C_pos_selected:.2e} (target: [{eff_C_pos_range[0]:.0e}, {eff_C_pos_range[1]:.0e}])", flush=True)
-            print(f"Model: UNCALIBRATED LinearSVC", flush=True)
+            print(f"Model: UNCALIBRATED SVC(kernel='{self.kernel}')", flush=True)
             print(f"Best CV score ({self.scoring_metric}): {best_score:.4f}", flush=True)
             print(f"Rank-1 C values: {', '.join([f'{c:.2e}' for c in rank_one_Cs])}", flush=True)
             print(f"Note: Calibration method (sigmoid vs isotonic) will be selected after C optimization completes", flush=True)
@@ -1021,11 +1131,13 @@ class SVMOptimizer:
             best_include_max=best_include_max,
             best_include_pairwise_mins=best_include_pairwise_mins,
             best_score=best_score,
+            best_score_std=best_score_std,
             rank_one_Cs=rank_one_Cs,
             best_penalty=best_penalty,
             best_class_weight_multiplier=best_class_weight_multiplier,
             best_loss=best_loss,
-            best_gamma_imbalance=best_gamma_imbalance
+            best_gamma_imbalance=best_gamma_imbalance,
+            best_gamma=best_gamma,
         )
 
     def _refine_grid(
@@ -1149,27 +1261,29 @@ class SVMOptimizer:
         w_neg = (n_samples / (2.0 * n_neg)) * class_weight_multiplier
         class_weight = {0: w_neg, 1: w_pos}
 
-        # CORRECTED: Removed RobustScaler (scaling done outside pipeline)
-        # Pipeline: z-scores → augmented features → svc
+        # Pipeline: z-scores → augmented features → standardize → svc
+        gamma = getattr(self, '_best_gamma', 'scale')
         base_svm_pipeline = Pipeline([
             ('transform', BothEndsStrongTransformer(
-                features=self.features_list
+                features=self.features_list,
+                extra_feature_names=self.extra_feature_names,
             )),
-            ('svc', LinearSVC(
+            ('scale', StandardScaler()),
+            ('svc', create_svm(
+                kernel=self.kernel,
                 C=C,
-                penalty=penalty,
-                dual=False,
-                loss=loss,
+                gamma=gamma,
                 class_weight=class_weight,
+                penalty=penalty,
+                loss=loss,
                 max_iter=self.max_iter,
-                tol=1e-4,
-                random_state=self.random_state
+                random_state=self.random_state,
             ))
         ])
 
         model = CalibratedClassifierCV(
             base_svm_pipeline,
-            method=method,  # The method we're evaluating
+            method=method,
             cv=self.cv_folds,
             ensemble='auto'
         )
@@ -1222,31 +1336,32 @@ class SVMOptimizer:
         # Pipeline: z-scores → augmented features → svc → calibration
         # - Data arrives as z-scores (already scaled by ScoreNormalizer)
         # - BothEndsStrongTransformer: Augmented features from z-scores
-        # - LinearSVC: L2-regularized linear classifier
+        # - SVC: Kernel-based classifier (rbf or linear)
         # - CalibratedClassifierCV: External calibration (isotonic or sigmoid)
         #
         # Scoring: balanced_accuracy (designed for imbalanced data)
+        gamma = getattr(self, '_best_gamma', 'scale')
         base_svm_pipeline = Pipeline([
             ('transform', BothEndsStrongTransformer(
-                features=self.features_list
+                features=self.features_list,
+                extra_feature_names=self.extra_feature_names,
             )),
-            ('svc', LinearSVC(
+            ('scale', StandardScaler()),
+            ('svc', create_svm(
+                kernel=self.kernel,
                 C=C,
-                penalty='l2',
-                dual=False,
-                loss='squared_hinge',
+                gamma=gamma,
                 class_weight='balanced',
                 max_iter=self.max_iter,
-                tol=1e-4,
-                random_state=self.random_state
+                random_state=self.random_state,
             ))
         ])
 
         model = CalibratedClassifierCV(
             base_svm_pipeline,
-            method=method,  # Use same method as found in grid search
+            method=method,
             cv=self.cv_folds,
-            ensemble='auto'  # Per-fold fit + averaging
+            ensemble='auto'
         )
 
         # balanced_accuracy scorer: (TPR + TNR) / 2

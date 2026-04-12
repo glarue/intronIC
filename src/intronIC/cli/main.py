@@ -25,7 +25,7 @@ from smart_open import open as smart_open  # type: ignore[import-unresolved]
 from intronIC.classification.classifier import IntronClassifier
 
 # Import pipeline components
-from intronIC.core.intron import Intron, IntronSequences, OmissionReason
+from intronIC.core.intron import Intron, IntronMetadata, IntronSequences, OmissionReason
 from intronIC.extraction.annotator import AnnotationHierarchyBuilder
 from intronIC.extraction.filters import IntronFilter, prefilter_introns
 from intronIC.extraction.intronator import IntronGenerator
@@ -383,6 +383,123 @@ def format_count_with_percentage(count: int, total: int) -> str:
     return f"{count:,} ({percentage:.2f}%)"
 
 
+def _extract_ensemble_coefficients(ensemble) -> dict:
+    """Extract per-model coefficients and intercepts from trained ensemble.
+
+    Returns a dict with feature names, per-model weights/intercepts,
+    and summary statistics suitable for JSON metadata.
+
+    For linear kernel SVC/LinearSVC: extracts coef_ and intercept_.
+    For RBF kernel SVC: extracts n_support_, gamma, and support vector counts
+    (no per-feature weights available for non-linear kernels).
+    """
+    import numpy as np
+
+    base_features = ["s5", "sBP", "s3"]
+    composite_map = {
+        "min_5_bp": "min_5_bp", "min_5_3": "min_5_3", "min_bp_3": "min_bp_3",
+        "min_all": "min_all", "sqrt_5_bp": "sqrt_5_bp",
+        "corr_5_bp": "corr_5_bp", "corr_bp_3": "corr_bp_3", "corr_all": "corr_all",
+        "gap_5_bp": "gap_5_bp", "gap_5_rest": "gap_5_rest",
+        "absdiff_5_bp": "absdiff_5_bp", "absdiff_5_3": "absdiff_5_3",
+        "absdiff_bp_3": "absdiff_bp_3",
+        "neg_absdiff_5_bp": "neg_absdiff_5_bp", "neg_absdiff_5_3": "neg_absdiff_5_3",
+        "neg_absdiff_bp_3": "neg_absdiff_bp_3", "max_5_bp": "max_5_bp", "max_5_3": "max_5_3",
+    }
+
+    all_coefs = []
+    all_intercepts = []
+    feature_names = None
+    # For RBF kernel (no coef_ available)
+    rbf_models = []
+
+    for svm_model in ensemble.models:
+        model = svm_model.model
+        try:
+            if hasattr(model, "calibrated_classifiers_"):
+                fitted = model.calibrated_classifiers_[0].estimator
+            else:
+                fitted = model
+
+            svc = None
+            if hasattr(fitted, "named_steps"):
+                for step in ["svc", "linearsvc", "classifier"]:
+                    if step in fitted.named_steps:
+                        svc = fitted.named_steps[step]
+                        break
+
+            if svc is None:
+                continue
+
+            # Check if this is a linear model with coef_ (LinearSVC or SVC(kernel='linear'))
+            if hasattr(svc, "coef_"):
+                coef = svc.coef_[0].tolist()
+                intercept = float(svc.intercept_[0]) if hasattr(svc, "intercept_") else 0.0
+                all_coefs.append(coef)
+                all_intercepts.append(intercept)
+
+                if feature_names is None:
+                    transformer = fitted.named_steps.get("transform") if hasattr(fitted, "named_steps") else None
+                    if transformer and hasattr(transformer, "features") and transformer.features:
+                        feature_names = base_features + [
+                            composite_map.get(f, f) for f in transformer.features
+                        ]
+                    else:
+                        feature_names = base_features + [
+                            f"feature_{j}" for j in range(3, len(coef))
+                        ]
+            else:
+                # RBF or other non-linear kernel: store support vector metadata
+                rbf_info = {
+                    "n_support": svc.n_support_.tolist() if hasattr(svc, "n_support_") else [],
+                    "total_support_vectors": int(sum(svc.n_support_)) if hasattr(svc, "n_support_") else 0,
+                    "gamma": float(svc._gamma) if hasattr(svc, "_gamma") else getattr(svc, "gamma", "scale"),
+                    "C": float(svc.C) if hasattr(svc, "C") else 0.0,
+                    "kernel": getattr(svc, "kernel", "unknown"),
+                }
+                rbf_models.append(rbf_info)
+        except Exception:
+            continue
+
+    # Return linear coefficient summary if available
+    if all_coefs:
+        coef_arr = np.array(all_coefs)
+        int_arr = np.array(all_intercepts)
+
+        return {
+            "features": feature_names,
+            "n_models": len(all_coefs),
+            "per_model_weights": all_coefs,
+            "per_model_intercepts": all_intercepts,
+            "summary": {
+                "mean_weights": coef_arr.mean(axis=0).tolist(),
+                "std_weights": coef_arr.std(axis=0).tolist(),
+                "mean_intercept": float(int_arr.mean()),
+                "std_intercept": float(int_arr.std()),
+                "relative_importance_pct": (
+                    np.abs(coef_arr.mean(axis=0)) /
+                    np.abs(coef_arr.mean(axis=0)).sum() * 100
+                ).tolist(),
+            },
+        }
+
+    # Return RBF model summary if available (no per-feature weights)
+    if rbf_models:
+        return {
+            "kernel": rbf_models[0].get("kernel", "rbf"),
+            "n_models": len(rbf_models),
+            "per_model_support_vectors": rbf_models,
+            "summary": {
+                "mean_total_sv": float(np.mean([m["total_support_vectors"] for m in rbf_models])),
+                "gamma": rbf_models[0].get("gamma", "scale"),
+                "C": rbf_models[0].get("C", 0.0),
+                "note": "Per-feature weights not available for non-linear kernels",
+            },
+        }
+
+    return {}
+
+
 def log_ensemble_coefficients(ensemble, messenger: "UnifiedMessenger"):
     """
     Extract and log learned coefficients from trained ensemble with detailed hyperparameters.
@@ -418,7 +535,7 @@ def log_ensemble_coefficients(ensemble, messenger: "UnifiedMessenger"):
     for i, svm_model in enumerate(ensemble.models):
         model = svm_model.model
 
-        # Extract coefficients from CalibratedClassifierCV -> Pipeline -> LinearSVC
+        # Extract coefficients from CalibratedClassifierCV -> Pipeline -> SVC/LinearSVC
         try:
             # Navigate nested structure
             if hasattr(model, "calibrated_classifiers_"):
@@ -428,13 +545,27 @@ def log_ensemble_coefficients(ensemble, messenger: "UnifiedMessenger"):
                 # Get calibration method
                 calib_method = getattr(model, "method", "unknown")
 
-                # Get LinearSVC from pipeline
+                # Get SVC/LinearSVC from pipeline
                 linear_svc = None
                 if hasattr(fitted_estimator, "named_steps"):
                     for step_name in ["svc", "linearsvc", "classifier"]:
                         if step_name in fitted_estimator.named_steps:
                             linear_svc = fitted_estimator.named_steps[step_name]
                             break
+
+                # For RBF kernel, coef_ is not available - log support vector info instead
+                if linear_svc is not None and not hasattr(linear_svc, "coef_"):
+                    kernel = getattr(linear_svc, "kernel", "unknown")
+                    n_sv = sum(linear_svc.n_support_) if hasattr(linear_svc, "n_support_") else "?"
+                    gamma_val = getattr(linear_svc, "_gamma", getattr(linear_svc, "gamma", "?"))
+                    C_val = getattr(linear_svc, "C", "?")
+
+                    messenger.log_only(f"\nModel {i + 1}/{len(ensemble.models)}: SVC(kernel='{kernel}')")
+                    messenger.log_only(f"  C={C_val}, gamma={gamma_val}, support_vectors={n_sv}")
+                    messenger.log_only(f"  Calibration: {calib_method}")
+                    if hasattr(linear_svc, "n_support_"):
+                        messenger.log_only(f"  Per-class SVs: {linear_svc.n_support_.tolist()}")
+                    continue  # Skip coef_ extraction for non-linear kernels
 
                 if linear_svc is not None and hasattr(linear_svc, "coef_"):
                     coef = linear_svc.coef_[0]  # Shape (1, n_features)
@@ -1795,6 +1926,16 @@ def extract_introns_streaming(
     assert config.input.genome is not None, "Genome path required"
     contig_lengths = get_contig_lengths(config.input.genome)
 
+    # Filter out contigs missing from the genome FASTA
+    missing = [c for c in contigs if c not in contig_lengths]
+    if missing:
+        messenger.warning(
+            f"Skipping {len(missing)} contig(s) not found in genome FASTA: "
+            + ", ".join(missing[:5])
+            + (f" ... and {len(missing) - 5} more" if len(missing) > 5 else "")
+        )
+        contigs = [c for c in contigs if c in contig_lengths]
+
     # Prepare length-weighted progress tracking
     contig_length_list = [contig_lengths[c] for c in contigs]
     cumulative_lengths = np.cumsum(contig_length_list)
@@ -2035,7 +2176,7 @@ def extract_introns_from_bed(
         # Use BED name if provided, otherwise just the index number
         # (output formatting adds "i" prefix, so "intron_" is redundant)
         intron_id = bed_line.name if bed_line.name != "." else str(i + 1)
-        intron = Intron(intron_id=intron_id, coordinates=coord)
+        intron = Intron(intron_id=intron_id, coordinates=coord, metadata=IntronMetadata())
         introns_no_seq.append(intron)
 
     # Extract sequences
@@ -2533,11 +2674,14 @@ def _apply_margin_alignment(
     # We'll use the second approach for accuracy
 
     # Extract features from introns (require scores to be present)
+    from intronIC.classification.trainer import _extract_feature_vector
+    _extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
     features = np.array(
         [
-            [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+            _extract_feature_vector(i, _extra_names)
             for i in classified_introns
             if i.scores is not None
+            and i.scores.five_z_score is not None
         ]
     )
 
@@ -3168,6 +3312,13 @@ def classify_streaming_per_contig(
     boundaries_u12: Counter = Counter()
     boundaries_u2: Counter = Counter()
 
+    # Lightweight score accumulation for post-hoc cluster validation
+    # Only stores 3 floats per classified intron (~24 bytes each)
+    accumulated_five_z: list = []
+    accumulated_bp_z: list = []
+    accumulated_svm_scores: list = []
+    accumulated_type_ids: list = []
+
     # Accumulated filter statistics
     from intronIC.extraction.filters import FilterStats
 
@@ -3184,6 +3335,26 @@ def classify_streaming_per_contig(
 
     assert config.input.genome is not None, "Genome path required"
     contig_lengths = get_contig_lengths(config.input.genome)
+
+    # Filter out annotation contigs missing from the genome FASTA
+    # (e.g. organellar genes referencing contigs not in nuclear assemblies)
+    missing_contigs = [
+        (contig, count) for contig, count in contigs_with_counts
+        if contig not in contig_lengths
+    ]
+    if missing_contigs:
+        total_missing_annotations = sum(c for _, c in missing_contigs)
+        missing_names = [c for c, _ in missing_contigs]
+        messenger.warning(
+            f"Skipping {len(missing_contigs)} contig(s) not found in genome FASTA "
+            f"({total_missing_annotations:,} annotations): "
+            + ", ".join(missing_names[:5])
+            + (f" ... and {len(missing_names) - 5} more" if len(missing_names) > 5 else "")
+        )
+        contigs_with_counts = [
+            (contig, count) for contig, count in contigs_with_counts
+            if contig in contig_lengths
+        ]
 
     # Prepare length-weighted progress tracking
     contig_names = [contig for contig, _ in contigs_with_counts]
@@ -3289,6 +3460,21 @@ def classify_streaming_per_contig(
                     # Accumulate duplicate and overlap maps
                     accumulated_duplicate_map.update(stats["duplicate_map"])
                     accumulated_overlap_map.update(stats["overlap_map"])
+
+                    # Accumulate scores for cluster validation
+                    for intron in classified_introns:
+                        if (
+                            intron.scores
+                            and intron.scores.five_z_score is not None
+                            and intron.scores.bp_z_score is not None
+                            and intron.scores.svm_score is not None
+                            and intron.metadata
+                            and intron.metadata.type_id in ('u12', 'u2')
+                        ):
+                            accumulated_five_z.append(intron.scores.five_z_score)
+                            accumulated_bp_z.append(intron.scores.bp_z_score)
+                            accumulated_svm_scores.append(intron.scores.svm_score)
+                            accumulated_type_ids.append(intron.metadata.type_id)
 
                     # Update progress bar based on this contig's length
                     contig_idx = contig_to_index[contig_name]
@@ -3525,6 +3711,20 @@ def classify_streaming_per_contig(
                 for intron in classified_introns:
                     output_writer.write_intron(intron)
 
+                    # Accumulate scores for cluster validation
+                    if (
+                        intron.scores
+                        and intron.scores.five_z_score is not None
+                        and intron.scores.bp_z_score is not None
+                        and intron.scores.svm_score is not None
+                        and intron.metadata
+                        and intron.metadata.type_id in ('u12', 'u2')
+                    ):
+                        accumulated_five_z.append(intron.scores.five_z_score)
+                        accumulated_bp_z.append(intron.scores.bp_z_score)
+                        accumulated_svm_scores.append(intron.scores.svm_score)
+                        accumulated_type_ids.append(intron.metadata.type_id)
+
                     # Track boundary statistics
                     if (
                         intron.metadata
@@ -3559,6 +3759,65 @@ def classify_streaming_per_contig(
     annotation_store.cleanup()  # Delete SQLite annotation database
     gc.collect()
 
+    # =========================================================================
+    # POST-HOC CLUSTER VALIDATION
+    # Compute multi-bandwidth density valley depth to assess whether the
+    # SVM's U12 calls form a distinct cluster separated from U2 by a
+    # density gap. Reports a species-level confidence metric and adjusted prior.
+    # =========================================================================
+    cluster_validation_result = None
+    if accumulated_five_z:
+        from intronIC.scoring.cluster_validation import validate_u12_cluster
+
+        cluster_validation_result = validate_u12_cluster(
+            five_z_scores=np.array(accumulated_five_z),
+            bp_z_scores=np.array(accumulated_bp_z),
+            svm_scores=np.array(accumulated_svm_scores),
+            type_ids=np.array(accumulated_type_ids),
+            confidence_threshold=config.scoring.threshold,
+        )
+
+        valley_depth = cluster_validation_result['valley_depth']
+        regime = cluster_validation_result['regime']
+        adj_prior = cluster_validation_result['adjusted_prior']
+
+        if not np.isnan(valley_depth):
+            messenger.info(
+                f"Cluster validation: valley_depth={valley_depth:.3f} ({regime}), "
+                f"n_confident_u12={cluster_validation_result['n_confident_u12']}, "
+                f"centroid_σ={cluster_validation_result['centroid_sigma']:.1f}, "
+                f"adjusted_prior={adj_prior:.6f}"
+            )
+            if not cluster_validation_result.get('has_valley', False):
+                messenger.warning(
+                    f"No density valley detected (depth={valley_depth:.3f}): "
+                    f"U12-type intron calls may not form a distinct cluster. "
+                    f"Consider reviewing calls with caution."
+                )
+                # Rewrite output files with adjusted scores (sequential path)
+                # In parallel path, adjustment was applied before writing
+                from intronIC.scoring.cluster_validation import rewrite_outputs_with_prior_adjustment
+                meta_path = output_writer.meta_writer.path if hasattr(output_writer, 'meta_writer') and hasattr(output_writer.meta_writer, 'path') else None
+                score_path = output_writer.score_writer.path if hasattr(output_writer, 'score_writer') and hasattr(output_writer.score_writer, 'path') else None
+                if meta_path and score_path:
+                    n_reclass = rewrite_outputs_with_prior_adjustment(
+                        meta_path, score_path, cluster_validation_result,
+                        threshold=config.scoring.threshold,
+                    )
+                    if n_reclass > 0:
+                        messenger.info(
+                            f"Prior adjustment: {n_reclass} U12-type intron(s) "
+                            f"reclassified to U2-type"
+                        )
+        else:
+            messenger.info(
+                f"Cluster validation: insufficient confident U12-type intron calls "
+                f"(n={cluster_validation_result['n_confident_u12']}) to compute valley depth"
+            )
+
+    # Free accumulated score data
+    del accumulated_five_z, accumulated_bp_z, accumulated_svm_scores, accumulated_type_ids
+
     # Build summary
     summary = output_writer.get_summary()
     summary.update(
@@ -3573,6 +3832,18 @@ def classify_streaming_per_contig(
             "u2_boundaries": dict(boundaries_u2.most_common(20)),
         }
     )
+
+    # Add cluster validation to summary
+    if cluster_validation_result is not None:
+        summary["cluster_validation"] = {
+            "valley_depth": cluster_validation_result['valley_depth'],
+            "has_valley": cluster_validation_result.get('has_valley'),
+            "regime": cluster_validation_result['regime'],
+            "adjusted_prior": cluster_validation_result['adjusted_prior'],
+            "n_confident_u12": cluster_validation_result['n_confident_u12'],
+            "empirical_prior": cluster_validation_result['empirical_prior'],
+            "centroid_sigma": cluster_validation_result.get('centroid_sigma'),
+        }
 
     messenger.info(
         f"Streaming classification complete: {total_classified:,} introns classified"
@@ -3951,7 +4222,7 @@ def classify_introns(
         loss_options=list(opt.loss_options),
         class_weight_multipliers=list(opt.class_weight_multipliers),
         use_multiplier_tiebreaker=opt.use_multiplier_tiebreaker,
-        features_list=list(opt.features) if opt.features else None,
+        features_list=list(opt.features) if opt.features is not None else None,
         gamma_imbalance_options=list(opt.gamma_imbalance_options)
         if opt.gamma_imbalance_options
         else None,
@@ -3960,6 +4231,11 @@ def classify_introns(
         eff_C_pos_range=opt.eff_C_pos_range,
         eff_C_neg_max=opt.eff_C_neg_max,
         use_fold_averaged_params=use_fold_averaged_params,
+        early_stop_on_plateau=opt.early_stop_on_plateau,
+        plateau_rounds=opt.plateau_rounds,
+        kernel=opt.kernel,
+        gamma_search=list(opt.gamma_search) if opt.gamma_search else None,
+        extra_feature_names=list(opt.extra_features) if opt.extra_features else None,
     )
 
     # Run complete classification pipeline (optimize + train + classify)
@@ -4077,6 +4353,48 @@ def classify_introns(
             messenger.warning(f"Traceback: {traceback.format_exc()}")
             # Continue even if plotting fails
 
+    # Generate decision surface plot
+    try:
+        from intronIC.visualization.plots import plot_decision_surface
+
+        messenger.log_only("Generating decision surface plot")
+        # Need z-scores + extra features for decision surface
+        from intronIC.classification.trainer import _extract_feature_vector as _efv
+        _extra = list(getattr(result.ensemble.models[0].parameters, 'extra_features', ()))
+        u2_scores_3d = np.array(
+            [
+                _efv(i, _extra)
+                for i in u2_reference
+                if i.scores
+                and i.scores.five_z_score is not None
+                and i.scores.bp_z_score is not None
+                and i.scores.three_z_score is not None
+            ]
+        )
+        u12_scores_3d = np.array(
+            [
+                _efv(i, _extra)
+                for i in u12_reference
+                if i.scores
+                and i.scores.five_z_score is not None
+                and i.scores.bp_z_score is not None
+                and i.scores.three_z_score is not None
+            ]
+        )
+        surface_path = plot_decision_surface(
+            ensemble=result.ensemble,
+            u12_z=u12_scores_3d,
+            u2_z=u2_scores_3d,
+            output_dir=config.output.output_dir,
+            species_name=config.output.base_filename,
+        )
+        messenger.log_only(f"Decision surface plot saved to {surface_path}")
+    except Exception as plot_error:
+        import traceback
+
+        messenger.warning(f"Failed to generate decision surface plot: {plot_error}")
+        messenger.warning(f"Traceback: {traceback.format_exc()}")
+
     # Log learned coefficients from ensemble
     log_ensemble_coefficients(result.ensemble, messenger)
 
@@ -4090,12 +4408,15 @@ def classify_introns(
     first_model_obj = result.ensemble.models[0]
     first_model = first_model_obj.model  # This is the sklearn Pipeline
 
-    # Extract features from U2 reference introns
+    # Extract features from U2 reference introns (including extra features if model uses them)
+    from intronIC.classification.trainer import _extract_feature_vector
+    extra_names = list(getattr(result.ensemble.models[0].parameters, 'extra_features', ()))
     u2_features = np.array(
         [
-            [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+            _extract_feature_vector(i, extra_names)
             for i in u2_reference
             if i.scores is not None
+            and i.scores.five_z_score is not None
         ]
     )
 
@@ -4156,6 +4477,9 @@ def classify_introns(
         "Model saved successfully with cross-species adaptation statistics"
     )
 
+    # Extract per-model coefficients for metadata
+    ensemble_coefficients = _extract_ensemble_coefficients(result.ensemble)
+
     # Generate and save training metadata
     metadata_path = model_path.with_suffix(".metadata.json")
     messenger.log_only("Generating training metadata")
@@ -4172,9 +4496,11 @@ def classify_introns(
         threshold=config.scoring.threshold,
         eval_result=result.eval_result,
         max_iter=config.training.max_iter,
-        kernel="linear",
+        kernel=result.parameters.kernel,
         seed=config.training.seed,
     )
+    if ensemble_coefficients:
+        metadata["ensemble_coefficients"] = ensemble_coefficients
     write_metadata(metadata, metadata_path)
     messenger.log_only(f"Training metadata saved to {metadata_path}")
 

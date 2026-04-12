@@ -8,7 +8,7 @@ and scoring region sequences (5'ss, BP, 3'ss) from genome FASTA files.
 from collections import defaultdict
 from typing import Dict, Iterator, List, Optional, Tuple
 
-from intronIC.core.intron import Intron, IntronSequences, OmissionReason
+from intronIC.core.intron import Intron, IntronMetadata, IntronSequences, OmissionReason
 from intronIC.file_io.genome import GenomeReader
 from intronIC.utils.sequences import reverse_complement
 
@@ -78,8 +78,8 @@ class SequenceExtractor:
         self,
         introns: List[Intron],
         flank_size: int | Tuple[int, int] = 200,
-        five_score_coords: Tuple[int, int] = (-3, 9),
-        three_score_coords: Tuple[int, int] = (-6, 4),
+        five_score_coords: Tuple[int, int] = (-3, 10),
+        three_score_coords: Tuple[int, int] = (-14, 4),
         bp_coords: Tuple[int, int] = (-55, -5),
     ) -> Iterator[Intron]:
         """
@@ -142,8 +142,8 @@ class SequenceExtractor:
         self,
         introns: List[Intron],
         flank_size: int | Tuple[int, int] = 200,
-        five_score_coords: Tuple[int, int] = (-3, 9),
-        three_score_coords: Tuple[int, int] = (-6, 4),
+        five_score_coords: Tuple[int, int] = (-3, 10),
+        three_score_coords: Tuple[int, int] = (-14, 4),
         bp_coords: Tuple[int, int] = (-55, -5),
     ) -> Iterator[Intron]:
         """
@@ -441,7 +441,9 @@ class SequenceExtractor:
             # bp_seq_u2 and bp_relative_coords populated during PWM scoring
         )
 
-        # Update intron metadata
+        # Update intron metadata (create if missing, e.g. BED mode)
+        if intron.metadata is None:
+            intron.metadata = IntronMetadata()
         intron.metadata.noncanonical = not is_canonical
 
         # Update dynamic tag for non-canonical introns
@@ -495,8 +497,8 @@ def extract_sequences_for_introns(
     introns: List[Intron],
     genome_file: str,
     flank_size: int = 200,
-    five_score_coords: Tuple[int, int] = (-3, 9),
-    three_score_coords: Tuple[int, int] = (-6, 4),
+    five_score_coords: Tuple[int, int] = (-3, 10),
+    three_score_coords: Tuple[int, int] = (-14, 4),
     bp_coords: Tuple[int, int] = (-55, -5),
 ) -> Iterator[Intron]:
     """
