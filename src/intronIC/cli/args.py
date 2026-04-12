@@ -557,9 +557,9 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--five_score_coords",
             nargs=2,
             type=int,
-            default=[-3, 10],
+            default=[-3, 9],
             metavar=("START", "END"),
-            help="5' splice site region (default: -3 10)",
+            help="5' splice site region (default: -3 9)",
         )
         scoring.add_argument(
             "--bp-region-coords",
@@ -575,9 +575,9 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--three_score_coords",
             nargs=2,
             type=int,
-            default=[-14, 4],
+            default=[-6, 4],
             metavar=("START", "END"),
-            help="3' splice site region (default: -14 4)",
+            help="3' splice site region (default: -6 4)",
         )
         scoring.add_argument(
             "--pseudocount",
@@ -810,9 +810,9 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--five_score_coords",
             nargs=2,
             type=int,
-            default=[-3, 10],
+            default=[-3, 9],
             metavar=("START", "END"),
-            help="5' splice site region (default: -3 10)",
+            help="5' splice site region (default: -3 9)",
         )
         scoring.add_argument(
             "--bp-region-coords",
@@ -828,9 +828,9 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--three_score_coords",
             nargs=2,
             type=int,
-            default=[-14, 4],
+            default=[-6, 4],
             metavar=("START", "END"),
-            help="3' splice site region (default: -14 4)",
+            help="3' splice site region (default: -6 4)",
         )
 
         # === Performance ===

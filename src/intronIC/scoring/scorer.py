@@ -47,9 +47,9 @@ class IntronScorer:
     def __init__(
         self,
         pwm_sets: Dict[str, PWMSet],
-        five_coords: Tuple[int, int] = (-3, 10),
+        five_coords: Tuple[int, int] = (-3, 9),
         bp_coords: Tuple[int, int] = (-55, -5),
-        three_coords: Tuple[int, int] = (-14, 4),
+        three_coords: Tuple[int, int] = (-6, 4),
         ignore_nc_dnts: bool = True,
     ):
         """
