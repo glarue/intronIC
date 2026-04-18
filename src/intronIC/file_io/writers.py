@@ -1042,6 +1042,13 @@ class ScoreWriter(BaseWriter):
         name  rel_score  svm_score  decision_dist  5'_seq  5'_raw  5'_z
         bp_seq  bp_region  bp_raw  bp_z  3'_seq  3'_raw  3'_z
 
+    Raw score columns (5'_raw, bp_raw, 3'_raw, ppt_raw, core_3'_raw) are
+    log2 likelihood ratios: log2(P(seq|U12) / P(seq|U2)). Positive values
+    favor U12, negative favor U2.
+
+    Sequence columns (5'_seq, 3'_seq) contain the extraction window, which
+    is wider than the scoring window. See IntronScorer docstring for details.
+
     This comprehensive format includes all scoring details for
     in-depth analysis and debugging.
 

@@ -1,8 +1,9 @@
 # ============================================================================
-# intronIC v2.2 — Default Configuration
+# intronIC v2.2 — RBF 6D Configuration
 # ============================================================================
 #
-# Matches the default pretrained model (RBF 8D SVM).
+# 6D: 3 core z-scores + support2 + bp_offset + bp_scan_confidence (gap metric)
+# Drops ppt_t_weighted and ppt_longest_run.
 # CLI arguments override these settings.
 #
 # Auto-loaded from (in order of precedence):
@@ -45,11 +46,6 @@ scoring:
   # Search ±6bp around splice sites for strong U12 motifs (e.g. ATATCCTT).
   # If found at an offset, adjust boundaries. Corrected introns tagged [c:shift].
   u12_boundary_correction: true
-
-  # If true, only apply boundary correction when the result has canonical
-  # splice site dinucleotides (GT-AG, GC-AG, or AT-AC). If false, apply
-  # correction whenever the U12 5'SS motif is found regardless of the 3' end.
-  # The original v1 behavior was effectively false (no canonical check).
   u12_correction_require_canonical: true
 
 # ============================================================================
@@ -89,7 +85,7 @@ optimizer:
   use_multiplier_tiebreaker: true
 
   # ---- Feature engineering ----
-  # 8D feature set: 3 base z-scores + 1 composite + 4 extras
+  # 6D feature set: 3 base z-scores + 1 composite + 2 extras
   #
   # Composite features (computed from z-scores by BothEndsStrongTransformer):
   #   support2: second_largest(max(0,s5z), max(0,BPz), max(0,s3z))
@@ -97,12 +93,10 @@ optimizer:
   #
   # Extra features (from IntronScores, bypass the transformer):
   #   bp_offset:          branch A distance from 3'SS (negative int, e.g. -13)
-  #   ppt_t_weighted:     T-weighted pyrimidine score over 20nt window at 3'SS
-  #   ppt_longest_run:    longest uninterrupted C/T run in same window
   #   bp_scan_confidence: log2(best/2nd_best) BPS motif isolation across scan
   feature_transform:
     features: ['support2']
-    extra_features: ['bp_offset', 'ppt_t_weighted', 'ppt_longest_run', 'bp_scan_confidence']
+    extra_features: ['bp_offset', 'bp_scan_confidence']
 
   # RBF kernel with gamma grid search
   kernel: 'rbf'

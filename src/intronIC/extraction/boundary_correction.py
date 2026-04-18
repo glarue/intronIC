@@ -358,7 +358,8 @@ def get_corrected_dinucleotides(
 def correct_intron_if_needed(
     intron: Intron,
     correction_enabled: bool = True,
-    use_strict_motif: bool = True
+    use_strict_motif: bool = True,
+    require_canonical: bool = True
 ) -> Tuple[Intron, bool]:
     """
     Check intron and apply U12 correction if needed.
@@ -369,15 +370,17 @@ def correct_intron_if_needed(
     at a shifted position, the intron is corrected and returned with
     sequences cleared (caller must re-extract).
 
-    CRITICAL: Correction is ONLY applied if it results in canonical boundaries
-    (GT-AG, GC-AG, or AT-AC). This prevents false positive corrections.
-
     Port from: intronIC.py:2692 (conditional call to u12_correction)
 
     Args:
         intron: Intron to check
         correction_enabled: Whether correction is enabled (--no_nc_ss_adjustment flag)
         use_strict_motif: Use strict vs lax U12 motif
+        require_canonical: If True (default), only apply correction when it
+            produces canonical boundaries (GT-AG, GC-AG, or AT-AC). If False,
+            apply correction whenever the U12 5'SS motif is found, regardless
+            of the resulting 3' boundary. The original v1 behavior did not
+            check for canonical boundaries after correction.
 
     Returns:
         Tuple of (intron, was_corrected)
@@ -437,15 +440,14 @@ def correct_intron_if_needed(
         # Invalid correction (boundaries out of range)
         return intron, False
 
-    five_dnt, three_dnt = corrected_dnts
-    is_canonical = (five_dnt, three_dnt) in CANONICAL_PAIRS
+    if require_canonical:
+        five_dnt, three_dnt = corrected_dnts
+        is_canonical = (five_dnt, three_dnt) in CANONICAL_PAIRS
 
-    if not is_canonical:
-        # Correction would NOT result in canonical boundaries - reject it!
-        # This prevents false positive corrections like AT-AA or AT-TC
-        return intron, False
+        if not is_canonical:
+            return intron, False
 
-    # Apply correction (only if it results in canonical boundaries)
+    # Apply correction
     corrected_intron = apply_u12_correction(intron, shift)
 
     return corrected_intron, True

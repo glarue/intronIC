@@ -75,6 +75,7 @@ class ExtractionConfig:
     no_intron_overlap: bool = False
     include_duplicates: bool = False
     u12_boundary_correction: bool = True  # Enable U12 correction by default
+    u12_correction_require_canonical: bool = True  # Only correct if result is canonical (GT-AG, GC-AG, AT-AC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +543,14 @@ class IntronICConfig:
         )
 
         # Extraction configuration
+        # Get require_canonical from YAML (not a CLI arg)
+        _require_canonical = True  # default
+        if yaml_config:
+            _scoring = yaml_config.get("scoring", {})
+            _require_canonical = _scoring.get(
+                "u12_correction_require_canonical", True
+            )
+
         extraction_config = ExtractionConfig(
             feature_type=args.feature,
             min_intron_len=args.min_intron_len,
@@ -550,6 +559,7 @@ class IntronICConfig:
             no_intron_overlap=args.no_intron_overlap,
             include_duplicates=args.include_duplicates,
             u12_boundary_correction=not args.no_nc_ss_adjustment,
+            u12_correction_require_canonical=_require_canonical,
         )
 
         # Scoring regions

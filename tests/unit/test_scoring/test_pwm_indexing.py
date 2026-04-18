@@ -229,7 +229,6 @@ def test_subsequence_consistency(simple_pwm):
 # Real PWM Tests
 # ============================================================================
 
-@pytest.mark.slow
 def test_five_prime_scoring_with_real_pwm(matrix_file):
     """
     Test 5' scoring with real PWM against known correct value.
@@ -259,8 +258,8 @@ def test_five_prime_scoring_with_real_pwm(matrix_file):
     # Calculate log ratio
     log_ratio = math.log2(u12_score / u2_score)
 
-    # Expected value from original intronIC
-    expected_log_ratio = 18.216262900453128
+    # Expected value from rebuilt PWMs (2026-04-14)
+    expected_log_ratio = 18.117506382713668
 
     # Should match within reasonable tolerance
     assert abs(log_ratio - expected_log_ratio) < 0.01, \

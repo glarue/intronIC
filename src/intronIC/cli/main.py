@@ -1157,7 +1157,8 @@ def _process_contig_worker(
 
         for intron in contig_with_seqs:
             corrected_intron, was_corrected = correct_intron_if_needed(
-                intron, correction_enabled=True, use_strict_motif=True
+                intron, correction_enabled=True, use_strict_motif=True,
+                require_canonical=config.extraction.u12_correction_require_canonical
             )
             if was_corrected:
                 # Re-extract with new coordinates
@@ -1283,7 +1284,8 @@ def _process_contig_streaming_worker(
 
         for intron in contig_with_seqs:
             corrected_intron, was_corrected = correct_intron_if_needed(
-                intron, correction_enabled=True, use_strict_motif=True
+                intron, correction_enabled=True, use_strict_motif=True,
+                require_canonical=config.extraction.u12_correction_require_canonical
             )
             if was_corrected:
                 corrected_with_seq = list(
@@ -1717,7 +1719,8 @@ def _extract_sequences_for_introns(
 
                 for intron in contig_with_seqs:
                     corrected_intron, was_corrected = correct_intron_if_needed(
-                        intron, correction_enabled=True, use_strict_motif=True
+                        intron, correction_enabled=True, use_strict_motif=True,
+                        require_canonical=config.extraction.u12_correction_require_canonical
                     )
                     if was_corrected:
                         # Re-extract with new coordinates
@@ -2068,7 +2071,8 @@ def extract_introns_streaming(
 
                 for intron in contig_with_seqs:
                     corrected_intron, was_corrected = correct_intron_if_needed(
-                        intron, correction_enabled=True, use_strict_motif=True
+                        intron, correction_enabled=True, use_strict_motif=True,
+                        require_canonical=config.extraction.u12_correction_require_canonical
                     )
                     if was_corrected:
                         corrected_with_seq = list(
@@ -2207,7 +2211,8 @@ def extract_introns_from_bed(
 
         for intron in introns_all:
             corrected_intron, was_corrected = correct_intron_if_needed(
-                intron, correction_enabled=True, use_strict_motif=True
+                intron, correction_enabled=True, use_strict_motif=True,
+                require_canonical=config.extraction.u12_correction_require_canonical
             )
 
             if was_corrected:
@@ -3060,7 +3065,8 @@ def _process_contig_streaming_classify_worker(
         corrected_contig_introns = []
         for intron in contig_with_seqs:
             corrected_intron, was_corrected = correct_intron_if_needed(
-                intron, correction_enabled=True, use_strict_motif=True
+                intron, correction_enabled=True, use_strict_motif=True,
+                require_canonical=config.extraction.u12_correction_require_canonical
             )
             if was_corrected:
                 corrected_with_seq = list(
@@ -3622,7 +3628,8 @@ def classify_streaming_per_contig(
                     corrected_contig_introns = []
                     for intron in contig_with_seqs:
                         corrected_intron, was_corrected = correct_intron_if_needed(
-                            intron, correction_enabled=True, use_strict_motif=True
+                            intron, correction_enabled=True, use_strict_motif=True,
+                            require_canonical=config.extraction.u12_correction_require_canonical
                         )
                         if was_corrected:
                             corrected_with_seq = list(

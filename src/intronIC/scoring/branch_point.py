@@ -67,6 +67,7 @@ class BranchPointMatch:
     search_region: str | None = None  # The actual search region sequence
     scan_mean_score: float | None = None  # Mean U12 PWM score across all scan positions
     scan_n_positions: int | None = None  # Number of positions scanned
+    scan_second_best_score: float | None = None  # Second-highest U12 PWM score in scan
 
 
 class BranchPointScorer:
@@ -195,6 +196,7 @@ class BranchPointScorer:
             search_region=search_region,
             scan_mean_score=u12_match.scan_mean_score,
             scan_n_positions=u12_match.scan_n_positions,
+            scan_second_best_score=u12_match.scan_second_best_score,
         )
 
     def _extract_search_region(
@@ -316,11 +318,13 @@ class BranchPointScorer:
         for sub_seq in self._sliding_window(sequence, window_size):
             # Score this window
             # Port from: intronIC.py:2164
-            # CRITICAL: BP PWMs have start_index=0 and expect positions 0-N
-            # The original bp_score() calls seq_score(sub_seq, matrix) with NO start_index,
-            # which defaults to 0. We must do the same - seq_start_position=0 (the default).
-            # DO NOT pass genomic position here!
-            new_score = pwm.score_sequence(sub_seq)  # Use default seq_start_position=0
+            # CRITICAL: BPS PWMs use start_index=0 with seq_start_position=0.
+            # This means array index 0 is addressed as logical position 0, even
+            # though the biological label is -9. The biological positions (JSON
+            # keys -9 to +2) are only used during loading; at scoring time, the
+            # sliding window always presents 12 bases starting at position 0.
+            # See PWM class docstring for the full start_index semantics.
+            new_score = pwm.score_sequence(sub_seq)  # default seq_start_position=0
             new_coords = (start, stop)
             all_scores.append(new_score)
 
@@ -340,6 +344,13 @@ class BranchPointScorer:
         n_positions = len(all_scores)
         mean_score = sum(all_scores) / n_positions if n_positions > 0 else 0.0
 
+        # Second-best score for gap-based confidence metric
+        if n_positions >= 2:
+            sorted_scores = sorted(all_scores, reverse=True)
+            second_best = sorted_scores[1]
+        else:
+            second_best = best_score  # only one position → no gap
+
         # Return result
         # Port from: intronIC.py:2178
         return BranchPointMatch(
@@ -350,6 +361,7 @@ class BranchPointScorer:
             stop_in_region=best_coords[1],
             scan_mean_score=mean_score,
             scan_n_positions=n_positions,
+            scan_second_best_score=second_best,
         )
 
     def _find_top_k_in_sequence(self, sequence: str, pwm: PWM, k: int = 2) -> list[BranchPointMatch]:

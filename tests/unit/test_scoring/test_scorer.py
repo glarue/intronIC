@@ -621,29 +621,18 @@ def test_custom_three_coordinates(simple_pwms):
 # ============================================================================
 
 
-@pytest.mark.skip(
-    reason="Real PWM files don't have complete U2/U12 pairs for all regions"
-)
 def test_with_real_pwms_if_available(matrix_file):
     """Test scoring with real PWM matrices if available."""
-    # Try to load real PWMs
     if not matrix_file.exists():
         pytest.skip("Real PWM file not available")
 
-    # Load real PWMs
-    loader = PWMLoader()
-    pwm_sets = loader.load_from_file(matrix_file)  # Pass Path object directly
-
-    # Real PWM coordinates based on actual matrix lengths
-    # u12_gtag_five: start=-3, length varies
-    # u12_gtag_bp: canonical U12 BP motif
-    # u12_gtag_three: start=-20
+    pwm_sets = PWMLoader.load_from_file(matrix_file)
 
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
-        five_coords=(-3, 9),  # Default from original
-        bp_coords=(-55, -5),  # Default BP search window
-        three_coords=(-20, 3),  # Adjusted for real PWM start position
+        five_coords=(-3, 9),
+        bp_coords=(-55, -5),
+        three_coords=(-6, 4),
     )
 
     # Create test intron with canonical U12-like sequences
@@ -659,7 +648,7 @@ def test_with_real_pwms_if_available(matrix_file):
             three_prime_dnt="AG",
         ),
         scores=IntronScores(),
-        metadata=IntronMetadata("t1", "g1", noncanonical=False),
+        metadata=IntronMetadata("t1", "g1"),
     )
 
     # Score with real PWMs

@@ -35,13 +35,24 @@ class IntronScorer:
 
     Port from: intronIC.py:3040-3112 (assign_raw_score), 3115-3144 (get_raw_scores)
 
+    Extraction vs. scoring windows:
+        The extraction pipeline (SequenceExtractor) uses wider windows than the
+        scoring pipeline. The extra positions are silently clipped by the PWM
+        bounds check in score_sequence(). The score_info output contains the
+        wider extraction sequences, but the raw scores reflect only the narrower
+        scoring window.
+
+            Region   Extraction default   Scoring default   Scored portion
+            5'SS     (-3, 10) = 13bp      (-3, 9) = 12bp    first 12 of 13
+            3'SS     (-14, 4) = 18bp      (-6, 4) = 10bp    last 10 of 18
+            BPS      sliding window        PWM length         all positions
+
     Attributes:
         pwm_sets: Dictionary of PWMSets for each region (five, bp, three)
         five_coords: Tuple of (start, stop) for 5' scoring region
         bp_coords: Tuple of (start, stop) for branch point search region
         three_coords: Tuple of (start, stop) for 3' scoring region
         ignore_nc_dnts: Whether to ignore non-canonical dinucleotides in scoring
-        bp_scorer: BranchPointScorer instance
     """
 
     def __init__(
@@ -58,12 +69,16 @@ class IntronScorer:
         Args:
             pwm_sets: Dictionary with keys 'five', 'bp', 'three'
                      Values are PWMSet objects with u2/u12 canonical/noncanonical PWMs
-            five_coords: Coordinates for 5' scoring region relative to intron start
-                        Default: (-3, 10) — positions -3 to +9 (13bp)
-            bp_coords: Coordinates for branch point search relative to intron 3' end
-                      Default: (-55, -5) matches original intronIC
-            three_coords: Coordinates for 3' scoring region relative to intron stop
-                         Default: (-14, 4) — positions -14 to +3 (18bp, captures PPT)
+            five_coords: Scoring region for 5'SS relative to intron start.
+                        Default: (-3, 9) — positions -3 to +8 (12bp).
+                        Note: extraction uses (-3, 10) = 13bp; the extra
+                        position is clipped by PWM bounds during scoring.
+            bp_coords: Branch point search region relative to intron 3' end.
+                      Default: (-55, -5) matches original intronIC.
+            three_coords: Scoring region for 3'SS relative to intron stop.
+                         Default: (-6, 4) — positions -6 to +3 (10bp).
+                         Note: extraction uses (-14, 4) = 18bp; the extra
+                         8 intronic positions are clipped during scoring.
             ignore_nc_dnts: If True, ignore dinucleotide positions when scoring
                            non-canonical introns (default: True)
         """
@@ -206,14 +221,15 @@ class IntronScorer:
             )[0]
             bp_offset = bp_u12_match.position + bp_pwm.reference_offset
 
-            # BPS scan confidence: how much the best match stands out from the
-            # background. log2(best/mean) is high when the BPS motif is sharp
-            # and well-defined (U12-like), low when the landscape is flat (U2-like).
-            if (bp_u12_match.scan_mean_score is not None
-                    and bp_u12_match.scan_mean_score > 0
+            # BPS scan confidence: how isolated the best BP hit is from the
+            # second-best position. log2(best/2nd_best) is high when there's
+            # one dominant BPS position (real U12 motif) and low when multiple
+            # positions score similarly (no clear motif).
+            if (bp_u12_match.scan_second_best_score is not None
+                    and bp_u12_match.scan_second_best_score > 0
                     and bp_u12_match.score > 0):
                 bp_scan_confidence = math.log2(
-                    bp_u12_match.score / bp_u12_match.scan_mean_score
+                    bp_u12_match.score / bp_u12_match.scan_second_best_score
                 )
 
         # Compute PPT decomposition (legacy)
@@ -867,9 +883,15 @@ class IntronScorer:
         This is the core scoring metric: how much better does the sequence
         score with U12 matrices vs U2 matrices?
 
+        Uses base-2 logarithm (math.log2), not natural log. All raw scores
+        in the output (5'_raw, bp_raw, 3'_raw) are log2 ratios.
+
+        Equivalently: sum of per-position log2 frequency ratios,
+        i.e. sum(log2(u12_freq_i / u2_freq_i)) for each scored position.
+
         Args:
-            u12_score: Score from U12 PWM
-            u2_score: Score from U2 PWM
+            u12_score: Product of U12 PWM frequencies across scored positions
+            u2_score: Product of U2 PWM frequencies across scored positions
 
         Returns:
             log2(u12_score / u2_score)

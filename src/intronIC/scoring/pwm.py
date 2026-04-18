@@ -38,16 +38,36 @@ class PWM:
     Attributes:
         name: Identifier for this PWM (e.g., "u12_atac_five")
         matrix: Numpy array of shape (4, length) for ACGT frequencies
-        length: int
+        length: Number of positions in the PWM
         pseudocount: Value to use for zero frequencies (default: 0.0001)
-        start_index: Optional offset for position numbering (default: 0)
+        start_index: Logical position that maps to array index 0 in score_sequence().
+            Used in the formula: matrix_index = logical_position - start_index.
+
+            For splice site PWMs: this is the biological position of array[0].
+            Example: start_index=-20 means array[0] = biological position -20.
+            The scorer passes seq_start_position as a biological position (e.g. -3).
+
+            For BPS PWMs: this is 0 (not the first biological position, which is -9).
+            The BPS scorer always passes seq_start_position=0 (the default), so
+            array index 0 is addressed as logical position 0 even though the
+            biological label of that position is -9. Use reference_offset to
+            convert between array indices and biological positions.
+
+        reference_offset: Array index of biological position 0 in the PWM matrix.
+            For splice site PWMs: abs(start_index) (e.g. 20 for start_index=-20).
+            For BPS PWMs: array index of the branch point adenosine (e.g. 9 for
+            a PWM spanning biological positions -9 to +2).
+
+            Convert between array and biological coordinates:
+                bio_position = array_index - reference_offset
+                array_index  = bio_position + reference_offset
     """
     name: str
     matrix: np.ndarray  # Shape: (4, length) for ACGT
     length: int
     pseudocount: float = 0.0001
     start_index: int = 0
-    reference_offset: int = 0  # Array index of the reference position (e.g., branch A at position 0 in BPS PWMs)
+    reference_offset: int = 0
 
     def __post_init__(self):
         """Validate PWM structure."""
@@ -79,15 +99,33 @@ class PWM:
         Port from: intronIC.py:2114-2140 (seq_score)
 
         Args:
-            seq: Sequence to score
-            seq_start_position: Logical position of first base in sequence
-                               (e.g., -3 for 5' region starting at -3)
-                               Corresponds to enumerate(seq, start=start_index)
-            ignore_positions: Set of logical positions to ignore (set freq to 1.0)
-                             Used to skip canonical dinucleotides in scoring
+            seq: Sequence to score (uppercase)
+            seq_start_position: Logical position of first base in sequence.
+                For splice sites: a biological position (e.g. -3 for 5'SS).
+                For BPS: always 0 (the default) — see start_index docs on PWM.
+            ignore_positions: Set of logical positions to ignore (set freq to 1.0).
+                Used to skip canonical dinucleotides in scoring.
 
         Returns:
-            Score as product of frequencies (float)
+            Product of base frequencies at each scored position (float).
+            To get a log-ratio score, compute log2(u12_score / u2_score).
+            Note: the scorer uses log2, not natural log.
+
+        Position mapping:
+            For each base at index i in seq:
+                logical_position = seq_start_position + i
+                matrix_index = logical_position - self.start_index
+            Positions where matrix_index is out of bounds [0, length) are
+            silently skipped. This is how sequences wider than the scoring
+            window are handled — extra positions fall outside bounds.
+
+            Splice site example (start_index=-20, seq_start_position=-3):
+                seq[0] → logical -3 → matrix_index 17
+                seq[3] → logical  0 → matrix_index 20  (splice junction base)
+
+            BPS example (start_index=0, seq_start_position=0):
+                seq[0] → logical 0 → matrix_index 0  (bio position -9)
+                seq[9] → logical 9 → matrix_index 9  (bio position 0, branch A)
 
         Raises:
             ValueError: If sequence is empty
@@ -126,8 +164,11 @@ class PWM:
             # For example: seq_start_position=-3, i=0 → logical_pos=-3
             logical_position = seq_start_position + i
 
-            # Convert logical position to matrix array index
-            # For example: logical_pos=-3, start_index=-20 → matrix_index=17
+            # Convert logical position to matrix array index.
+            # Uses dense arithmetic: matrix_index = logical_position - start_index
+            # The PWM matrix must be contiguous (no gaps). Splice site PWMs
+            # that use biological convention (no position 0) must include
+            # position 0 in the matrix with appropriate frequencies.
             matrix_index = logical_position - self.start_index
 
             # Skip positions outside PWM length (for flexible scoring)
@@ -543,12 +584,21 @@ class PWMLoader:
             "matrix": [[A, C, G, T], [A, C, G, T], ...]
 
         v2.0 — dict-keyed with biological positions:
-            "matrix": {"-1": {"A": .., "C": .., "G": .., "T": ..}, "+1": {...}, ...}
-            Position keys use biological conventions:
-              5'SS/3'SS: no position 0 (skip from -1 to +1)
-              BPS: position 0 = branch point adenosine
+            "matrix": {"-3": {"A": .., ...}, "0": {...}, "+1": {...}, ...}
+            Splice site PWMs include position 0 (the splice junction base).
+            BPS position 0 = branch point adenosine.
+
+        Position key format (v2.0):
+            Negative positions: "-3", "-1" (plain minus sign)
+            Zero: "0"
+            Positive positions: "+1", "+2" (plus prefix required)
+
+            To convert an integer to a JSON key:
+                key = f"+{pos}" if pos > 0 else str(pos)
 
         Both formats include start_index for internal array construction.
+        See PWM class docstring for start_index semantics (differs between
+        splice site and BPS PWMs).
 
         Args:
             filepath: Path to JSON PWM file
@@ -577,9 +627,14 @@ class PWMLoader:
 
                 if isinstance(json_matrix, dict):
                     # v2.0 dict-keyed format: {"pos_label": {"A": .., ...}, ...}
-                    # Sort by numeric position to build contiguous array indices
+                    # Sort by numeric position to build contiguous array indices.
+                    # The JSON must include all positions in the range (no gaps).
+                    # Splice site PWMs must include position 0 with appropriate
+                    # frequencies for the splice-site-adjacent base.
                     sorted_keys = sorted(json_matrix.keys(), key=lambda k: int(k))
                     bases = list(next(iter(json_matrix.values())).keys())
+                    bio_positions = [int(k) for k in sorted_keys]
+
                     internal_matrix = {base: {} for base in bases}
                     for arr_idx, pos_key in enumerate(sorted_keys):
                         freqs = json_matrix[pos_key]
@@ -587,10 +642,18 @@ class PWMLoader:
                             internal_matrix[base][arr_idx] = freqs[base]
 
                     # Compute reference_offset: array index of biological position 0.
-                    # For BPS PWMs with positions -7 to +2, position 0 (branch A)
-                    # maps to array index 7. For PWMs without position 0 in their
-                    # labels (e.g., 5'SS/3'SS which skip 0), defaults to 0.
-                    bio_positions = [int(k) for k in sorted_keys]
+                    # This bridges the gap between array indices and biological
+                    # positions (bio = array_index - reference_offset).
+                    #
+                    # For BPS PWMs: bio positions -9 to +2 → reference_offset=9
+                    #   (position 0 = branch point adenosine at array index 9)
+                    # For splice site PWMs: bio positions -20 to +19 → reference_offset=20
+                    #   (position 0 = the splice junction base at array index 20)
+                    #
+                    # Note: reference_offset is computed from the JSON keys, not
+                    # from start_index. For splice sites these agree (start_index
+                    # = first bio position), but for BPS they differ (start_index=0
+                    # is the scorer's seq_start_position, not the first bio position).
                     if 0 in bio_positions:
                         reference_offset = bio_positions.index(0)
                     else:

@@ -131,9 +131,9 @@ class IntronScores:
     Contains all PWM scores, z-scores, and classification results.
 
     Attributes:
-        five_raw_score: Raw PWM score for 5' splice site
-        bp_raw_score: Raw PWM score for branch point
-        three_raw_score: Raw PWM score for 3' splice site
+        five_raw_score: Log2 likelihood ratio for 5'SS: log2(P(seq|U12) / P(seq|U2))
+        bp_raw_score: Log2 likelihood ratio for BPS: log2(P(seq|U12) / P(seq|U2))
+        three_raw_score: Log2 likelihood ratio for 3'SS: log2(P(seq|U12) / P(seq|U2))
         five_z_score: Normalized z-score for 5' splice site
         bp_z_score: Normalized z-score for branch point
         three_z_score: Normalized z-score for 3' splice site
@@ -204,9 +204,9 @@ class IntronScores:
     # Non-donor fit composites (ignoring the often-dominant 5'SS signal)
     min_fit_bp_3: Optional[float] = None  # min(fit_u12_bp, fit_u12_three)
 
-    # BPS scan confidence: log2(best_score / mean_score) across the BP search window.
-    # High values indicate a sharp, well-defined BPS motif (U12-like).
-    # Low values indicate a flat landscape with no clear motif (U2-like).
+    # BPS scan confidence: log2(best_score / 2nd_best_score) across the BP search window.
+    # High values indicate one dominant BPS position (real U12 motif, typically 7-11).
+    # Low values indicate multiple similar-scoring positions (no clear motif, typically 2-5).
     bp_scan_confidence: Optional[float] = None
 
     def is_high_confidence(self, threshold: float = 90.0) -> bool:
