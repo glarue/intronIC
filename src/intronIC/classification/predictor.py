@@ -66,9 +66,16 @@ def _predict_chunk_worker(
     X_z = np.array(features)
 
     # Get predictions from each model (pass z-scores - NO scaling in pipeline)
+    # If feature dropout was used during training, apply the same mask
+    # (set the dropped feature to its training median) before predicting.
     probas = []
     for model in ensemble.models:
-        proba = model.model.predict_proba(X_z)[:, 1]
+        if getattr(model, 'dropped_feature', None) is not None:
+            X_masked = X_z.copy()
+            X_masked[:, model.dropped_feature] = model.feature_median
+            proba = model.model.predict_proba(X_masked)[:, 1]
+        else:
+            proba = model.model.predict_proba(X_z)[:, 1]
         probas.append(proba)
 
     probas = np.array(probas)
@@ -299,11 +306,15 @@ class SVMPredictor:
         X_z = np.array(features)
 
         # Get predictions from each model (pass z-scores - NO scaling in pipeline)
+        # Apply per-model feature dropout mask if applicable.
         probas = []
         for model in ensemble.models:
-            # predict_proba returns [P(U2), P(U12)]
-            # We want P(U12) which is column 1
-            proba = model.model.predict_proba(X_z)[:, 1]
+            if getattr(model, 'dropped_feature', None) is not None:
+                X_masked = X_z.copy()
+                X_masked[:, model.dropped_feature] = model.feature_median
+                proba = model.model.predict_proba(X_masked)[:, 1]
+            else:
+                proba = model.model.predict_proba(X_z)[:, 1]
             probas.append(proba)
 
         probas = np.array(probas)  # Shape: (n_models, n_introns)
@@ -528,10 +539,15 @@ def classify_introns_streaming(
         # Build feature vector (validates z-scores internally)
         X_z = np.array([_extract_feature_vector(intron, extra_names)])
 
-        # Get predictions from each model
+        # Get predictions from each model (apply per-model feature mask if dropout)
         probas = []
         for model in ensemble.models:
-            proba = model.model.predict_proba(X_z)[:, 1]
+            if getattr(model, 'dropped_feature', None) is not None:
+                X_masked = X_z.copy()
+                X_masked[:, model.dropped_feature] = model.feature_median
+                proba = model.model.predict_proba(X_masked)[:, 1]
+            else:
+                proba = model.model.predict_proba(X_z)[:, 1]
             probas.append(proba[0])
 
         probas = np.array(probas)

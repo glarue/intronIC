@@ -67,6 +67,8 @@ class SVMModel:
     u12_count: int  # U12 introns in training
     u2_count: int  # U2 introns in training
     parameters: SVMParameters  # Hyperparameters used
+    dropped_feature: Optional[int] = None  # Index of feature dropped during training (None = no dropout)
+    feature_median: Optional[float] = None  # Median value used to mask the dropped feature
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +139,7 @@ class SVMTrainer:
         gamma_imbalance_options: Optional[list] = None,
         progress_tracker: Optional[Any] = None,
         extra_feature_names: Optional[list] = None,
+        feature_dropout: int = 0,
     ):
         """
         Initialize trainer.
@@ -150,6 +153,11 @@ class SVMTrainer:
             gamma_imbalance_options: Gamma scaling factors (default: None, uses parameters.gamma_imbalance from SVMParameters)
             progress_tracker: Optional ProgressTracker for global step counting
             extra_feature_names: Additional IntronScores fields to include as classifier features
+            feature_dropout: Number of input features to drop per model (default: 0 = disabled).
+                When > 0, each model is trained with a different randomly selected feature
+                masked to its population median. This creates ensemble diversity that
+                produces higher variance for introns dependent on a single feature (FPs)
+                than for introns strong across all features (real U12s).
         """
         self.n_models = n_models
         self.random_state = random_state
@@ -159,6 +167,7 @@ class SVMTrainer:
         self.gamma_imbalance_options = gamma_imbalance_options
         self.progress_tracker = progress_tracker
         self.extra_feature_names = extra_feature_names or []
+        self.feature_dropout = feature_dropout
 
     def train_ensemble(
         self,
@@ -210,12 +219,22 @@ class SVMTrainer:
             else:
                 u2_sample = u2_introns
 
+            # Select feature to drop for this model (if dropout enabled)
+            if self.feature_dropout > 0:
+                rng = np.random.RandomState(self.random_state + i + 1000)
+                # Number of input features = 3 base z-scores + extra features
+                n_input_features = 3 + len(self.extra_feature_names)
+                dropped = int(rng.randint(0, n_input_features))
+            else:
+                dropped = None
+
             # Train single model
             model = self._train_single_model(
                 u12_introns,
                 u2_sample,
                 parameters,
-                seed=self.random_state + i
+                seed=self.random_state + i,
+                drop_feature=dropped,
             )
             models.append(model)
 
@@ -237,15 +256,27 @@ class SVMTrainer:
         u12_introns: Sequence[Intron],
         u2_introns: Sequence[Intron],
         parameters: SVMParameters,
-        seed: int
+        seed: int,
+        drop_feature: Optional[int] = None,
     ) -> SVMModel:
         """
         Train a single SVM model.
+
+        Args:
+            drop_feature: If not None, mask this feature column to its median
+                before training. The model learns to classify without this feature.
 
         Port from: intronIC.py:5353-5428
         """
         # Prepare data
         X, y = self._prepare_training_data(u12_introns, u2_introns)
+
+        # Apply feature dropout: mask one feature to its population median
+        feature_median = None
+        if drop_feature is not None and 0 <= drop_feature < X.shape[1]:
+            feature_median = float(np.median(X[:, drop_feature]))
+            X = X.copy()  # Don't modify shared data
+            X[:, drop_feature] = feature_median
 
         # Compute balanced class weights with multiplier (2025-01-19: robustness improvements)
         n_samples = len(y)
@@ -314,7 +345,9 @@ class SVMTrainer:
             train_size=len(X),
             u12_count=int(np.sum(y == 1)),
             u2_count=int(np.sum(y == 0)),
-            parameters=parameters
+            parameters=parameters,
+            dropped_feature=drop_feature,
+            feature_median=feature_median,
         )
 
     def _subsample_u2(

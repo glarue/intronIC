@@ -159,6 +159,7 @@ class IntronClassifier:
         kernel: str = 'rbf',
         gamma_search: Optional[list] = None,
         extra_feature_names: Optional[list] = None,
+        feature_dropout: int = 0,
     ):
         """
         Initialize classifier.
@@ -250,6 +251,7 @@ class IntronClassifier:
         self.kernel = kernel
         self.gamma_search = gamma_search
         self.extra_feature_names = extra_feature_names or []
+        self.feature_dropout = feature_dropout
 
         # Debug: Log features being used
         if features_list is not None:
@@ -429,6 +431,7 @@ class IntronClassifier:
                 kernel=self.kernel,
                 gamma_search=self.gamma_search,
                 extra_feature_names=self.extra_feature_names,
+                feature_dropout=self.feature_dropout,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -562,6 +565,7 @@ class IntronClassifier:
             gamma_imbalance_options=self.gamma_imbalance_options,
             progress_tracker=progress_tracker,
             extra_feature_names=self.extra_feature_names,
+            feature_dropout=self.feature_dropout,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
@@ -691,6 +695,7 @@ class IntronClassifier:
                 kernel=self.kernel,
                 gamma_search=self.gamma_search,
                 extra_feature_names=self.extra_feature_names,
+                feature_dropout=self.feature_dropout,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -824,6 +829,7 @@ class IntronClassifier:
             gamma_imbalance_options=self.gamma_imbalance_options,
             progress_tracker=progress_tracker,
             extra_feature_names=self.extra_feature_names,
+            feature_dropout=self.feature_dropout,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,

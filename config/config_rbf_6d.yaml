@@ -69,11 +69,14 @@ training:
   test_fraction: 0.2
 
   ensemble:
-    n_models: 15               # 15-model ensemble for robust probability estimates
+    n_models: 30               # 30-model ensemble (5 per dropped feature × 6 features)
     subsample_u2: true         # Each model sees a different random U2 subset
     subsample_ratio: 0.80      # Fraction of U2 per model
     max_iter: 50000
     random_state: 42
+    feature_dropout: 1         # Drop 1 input feature per model for ensemble diversity.
+                               # Creates models that disagree on feature-dependent FPs
+                               # while agreeing on robust U12 calls.
 
   use_fold_averaged_params: false
 

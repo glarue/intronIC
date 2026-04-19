@@ -125,6 +125,7 @@ class NestedCVEvaluator:
         kernel: str = 'rbf',
         gamma_search: list | None = None,
         extra_feature_names: list | None = None,
+        feature_dropout: int = 0,
     ):
         """
         Initialize nested CV evaluator.
@@ -183,6 +184,7 @@ class NestedCVEvaluator:
         self.kernel = kernel
         self.gamma_search = gamma_search
         self.extra_feature_names = extra_feature_names or []
+        self.feature_dropout = feature_dropout
 
     def evaluate(
         self, u12_reference: Sequence[Intron], u2_reference: Sequence[Intron]
@@ -310,6 +312,7 @@ class NestedCVEvaluator:
                 progress_tracker=self.progress_tracker,
                 features_list=self.features_list,
                 extra_feature_names=self.extra_feature_names,
+                feature_dropout=self.feature_dropout,
             )
             ensemble = trainer.train_ensemble(
                 train_u12,

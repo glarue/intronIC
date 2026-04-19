@@ -4543,6 +4543,7 @@ def classify_introns(
         kernel=opt.kernel,
         gamma_search=list(opt.gamma_search) if opt.gamma_search else None,
         extra_feature_names=list(opt.extra_features) if opt.extra_features else None,
+        feature_dropout=ens.feature_dropout,
     )
 
     # Run complete classification pipeline (optimize + train + classify)

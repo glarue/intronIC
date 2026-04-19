@@ -260,6 +260,7 @@ class EnsembleConfig:
     subsample_ratio: float = 0.85
     max_iter: int = 50000
     random_state: int = 42
+    feature_dropout: int = 0  # Number of features to drop per model (0=disabled)
 
     @classmethod
     def from_yaml(cls, yaml_config: dict) -> "EnsembleConfig":
@@ -279,6 +280,7 @@ class EnsembleConfig:
             subsample_u2=ensemble.get("subsample_u2", True),
             subsample_ratio=ensemble.get("subsample_ratio", 0.85),
             max_iter=ensemble.get("max_iter", 50000),
+            feature_dropout=ensemble.get("feature_dropout", 0),
             random_state=ensemble.get("random_state", 42),
         )
 

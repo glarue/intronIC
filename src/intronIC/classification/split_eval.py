@@ -318,6 +318,7 @@ class SplitEvaluator:
             progress_tracker=self.progress_tracker,
             features_list=self.features_list,
             extra_feature_names=self.extra_feature_names,
+            feature_dropout=getattr(self, 'feature_dropout', 0),
         )
         ensemble = trainer.train_ensemble(
             train_u12,
