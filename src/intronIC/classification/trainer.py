@@ -190,8 +190,6 @@ class SVMTrainer:
         Returns:
             Ensemble of trained models
         """
-        models = []
-
         # Print training header (no stage number - context-dependent)
         print(f"\n{'='*80}", flush=True)
         if self.n_models == 1:
@@ -200,16 +198,9 @@ class SVMTrainer:
             print(f"Ensemble Training ({self.n_models} models)", flush=True)
         print(f"{'='*80}\n", flush=True)
 
+        # Prepare per-model configurations (subsample + dropout selection)
+        model_configs = []
         for i in range(self.n_models):
-            print(f"\n{'─'*80}", flush=True)
-            global_step_str = f" {self.progress_tracker.format_step()}" if self.progress_tracker else ""
-            if self.n_models == 1:
-                print(f"Training model...{global_step_str}", flush=True)
-            else:
-                print(f"MODEL {i+1}/{self.n_models}: Training ensemble model...{global_step_str}", flush=True)
-            print(f"{'─'*80}", flush=True)
-
-            # Subsample U2 if requested (for diversity)
             if subsample_u2 and self.n_models > 1:
                 u2_sample = self._subsample_u2(
                     u2_introns,
@@ -219,28 +210,29 @@ class SVMTrainer:
             else:
                 u2_sample = u2_introns
 
-            # Select feature to drop for this model (if dropout enabled)
             if self.feature_dropout > 0:
                 rng = np.random.RandomState(self.random_state + i + 1000)
-                # Number of input features = 3 base z-scores + extra features
                 n_input_features = 3 + len(self.extra_feature_names)
                 dropped = int(rng.randint(0, n_input_features))
             else:
                 dropped = None
 
-            # Train single model
-            model = self._train_single_model(
-                u12_introns,
-                u2_sample,
-                parameters,
-                seed=self.random_state + i,
-                drop_feature=dropped,
-            )
-            models.append(model)
+            model_configs.append((i, u2_sample, dropped))
 
-            # Update global progress
-            if self.progress_tracker:
-                self.progress_tracker.increment(f"Completed model {i+1}/{self.n_models}")
+        # Train models — parallel if n_models > 1 and joblib available
+        n_parallel = min(self.n_models, 6)  # Cap at 6 parallel workers
+        use_parallel = self.n_models > 1 and n_parallel > 1
+
+        if use_parallel:
+            print(f"Training {self.n_models} models in parallel "
+                  f"({n_parallel} workers)\n", flush=True)
+            models = self._train_ensemble_parallel(
+                u12_introns, model_configs, parameters, n_parallel
+            )
+        else:
+            models = self._train_ensemble_sequential(
+                u12_introns, model_configs, parameters
+            )
 
         print(f"\n{'='*80}", flush=True)
         if self.n_models == 1:
@@ -250,6 +242,117 @@ class SVMTrainer:
         print(f"{'='*80}\n", flush=True)
 
         return SVMEnsemble(models=models, subsample_ratio=subsample_ratio)
+
+    def _train_ensemble_sequential(
+        self,
+        u12_introns: Sequence[Intron],
+        model_configs: list,
+        parameters: SVMParameters,
+    ) -> list:
+        """Train models sequentially with per-model output."""
+        models = []
+        for i, u2_sample, dropped in model_configs:
+            print(f"\n{'─'*80}", flush=True)
+            global_step_str = f" {self.progress_tracker.format_step()}" if self.progress_tracker else ""
+            if self.n_models == 1:
+                print(f"Training model...{global_step_str}", flush=True)
+            else:
+                print(f"MODEL {i+1}/{self.n_models}: Training ensemble model...{global_step_str}", flush=True)
+            print(f"{'─'*80}", flush=True)
+
+            model = self._train_single_model(
+                u12_introns, u2_sample, parameters,
+                seed=self.random_state + i, drop_feature=dropped,
+            )
+            models.append(model)
+
+            if self.progress_tracker:
+                self.progress_tracker.increment(f"Completed model {i+1}/{self.n_models}")
+
+        return models
+
+    def _train_ensemble_parallel(
+        self,
+        u12_introns: Sequence[Intron],
+        model_configs: list,
+        parameters: SVMParameters,
+        n_parallel: int,
+    ) -> list:
+        """Train models in parallel with live progress updates.
+
+        Uses joblib with threading backend. Each completed model updates
+        a shared counter and prints a progress line. Per-model sklearn
+        output is suppressed to avoid interleaving.
+
+        Falls back to sequential training if joblib is unavailable.
+        """
+        try:
+            from joblib import Parallel, delayed
+        except ImportError:
+            print("joblib not available, falling back to sequential training",
+                  flush=True)
+            return self._train_ensemble_sequential(
+                u12_introns, model_configs, parameters
+            )
+
+        import io
+        import sys
+        import warnings
+        import threading
+
+        # Shared progress counter
+        lock = threading.Lock()
+        completed = [0]  # mutable for closure access
+        n_total = self.n_models
+
+        def _train_with_progress(trainer_self, u12, u2_sample, params,
+                                 seed, drop_feature, model_idx):
+            """Train one model, suppress output, update progress on completion."""
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    model = trainer_self._train_single_model(
+                        u12, u2_sample, params,
+                        seed=seed, drop_feature=drop_feature,
+                    )
+            finally:
+                sys.stdout = old_stdout
+
+            # Thread-safe progress update
+            with lock:
+                completed[0] += 1
+                n_done = completed[0]
+                drop_info = (f" (dropped feature {model.dropped_feature})"
+                             if model.dropped_feature is not None else "")
+                old_stdout.write(
+                    f"\r  Models trained: {n_done}/{n_total}"
+                    f"  [latest: model {model_idx+1}{drop_info}]"
+                    + " " * 20
+                )
+                old_stdout.flush()
+
+            return model
+
+        # Use threads to avoid pickling — GIL is released during sklearn C fits
+        raw_results = Parallel(n_jobs=n_parallel, prefer="threads")(
+            delayed(_train_with_progress)(
+                self, u12_introns, u2_sample, parameters,
+                self.random_state + i, dropped, i,
+            )
+            for i, u2_sample, dropped in model_configs
+        )
+
+        # Final newline after progress counter
+        print(flush=True)
+
+        # Print completion summary
+        for idx, model in enumerate(raw_results):
+            if self.progress_tracker:
+                self.progress_tracker.increment(f"Completed model {idx+1}/{self.n_models}")
+
+        return list(raw_results)
 
     def _train_single_model(
         self,
@@ -329,13 +432,15 @@ class SVMTrainer:
         # External calibration wrapper
         # Method (sigmoid vs isotonic) chosen by hyperparameter optimization
         # ensemble='auto' uses per-fold fit + averaging for stable tails
-        # n_jobs=-1 parallelizes the internal 5-fold CV fits
+        # n_jobs: -1 when training sequentially (parallelize CV folds),
+        #         1 when training in parallel (avoid nested parallelism)
+        cal_n_jobs = 1 if self.n_models > 1 else -1
         svm = CalibratedClassifierCV(
             base_pipeline,
             method=parameters.calibration_method,  # From optimizer: 'sigmoid' or 'isotonic'
             cv=5,  # Stratified 5-fold
             ensemble='auto',  # Per-fold calibrators averaged
-            n_jobs=-1,  # Parallelize CV folds
+            n_jobs=cal_n_jobs,
         )
 
         # Suppress convergence warning spam but log summary
