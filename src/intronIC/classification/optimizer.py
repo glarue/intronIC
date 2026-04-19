@@ -869,7 +869,10 @@ class SVMOptimizer:
             else:
                 print(f"Model: UNCALIBRATED SVC(kernel='{self.kernel}') (calibration selected later)", flush=True)
             print(f"CV folds: {n_cv_folds}", flush=True)
-            print(f"GridSearchCV tasks: {total_tasks:,} (~{total_tasks}/{self.n_jobs if self.n_jobs > 0 else 'auto'} per worker)", flush=True)
+            import os
+            effective_workers = self.n_jobs if self.n_jobs > 0 else os.cpu_count() or 1
+            tasks_per_worker = total_tasks // effective_workers
+            print(f"GridSearchCV tasks: {total_tasks:,} (~{tasks_per_worker:,} per worker, {effective_workers} workers)", flush=True)
             print(f"Total model fits: {total_fits:,}", flush=True)
             print(f"C range: [{C_grid.min():.2e}, {C_grid.max():.2e}]", flush=True)
             print(f"Metric: {self.scoring_metric}", flush=True)
