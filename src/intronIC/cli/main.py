@@ -3403,18 +3403,7 @@ def classify_streaming_per_contig(
     messenger.info("Loading PWM matrices")
     pwm_sets = load_pwms_with_fallback(config, messenger)
 
-    # TODO: Species-specific U2 background correction in streaming mode.
-    # Currently only supported in non-streaming mode (score_introns path).
-    # Streaming mode requires a two-pass approach: first pass accumulates
-    # background frequencies across all contigs, second pass scores with
-    # corrected PWMs. For now, streaming uses uncorrected human U2 PWMs.
-    if config.species_background.enabled:
-        messenger.log_only(
-            "Species background correction not yet available in streaming mode; "
-            "using standard human U2 PWMs. Use --no-streaming for background correction."
-        )
-
-    # Configure scorer
+    # Configure scoring coordinates (used by scorer and background correction)
     five_coords = (
         config.scoring.scoring_regions.five_start,
         config.scoring.scoring_regions.five_end,
@@ -3428,13 +3417,8 @@ def classify_streaming_per_contig(
         config.scoring.scoring_regions.three_end,
     )
 
-    scorer = IntronScorer(
-        pwm_sets=pwm_sets,
-        five_coords=five_coords,
-        bp_coords=bp_coords,
-        three_coords=three_coords,
-        ignore_nc_dnts=config.scoring.ignore_nc_dnts,
-    )
+    # NOTE: Scorer creation is deferred to after background correction (below)
+    # so that corrected pwm_sets can be used if species background is enabled.
 
     # =========================================================================
     # MEMORY OPTIMIZATION 1: Parse annotations into SQLite (single pass)
@@ -3466,6 +3450,142 @@ def classify_streaming_per_contig(
     # =========================================================================
     messenger.info(f"Using indexed genome access: {config.input.genome}")
     genome_reader = IndexedGenomeReader(str(config.input.genome), use_cache=False)
+
+    # NOTE: Species-specific U2 background correction is handled by redirecting
+    # to non-streaming mode when enabled (see main_classify). This function
+    # is only called when species_background.enabled is False.
+    if False and config.species_background.enabled:
+        from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
+
+        bg_config = config.species_background
+        five_start = config.scoring.scoring_regions.five_start
+        five_end = config.scoring.scoring_regions.five_end
+        three_start = config.scoring.scoring_regions.three_start
+        three_end = config.scoring.scoring_regions.three_end
+        bp_start_coord = config.scoring.scoring_regions.bp_start
+        bp_end_coord = config.scoring.scoring_regions.bp_end
+        five_len = five_end - five_start
+        three_len = three_end - three_start
+
+        from intronIC.scoring.pwm import PWMSet
+        u12_sets_bg = {}
+        u2_sets_bg = {}
+        for region in ['five', 'three', 'bp']:
+            if region not in pwm_sets:
+                continue
+            u12_sets_bg[region] = PWMSet(
+                matrices={k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u12'})
+            u2_sets_bg[region] = PWMSet(
+                matrices={k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u2'})
+
+        core_bg_config = BackgroundConfig(
+            enabled=True, n0=bg_config.n0,
+            trim_percentile=bg_config.trim_percentile,
+            pseudocount_per_base=bg_config.pseudocount_per_base,
+            n_iterations=bg_config.n_iterations,
+            min_introns=bg_config.min_introns,
+        )
+        bg = SpeciesBackground(
+            human_u2_pwm_sets=u2_sets_bg, config=core_bg_config,
+            five_len=five_len, three_len=three_len,
+        )
+
+        messenger.info("Species background: accumulating frequencies across contigs...")
+        n_bg_introns = 0
+
+        # Lightweight extraction: for each contig, parse annotations → generate
+        # introns → fetch short flanking sequences → accumulate counts.
+        # This is much cheaper than full extraction because we only need ~30bp
+        # per intron (the scored motif windows), not the full intron sequence.
+        for contig_name, _count in contigs_with_counts:
+            try:
+                annotations = annotation_store.get_annotations(contig_name)
+            except Exception:
+                continue
+
+            from intronIC.extraction.intron_generator import generate_introns_from_annotations
+            contig_introns = generate_introns_from_annotations(
+                annotations,
+                feature_type=config.extraction.feature_type,
+                clean_names=config.output.clean_names,
+            )
+
+            for intron in contig_introns:
+                coord = intron.coordinates
+                if coord is None:
+                    continue
+                seq_len = coord.stop - coord.start + 1
+                if seq_len < 30:
+                    continue
+
+                # Fetch only the short sequences we need for frequency accumulation
+                try:
+                    # 5'SS: upstream flank + intron start
+                    up_start = max(1, coord.start - abs(five_start))
+                    up_seq = genome_reader.fetch(coord.chromosome, up_start, coord.start - 1)
+                    intro_start_seq = genome_reader.fetch(coord.chromosome, coord.start, coord.start + five_end - 1)
+
+                    # 3'SS: intron end + downstream flank
+                    intro_end_seq = genome_reader.fetch(coord.chromosome, coord.stop + three_start + 1, coord.stop)
+                    dn_end = min(coord.stop + three_end, genome_reader.get_contig_length(coord.chromosome))
+                    dn_seq = genome_reader.fetch(coord.chromosome, coord.stop + 1, dn_end)
+
+                    # BP region
+                    bp_region_start = max(coord.start, coord.stop + bp_start_coord)
+                    bp_region_end = coord.stop + bp_end_coord
+                    bp_seq = genome_reader.fetch(coord.chromosome, bp_region_start, bp_region_end)
+                except Exception:
+                    continue
+
+                five_seq = (up_seq + intro_start_seq).upper()
+                three_seq = (intro_end_seq + dn_seq).upper()
+
+                # Handle reverse strand
+                if coord.strand == '-':
+                    from intronIC.utils.sequence import reverse_complement
+                    five_seq = reverse_complement(five_seq)
+                    three_seq = reverse_complement(three_seq)
+                    bp_seq = reverse_complement(bp_seq)
+                    five_seq, three_seq = three_seq, five_seq
+
+                # Get dinucleotides
+                full_start = genome_reader.fetch(coord.chromosome, coord.start, coord.start + 1)
+                full_end = genome_reader.fetch(coord.chromosome, coord.stop - 1, coord.stop)
+                if coord.strand == '-':
+                    from intronIC.utils.sequence import reverse_complement
+                    five_dnt = reverse_complement(full_end).upper()
+                    three_dnt = reverse_complement(full_start).upper()
+                else:
+                    five_dnt = full_start.upper()
+                    three_dnt = full_end.upper()
+
+                bg.accumulate(
+                    intron.intron_id, five_dnt, three_dnt,
+                    five_seq[:five_len], three_seq[-three_len:],
+                    bp_seq.upper(),
+                )
+                n_bg_introns += 1
+
+        if n_bg_introns >= bg_config.min_introns:
+            messenger.info(
+                f"Species background: computing empirical U2 from {n_bg_introns} introns "
+                f"(n0={bg_config.n0})"
+            )
+            pwm_sets = bg.build_corrected_pwm_sets(u12_pwm_sets=u12_sets_bg)
+        else:
+            messenger.info(
+                f"Species background: {n_bg_introns} introns < min_introns "
+                f"({bg_config.min_introns}), skipping correction"
+            )
+
+    # Create scorer (uses corrected pwm_sets if background correction was applied)
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=five_coords,
+        bp_coords=bp_coords,
+        three_coords=three_coords,
+        ignore_nc_dnts=config.scoring.ignore_nc_dnts,
+    )
 
     # Initialize output writer
     output_writer = StreamingOutputWriter(
@@ -5304,11 +5424,13 @@ def main_classify(config: IntronICConfig):
         # This mode provides ~90% memory savings but requires:
         # 1. Pre-trained model (has frozen scaler)
         # 2. Annotation input mode
+        # 3. Species background correction disabled (requires two-pass)
         # The function handles extraction, scoring, classification, and output internally.
         if (
             config.performance.streaming
             and config.training.pretrained_model_path
             and config.input.mode == "annotation"
+            and not config.species_background.enabled
         ):
             total_classified, summary = classify_streaming_per_contig(
                 config, messenger, reporter
@@ -5369,12 +5491,17 @@ def main_classify(config: IntronICConfig):
         if config.input.mode == "annotation":
             # Don't load genome here - extraction handles it internally
             # (parallel mode uses indexed access, sequential uses cache)
-            if config.performance.streaming:
+            if config.performance.streaming and not config.species_background.enabled:
                 # Streaming mode: ~85% memory savings, stores sequences in SQLite
                 introns, streaming_db_path = extract_introns_streaming(
                     config, messenger, reporter
                 )
             else:
+                if config.species_background.enabled and config.performance.streaming:
+                    messenger.info(
+                        "Using in-memory mode for species background correction "
+                        "(requires all intron sequences before scoring)"
+                    )
                 # Standard processing: faster but uses more memory
                 introns = extract_introns_from_annotation(config, messenger, reporter)
         elif config.input.mode == "bed":
