@@ -111,6 +111,123 @@ def merge_pwm_sets(
     return default_pwms
 
 
+def apply_species_background(
+    introns: List["Intron"],
+    pwm_sets: Dict[str, "PWMSet"],
+    config: "IntronICConfig",
+    messenger: "UnifiedMessenger",
+) -> Dict[str, "PWMSet"]:
+    """Apply species-specific U2 background correction to PWM sets.
+
+    Computes empirical per-position nucleotide frequencies from the species'
+    own introns and blends them into the U2 PWMs. The U12 PWMs are unchanged.
+
+    This must be called AFTER extraction (introns have sequences) and BEFORE
+    scoring (scorer uses the returned corrected pwm_sets).
+
+    Args:
+        introns: Introns with extracted sequences
+        pwm_sets: Original PWM sets (U12 + U2)
+        config: Pipeline config with species_background settings
+        messenger: For logging
+
+    Returns:
+        Corrected PWM sets (same structure, U2 entries replaced)
+    """
+    bg_config = config.species_background
+    if not bg_config.enabled:
+        return pwm_sets
+
+    from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
+    from intronIC.scoring.pwm import PWMSet
+
+    # Split into U12 and U2 sets
+    u12_sets = {}
+    u2_sets = {}
+    for region in ['five', 'three', 'bp']:
+        if region not in pwm_sets:
+            continue
+        u12_mats = {k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u12'}
+        u2_mats = {k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u2'}
+        u12_sets[region] = PWMSet(matrices=u12_mats)
+        u2_sets[region] = PWMSet(matrices=u2_mats)
+
+    # Determine scored lengths from config
+    five_len = config.scoring.scoring_regions.five_end - config.scoring.scoring_regions.five_start
+    three_len = config.scoring.scoring_regions.three_end - config.scoring.scoring_regions.three_start
+
+    core_config = BackgroundConfig(
+        enabled=True,
+        n0=bg_config.n0,
+        trim_percentile=bg_config.trim_percentile,
+        pseudocount_per_base=bg_config.pseudocount_per_base,
+        n_iterations=bg_config.n_iterations,
+        min_introns=bg_config.min_introns,
+    )
+
+    bg = SpeciesBackground(
+        human_u2_pwm_sets=u2_sets,
+        config=core_config,
+        five_len=five_len,
+        three_len=three_len,
+    )
+
+    # Accumulate sequences from all introns
+    n_accumulated = 0
+    for intron in introns:
+        seqs = intron.sequences
+        if seqs is None or seqs.seq is None:
+            continue
+
+        five_dnt = seqs.five_prime_dnt or (seqs.seq[:2] if seqs.seq else '')
+        three_dnt = seqs.three_prime_dnt or (seqs.seq[-2:] if seqs.seq else '')
+        if not five_dnt or not three_dnt:
+            continue
+
+        upstream = (seqs.upstream_flank or '')
+        seq = seqs.seq or ''
+        downstream = (seqs.downstream_flank or '')
+
+        five_start = config.scoring.scoring_regions.five_start
+        five_end = config.scoring.scoring_regions.five_end
+        five_seq = upstream[five_start:] + seq[:five_end]
+
+        three_start = config.scoring.scoring_regions.three_start
+        three_end = config.scoring.scoring_regions.three_end
+        three_seq = seq[three_start:] + downstream[:three_end]
+
+        bp_start = config.scoring.scoring_regions.bp_start
+        bp_end = config.scoring.scoring_regions.bp_end
+        bp_region = seq[max(0, len(seq) + bp_start):len(seq) + bp_end]
+
+        bg.accumulate(
+            intron.intron_id,
+            five_dnt.upper(),
+            three_dnt.upper(),
+            five_seq.upper(),
+            three_seq.upper(),
+            bp_region.upper(),
+        )
+        n_accumulated += 1
+
+    if n_accumulated < bg_config.min_introns:
+        messenger.info(
+            f"Species background: {n_accumulated} introns < min_introns "
+            f"({bg_config.min_introns}), skipping correction"
+        )
+        return pwm_sets
+
+    messenger.info(
+        f"Species background: computing empirical U2 from {n_accumulated} introns "
+        f"(n0={bg_config.n0})"
+    )
+
+    # Build corrected PWM sets (U12 unchanged, U2 replaced with blended)
+    corrected = bg.build_corrected_pwm_sets(u12_pwm_sets=u12_sets)
+
+    return corrected
+
+
 def load_pwms_with_fallback(
     config: "IntronICConfig", messenger: "UnifiedMessenger"
 ) -> Dict[str, "PWMSet"]:
@@ -222,6 +339,33 @@ def _init_worker(
     # Create scorer once for this worker
     _worker_scorer = IntronScorer(
         pwm_sets=pwm_sets,
+        five_coords=five_coords,
+        bp_coords=bp_coords,
+        three_coords=three_coords,
+        ignore_nc_dnts=ignore_nc_dnts,
+    )
+
+
+def _init_worker_with_pwms(
+    pwm_sets_dict: Dict,
+    five_coords: Tuple[int, int],
+    bp_coords: Tuple[int, int],
+    three_coords: Tuple[int, int],
+    ignore_nc_dnts: bool,
+):
+    """Initialize worker with pre-built PWM sets (e.g., after background correction).
+
+    Unlike _init_worker which loads PWMs from disk, this receives PWM sets
+    that have already been corrected with species-specific backgrounds.
+    """
+    global _worker_pwm_sets, _worker_scorer
+
+    from intronIC.scoring.scorer import IntronScorer
+
+    _worker_pwm_sets = pwm_sets_dict
+
+    _worker_scorer = IntronScorer(
+        pwm_sets=pwm_sets_dict,
         five_coords=five_coords,
         bp_coords=bp_coords,
         three_coords=three_coords,
@@ -2393,6 +2537,9 @@ def score_introns(
     # Load PWM matrices with fallback support for custom matrices
     pwm_sets = load_pwms_with_fallback(config, messenger)
 
+    # Apply species-specific U2 background correction if enabled
+    pwm_sets = apply_species_background(introns, pwm_sets, config, messenger)
+
     # Extract scoring configuration
     five_coords = (
         config.scoring.scoring_regions.five_start,
@@ -2415,31 +2562,44 @@ def score_introns(
     if n_workers > 1:
         messenger.info(f"Calculating PWM scores (parallel, {n_workers} workers)")
 
-        # Get PWM file paths for workers (they load PWMs in separate processes)
-        data_dir = Path(__file__).parent.parent / "data"
-        default_pwm_file = data_dir / "intronIC_scoring_PWMs.json"
-        custom_pwm_file = config.scoring.pwm_file
-
         progress = reporter.create_progress()
         scored_introns = []
         failed_count = 0
 
+        # Choose worker initializer: if background correction was applied,
+        # pass pre-built pwm_sets directly to workers. Otherwise, have
+        # workers load PWMs from disk (original behavior).
+        if config.species_background.enabled:
+            worker_init = _init_worker_with_pwms
+            worker_initargs = (
+                pwm_sets,
+                five_coords,
+                bp_coords,
+                three_coords,
+                ignore_nc_dnts,
+            )
+        else:
+            data_dir = Path(__file__).parent.parent / "data"
+            default_pwm_file = data_dir / "intronIC_scoring_PWMs.json"
+            custom_pwm_file = config.scoring.pwm_file
+            worker_init = _init_worker
+            worker_initargs = (
+                default_pwm_file,
+                custom_pwm_file,
+                five_coords,
+                bp_coords,
+                three_coords,
+                ignore_nc_dnts,
+                config.scoring.pseudocount,
+            )
+
         with progress:
             task = progress.add_task("[cyan]Scoring introns...", total=len(introns))
 
-            # Use initializer to load PWMs once per worker process (not per intron)
             with Pool(
                 processes=n_workers,
-                initializer=_init_worker,
-                initargs=(
-                    default_pwm_file,
-                    custom_pwm_file,
-                    five_coords,
-                    bp_coords,
-                    three_coords,
-                    ignore_nc_dnts,
-                    config.scoring.pseudocount,
-                ),
+                initializer=worker_init,
+                initargs=worker_initargs,
             ) as pool:
                 try:
                     # Use imap_unordered with chunking for smooth progress updates
@@ -3242,6 +3402,17 @@ def classify_streaming_per_contig(
     # Load PWM matrices
     messenger.info("Loading PWM matrices")
     pwm_sets = load_pwms_with_fallback(config, messenger)
+
+    # TODO: Species-specific U2 background correction in streaming mode.
+    # Currently only supported in non-streaming mode (score_introns path).
+    # Streaming mode requires a two-pass approach: first pass accumulates
+    # background frequencies across all contigs, second pass scores with
+    # corrected PWMs. For now, streaming uses uncorrected human U2 PWMs.
+    if config.species_background.enabled:
+        messenger.log_only(
+            "Species background correction not yet available in streaming mode; "
+            "using standard human U2 PWMs. Use --no-streaming for background correction."
+        )
 
     # Configure scorer
     five_coords = (
