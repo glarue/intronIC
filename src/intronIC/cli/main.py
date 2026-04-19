@@ -2517,6 +2517,7 @@ def score_introns(
     config: IntronICConfig,
     messenger: "UnifiedMessenger",
     reporter: IntronICProgressReporter,
+    precomputed_pwm_sets: Optional[Dict] = None,
 ) -> List[Intron]:
     """Score introns with PWM matrices (parallel or sequential).
 
@@ -2528,17 +2529,25 @@ def score_introns(
         config: Pipeline configuration
         messenger: Unified messenger for output
         reporter: Progress reporter (for progress bars only)
+        precomputed_pwm_sets: If provided, use these PWMs instead of loading
+            from disk. Used when species background correction has already
+            been computed (e.g., from streaming SQLite readback).
 
     Returns:
         List of introns with raw scores
     """
-    messenger.info("Loading PWM matrices")
+    if precomputed_pwm_sets is not None:
+        messenger.info("Using precomputed PWM matrices (species background corrected)")
+        pwm_sets = precomputed_pwm_sets
+    else:
+        messenger.info("Loading PWM matrices")
 
-    # Load PWM matrices with fallback support for custom matrices
-    pwm_sets = load_pwms_with_fallback(config, messenger)
+        # Load PWM matrices with fallback support for custom matrices
+        pwm_sets = load_pwms_with_fallback(config, messenger)
 
-    # Apply species-specific U2 background correction if enabled
-    pwm_sets = apply_species_background(introns, pwm_sets, config, messenger)
+        # Apply species-specific U2 background correction if enabled
+        # (only needed when PWMs weren't precomputed from streaming path)
+        pwm_sets = apply_species_background(introns, pwm_sets, config, messenger)
 
     # Extract scoring configuration
     five_coords = (
@@ -5424,8 +5433,9 @@ def main_classify(config: IntronICConfig):
         # This mode provides ~90% memory savings but requires:
         # 1. Pre-trained model (has frozen scaler)
         # 2. Annotation input mode
-        # 3. Species background correction disabled (requires two-pass)
-        # The function handles extraction, scoring, classification, and output internally.
+        # When species background correction is enabled, it's handled in the
+        # non-streaming path below (extraction stores to SQLite, then BG
+        # frequencies are accumulated from SQLite before scoring).
         if (
             config.performance.streaming
             and config.training.pretrained_model_path
@@ -5491,25 +5501,119 @@ def main_classify(config: IntronICConfig):
         if config.input.mode == "annotation":
             # Don't load genome here - extraction handles it internally
             # (parallel mode uses indexed access, sequential uses cache)
-            if config.performance.streaming and not config.species_background.enabled:
+            if config.performance.streaming:
                 # Streaming mode: ~85% memory savings, stores sequences in SQLite
                 introns, streaming_db_path = extract_introns_streaming(
                     config, messenger, reporter
                 )
-            else:
-                if config.species_background.enabled and config.performance.streaming:
-                    messenger.info(
-                        "Using in-memory mode for species background correction "
-                        "(requires all intron sequences before scoring)"
+
+                # If species background correction is enabled, accumulate
+                # frequencies from the SQLite sequence store before scoring.
+                # This avoids loading all sequences into memory — we just
+                # iterate the store and count bases at scored positions.
+                if config.species_background.enabled and streaming_db_path:
+                    from intronIC.file_io.sequence_store import StreamingSequenceStore
+                    from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
+                    from intronIC.scoring.pwm import PWMSet
+
+                    bg_cfg = config.species_background
+                    five_len = (config.scoring.scoring_regions.five_end -
+                                config.scoring.scoring_regions.five_start)
+                    three_len = (config.scoring.scoring_regions.three_end -
+                                 config.scoring.scoring_regions.three_start)
+
+                    u12_s, u2_s = {}, {}
+                    for region in ['five', 'three', 'bp']:
+                        from intronIC.scoring.pwm import PWMLoader
+                        pwm_sets_tmp = PWMLoader.load_from_file(
+                            Path(__file__).parent.parent / "data" / "intronIC_scoring_PWMs.json"
+                        )
+                        break  # just need to load once
+                    pwm_sets_tmp = PWMLoader.load_from_file(
+                        Path(__file__).parent.parent / "data" / "intronIC_scoring_PWMs.json"
                     )
+                    for region in ['five', 'three', 'bp']:
+                        if region in pwm_sets_tmp:
+                            u12_s[region] = PWMSet(matrices={
+                                k: v for k, v in pwm_sets_tmp[region].matrices.items()
+                                if k[0] == 'u12'})
+                            u2_s[region] = PWMSet(matrices={
+                                k: v for k, v in pwm_sets_tmp[region].matrices.items()
+                                if k[0] == 'u2'})
+
+                    core_bg = BackgroundConfig(
+                        enabled=True, n0=bg_cfg.n0,
+                        trim_percentile=bg_cfg.trim_percentile,
+                        pseudocount_per_base=bg_cfg.pseudocount_per_base,
+                        n_iterations=bg_cfg.n_iterations,
+                        min_introns=bg_cfg.min_introns,
+                    )
+                    bg = SpeciesBackground(
+                        human_u2_pwm_sets=u2_s, config=core_bg,
+                        five_len=five_len, three_len=three_len,
+                    )
+
+                    messenger.info("Species background: reading sequences from SQLite...")
+                    store = StreamingSequenceStore(streaming_db_path)
+                    n_acc = 0
+                    for row in store.iter_all():
+                        seq = row.seq or ''
+                        up = row.upstream_flank or ''
+                        dn = row.downstream_flank or ''
+                        dnts = row.terminal_dnts or ''
+                        if '-' not in dnts or len(seq) < 30:
+                            continue
+                        five_dnt, three_dnt = dnts.split('-')
+
+                        five_start = config.scoring.scoring_regions.five_start
+                        five_end = config.scoring.scoring_regions.five_end
+                        five_seq = (up[five_start:] + seq[:five_end]).upper()
+
+                        three_start = config.scoring.scoring_regions.three_start
+                        three_end = config.scoring.scoring_regions.three_end
+                        three_seq = (seq[three_start:] + dn[:three_end]).upper()
+
+                        bp_start = config.scoring.scoring_regions.bp_start
+                        bp_end = config.scoring.scoring_regions.bp_end
+                        bp_seq = seq[max(0, len(seq)+bp_start):len(seq)+bp_end].upper()
+
+                        bg.accumulate(
+                            row.intron_id, five_dnt.upper(), three_dnt.upper(),
+                            five_seq[:five_len], three_seq[-three_len:], bp_seq,
+                        )
+                        n_acc += 1
+                    store.close()
+
+                    if n_acc >= bg_cfg.min_introns:
+                        messenger.info(
+                            f"Species background: computing empirical U2 from "
+                            f"{n_acc} introns (n0={bg_cfg.n0})"
+                        )
+                        # Store corrected PWMs — they'll be picked up by
+                        # score_introns() via the config or passed directly
+                        _streaming_corrected_pwm_sets = bg.build_corrected_pwm_sets(
+                            u12_pwm_sets=u12_s
+                        )
+                    else:
+                        messenger.info(
+                            f"Species background: {n_acc} introns < min_introns "
+                            f"({bg_cfg.min_introns}), skipping correction"
+                        )
+                        _streaming_corrected_pwm_sets = None
+                else:
+                    _streaming_corrected_pwm_sets = None
+            else:
+                _streaming_corrected_pwm_sets = None
                 # Standard processing: faster but uses more memory
                 introns = extract_introns_from_annotation(config, messenger, reporter)
         elif config.input.mode == "bed":
+            _streaming_corrected_pwm_sets = None
             genome_reader = load_genome(config, messenger)
             introns = extract_introns_from_bed(
                 config, genome_reader, messenger, reporter
             )
         elif config.input.mode == "sequences":
+            _streaming_corrected_pwm_sets = None
             introns = load_introns_from_sequences(config, messenger)
         else:
             raise ValueError(f"Unknown input mode: {config.input.mode}")
@@ -5570,7 +5674,10 @@ def main_classify(config: IntronICConfig):
         # Step 2: Score introns
         messenger.step(2, "Score Introns with PWMs", pipeline_steps)
 
-        scored_introns = score_introns(introns_for_scoring, config, messenger, reporter)
+        scored_introns = score_introns(
+            introns_for_scoring, config, messenger, reporter,
+            precomputed_pwm_sets=_streaming_corrected_pwm_sets,
+        )
 
         # Defer sequence writing until AFTER classification for both modes
         # so we can include SVM scores. Sequences remain in memory for standard mode
