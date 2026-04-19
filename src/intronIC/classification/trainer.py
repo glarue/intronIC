@@ -329,11 +329,13 @@ class SVMTrainer:
         # External calibration wrapper
         # Method (sigmoid vs isotonic) chosen by hyperparameter optimization
         # ensemble='auto' uses per-fold fit + averaging for stable tails
+        # n_jobs=-1 parallelizes the internal 5-fold CV fits
         svm = CalibratedClassifierCV(
             base_pipeline,
             method=parameters.calibration_method,  # From optimizer: 'sigmoid' or 'isotonic'
             cv=5,  # Stratified 5-fold
-            ensemble='auto'  # Per-fold calibrators averaged
+            ensemble='auto',  # Per-fold calibrators averaged
+            n_jobs=-1,  # Parallelize CV folds
         )
 
         # Suppress convergence warning spam but log summary
