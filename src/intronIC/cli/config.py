@@ -284,6 +284,47 @@ class EnsembleConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeciesBackgroundConfig:
+    """Configuration for species-specific U2 background correction.
+
+    Controls whether and how species-level nucleotide frequencies are
+    blended into U2 PWMs to correct for composition bias.  Defaults are
+    conservative (enabled, no trimming, no iteration).
+
+    Loaded from YAML config 'scoring.species_background' section.
+    """
+
+    enabled: bool = True
+    n0: int = 1000  # Bayesian shrinkage: w = n / (n + n0)
+    trim_percentile: float = 0  # Fraction of top-scoring introns to exclude (0 = none)
+    pseudocount_per_base: float = 1.0  # Dirichlet pseudocount per base per position
+    n_iterations: int = 0  # Iterative re-trimming passes (0 = single pass, no trim)
+    min_introns: int = 500  # Minimum introns required; below this, skip correction
+
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "SpeciesBackgroundConfig":
+        """Create SpeciesBackgroundConfig from YAML config dict.
+
+        Args:
+            yaml_config: Full YAML config dictionary
+
+        Returns:
+            SpeciesBackgroundConfig instance with values from YAML
+        """
+        scoring = yaml_config.get("scoring", {})
+        bg = scoring.get("species_background", {})
+
+        return cls(
+            enabled=bg.get("enabled", True),
+            n0=bg.get("n0", 1000),
+            trim_percentile=bg.get("trim_percentile", 0),
+            pseudocount_per_base=bg.get("pseudocount_per_base", 1.0),
+            n_iterations=bg.get("n_iterations", 0),
+            min_introns=bg.get("min_introns", 500),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PerformanceConfig:
     """Configuration for performance settings."""
 
@@ -348,6 +389,8 @@ class IntronICConfig:
         output: Output file settings
         optimizer: Hyperparameter optimization settings (from YAML 'optimizer' section)
         ensemble: Ensemble training settings (from YAML 'training.ensemble' section)
+        species_background: Species-specific U2 background correction settings
+            (from YAML 'scoring.species_background' section)
         yaml_config: Raw YAML config dict (for any custom/advanced settings)
         config_path: Path to the loaded config file (for logging)
     """
@@ -360,6 +403,9 @@ class IntronICConfig:
     output: OutputConfig
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
+    species_background: SpeciesBackgroundConfig = field(
+        default_factory=SpeciesBackgroundConfig
+    )
     yaml_config: dict = field(default_factory=dict)
     config_path: Optional[Path] = None
 
@@ -397,9 +443,10 @@ class IntronICConfig:
         # Only set arg from YAML if it wasn't explicitly set on CLI
         merged_args = cls._merge_yaml_into_args(args, yaml_config)
 
-        # Create optimizer and ensemble configs from YAML
+        # Create optimizer, ensemble, and species background configs from YAML
         optimizer_config = OptimizerConfig.from_yaml(yaml_config)
         ensemble_config = EnsembleConfig.from_yaml(yaml_config)
+        species_background_config = SpeciesBackgroundConfig.from_yaml(yaml_config)
 
         # Now create config from merged args using existing logic
         # Pass the extra configs to from_args
@@ -407,6 +454,7 @@ class IntronICConfig:
             merged_args,
             optimizer_config=optimizer_config,
             ensemble_config=ensemble_config,
+            species_background_config=species_background_config,
             yaml_config=yaml_config,
             config_path=found_config_path,
         )
@@ -511,6 +559,7 @@ class IntronICConfig:
         args,
         optimizer_config: OptimizerConfig = None,
         ensemble_config: EnsembleConfig = None,
+        species_background_config: SpeciesBackgroundConfig = None,
         yaml_config: dict = None,
         config_path: Path = None,
     ) -> "IntronICConfig":
@@ -520,6 +569,7 @@ class IntronICConfig:
             args: Parsed argument namespace
             optimizer_config: Pre-built OptimizerConfig (from YAML)
             ensemble_config: Pre-built EnsembleConfig (from YAML)
+            species_background_config: Pre-built SpeciesBackgroundConfig (from YAML)
             yaml_config: Raw YAML config dict
             config_path: Path to loaded config file
 
@@ -531,6 +581,8 @@ class IntronICConfig:
             optimizer_config = OptimizerConfig()
         if ensemble_config is None:
             ensemble_config = EnsembleConfig()
+        if species_background_config is None:
+            species_background_config = SpeciesBackgroundConfig()
         if yaml_config is None:
             yaml_config = {}
 
@@ -683,6 +735,7 @@ class IntronICConfig:
             output=output_config,
             optimizer=optimizer_config,
             ensemble=ensemble_config,
+            species_background=species_background_config,
             yaml_config=yaml_config,
             config_path=config_path,
         )

@@ -48,6 +48,18 @@ scoring:
   u12_boundary_correction: true
   u12_correction_require_canonical: true
 
+  # Species-specific U2 background correction.
+  # Blends empirical per-position nucleotide frequencies from the species'
+  # own intron pool into the U2 denominator PWMs, correcting composition
+  # bias without touching the U12 numerator.
+  species_background:
+    enabled: true
+    n0: 1000                  # Bayesian shrinkage strength: w = n / (n + n0)
+    trim_percentile: 0        # % of top-scoring introns to exclude (0 = none)
+    pseudocount_per_base: 1.0 # Dirichlet pseudocount per base per position
+    n_iterations: 0           # Iterative re-trimming passes (0 = single pass)
+    min_introns: 500          # Skip correction if fewer introns than this
+
 # ============================================================================
 # TRAINING & ENSEMBLE
 # ============================================================================
