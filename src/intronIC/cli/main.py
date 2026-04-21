@@ -1375,7 +1375,7 @@ def _init_streaming_worker(
 
 
 def _process_contig_streaming_worker(
-    worker_input: tuple[str, List[Intron], int, bool],
+    worker_input: tuple,
 ) -> tuple[str, List[Intron], int, int]:
     """
     Worker function for parallel streaming contig processing.
@@ -1386,12 +1386,17 @@ def _process_contig_streaming_worker(
     3. Returns lightweight introns (no full sequences)
 
     Args:
-        worker_input: Tuple of (contig_name, contig_introns, flank_len, u12_correction)
+        worker_input: Tuple of (contig_name, contig_introns, flank_len,
+            u12_correction, [u12_correction_require_canonical])
 
     Returns:
         Tuple of (contig_name, lightweight_introns, sequences_stored_count, corrections_count)
     """
-    contig_name, contig_introns, flank_len, u12_correction = worker_input
+    if len(worker_input) >= 5:
+        contig_name, contig_introns, flank_len, u12_correction, _req_canonical = worker_input
+    else:
+        contig_name, contig_introns, flank_len, u12_correction = worker_input
+        _req_canonical = True
     from intronIC.extraction.sequences import SequenceExtractor
     from intronIC.file_io.indexed_genome import get_worker_genome
     from intronIC.file_io.sequence_store import StreamingSequenceStore
