@@ -15,7 +15,7 @@ Evaluation metrics are computed separately via nested CV or split evaluation mod
 Port from: intronIC.py:5345-5430 (train_svm)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, MISSING
 from typing import Sequence, Tuple, Optional, Any
 import warnings
 import contextlib
@@ -69,6 +69,36 @@ class SVMModel:
     parameters: SVMParameters  # Hyperparameters used
     dropped_feature: Optional[int] = None  # Index of feature dropped during training (None = no dropout)
     feature_median: Optional[float] = None  # Median value used to mask the dropped feature
+
+
+def _svmmodel_getstate(self):
+    """Backward-compatible pickle for SVMModel.
+
+    Handles models pickled before dropped_feature/feature_median fields
+    were added. Uninitialized slots return their default values.
+    """
+    state = []
+    for f in fields(self):
+        try:
+            state.append(getattr(self, f.name))
+        except AttributeError:
+            state.append(f.default if f.default is not MISSING else None)
+    return state
+
+
+def _svmmodel_setstate(self, state):
+    """Backward-compatible unpickle for SVMModel."""
+    for f, val in zip(fields(self), state):
+        object.__setattr__(self, f.name, val)
+    # Fill missing fields from models with fewer fields
+    for f in fields(self)[len(state):]:
+        object.__setattr__(self, f.name,
+                           f.default if f.default is not MISSING else None)
+
+
+# Override the auto-generated pickle methods to handle backward compatibility
+SVMModel.__getstate__ = _svmmodel_getstate
+SVMModel.__setstate__ = _svmmodel_setstate
 
 
 @dataclass(frozen=True, slots=True)
