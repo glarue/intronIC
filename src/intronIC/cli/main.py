@@ -1238,7 +1238,8 @@ def load_genome(config: IntronICConfig, messenger: "UnifiedMessenger") -> Genome
 
 
 def _process_contig_worker(
-    contig_name: str, contig_introns: List[Intron], flank_len: int, u12_correction: bool
+    contig_name: str, contig_introns: List[Intron], flank_len: int,
+    u12_correction: bool, u12_correction_require_canonical: bool = True,
 ) -> List[Intron]:
     """
     Worker function for parallel contig processing.
@@ -1251,6 +1252,7 @@ def _process_contig_worker(
         contig_introns: Pre-filtered introns on this contig (already filtered!)
         flank_len: Flanking sequence length
         u12_correction: Whether to apply U12 boundary corrections
+        u12_correction_require_canonical: Only correct if result is canonical
 
     Returns:
         List of introns with sequences extracted
@@ -1302,7 +1304,7 @@ def _process_contig_worker(
         for intron in contig_with_seqs:
             corrected_intron, was_corrected = correct_intron_if_needed(
                 intron, correction_enabled=True, use_strict_motif=True,
-                require_canonical=config.extraction.u12_correction_require_canonical
+                require_canonical=u12_correction_require_canonical
             )
             if was_corrected:
                 # Re-extract with new coordinates
@@ -1328,6 +1330,7 @@ _streaming_worker_no_abbreviate: bool = False
 _streaming_worker_five_coords: tuple[int, int] = (0, 0)
 _streaming_worker_bp_coords: tuple[int, int] = (0, 0)
 _streaming_worker_three_coords: tuple[int, int] = (0, 0)
+_streaming_worker_u12_correction_require_canonical: bool = True
 
 
 def _init_streaming_worker(
@@ -1339,6 +1342,7 @@ def _init_streaming_worker(
     five_coords: tuple[int, int],
     bp_coords: tuple[int, int],
     three_coords: tuple[int, int],
+    u12_correction_require_canonical: bool = True,
 ) -> None:
     """
     Initialize streaming worker process with genome and config.
@@ -1358,6 +1362,7 @@ def _init_streaming_worker(
         _streaming_worker_five_coords, \
         _streaming_worker_bp_coords, \
         _streaming_worker_three_coords
+    global _streaming_worker_u12_correction_require_canonical
 
     _streaming_worker_db_path = db_path
     _streaming_worker_species_name = species_name
@@ -1366,6 +1371,7 @@ def _init_streaming_worker(
     _streaming_worker_five_coords = five_coords
     _streaming_worker_bp_coords = bp_coords
     _streaming_worker_three_coords = three_coords
+    _streaming_worker_u12_correction_require_canonical = u12_correction_require_canonical
 
 
 def _process_contig_streaming_worker(
@@ -1429,7 +1435,7 @@ def _process_contig_streaming_worker(
         for intron in contig_with_seqs:
             corrected_intron, was_corrected = correct_intron_if_needed(
                 intron, correction_enabled=True, use_strict_motif=True,
-                require_canonical=config.extraction.u12_correction_require_canonical
+                require_canonical=_streaming_worker_u12_correction_require_canonical
             )
             if was_corrected:
                 corrected_with_seq = list(
@@ -1750,6 +1756,7 @@ def _extract_sequences_for_introns(
                 introns_by_contig[contig],
                 config.extraction.flank_len,
                 config.extraction.u12_boundary_correction,
+                config.extraction.u12_correction_require_canonical,
             )
             for contig in contigs
         ]
@@ -1864,7 +1871,7 @@ def _extract_sequences_for_introns(
                 for intron in contig_with_seqs:
                     corrected_intron, was_corrected = correct_intron_if_needed(
                         intron, correction_enabled=True, use_strict_motif=True,
-                        require_canonical=config.extraction.u12_correction_require_canonical
+                        require_canonical=_streaming_worker_u12_correction_require_canonical
                     )
                     if was_corrected:
                         # Re-extract with new coordinates
@@ -2119,6 +2126,7 @@ def extract_introns_streaming(
                 introns_by_contig[contig],
                 config.extraction.flank_len,
                 config.extraction.u12_boundary_correction,
+                config.extraction.u12_correction_require_canonical,
             )
             for contig in contigs
         ]
@@ -2143,6 +2151,7 @@ def extract_introns_streaming(
                 five_coords,
                 bp_coords,
                 three_coords,
+                config.extraction.u12_correction_require_canonical,
             ),
         ) as pool, progress:
             # Add task with total = total genome length for smooth progress
@@ -2216,7 +2225,7 @@ def extract_introns_streaming(
                 for intron in contig_with_seqs:
                     corrected_intron, was_corrected = correct_intron_if_needed(
                         intron, correction_enabled=True, use_strict_motif=True,
-                        require_canonical=config.extraction.u12_correction_require_canonical
+                        require_canonical=_streaming_worker_u12_correction_require_canonical
                     )
                     if was_corrected:
                         corrected_with_seq = list(
@@ -3235,7 +3244,7 @@ def _process_contig_streaming_classify_worker(
         for intron in contig_with_seqs:
             corrected_intron, was_corrected = correct_intron_if_needed(
                 intron, correction_enabled=True, use_strict_motif=True,
-                require_canonical=config.extraction.u12_correction_require_canonical
+                require_canonical=config.get("u12_correction_require_canonical", True)
             )
             if was_corrected:
                 corrected_with_seq = list(
@@ -3685,6 +3694,7 @@ def classify_streaming_per_contig(
             "feature_type": config.extraction.feature_type,
             "flank_len": config.extraction.flank_len,
             "u12_boundary_correction": config.extraction.u12_boundary_correction,
+            "u12_correction_require_canonical": config.extraction.u12_correction_require_canonical,
             "min_intron_len": config.extraction.min_intron_len,
             "exclude_noncanonical": config.scoring.exclude_noncanonical,
             "no_intron_overlap": config.extraction.no_intron_overlap,
