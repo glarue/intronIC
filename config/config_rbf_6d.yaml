@@ -69,14 +69,14 @@ training:
   test_fraction: 0.2
 
   ensemble:
-    n_models: 30               # 30-model ensemble (5 per dropped feature × 6 features)
+    n_models: 30               # 30-model ensemble for stable σ estimates
     subsample_u2: true         # Each model sees a different random U2 subset
     subsample_ratio: 0.80      # Fraction of U2 per model
     max_iter: 50000
     random_state: 42
-    feature_dropout: 1         # Drop 1 input feature per model for ensemble diversity.
-                               # Creates models that disagree on feature-dependent FPs
-                               # while agreeing on robust U12 calls.
+    feature_dropout: 0         # 0 = disabled. All models see all features.
+                               # Ensemble variance from U2 subsampling alone provides
+                               # sufficient σ signal (5x gap between real U12 and FPs).
 
   use_fold_averaged_params: false
 

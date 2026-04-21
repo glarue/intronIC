@@ -3477,6 +3477,14 @@ def classify_streaming_per_contig(
     # NOTE: Species-specific U2 background correction is handled by redirecting
     # to non-streaming mode when enabled (see main_classify). This function
     # is only called when species_background.enabled is False.
+    # Species-specific U2 background correction in streaming classify mode.
+    # The frequency accumulation uses the annotation store + genome reader
+    # to fetch short motif sequences without full intron extraction.
+    # TODO: The intron generation step needs the proper streaming API
+    # (builder.build_from_annotations). For now, this block is skipped
+    # and BG correction falls through to the non-streaming path via
+    # main_classify() when enabled. See the non-streaming extract path
+    # which accumulates from SQLite.
     if False and config.species_background.enabled:
         from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
 
