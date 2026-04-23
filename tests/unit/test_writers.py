@@ -534,7 +534,7 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[1].split("\t")
 
-        assert len(fields) == 30
+        assert len(fields) == 32  # 30 original + adjusted_score + ensemble_sigma
         # Header: name, rel_score, svm_score, 5'_seq, 5'_raw, 5'_z,
         #         bp_seq, bp_seq_u2, bp_raw, bp_z, 3'_seq, 3'_raw, 3'_z,
         #         min(5,bp), min(5,3), max(5,bp), max(5,3), decision_dist,
@@ -564,7 +564,7 @@ class TestScoreWriter:
         fields = lines[0].split("\t")
 
         # Check that we have all 24 fields
-        assert len(fields) == 30
+        assert len(fields) == 32  # 30 original + adjusted_score + ensemble_sigma
         # Relative and SVM scores should be available
         assert fields[1] == "2.3"  # rel_score available
         assert fields[2] == "12.3"  # svm_score available

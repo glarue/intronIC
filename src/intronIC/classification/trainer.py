@@ -170,6 +170,7 @@ class SVMTrainer:
         progress_tracker: Optional[Any] = None,
         extra_feature_names: Optional[list] = None,
         feature_dropout: int = 0,
+        feature_dropout_fraction: float = 1.0,
     ):
         """
         Initialize trainer.
@@ -188,6 +189,10 @@ class SVMTrainer:
                 masked to its population median. This creates ensemble diversity that
                 produces higher variance for introns dependent on a single feature (FPs)
                 than for introns strong across all features (real U12s).
+            feature_dropout_fraction: Fraction of models that use dropout (default: 1.0 = all).
+                When < 1.0, creates a mixed ensemble: the first n_models*(1-fraction)
+                models are full-feature, the rest use dropout. E.g. n_models=50,
+                feature_dropout=1, fraction=0.5 → 25 full + 25 dropout.
         """
         self.n_models = n_models
         self.random_state = random_state
@@ -198,6 +203,7 @@ class SVMTrainer:
         self.progress_tracker = progress_tracker
         self.extra_feature_names = extra_feature_names or []
         self.feature_dropout = feature_dropout
+        self.feature_dropout_fraction = feature_dropout_fraction
 
     def train_ensemble(
         self,
@@ -229,6 +235,11 @@ class SVMTrainer:
         print(f"{'='*80}\n", flush=True)
 
         # Prepare per-model configurations (subsample + dropout selection)
+        # Mixed ensemble: first n_full models are full-feature, rest use dropout
+        n_full = self.n_models
+        if self.feature_dropout > 0:
+            n_full = int(self.n_models * (1 - self.feature_dropout_fraction))
+
         model_configs = []
         for i in range(self.n_models):
             if subsample_u2 and self.n_models > 1:
@@ -240,7 +251,7 @@ class SVMTrainer:
             else:
                 u2_sample = u2_introns
 
-            if self.feature_dropout > 0:
+            if self.feature_dropout > 0 and i >= n_full:
                 rng = np.random.RandomState(self.random_state + i + 1000)
                 n_input_features = 3 + len(self.extra_feature_names)
                 dropped = int(rng.randint(0, n_input_features))

@@ -1,5 +1,5 @@
 # ============================================================================
-# intronIC v2.3 — Default Configuration
+# intronIC v2.3 Configuration
 # ============================================================================
 #
 # 6D RBF SVM with Bayesian score adjustment.
@@ -133,7 +133,7 @@ training:
 optimizer:
   n_rounds: 7
   n_points_initial: 50
-  n_points_refine: 25
+  n_points_refine: 25               # 100 → 25: finer resolution is wasted on log-scale C
   cv_folds: 7
   random_state: 42
   n_jobs: -1

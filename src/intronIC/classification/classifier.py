@@ -160,6 +160,7 @@ class IntronClassifier:
         gamma_search: Optional[list] = None,
         extra_feature_names: Optional[list] = None,
         feature_dropout: int = 0,
+        feature_dropout_fraction: float = 1.0,
     ):
         """
         Initialize classifier.
@@ -252,6 +253,7 @@ class IntronClassifier:
         self.gamma_search = gamma_search
         self.extra_feature_names = extra_feature_names or []
         self.feature_dropout = feature_dropout
+        self.feature_dropout_fraction = feature_dropout_fraction
 
         # Debug: Log features being used
         if features_list is not None:
@@ -432,6 +434,7 @@ class IntronClassifier:
                 gamma_search=self.gamma_search,
                 extra_feature_names=self.extra_feature_names,
                 feature_dropout=self.feature_dropout,
+                feature_dropout_fraction=self.feature_dropout_fraction,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -566,6 +569,7 @@ class IntronClassifier:
             progress_tracker=progress_tracker,
             extra_feature_names=self.extra_feature_names,
             feature_dropout=self.feature_dropout,
+                feature_dropout_fraction=self.feature_dropout_fraction,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,
@@ -696,6 +700,7 @@ class IntronClassifier:
                 gamma_search=self.gamma_search,
                 extra_feature_names=self.extra_feature_names,
                 feature_dropout=self.feature_dropout,
+                feature_dropout_fraction=self.feature_dropout_fraction,
             )
             eval_result = evaluator.evaluate(u12_reference, u2_reference)
 
@@ -830,6 +835,7 @@ class IntronClassifier:
             progress_tracker=progress_tracker,
             extra_feature_names=self.extra_feature_names,
             feature_dropout=self.feature_dropout,
+                feature_dropout_fraction=self.feature_dropout_fraction,
         )
         ensemble = trainer.train_ensemble(
             u12_reference,

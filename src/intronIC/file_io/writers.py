@@ -1099,6 +1099,8 @@ class ScoreWriter(BaseWriter):
             "min_fit_bp_3",
             "ppt_longest_run",
             "ppt_t_weighted",
+            "adjusted_score",
+            "ensemble_sigma",
         ]
         self.file.write("\t".join(header_fields) + "\n")
 
@@ -1155,6 +1157,8 @@ class ScoreWriter(BaseWriter):
         min_fit_bp_3 = null
         ppt_longest_run = null
         ppt_t_weighted = null
+        adjusted_score = null
+        ensemble_sigma = null
 
         # Fill in scores if available
         if intron.scores:
@@ -1218,6 +1222,10 @@ class ScoreWriter(BaseWriter):
                 ppt_longest_run = str(intron.scores.ppt_longest_run)
             if intron.scores.ppt_t_weighted is not None:
                 ppt_t_weighted = str(round(intron.scores.ppt_t_weighted, 4))
+            if intron.scores.adjusted_score is not None:
+                adjusted_score = str(round(intron.scores.adjusted_score, 2))
+            if intron.scores.ensemble_sigma is not None:
+                ensemble_sigma = str(round(intron.scores.ensemble_sigma, 4))
 
         # Fill in sequences if available
         if intron.sequences:
@@ -1261,6 +1269,8 @@ class ScoreWriter(BaseWriter):
             min_fit_bp_3,
             ppt_longest_run,
             ppt_t_weighted,
+            adjusted_score,
+            ensemble_sigma,
         ]
 
         self.file.write("\t".join(fields) + "\n")

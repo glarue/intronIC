@@ -111,6 +111,105 @@ def merge_pwm_sets(
     return default_pwms
 
 
+def _create_background_accumulator(
+    config: "IntronICConfig",
+    pwm_sets: Dict[str, "PWMSet"],
+) -> Tuple["SpeciesBackground", Dict[str, "PWMSet"], Dict[str, "PWMSet"], int, int]:
+    """Create a SpeciesBackground accumulator and split PWMs into U12/U2.
+
+    Shared setup used by all three BG correction paths (in-memory introns,
+    SQLite readback, and streaming genome fetch).
+
+    Args:
+        config: Pipeline config with species_background settings
+        pwm_sets: Original PWM sets (U12 + U2 combined)
+
+    Returns:
+        (bg, u12_sets, u2_sets, five_len, three_len)
+    """
+    from intronIC.scoring.background import BackgroundConfig, SpeciesBackground
+    from intronIC.scoring.pwm import PWMSet
+
+    bg_config = config.species_background
+
+    # Split into U12 and U2 sets
+    u12_sets: Dict[str, "PWMSet"] = {}
+    u2_sets: Dict[str, "PWMSet"] = {}
+    for region in ["five", "three", "bp"]:
+        if region not in pwm_sets:
+            continue
+        u12_mats = {
+            k: v for k, v in pwm_sets[region].matrices.items() if k[0] == "u12"
+        }
+        u2_mats = {
+            k: v for k, v in pwm_sets[region].matrices.items() if k[0] == "u2"
+        }
+        u12_sets[region] = PWMSet(matrices=u12_mats)
+        u2_sets[region] = PWMSet(matrices=u2_mats)
+
+    five_len = (
+        config.scoring.scoring_regions.five_end
+        - config.scoring.scoring_regions.five_start
+    )
+    three_len = (
+        config.scoring.scoring_regions.three_end
+        - config.scoring.scoring_regions.three_start
+    )
+
+    core_config = BackgroundConfig(
+        enabled=True,
+        n0=bg_config.n0,
+        trim_percentile=bg_config.trim_percentile,
+        pseudocount_per_base=bg_config.pseudocount_per_base,
+        n_iterations=bg_config.n_iterations,
+        min_introns=bg_config.min_introns,
+    )
+
+    bg = SpeciesBackground(
+        human_u2_pwm_sets=u2_sets,
+        config=core_config,
+        five_len=five_len,
+        three_len=three_len,
+    )
+
+    return bg, u12_sets, u2_sets, five_len, three_len
+
+
+def _finalize_background_correction(
+    bg: "SpeciesBackground",
+    u12_sets: Dict[str, "PWMSet"],
+    n_accumulated: int,
+    min_introns: int,
+    n0: int,
+    messenger: "UnifiedMessenger",
+) -> Optional[Dict[str, "PWMSet"]]:
+    """Build corrected PWMs if enough introns were accumulated.
+
+    Args:
+        bg: SpeciesBackground with accumulated frequencies
+        u12_sets: U12 PWM sets (passed through unchanged)
+        n_accumulated: Number of introns accumulated
+        min_introns: Minimum required for correction
+        n0: Bayesian shrinkage strength (for log message)
+        messenger: For logging
+
+    Returns:
+        Corrected PWM sets, or None if insufficient introns
+    """
+    if n_accumulated < min_introns:
+        messenger.info(
+            f"Species background: {n_accumulated} introns < min_introns "
+            f"({min_introns}), skipping correction"
+        )
+        return None
+
+    messenger.info(
+        f"Species background: computing empirical U2 from {n_accumulated} introns "
+        f"(n0={n0})"
+    )
+    return bg.build_corrected_pwm_sets(u12_pwm_sets=u12_sets)
+
+
 def apply_species_background(
     introns: List["Intron"],
     pwm_sets: Dict[str, "PWMSet"],
@@ -138,67 +237,36 @@ def apply_species_background(
     if not bg_config.enabled:
         return pwm_sets
 
-    from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
-    from intronIC.scoring.pwm import PWMSet
-
-    # Split into U12 and U2 sets
-    u12_sets = {}
-    u2_sets = {}
-    for region in ['five', 'three', 'bp']:
-        if region not in pwm_sets:
-            continue
-        u12_mats = {k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u12'}
-        u2_mats = {k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u2'}
-        u12_sets[region] = PWMSet(matrices=u12_mats)
-        u2_sets[region] = PWMSet(matrices=u2_mats)
-
-    # Determine scored lengths from config
-    five_len = config.scoring.scoring_regions.five_end - config.scoring.scoring_regions.five_start
-    three_len = config.scoring.scoring_regions.three_end - config.scoring.scoring_regions.three_start
-
-    core_config = BackgroundConfig(
-        enabled=True,
-        n0=bg_config.n0,
-        trim_percentile=bg_config.trim_percentile,
-        pseudocount_per_base=bg_config.pseudocount_per_base,
-        n_iterations=bg_config.n_iterations,
-        min_introns=bg_config.min_introns,
-    )
-
-    bg = SpeciesBackground(
-        human_u2_pwm_sets=u2_sets,
-        config=core_config,
-        five_len=five_len,
-        three_len=three_len,
+    bg, u12_sets, _, five_len, three_len = _create_background_accumulator(
+        config, pwm_sets
     )
 
     # Accumulate sequences from all introns
+    five_start = config.scoring.scoring_regions.five_start
+    five_end = config.scoring.scoring_regions.five_end
+    three_start = config.scoring.scoring_regions.three_start
+    three_end = config.scoring.scoring_regions.three_end
+    bp_start = config.scoring.scoring_regions.bp_start
+    bp_end = config.scoring.scoring_regions.bp_end
+
     n_accumulated = 0
     for intron in introns:
         seqs = intron.sequences
         if seqs is None or seqs.seq is None:
             continue
 
-        five_dnt = seqs.five_prime_dnt or (seqs.seq[:2] if seqs.seq else '')
-        three_dnt = seqs.three_prime_dnt or (seqs.seq[-2:] if seqs.seq else '')
+        five_dnt = seqs.five_prime_dnt or (seqs.seq[:2] if seqs.seq else "")
+        three_dnt = seqs.three_prime_dnt or (seqs.seq[-2:] if seqs.seq else "")
         if not five_dnt or not three_dnt:
             continue
 
-        upstream = (seqs.upstream_flank or '')
-        seq = seqs.seq or ''
-        downstream = (seqs.downstream_flank or '')
+        upstream = seqs.upstream_flank or ""
+        seq = seqs.seq or ""
+        downstream = seqs.downstream_flank or ""
 
-        five_start = config.scoring.scoring_regions.five_start
-        five_end = config.scoring.scoring_regions.five_end
         five_seq = upstream[five_start:] + seq[:five_end]
-
-        three_start = config.scoring.scoring_regions.three_start
-        three_end = config.scoring.scoring_regions.three_end
         three_seq = seq[three_start:] + downstream[:three_end]
-
-        bp_start = config.scoring.scoring_regions.bp_start
-        bp_end = config.scoring.scoring_regions.bp_end
-        bp_region = seq[max(0, len(seq) + bp_start):len(seq) + bp_end]
+        bp_region = seq[max(0, len(seq) + bp_start) : len(seq) + bp_end]
 
         bg.accumulate(
             intron.intron_id,
@@ -210,22 +278,192 @@ def apply_species_background(
         )
         n_accumulated += 1
 
-    if n_accumulated < bg_config.min_introns:
+    corrected = _finalize_background_correction(
+        bg, u12_sets, n_accumulated, bg_config.min_introns, bg_config.n0, messenger
+    )
+    return corrected if corrected is not None else pwm_sets
+
+
+def _apply_post_classification_adjustment(
+    cluster_validation_result: dict,
+    config: "IntronICConfig",
+    messenger: "UnifiedMessenger",
+    score_path: Optional[Path] = None,
+    meta_path: Optional[Path] = None,
+) -> Optional[dict]:
+    """Apply cluster validation + score adjustment to output files.
+
+    Shared by both streaming and non-streaming classification paths.
+    Computes valley-based prior correction and ensemble σ penalty,
+    rewrites score_info and meta files with adjusted scores.
+
+    Args:
+        cluster_validation_result: Output from validate_u12_cluster()
+        config: Pipeline configuration
+        messenger: For logging
+        score_path: Path to .score_info.iic file
+        meta_path: Path to .meta.iic file
+
+    Returns:
+        cluster_validation_result (passthrough for summary)
+    """
+    valley_depth = cluster_validation_result['valley_depth']
+    regime = cluster_validation_result['regime']
+
+    if np.isnan(valley_depth):
         messenger.info(
-            f"Species background: {n_accumulated} introns < min_introns "
-            f"({bg_config.min_introns}), skipping correction"
+            f"Cluster validation: insufficient confident U12-type intron calls "
+            f"(n={cluster_validation_result['n_confident_u12']}) to compute valley depth"
         )
-        return pwm_sets
+        return cluster_validation_result
 
     messenger.info(
-        f"Species background: computing empirical U2 from {n_accumulated} introns "
-        f"(n0={bg_config.n0})"
+        f"Cluster validation: valley_depth={valley_depth:.3f} ({regime}), "
+        f"n_confident_u12={cluster_validation_result['n_confident_u12']}, "
+        f"centroid_σ={cluster_validation_result['centroid_sigma']:.1f}"
     )
+    if not cluster_validation_result.get('has_valley', False):
+        messenger.warning(
+            f"No density valley detected (depth={valley_depth:.3f}): "
+            f"U12-type intron calls may not form a distinct cluster. "
+            f"Consider reviewing calls with caution."
+        )
 
-    # Build corrected PWM sets (U12 unchanged, U2 replaced with blended)
-    corrected = bg.build_corrected_pwm_sets(u12_pwm_sets=u12_sets)
+    # Apply score adjustment if enabled
+    sa_config = config.score_adjustment
+    if not sa_config.enabled:
+        return cluster_validation_result
 
-    return corrected
+    from intronIC.scoring.cluster_validation import compute_adjusted_score
+
+    if score_path and score_path.exists():
+        tmp = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.iic',
+            dir=score_path.parent, delete=False,
+        )
+        n_adjusted = 0
+        try:
+            with open(score_path) as f_in:
+                header_line = f_in.readline()
+                tmp.write(header_line)
+
+                hdr = header_line.strip().split('\t')
+                col = {name: i for i, name in enumerate(hdr)}
+                svm_col = col.get('svm_score')
+                rel_col = col.get('rel_score')
+                adj_col = col.get('adjusted_score')
+                sigma_col = col.get('ensemble_sigma')
+
+                for line in f_in:
+                    parts = line.rstrip('\n').split('\t')
+
+                    if (svm_col is not None and adj_col is not None
+                            and sigma_col is not None
+                            and svm_col < len(parts)
+                            and parts[svm_col] not in ('NA', '')):
+                        try:
+                            svm_val = float(parts[svm_col])
+                            sigma_val = (
+                                float(parts[sigma_col])
+                                if parts[sigma_col] not in ('NA', '')
+                                else 0.0
+                            )
+                            adj_val = compute_adjusted_score(
+                                svm_val, valley_depth, sigma_val,
+                                valley_midpoint=sa_config.valley_midpoint,
+                                transition_width=sa_config.transition_width,
+                                prior_floor=sa_config.prior_floor,
+                                k_sigma=sa_config.k_sigma,
+                            )
+                            parts[adj_col] = str(round(adj_val, 2))
+                            if rel_col is not None:
+                                parts[rel_col] = str(
+                                    round(adj_val - config.scoring.threshold, 4)
+                                )
+                            n_adjusted += 1
+                        except (ValueError, IndexError):
+                            pass
+
+                    tmp.write('\t'.join(parts) + '\n')
+
+            tmp.close()
+            shutil.move(tmp.name, score_path)
+        except Exception:
+            tmp.close()
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
+
+        messenger.info(
+            f"Score adjustment: {n_adjusted:,} introns adjusted "
+            f"(valley_depth={valley_depth:.3f}, k_σ={sa_config.k_sigma})"
+        )
+
+    # Rewrite meta with updated rel_score
+    if meta_path and meta_path.exists() and score_path and score_path.exists():
+        adj_rel_scores: Dict[str, str] = {}
+        with open(score_path) as f:
+            hdr = f.readline().strip().split('\t')
+            col = {name: i for i, name in enumerate(hdr)}
+            name_col = col.get('name', 0)
+            rel_col = col.get('rel_score')
+            if rel_col is not None:
+                for line in f:
+                    parts = line.rstrip('\n').split('\t')
+                    if parts[rel_col] not in ('NA', ''):
+                        adj_rel_scores[parts[name_col]] = parts[rel_col]
+
+        if adj_rel_scores:
+            tmp = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.iic',
+                dir=meta_path.parent, delete=False,
+            )
+            try:
+                with open(meta_path) as f_in:
+                    meta_hdr = f_in.readline()
+                    tmp.write(meta_hdr)
+                    mh = meta_hdr.strip().split('\t')
+                    mcol = {name: i for i, name in enumerate(mh)}
+                    m_name_col = mcol.get('name', 0)
+                    m_rel_col = mcol.get('rel_score')
+
+                    for line in f_in:
+                        parts = line.rstrip('\n').split('\t')
+                        name = parts[m_name_col]
+                        if m_rel_col is not None and name in adj_rel_scores:
+                            parts[m_rel_col] = adj_rel_scores[name]
+                        tmp.write('\t'.join(parts) + '\n')
+
+                tmp.close()
+                shutil.move(tmp.name, meta_path)
+            except Exception:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+                raise
+
+    # Compute adjusted HC count from the rewritten score_info
+    adjusted_hc_count = None
+    if score_path and score_path.exists():
+        n_hc = 0
+        with open(score_path) as f:
+            hdr = f.readline().strip().split('\t')
+            col = {name: i for i, name in enumerate(hdr)}
+            adj_col = col.get('adjusted_score')
+            if adj_col is not None:
+                for line in f:
+                    parts = line.rstrip('\n').split('\t')
+                    try:
+                        adj = float(parts[adj_col])
+                        if adj >= config.scoring.threshold:
+                            n_hc += 1
+                    except (ValueError, IndexError):
+                        pass
+        adjusted_hc_count = n_hc
+        messenger.log_only(
+            f"Adjusted high-confidence U12 count: {n_hc} "
+            f"(adjusted_score >= {config.scoring.threshold}%)"
+        )
+
+    return cluster_validation_result, adjusted_hc_count
 
 
 def load_pwms_with_fallback(
@@ -3474,140 +3712,131 @@ def classify_streaming_per_contig(
     messenger.info(f"Using indexed genome access: {config.input.genome}")
     genome_reader = IndexedGenomeReader(str(config.input.genome), use_cache=False)
 
-    # NOTE: Species-specific U2 background correction is handled by redirecting
-    # to non-streaming mode when enabled (see main_classify). This function
-    # is only called when species_background.enabled is False.
     # Species-specific U2 background correction in streaming classify mode.
-    # The frequency accumulation uses the annotation store + genome reader
-    # to fetch short motif sequences without full intron extraction.
-    # TODO: The intron generation step needs the proper streaming API
-    # (builder.build_from_annotations). For now, this block is skipped
-    # and BG correction falls through to the non-streaming path via
-    # main_classify() when enabled. See the non-streaming extract path
-    # which accumulates from SQLite.
-    if False and config.species_background.enabled:
-        from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
+    # Lightweight first-pass: parse annotations → generate introns → fetch
+    # only the short scored motif windows (~83 bytes/intron) → accumulate
+    # nucleotide frequencies. Much cheaper than full extraction.
+    if config.species_background.enabled:
+        from intronIC.utils.sequences import reverse_complement
 
-        bg_config = config.species_background
+        bg, u12_sets_bg, _, five_len, three_len = _create_background_accumulator(
+            config, pwm_sets
+        )
+
         five_start = config.scoring.scoring_regions.five_start
         five_end = config.scoring.scoring_regions.five_end
         three_start = config.scoring.scoring_regions.three_start
         three_end = config.scoring.scoring_regions.three_end
         bp_start_coord = config.scoring.scoring_regions.bp_start
         bp_end_coord = config.scoring.scoring_regions.bp_end
-        five_len = five_end - five_start
-        three_len = three_end - three_start
-
-        from intronIC.scoring.pwm import PWMSet
-        u12_sets_bg = {}
-        u2_sets_bg = {}
-        for region in ['five', 'three', 'bp']:
-            if region not in pwm_sets:
-                continue
-            u12_sets_bg[region] = PWMSet(
-                matrices={k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u12'})
-            u2_sets_bg[region] = PWMSet(
-                matrices={k: v for k, v in pwm_sets[region].matrices.items() if k[0] == 'u2'})
-
-        core_bg_config = BackgroundConfig(
-            enabled=True, n0=bg_config.n0,
-            trim_percentile=bg_config.trim_percentile,
-            pseudocount_per_base=bg_config.pseudocount_per_base,
-            n_iterations=bg_config.n_iterations,
-            min_introns=bg_config.min_introns,
-        )
-        bg = SpeciesBackground(
-            human_u2_pwm_sets=u2_sets_bg, config=core_bg_config,
-            five_len=five_len, three_len=three_len,
-        )
 
         messenger.info("Species background: accumulating frequencies across contigs...")
         n_bg_introns = 0
 
-        # Lightweight extraction: for each contig, parse annotations → generate
-        # introns → fetch short flanking sequences → accumulate counts.
-        # This is much cheaper than full extraction because we only need ~30bp
-        # per intron (the scored motif windows), not the full intron sequence.
         for contig_name, _count in contigs_with_counts:
             try:
-                annotations = annotation_store.get_annotations(contig_name)
+                annotations = annotation_store.get_annotations_for_contig(contig_name)
             except Exception:
                 continue
 
-            from intronIC.extraction.intron_generator import generate_introns_from_annotations
-            contig_introns = generate_introns_from_annotations(
-                annotations,
-                feature_type=config.extraction.feature_type,
+            builder = AnnotationHierarchyBuilder(
+                child_features=["cds", "exon"],
                 clean_names=config.output.clean_names,
+                messenger=None,
+            )
+            try:
+                contig_genes = builder.build_from_annotations(annotations)
+            except ValueError:
+                continue
+
+            if not contig_genes:
+                continue
+
+            generator = IntronGenerator(
+                debug=config.output.debug, messenger=None
+            )
+            contig_introns = generator.generate_from_genes(
+                contig_genes, builder.feature_index
             )
 
             for intron in contig_introns:
                 coord = intron.coordinates
                 if coord is None:
                     continue
-                seq_len = coord.stop - coord.start + 1
-                if seq_len < 30:
+                if coord.stop - coord.start + 1 < 30:
                     continue
 
-                # Fetch only the short sequences we need for frequency accumulation
+                # Fetch only the short sequences needed for BG accumulation
                 try:
-                    # 5'SS: upstream flank + intron start
-                    up_start = max(1, coord.start - abs(five_start))
-                    up_seq = genome_reader.fetch(coord.chromosome, up_start, coord.start - 1)
-                    intro_start_seq = genome_reader.fetch(coord.chromosome, coord.start, coord.start + five_end - 1)
+                    # 5'SS: upstream flank + intron start (1-based inclusive)
+                    up_start = max(1, coord.start + five_start)
+                    up_seq = genome_reader.fetch(
+                        coord.chromosome, up_start, coord.start - 1
+                    )
+                    intro_start_seq = genome_reader.fetch(
+                        coord.chromosome, coord.start, coord.start + five_end - 1
+                    )
 
                     # 3'SS: intron end + downstream flank
-                    intro_end_seq = genome_reader.fetch(coord.chromosome, coord.stop + three_start + 1, coord.stop)
-                    dn_end = min(coord.stop + three_end, genome_reader.get_contig_length(coord.chromosome))
-                    dn_seq = genome_reader.fetch(coord.chromosome, coord.stop + 1, dn_end)
+                    intro_end_seq = genome_reader.fetch(
+                        coord.chromosome,
+                        coord.stop + three_start + 1,
+                        coord.stop,
+                    )
+                    dn_seq = genome_reader.fetch(
+                        coord.chromosome,
+                        coord.stop + 1,
+                        coord.stop + three_end,
+                    )
 
-                    # BP region
+                    # BP region (inside intron, near 3' end)
                     bp_region_start = max(coord.start, coord.stop + bp_start_coord)
                     bp_region_end = coord.stop + bp_end_coord
-                    bp_seq = genome_reader.fetch(coord.chromosome, bp_region_start, bp_region_end)
+                    bp_seq = genome_reader.fetch(
+                        coord.chromosome, bp_region_start, bp_region_end
+                    )
+
+                    # Dinucleotides (first 2bp and last 2bp of intron)
+                    dnt_start = genome_reader.fetch(
+                        coord.chromosome, coord.start, coord.start + 1
+                    )
+                    dnt_end = genome_reader.fetch(
+                        coord.chromosome, coord.stop - 1, coord.stop
+                    )
                 except Exception:
                     continue
 
                 five_seq = (up_seq + intro_start_seq).upper()
                 three_seq = (intro_end_seq + dn_seq).upper()
 
-                # Handle reverse strand
-                if coord.strand == '-':
-                    from intronIC.utils.sequence import reverse_complement
+                if coord.strand == "-":
                     five_seq = reverse_complement(five_seq)
                     three_seq = reverse_complement(three_seq)
                     bp_seq = reverse_complement(bp_seq)
                     five_seq, three_seq = three_seq, five_seq
-
-                # Get dinucleotides
-                full_start = genome_reader.fetch(coord.chromosome, coord.start, coord.start + 1)
-                full_end = genome_reader.fetch(coord.chromosome, coord.stop - 1, coord.stop)
-                if coord.strand == '-':
-                    from intronIC.utils.sequence import reverse_complement
-                    five_dnt = reverse_complement(full_end).upper()
-                    three_dnt = reverse_complement(full_start).upper()
+                    five_dnt = reverse_complement(dnt_end).upper()
+                    three_dnt = reverse_complement(dnt_start).upper()
                 else:
-                    five_dnt = full_start.upper()
-                    three_dnt = full_end.upper()
+                    five_dnt = dnt_start.upper()
+                    three_dnt = dnt_end.upper()
 
                 bg.accumulate(
-                    intron.intron_id, five_dnt, three_dnt,
-                    five_seq[:five_len], three_seq[-three_len:],
+                    intron.intron_id,
+                    five_dnt,
+                    three_dnt,
+                    five_seq[:five_len],
+                    three_seq[-three_len:],
                     bp_seq.upper(),
                 )
                 n_bg_introns += 1
 
-        if n_bg_introns >= bg_config.min_introns:
-            messenger.info(
-                f"Species background: computing empirical U2 from {n_bg_introns} introns "
-                f"(n0={bg_config.n0})"
-            )
-            pwm_sets = bg.build_corrected_pwm_sets(u12_pwm_sets=u12_sets_bg)
-        else:
-            messenger.info(
-                f"Species background: {n_bg_introns} introns < min_introns "
-                f"({bg_config.min_introns}), skipping correction"
-            )
+        bg_config = config.species_background
+        corrected = _finalize_background_correction(
+            bg, u12_sets_bg, n_bg_introns, bg_config.min_introns,
+            bg_config.n0, messenger,
+        )
+        if corrected is not None:
+            pwm_sets = corrected
 
     # Create scorer (uses corrected pwm_sets if background correction was applied)
     scorer = IntronScorer(
@@ -4090,10 +4319,10 @@ def classify_streaming_per_contig(
     gc.collect()
 
     # =========================================================================
-    # POST-HOC CLUSTER VALIDATION
-    # Compute multi-bandwidth density valley depth to assess whether the
-    # SVM's U12 calls form a distinct cluster separated from U2 by a
-    # density gap. Reports a species-level confidence metric and adjusted prior.
+    # POST-HOC CLUSTER VALIDATION AND SCORE ADJUSTMENT
+    # 1. Compute valley depth from 2D (5'z, BPz) KDE bimodality
+    # 2. Apply log-odds score adjustment: valley prior + σ penalty
+    # 3. Rewrite output files with adjusted_score and updated rel_score
     # =========================================================================
     cluster_validation_result = None
     if accumulated_five_z:
@@ -4107,49 +4336,33 @@ def classify_streaming_per_contig(
             confidence_threshold=config.scoring.threshold,
         )
 
-        valley_depth = cluster_validation_result['valley_depth']
-        regime = cluster_validation_result['regime']
-        adj_prior = cluster_validation_result['adjusted_prior']
+        score_path = config.output.get_output_path(".score_info.iic")
+        meta_path = config.output.get_output_path(".meta.iic")
 
-        if not np.isnan(valley_depth):
-            messenger.info(
-                f"Cluster validation: valley_depth={valley_depth:.3f} ({regime}), "
-                f"n_confident_u12={cluster_validation_result['n_confident_u12']}, "
-                f"centroid_σ={cluster_validation_result['centroid_sigma']:.1f}, "
-                f"adjusted_prior={adj_prior:.6f}"
+        cluster_validation_result, adjusted_hc_count = (
+            _apply_post_classification_adjustment(
+                cluster_validation_result,
+                config,
+                messenger,
+                score_path=score_path,
+                meta_path=meta_path,
             )
-            if not cluster_validation_result.get('has_valley', False):
-                messenger.warning(
-                    f"No density valley detected (depth={valley_depth:.3f}): "
-                    f"U12-type intron calls may not form a distinct cluster. "
-                    f"Consider reviewing calls with caution."
-                )
-                # Rewrite output files with adjusted scores (sequential path)
-                # In parallel path, adjustment was applied before writing
-                from intronIC.scoring.cluster_validation import rewrite_outputs_with_prior_adjustment
-                meta_path = output_writer.meta_writer.path if hasattr(output_writer, 'meta_writer') and hasattr(output_writer.meta_writer, 'path') else None
-                score_path = output_writer.score_writer.path if hasattr(output_writer, 'score_writer') and hasattr(output_writer.score_writer, 'path') else None
-                if meta_path and score_path:
-                    n_reclass = rewrite_outputs_with_prior_adjustment(
-                        meta_path, score_path, cluster_validation_result,
-                        threshold=config.scoring.threshold,
-                    )
-                    if n_reclass > 0:
-                        messenger.info(
-                            f"Prior adjustment: {n_reclass} U12-type intron(s) "
-                            f"reclassified to U2-type"
-                        )
-        else:
-            messenger.info(
-                f"Cluster validation: insufficient confident U12-type intron calls "
-                f"(n={cluster_validation_result['n_confident_u12']}) to compute valley depth"
-            )
+        )
+    else:
+        adjusted_hc_count = None
 
     # Free accumulated score data
     del accumulated_five_z, accumulated_bp_z, accumulated_svm_scores, accumulated_type_ids
 
     # Build summary
     summary = output_writer.get_summary()
+
+    # Replace HC count with adjusted value if score adjustment was applied
+    if adjusted_hc_count is not None:
+        summary["high_confidence_u12"] = adjusted_hc_count
+        total = summary.get("total_introns", 1)
+        summary["high_confidence_percentage"] = adjusted_hc_count / total * 100 if total > 0 else 0.0
+
     summary.update(
         {
             "total_genes": total_genes,
@@ -4163,17 +4376,25 @@ def classify_streaming_per_contig(
         }
     )
 
-    # Add cluster validation to summary
+    # Add cluster validation and score adjustment to summary
     if cluster_validation_result is not None:
+        sa_cfg = config.score_adjustment
         summary["cluster_validation"] = {
             "valley_depth": cluster_validation_result['valley_depth'],
             "has_valley": cluster_validation_result.get('has_valley'),
             "regime": cluster_validation_result['regime'],
-            "adjusted_prior": cluster_validation_result['adjusted_prior'],
             "n_confident_u12": cluster_validation_result['n_confident_u12'],
             "empirical_prior": cluster_validation_result['empirical_prior'],
             "centroid_sigma": cluster_validation_result.get('centroid_sigma'),
         }
+        if sa_cfg.enabled:
+            summary["score_adjustment"] = {
+                "enabled": True,
+                "valley_midpoint": sa_cfg.valley_midpoint,
+                "transition_width": sa_cfg.transition_width,
+                "prior_floor": sa_cfg.prior_floor,
+                "k_sigma": sa_cfg.k_sigma,
+            }
 
     messenger.info(
         f"Streaming classification complete: {total_classified:,} introns classified"
@@ -4567,6 +4788,7 @@ def classify_introns(
         gamma_search=list(opt.gamma_search) if opt.gamma_search else None,
         extra_feature_names=list(opt.extra_features) if opt.extra_features else None,
         feature_dropout=ens.feature_dropout,
+        feature_dropout_fraction=ens.feature_dropout_fraction,
     )
 
     # Run complete classification pipeline (optimize + train + classify)
@@ -5457,14 +5679,12 @@ def main_classify(config: IntronICConfig):
         # This mode provides ~90% memory savings but requires:
         # 1. Pre-trained model (has frozen scaler)
         # 2. Annotation input mode
-        # When species background correction is enabled, it's handled in the
-        # non-streaming path below (extraction stores to SQLite, then BG
-        # frequencies are accumulated from SQLite before scoring).
+        # Species background correction is handled via a lightweight first-pass
+        # in classify_streaming_per_contig() (genome fetch, not full extraction).
         if (
             config.performance.streaming
             and config.training.pretrained_model_path
             and config.input.mode == "annotation"
-            and not config.species_background.enabled
         ):
             total_classified, summary = classify_streaming_per_contig(
                 config, messenger, reporter
@@ -5537,93 +5757,53 @@ def main_classify(config: IntronICConfig):
                 # iterate the store and count bases at scored positions.
                 if config.species_background.enabled and streaming_db_path:
                     from intronIC.file_io.sequence_store import StreamingSequenceStore
-                    from intronIC.scoring.background import SpeciesBackground, BackgroundConfig
-                    from intronIC.scoring.pwm import PWMSet
 
-                    bg_cfg = config.species_background
-                    five_len = (config.scoring.scoring_regions.five_end -
-                                config.scoring.scoring_regions.five_start)
-                    three_len = (config.scoring.scoring_regions.three_end -
-                                 config.scoring.scoring_regions.three_start)
-
-                    u12_s, u2_s = {}, {}
-                    for region in ['five', 'three', 'bp']:
-                        from intronIC.scoring.pwm import PWMLoader
-                        pwm_sets_tmp = PWMLoader.load_from_file(
-                            Path(__file__).parent.parent / "data" / "intronIC_scoring_PWMs.json"
-                        )
-                        break  # just need to load once
-                    pwm_sets_tmp = PWMLoader.load_from_file(
-                        Path(__file__).parent.parent / "data" / "intronIC_scoring_PWMs.json"
-                    )
-                    for region in ['five', 'three', 'bp']:
-                        if region in pwm_sets_tmp:
-                            u12_s[region] = PWMSet(matrices={
-                                k: v for k, v in pwm_sets_tmp[region].matrices.items()
-                                if k[0] == 'u12'})
-                            u2_s[region] = PWMSet(matrices={
-                                k: v for k, v in pwm_sets_tmp[region].matrices.items()
-                                if k[0] == 'u2'})
-
-                    core_bg = BackgroundConfig(
-                        enabled=True, n0=bg_cfg.n0,
-                        trim_percentile=bg_cfg.trim_percentile,
-                        pseudocount_per_base=bg_cfg.pseudocount_per_base,
-                        n_iterations=bg_cfg.n_iterations,
-                        min_introns=bg_cfg.min_introns,
-                    )
-                    bg = SpeciesBackground(
-                        human_u2_pwm_sets=u2_s, config=core_bg,
-                        five_len=five_len, three_len=three_len,
+                    pwm_sets_for_bg = load_pwms_with_fallback(config, messenger)
+                    bg, u12_sets_bg, _, five_len, three_len = (
+                        _create_background_accumulator(config, pwm_sets_for_bg)
                     )
 
                     messenger.info("Species background: reading sequences from SQLite...")
+                    five_start = config.scoring.scoring_regions.five_start
+                    five_end = config.scoring.scoring_regions.five_end
+                    three_start = config.scoring.scoring_regions.three_start
+                    three_end = config.scoring.scoring_regions.three_end
+                    bp_start = config.scoring.scoring_regions.bp_start
+                    bp_end = config.scoring.scoring_regions.bp_end
+
                     store = StreamingSequenceStore(streaming_db_path)
                     n_acc = 0
                     for row in store.iter_all():
-                        seq = row.seq or ''
-                        up = row.upstream_flank or ''
-                        dn = row.downstream_flank or ''
-                        dnts = row.terminal_dnts or ''
-                        if '-' not in dnts or len(seq) < 30:
+                        seq = row.seq or ""
+                        up = row.upstream_flank or ""
+                        dn = row.downstream_flank or ""
+                        dnts = row.terminal_dnts or ""
+                        if "-" not in dnts or len(seq) < 30:
                             continue
-                        five_dnt, three_dnt = dnts.split('-')
+                        five_dnt, three_dnt = dnts.split("-")
 
-                        five_start = config.scoring.scoring_regions.five_start
-                        five_end = config.scoring.scoring_regions.five_end
                         five_seq = (up[five_start:] + seq[:five_end]).upper()
-
-                        three_start = config.scoring.scoring_regions.three_start
-                        three_end = config.scoring.scoring_regions.three_end
                         three_seq = (seq[three_start:] + dn[:three_end]).upper()
-
-                        bp_start = config.scoring.scoring_regions.bp_start
-                        bp_end = config.scoring.scoring_regions.bp_end
-                        bp_seq = seq[max(0, len(seq)+bp_start):len(seq)+bp_end].upper()
+                        bp_seq = seq[
+                            max(0, len(seq) + bp_start) : len(seq) + bp_end
+                        ].upper()
 
                         bg.accumulate(
-                            row.intron_id, five_dnt.upper(), three_dnt.upper(),
-                            five_seq[:five_len], three_seq[-three_len:], bp_seq,
+                            row.intron_id,
+                            five_dnt.upper(),
+                            three_dnt.upper(),
+                            five_seq[:five_len],
+                            three_seq[-three_len:],
+                            bp_seq,
                         )
                         n_acc += 1
                     store.close()
 
-                    if n_acc >= bg_cfg.min_introns:
-                        messenger.info(
-                            f"Species background: computing empirical U2 from "
-                            f"{n_acc} introns (n0={bg_cfg.n0})"
-                        )
-                        # Store corrected PWMs — they'll be picked up by
-                        # score_introns() via the config or passed directly
-                        _streaming_corrected_pwm_sets = bg.build_corrected_pwm_sets(
-                            u12_pwm_sets=u12_s
-                        )
-                    else:
-                        messenger.info(
-                            f"Species background: {n_acc} introns < min_introns "
-                            f"({bg_cfg.min_introns}), skipping correction"
-                        )
-                        _streaming_corrected_pwm_sets = None
+                    bg_cfg = config.species_background
+                    _streaming_corrected_pwm_sets = _finalize_background_correction(
+                        bg, u12_sets_bg, n_acc, bg_cfg.min_introns, bg_cfg.n0,
+                        messenger,
+                    )
                 else:
                     _streaming_corrected_pwm_sets = None
             else:
@@ -5827,12 +6007,7 @@ def main_classify(config: IntronICConfig):
                 intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
             )
 
-        # Save classification metrics to JSON file
-        if metrics:
-            metrics_path = config.output.get_output_path(".metrics.iic.json")
-            messenger.log_only(f"Saving classification metrics to {metrics_path}")
-            with open(metrics_path, "w") as f:
-                json.dump(metrics, f, indent=2)
+        # Metrics JSON is written after score adjustment (see below)
 
         # Generate visualization plots
         messenger.log_only("Generating visualization plots")
@@ -5982,6 +6157,59 @@ def main_classify(config: IntronICConfig):
             scored_only=classified_introns,
             skip_sequences=True,  # Sequences already written (standard mode) or just above (streaming mode)
         )
+
+        # Post-classification score adjustment (cluster validation + valley prior + σ penalty)
+        if classified_introns:
+            from intronIC.scoring.cluster_validation import validate_u12_cluster
+
+            five_z = np.array([
+                i.scores.five_z_score for i in classified_introns
+                if i.scores and i.scores.five_z_score is not None
+            ])
+            bp_z = np.array([
+                i.scores.bp_z_score for i in classified_introns
+                if i.scores and i.scores.bp_z_score is not None
+            ])
+            svm_s = np.array([
+                i.scores.svm_score for i in classified_introns
+                if i.scores and i.scores.svm_score is not None
+            ])
+            type_ids = np.array([
+                i.metadata.type_id if i.metadata else 'u2'
+                for i in classified_introns
+                if i.scores and i.scores.svm_score is not None
+            ])
+
+            if len(five_z) > 0:
+                cv_result = validate_u12_cluster(
+                    five_z_scores=five_z,
+                    bp_z_scores=bp_z,
+                    svm_scores=svm_s,
+                    type_ids=type_ids,
+                    confidence_threshold=config.scoring.threshold,
+                )
+
+                score_path = config.output.get_output_path(".score_info.iic")
+                meta_path = config.output.get_output_path(".meta.iic")
+
+                cv_result, adjusted_hc_count = _apply_post_classification_adjustment(
+                    cv_result, config, messenger,
+                    score_path=score_path,
+                    meta_path=meta_path,
+                )
+                if adjusted_hc_count is not None and metrics:
+                    metrics["high_confidence_u12"] = adjusted_hc_count
+                    total = metrics.get("total_introns", 1)
+                    metrics["high_confidence_percentage"] = (
+                        adjusted_hc_count / total * 100 if total > 0 else 0.0
+                    )
+
+        # Save classification metrics to JSON file (after score adjustment)
+        if metrics:
+            metrics_path = config.output.get_output_path(".metrics.iic.json")
+            messenger.log_only(f"Saving classification metrics to {metrics_path}")
+            with open(metrics_path, "w") as f:
+                json.dump(metrics, f, indent=2)
 
         # Calculate and log total runtime
         elapsed_seconds = time.time() - start_time

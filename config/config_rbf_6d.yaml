@@ -25,8 +25,11 @@ scoring:
     three_prime: {start: -6, end: 4}
 
   # Classification threshold (0-100%).
-  # Introns with SVM probability >= threshold are classified as U12-type.
-  threshold: 90.0
+  # Introns with adjusted_score >= threshold are considered high-confidence U12.
+  # The adjusted_score incorporates species-level valley prior and ensemble σ
+  # penalty (see score_adjustment below). The binary type_id (U12/U2) is set
+  # by the raw SVM decision boundary and is not affected by this threshold.
+  threshold: 95.0
 
   # Feature type to extract introns from:
   #   "cds"  — coding sequence only (excludes UTR introns)
@@ -47,6 +50,36 @@ scoring:
   # If found at an offset, adjust boundaries. Corrected introns tagged [c:shift].
   u12_boundary_correction: true
   u12_correction_require_canonical: true
+
+  # Post-classification score adjustment (Bayesian prior + epistemic uncertainty).
+  # Adjusts SVM probabilities using two independent signals:
+  #
+  #   1. Valley prior: species-level population evidence from 2D KDE bimodality
+  #      (5'z, BPz). Deep valley → trust SVM. No valley → discount probability.
+  #   2. Ensemble σ: per-intron model disagreement. High σ → less confidence.
+  #
+  # Formula (log-odds space):
+  #   logit(p_adj) = logit(p_svm) + log(π_species / 0.5) - k_sigma * σ
+  #
+  # The valley-to-prior mapping uses a sigmoid centered at valley_midpoint:
+  #   π_species = prior_floor + sigmoid(valley_depth) * (0.5 - prior_floor)
+  #   transition zone = [midpoint - width/2, midpoint + width/2]
+  #
+  # Output: adjusted_score and ensemble_sigma columns in score_info.
+  # rel_score in meta/score_info = adjusted_score - threshold.
+  score_adjustment:
+    enabled: true
+    valley_midpoint: 0.3        # Center of discount→trust transition (valley depth 0-1).
+                                # Below: strong discounting. Above: trust SVM.
+                                # Set between known U12-absent (≤0.13) and U12-present (≥0.65) species.
+    transition_width: 0.25      # Valley depth range for the sigmoid transition.
+                                # Transition zone = [midpoint - width/2, midpoint + width/2] = [0.175, 0.425].
+                                # Narrower = sharper cutoff; wider = more gradual.
+    prior_floor: 0.001          # Minimum species-level prior for no-valley species.
+                                # At floor=0.001, a 99% SVM score adjusts to ~41% (valley=0).
+    k_sigma: 3.0                # Ensemble disagreement penalty in log-odds per σ unit.
+                                # σ is std of per-model probabilities (0-1 scale).
+                                # Most introns have σ≈0; this penalizes rare high-σ outliers.
 
   # Species-specific U2 background correction.
   # Blends empirical per-position nucleotide frequencies from the species'

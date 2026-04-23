@@ -80,6 +80,9 @@ def _predict_chunk_worker(
 
     probas = np.array(probas)
 
+    # Ensemble sigma: std of per-model probabilities (0-100 scale)
+    ensemble_sigmas = probas.std(axis=0) * 100.0
+
     # F1-weighted averaging (if f1_scores available), else equal weights
     # In nested CV, models don't have f1_scores, so use equal weights
     try:
@@ -157,6 +160,7 @@ def _predict_chunk_worker(
             min_5_3=min_5_3,
             max_5_bp=max_5_bp,
             max_5_3=max_5_3,
+            ensemble_sigma=float(ensemble_sigmas[i]),
         )
 
         # Update metadata with type_id
@@ -319,6 +323,9 @@ class SVMPredictor:
 
         probas = np.array(probas)  # Shape: (n_models, n_introns)
 
+        # Ensemble sigma: std of per-model probabilities (0-100 scale)
+        ensemble_sigmas = probas.std(axis=0) * 100.0
+
         # F1-weighted averaging (Port from: intronIC.py:5671-5676)
         # Handle models that may not have f1_score (e.g., loaded from old format)
         f1_scores = np.array([getattr(m, "f1_score", 1.0) for m in ensemble.models])
@@ -392,6 +399,7 @@ class SVMPredictor:
                 min_5_3=min_5_3,
                 max_5_bp=max_5_bp,
                 max_5_3=max_5_3,
+                ensemble_sigma=float(ensemble_sigmas[i]),
             )
 
             # Update metadata with type_id
@@ -552,6 +560,9 @@ def classify_introns_streaming(
 
         probas = np.array(probas)
 
+        # Ensemble sigma for single intron (0-100 scale)
+        ensemble_sigma = float(probas.std() * 100.0)
+
         # Weighted average
         avg_proba = float(np.dot(weights, probas))
 
@@ -598,6 +609,7 @@ def classify_introns_streaming(
             min_5_3=min_5_3,
             max_5_bp=max_5_bp,
             max_5_3=max_5_3,
+            ensemble_sigma=ensemble_sigma,
         )
 
         # Update metadata with type_id

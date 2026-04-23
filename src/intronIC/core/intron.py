@@ -209,6 +209,10 @@ class IntronScores:
     # Low values indicate multiple similar-scoring positions (no clear motif, typically 2-5).
     bp_scan_confidence: Optional[float] = None
 
+    # Score adjustment fields (post-classification)
+    ensemble_sigma: Optional[float] = None  # Std of per-model probabilities (0-100 scale)
+    adjusted_score: Optional[float] = None  # Probability after valley prior + σ penalty
+
     def is_high_confidence(self, threshold: float = 90.0) -> bool:
         """
         Check if this intron has high-confidence U12 classification.

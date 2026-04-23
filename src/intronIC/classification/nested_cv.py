@@ -126,6 +126,7 @@ class NestedCVEvaluator:
         gamma_search: list | None = None,
         extra_feature_names: list | None = None,
         feature_dropout: int = 0,
+        feature_dropout_fraction: float = 1.0,
     ):
         """
         Initialize nested CV evaluator.
@@ -185,6 +186,7 @@ class NestedCVEvaluator:
         self.gamma_search = gamma_search
         self.extra_feature_names = extra_feature_names or []
         self.feature_dropout = feature_dropout
+        self.feature_dropout_fraction = feature_dropout_fraction
 
     def evaluate(
         self, u12_reference: Sequence[Intron], u2_reference: Sequence[Intron]
@@ -313,6 +315,7 @@ class NestedCVEvaluator:
                 features_list=self.features_list,
                 extra_feature_names=self.extra_feature_names,
                 feature_dropout=self.feature_dropout,
+                feature_dropout_fraction=self.feature_dropout_fraction,
             )
             ensemble = trainer.train_ensemble(
                 train_u12,

@@ -261,6 +261,7 @@ class EnsembleConfig:
     max_iter: int = 50000
     random_state: int = 42
     feature_dropout: int = 0  # Number of features to drop per model (0=disabled)
+    feature_dropout_fraction: float = 1.0  # Fraction of models using dropout (1.0=all, 0.5=mixed)
 
     @classmethod
     def from_yaml(cls, yaml_config: dict) -> "EnsembleConfig":
@@ -281,7 +282,44 @@ class EnsembleConfig:
             subsample_ratio=ensemble.get("subsample_ratio", 0.85),
             max_iter=ensemble.get("max_iter", 50000),
             feature_dropout=ensemble.get("feature_dropout", 0),
+            feature_dropout_fraction=ensemble.get("feature_dropout_fraction", 1.0),
             random_state=ensemble.get("random_state", 42),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreAdjustmentConfig:
+    """Configuration for post-classification score adjustment.
+
+    Adjusts SVM probabilities using species-level population evidence
+    (valley depth) and per-intron ensemble agreement (σ).
+
+    Formula (log-odds space):
+        logit(p_adj) = logit(p_svm) + log(π_species / 0.5) - k_sigma * σ
+
+    Where π_species is derived from the 2D valley depth via a sigmoid mapping.
+
+    Loaded from YAML config 'scoring.score_adjustment' section.
+    """
+
+    enabled: bool = True
+    valley_midpoint: float = 0.3    # Center of discount→trust transition (valley depth 0-1)
+    transition_width: float = 0.25  # Width of transition zone [midpoint ± width/2]
+    prior_floor: float = 0.001     # Minimum prior for no-valley species
+    k_sigma: float = 3.0           # Ensemble disagreement penalty (log-odds per σ unit)
+
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "ScoreAdjustmentConfig":
+        """Create ScoreAdjustmentConfig from YAML config dict."""
+        scoring = yaml_config.get("scoring", {})
+        sa = scoring.get("score_adjustment", {})
+
+        return cls(
+            enabled=sa.get("enabled", True),
+            valley_midpoint=sa.get("valley_midpoint", 0.3),
+            transition_width=sa.get("transition_width", 0.25),
+            prior_floor=sa.get("prior_floor", 0.001),
+            k_sigma=sa.get("k_sigma", 3.0),
         )
 
 
@@ -408,6 +446,9 @@ class IntronICConfig:
     species_background: SpeciesBackgroundConfig = field(
         default_factory=SpeciesBackgroundConfig
     )
+    score_adjustment: ScoreAdjustmentConfig = field(
+        default_factory=ScoreAdjustmentConfig
+    )
     yaml_config: dict = field(default_factory=dict)
     config_path: Optional[Path] = None
 
@@ -445,10 +486,11 @@ class IntronICConfig:
         # Only set arg from YAML if it wasn't explicitly set on CLI
         merged_args = cls._merge_yaml_into_args(args, yaml_config)
 
-        # Create optimizer, ensemble, and species background configs from YAML
+        # Create optimizer, ensemble, species background, and score adjustment configs from YAML
         optimizer_config = OptimizerConfig.from_yaml(yaml_config)
         ensemble_config = EnsembleConfig.from_yaml(yaml_config)
         species_background_config = SpeciesBackgroundConfig.from_yaml(yaml_config)
+        score_adjustment_config = ScoreAdjustmentConfig.from_yaml(yaml_config)
 
         # Now create config from merged args using existing logic
         # Pass the extra configs to from_args
@@ -457,6 +499,7 @@ class IntronICConfig:
             optimizer_config=optimizer_config,
             ensemble_config=ensemble_config,
             species_background_config=species_background_config,
+            score_adjustment_config=score_adjustment_config,
             yaml_config=yaml_config,
             config_path=found_config_path,
         )
@@ -562,6 +605,7 @@ class IntronICConfig:
         optimizer_config: OptimizerConfig = None,
         ensemble_config: EnsembleConfig = None,
         species_background_config: SpeciesBackgroundConfig = None,
+        score_adjustment_config: ScoreAdjustmentConfig = None,
         yaml_config: dict = None,
         config_path: Path = None,
     ) -> "IntronICConfig":
@@ -572,6 +616,7 @@ class IntronICConfig:
             optimizer_config: Pre-built OptimizerConfig (from YAML)
             ensemble_config: Pre-built EnsembleConfig (from YAML)
             species_background_config: Pre-built SpeciesBackgroundConfig (from YAML)
+            score_adjustment_config: Pre-built ScoreAdjustmentConfig (from YAML)
             yaml_config: Raw YAML config dict
             config_path: Path to loaded config file
 
@@ -585,6 +630,8 @@ class IntronICConfig:
             ensemble_config = EnsembleConfig()
         if species_background_config is None:
             species_background_config = SpeciesBackgroundConfig()
+        if score_adjustment_config is None:
+            score_adjustment_config = ScoreAdjustmentConfig()
         if yaml_config is None:
             yaml_config = {}
 
@@ -738,6 +785,7 @@ class IntronICConfig:
             optimizer=optimizer_config,
             ensemble=ensemble_config,
             species_background=species_background_config,
+            score_adjustment=score_adjustment_config,
             yaml_config=yaml_config,
             config_path=config_path,
         )

@@ -177,6 +177,92 @@ def compute_valley_depth(
     }
 
 
+def compute_adjusted_score(
+    svm_score: float,
+    valley_depth: float,
+    ensemble_sigma: float,
+    valley_midpoint: float = 0.3,
+    transition_width: float = 0.25,
+    prior_floor: float = 0.001,
+    k_sigma: float = 3.0,
+    pi_train: float = 0.5,
+) -> float:
+    """Compute valley+σ adjusted confidence score for a single intron.
+
+    Combines three signals in log-odds space:
+        logit(p_adj) = logit(p_svm) + log(π_species / π_train) - k_σ * σ
+
+    Args:
+        svm_score: Raw SVM ensemble mean probability (0-100 scale)
+        valley_depth: Species-level 2D valley depth (0-1)
+        ensemble_sigma: Std of per-model probabilities (0-100 scale)
+        valley_midpoint: Center of discount→trust transition
+        transition_width: Width of transition zone
+        prior_floor: Minimum species-level prior
+        k_sigma: Ensemble disagreement penalty coefficient
+        pi_train: Training prior (0.5 for balanced)
+
+    Returns:
+        Adjusted probability (0-100 scale)
+    """
+    eps = 1e-9
+    p = max(eps, min(1 - eps, svm_score / 100.0))
+
+    # Term 1: instance-level evidence
+    logit_svm = math.log(p / (1 - p))
+
+    # Term 2: population-level prior correction
+    steepness = 4.394 / transition_width
+    weight = 1.0 / (1.0 + math.exp(-steepness * (valley_depth - valley_midpoint)))
+    pi_species = prior_floor + weight * (pi_train - prior_floor)
+    prior_correction = math.log(pi_species / pi_train)
+
+    # Term 3: epistemic uncertainty penalty (σ on 0-1 scale)
+    sigma_penalty = k_sigma * (ensemble_sigma / 100.0)
+
+    logit_adj = logit_svm + prior_correction - sigma_penalty
+    return 100.0 / (1.0 + math.exp(-logit_adj))
+
+
+def compute_adjusted_scores_batch(
+    svm_scores: np.ndarray,
+    valley_depth: float,
+    ensemble_sigmas: np.ndarray,
+    valley_midpoint: float = 0.3,
+    transition_width: float = 0.25,
+    prior_floor: float = 0.001,
+    k_sigma: float = 3.0,
+    pi_train: float = 0.5,
+) -> np.ndarray:
+    """Vectorized score adjustment for a batch of introns.
+
+    Same formula as compute_adjusted_score but operates on arrays.
+
+    Args:
+        svm_scores: Raw SVM probabilities (0-100 scale), shape (n,)
+        valley_depth: Species-level valley depth (scalar, same for all)
+        ensemble_sigmas: Per-intron ensemble σ (0-100 scale), shape (n,)
+        Other args: see compute_adjusted_score
+
+    Returns:
+        Adjusted probabilities (0-100 scale), shape (n,)
+    """
+    eps = 1e-9
+    p = np.clip(svm_scores / 100.0, eps, 1 - eps)
+
+    logit_svm = np.log(p / (1 - p))
+
+    steepness = 4.394 / transition_width
+    weight = 1.0 / (1.0 + math.exp(-steepness * (valley_depth - valley_midpoint)))
+    pi_species = prior_floor + weight * (pi_train - prior_floor)
+    prior_correction = math.log(pi_species / pi_train)
+
+    sigma_penalty = k_sigma * (ensemble_sigmas / 100.0)
+
+    logit_adj = logit_svm + prior_correction - sigma_penalty
+    return 100.0 / (1.0 + np.exp(-logit_adj))
+
+
 def compute_valley_adjusted_prior(
     valley_result: dict,
     empirical_prior: float,
