@@ -1,6 +1,6 @@
 {
   "model_name": "homo_sapiens.model",
-  "training_date": "2026-04-10 06:36:25",
+  "training_date": "2026-04-23 07:41:55",
   "reference_data": {
     "u12": {
       "file": "/mnt/data/u12/intronIC_v2_repo/src/intronIC/data/u12_reference.introns.iic.gz",
@@ -15,182 +15,452 @@
     "total": 30627
   },
   "hyperparameters": {
-    "C": 65.88393087415548,
-    "cv_score": 0.0015871790463744336,
+    "C": 35.08493011159971,
+    "cv_score": 0.0007128979306516649,
     "kernel": "rbf",
     "calibration_method": "isotonic",
     "max_iter": 50000,
-    "n_models": 15,
-    "threshold": 90.0,
+    "n_models": 42,
+    "threshold": 95.0,
     "random_seed": 42
   },
   "evaluation": {
     "method": "nested_cv",
     "n_folds": 7,
-    "mean_f1": 0.9947,
-    "std_f1": 0.0065,
-    "mean_pr_auc": 0.9999,
-    "std_pr_auc": 0.0002
+    "mean_f1": 0.9936,
+    "std_f1": 0.0048,
+    "mean_pr_auc": 0.9997,
+    "std_pr_auc": 0.0004
   },
   "ensemble_coefficients": {
     "kernel": "rbf",
-    "n_models": 15,
+    "n_models": 42,
     "per_model_support_vectors": [
       {
         "n_support": [
-          18,
-          12
+          29,
+          6
         ],
-        "total_support_vectors": 30,
+        "total_support_vectors": 35,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          17,
-          12
+          28,
+          7
         ],
-        "total_support_vectors": 29,
+        "total_support_vectors": 35,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          19,
-          12
-        ],
-        "total_support_vectors": 31,
-        "gamma": 0.01,
-        "C": 65.88393087415548,
-        "kernel": "rbf"
-      },
-      {
-        "n_support": [
-          16,
+          31,
           9
         ],
-        "total_support_vectors": 25,
+        "total_support_vectors": 40,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          18,
-          10
+          29,
+          6
         ],
-        "total_support_vectors": 28,
+        "total_support_vectors": 35,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          17,
-          12
+          29,
+          7
         ],
-        "total_support_vectors": 29,
+        "total_support_vectors": 36,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          20,
-          10
+          33,
+          8
         ],
-        "total_support_vectors": 30,
+        "total_support_vectors": 41,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          17,
-          12
+          28,
+          8
         ],
-        "total_support_vectors": 29,
+        "total_support_vectors": 36,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          14,
-          10
+          33,
+          8
         ],
-        "total_support_vectors": 24,
+        "total_support_vectors": 41,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          19,
-          10
+          26,
+          6
         ],
-        "total_support_vectors": 29,
+        "total_support_vectors": 32,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          17,
-          11
+          31,
+          9
         ],
-        "total_support_vectors": 28,
+        "total_support_vectors": 40,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          17,
-          12
+          27,
+          9
         ],
-        "total_support_vectors": 29,
+        "total_support_vectors": 36,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          18,
-          12
+          31,
+          8
         ],
-        "total_support_vectors": 30,
+        "total_support_vectors": 39,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          18,
-          12
+          32,
+          9
         ],
-        "total_support_vectors": 30,
+        "total_support_vectors": 41,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       },
       {
         "n_support": [
-          18,
-          11
+          32,
+          8
         ],
-        "total_support_vectors": 29,
+        "total_support_vectors": 40,
         "gamma": 0.01,
-        "C": 65.88393087415548,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          31,
+          6
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          8
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          8
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          27,
+          7
+        ],
+        "total_support_vectors": 34,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          8
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          8
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          32,
+          7
+        ],
+        "total_support_vectors": 39,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          28,
+          7
+        ],
+        "total_support_vectors": 35,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          28,
+          9
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          28,
+          6
+        ],
+        "total_support_vectors": 34,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          27,
+          8
+        ],
+        "total_support_vectors": 35,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          28,
+          6
+        ],
+        "total_support_vectors": 34,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          28,
+          6
+        ],
+        "total_support_vectors": 34,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          28,
+          7
+        ],
+        "total_support_vectors": 35,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          30,
+          9
+        ],
+        "total_support_vectors": 39,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          30,
+          7
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          30,
+          8
+        ],
+        "total_support_vectors": 38,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          7
+        ],
+        "total_support_vectors": 36,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          33,
+          7
+        ],
+        "total_support_vectors": 40,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          8
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          30,
+          8
+        ],
+        "total_support_vectors": 38,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          8
+        ],
+        "total_support_vectors": 37,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          30,
+          8
+        ],
+        "total_support_vectors": 38,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          29,
+          7
+        ],
+        "total_support_vectors": 36,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          24,
+          8
+        ],
+        "total_support_vectors": 32,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          31,
+          9
+        ],
+        "total_support_vectors": 40,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          32,
+          8
+        ],
+        "total_support_vectors": 40,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
+        "kernel": "rbf"
+      },
+      {
+        "n_support": [
+          27,
+          7
+        ],
+        "total_support_vectors": 34,
+        "gamma": 0.01,
+        "C": 35.08493011159971,
         "kernel": "rbf"
       }
     ],
     "summary": {
-      "mean_total_sv": 28.666666666666668,
+      "mean_total_sv": 36.92857142857143,
       "gamma": 0.01,
-      "C": 65.88393087415548,
+      "C": 35.08493011159971,
       "note": "Per-feature weights not available for non-linear kernels"
     }
   }
