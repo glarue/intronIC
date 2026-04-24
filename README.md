@@ -28,8 +28,8 @@ intronIC test -p 4
 ## What's New in v2.3
 
 - **42-model RBF SVM ensemble** on a streamlined 6D feature set
-- **Bayesian score adjustment** suppresses false positives in species lacking a distinct U12 population, using a species-level valley prior and per-intron ensemble agreement
-- **Species-specific U2 background correction** for cross-species composition bias
+- **Bayesian score adjustment** suppresses false positives in species lacking a distinct U12-type intron population, using a species-level valley prior and per-intron ensemble agreement
+- **Species-specific U2-type background correction** for cross-species composition bias
 - **Default threshold raised to 95%** for higher-confidence calls
 - See [CHANGELOG.md](CHANGELOG.md) for full release history
 
@@ -52,7 +52,7 @@ Most eukaryotic introns (~99.5%) use the **major (U2-type) spliceosome**. A smal
 intronIC identifies U12-type introns in five stages:
 
 1. **PWM scoring** — score the 5' splice site, branch point, and 3' splice site against position-weight matrices
-2. **Background correction** — blend species-specific nucleotide frequencies into U2 PWMs to correct composition bias
+2. **Background correction** — blend species-specific nucleotide frequencies into U2-type PWMs to correct composition bias
 3. **Normalization** — convert raw log-odds to z-scores via robust scaling
 4. **SVM classification** — 42-model RBF SVM ensemble produces per-intron probabilities and ensemble agreement (sigma)
 5. **Score adjustment** — adjust probabilities using a species-level valley prior and an ensemble disagreement penalty
