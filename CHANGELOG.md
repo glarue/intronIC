@@ -5,6 +5,33 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-04-23
+
+### Changed
+- **Default model upgraded from 8D to 6D RBF SVM** with 42-model ensemble (was 15-model, 8D)
+  - Kernel: RBF (C=35.11, gamma=0.01), isotonic calibration
+  - 6 features: s5z, BPz, s3z, support2, bp_offset, bp_scan_confidence
+  - Dropped ppt_t_weighted and ppt_longest_run (minimal discriminative value in RBF kernel)
+  - U2 subsample ratio: 75% per model (was 80%)
+- **Default threshold raised from 90% to 95%** for higher-confidence U12 calls
+- `rel_score` now computed as `adjusted_score - threshold` (was `svm_score - threshold`)
+
+### Added
+- **Bayesian score adjustment** combining two independent signals:
+  - Species-level valley prior from 2D KDE bimodality (5'z, BPz) — discounts probabilities in species lacking distinct U12 clusters
+  - Per-intron ensemble sigma penalty — penalizes introns with high model disagreement
+  - Formula: `logit(p_adj) = logit(p_svm) + log(pi_species / 0.5) - k_sigma * sigma`
+  - Configurable via `scoring.score_adjustment` in YAML config
+- **Species-specific U2 background correction** now works in streaming classification mode (was disabled, forced fallback to non-streaming)
+- New `score_info.iic` columns: `adjusted_score` (post-adjustment probability) and `ensemble_sigma` (per-intron model agreement)
+- Valley depth and ensemble sigma reported in metrics JSON output
+- Shared background correction helpers (`_create_background_accumulator`, `_finalize_background_correction`) eliminate three-way code duplication
+- `ScoreAdjustmentConfig` dataclass for score adjustment parameters
+
+### Fixed
+- Streaming classify mode now supports species-specific background correction (previously gated off)
+- Metrics JSON `high_confidence_u12` count now reflects adjusted scores, not raw SVM scores
+
 ## [2.2.0] - 2026-04-11
 
 ### Changed
@@ -147,6 +174,8 @@ Previous monolithic version. See git history for details.
 
 ---
 
+[2.3.0]: https://github.com/glarue/intronIC/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/glarue/intronIC/compare/v2.1.3...v2.2.0
 [2.1.3]: https://github.com/glarue/intronIC/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/glarue/intronIC/compare/v2.1.0...v2.1.2
 [2.1.0]: https://github.com/glarue/intronIC/compare/v2.0.10...v2.1.0

@@ -1,118 +1,99 @@
 ![intronIC_logo](https://user-images.githubusercontent.com/6827531/82829967-62872480-9e69-11ea-94e9-fa7306c7df1b.png)
 
-# intronIC - (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
+# intronIC (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-`intronIC` is a bioinformatics tool for extracting and classifying intron sequences as **U12-type (minor)** or **U2-type (major)** using a support vector machine trained on position-weight matrix scores.
+Classify intron sequences as **U12-type** (minor spliceosome) or **U2-type** (major spliceosome). A 42-model RBF SVM ensemble scores each intron against position-weight matrices and outputs a calibrated probability (0-100%).
 
 ---
 
 ## Quick Start
 
-### Installation
-
 ```bash
 pip install intronIC
 ```
 
-### Basic Usage
-
 ```bash
-# Classify introns (default model loaded automatically)
+# Classify introns (loads default model automatically)
 intronIC -g genome.fa.gz -a annotation.gff3.gz -n species_name -p 8
 
-# Extract sequences only (no classification)
+# Extract sequences without classification
 intronIC extract -g genome.fa.gz -a annotation.gff3.gz -n species_name -p 8
 
-# Train a custom model (optional - most users don't need this)
-intronIC train -n my_model -p 8
-```
-
-### Test Run
-
-```bash
-# Quick installation test using bundled test data
+# Verify installation with bundled test data
 intronIC test -p 4
-
-# Or show where test data is located
-intronIC test --show-only
 ```
 
 ---
 
-## Documentation
+## What's New in v2.3
 
-* **[Changelog](CHANGELOG.md)** - Release notes and version history
-
-For complete documentation, see the **[intronIC Wiki](https://github.com/glarue/intronIC/wiki)**:
-
-* **[Quick Start Guide](https://github.com/glarue/intronIC/wiki/Quick-start)** - Installation, dependencies, resource usage
-* **[Overview](https://github.com/glarue/intronIC/wiki/Overview)** - Classification approach and scientific background
-* **[Usage Info](https://github.com/glarue/intronIC/wiki/Usage-info)** - Complete CLI reference
-* **[Output Files](https://github.com/glarue/intronIC/wiki/Output-files)** - File formats and interpretation
-* **[Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm)** - Algorithm and ML architecture
-* **[Example Usage](https://github.com/glarue/intronIC/wiki/Example-usage)** - Common workflows
-* **[About](https://github.com/glarue/intronIC/wiki/About)** - Background and motivation
-
----
-
-## What's New in v2.2
-
-- **New 8D RBF SVM default model** trained on expanded reference data (472 U12-type + 30,155 U2-type introns)
-- **Five new classification features**: branch point offset, BPS motif sharpness, polypyrimidine tract metrics, and multi-site support scoring
-- **Reduced false positives**: 0 confident false calls in *C. elegans* (was 2), 1 in *Ascaris* (was 47)
+- **42-model RBF SVM ensemble** on a streamlined 6D feature set
+- **Bayesian score adjustment** suppresses false positives in species lacking a distinct U12 population, using a species-level valley prior and per-intron ensemble agreement
+- **Species-specific U2 background correction** for cross-species composition bias
+- **Default threshold raised to 95%** for higher-confidence calls
 - See [CHANGELOG.md](CHANGELOG.md) for full release history
 
 ---
 
 ## Key Features
 
-- **RBF SVM classification** with probability scores (0-100%) using 8 sequence-derived features
-- **Default pretrained model** loaded automatically — works for virtually all species
-- **Streaming mode** (default) for ~85% memory reduction on large genomes
-- **Parallel processing** for improved performance (`-p 8` recommended)
-- **Fast runtimes**: ~6-10 minutes for human genome with default settings
-- **Comprehensive metadata** including phase, position, parent gene/transcript
+- **Probability scores** (0-100%) from a 42-model ensemble with isotonic calibration
+- **Pretrained model** loaded automatically for cross-species analysis
+- **Streaming mode** (default) reduces memory ~85% on large genomes
+- **Parallel scoring** via `-p N` for linear speedup
+- **Comprehensive metadata**: phase, position, parent gene/transcript
 
 ---
 
-## Scientific Background
+## How It Works
 
-Most eukaryotic introns (~99.5%) are spliced by the **major (U2-type) spliceosome**, while a small fraction (~0.5%) are spliced by the **minor (U12-type) spliceosome**. U12-type introns have:
+Most eukaryotic introns (~99.5%) use the **major (U2-type) spliceosome**. A small fraction (~0.5%) use the **minor (U12-type) spliceosome**, characterized by a conserved **TCCTTAAC** branch point motif and either **AT-AC** (~25%) or **GT-AG** (~75%) terminal dinucleotides.
 
-- Highly conserved **TCCTTAAC** branch point motif
-- Terminal dinucleotides: **AT-AC** (~25%) or **GT-AG** (~75%)
-- Functional importance and evolutionary conservation
+intronIC identifies U12-type introns in five stages:
 
-intronIC identifies U12-type introns using:
+1. **PWM scoring** — score the 5' splice site, branch point, and 3' splice site against position-weight matrices
+2. **Background correction** — blend species-specific nucleotide frequencies into U2 PWMs to correct composition bias
+3. **Normalization** — convert raw log-odds to z-scores via robust scaling
+4. **SVM classification** — 42-model RBF SVM ensemble produces per-intron probabilities and ensemble agreement (sigma)
+5. **Score adjustment** — adjust probabilities using a species-level valley prior and an ensemble disagreement penalty
 
-1. **PWM Scoring**: Apply position-weight matrices to 5' splice site, branch point, and 3' splice site regions
-2. **Normalization**: Convert raw scores to z-scores via robust scaling
-3. **Feature Engineering**: Compute composite features (multi-site corroboration, BP position, PPT metrics, BPS motif sharpness)
-4. **SVM Classification**: RBF SVM ensemble with balanced class weights outputs probability scores
+See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) for the full algorithm description.
 
-For detailed algorithm description, see the [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) wiki page.
+---
+
+## Documentation
+
+Full documentation lives in the **[intronIC Wiki](https://github.com/glarue/intronIC/wiki)**:
+
+- **[Quick Start](https://github.com/glarue/intronIC/wiki/Quick-start)** — Installation, dependencies, resource usage
+- **[Overview](https://github.com/glarue/intronIC/wiki/Overview)** — Classification approach and scientific background
+- **[Output Files](https://github.com/glarue/intronIC/wiki/Output-files)** — File formats and score interpretation
+- **[Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm)** — Algorithm, features, score adjustment
+- **[Usage Info](https://github.com/glarue/intronIC/wiki/Usage-info)** — Complete CLI reference
+- **[Example Usage](https://github.com/glarue/intronIC/wiki/Example-usage)** — Common workflows
+- **[Changelog](CHANGELOG.md)** — Release notes and version history
 
 ---
 
 ## Citation
 
-If you use `intronIC` in your research, please cite:
+If you use intronIC in your research, please cite:
 
-**Devlin C Moyer, Graham E Larue, Courtney E Hershberger, Scott W Roy, Richard A Padgett.** *Comprehensive database and evolutionary dynamics of U12-type introns.* **Nucleic Acids Research,** Volume 48, Issue 13, 27 July 2020, Pages 7066–7078. <https://doi.org/10.1093/nar/gkaa464>
+> Moyer DC, Larue GE, Hershberger CE, Roy SW, Padgett RA. (2020) Comprehensive database and evolutionary dynamics of U12-type introns. *Nucleic Acids Research* 48(13):7066-7078. [doi:10.1093/nar/gkaa464](https://doi.org/10.1093/nar/gkaa464)
 
 ---
 
 ## Support
 
-* **Documentation**: [intronIC Wiki](https://github.com/glarue/intronIC/wiki)
-* **Issues**: [GitHub Issues](https://github.com/glarue/intronIC/issues)
-* **Discussions**: [GitHub Discussions](https://github.com/glarue/intronIC/discussions)
+- [intronIC Wiki](https://github.com/glarue/intronIC/wiki) — Documentation
+- [GitHub Issues](https://github.com/glarue/intronIC/issues) — Bug reports
+- [GitHub Discussions](https://github.com/glarue/intronIC/discussions) — Questions and ideas
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 git clone https://github.com/glarue/intronIC.git
@@ -125,4 +106,4 @@ make test       # Run tests
 
 ## License
 
-`intronIC` is released under the [GNU General Public License v3.0](LICENSE).
+[GNU General Public License v3.0](LICENSE)
