@@ -4014,6 +4014,11 @@ def classify_streaming_per_contig(
         if corrected is not None:
             pwm_sets = corrected
 
+        # Reset genome reader after BG accumulation to avoid pyfastx state
+        # corruption (many sequential fetch() calls can leave the handle in a
+        # state where subsequent fetches are off-by-one).
+        genome_reader = IndexedGenomeReader(str(config.input.genome), use_cache=False)
+
     # Create scorer (uses corrected pwm_sets if background correction was applied)
     scorer = IntronScorer(
         pwm_sets=pwm_sets,
