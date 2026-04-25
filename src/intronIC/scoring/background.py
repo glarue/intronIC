@@ -90,6 +90,25 @@ class _RegionAccumulator:
         """Return list of subtypes with data."""
         return list(self._data.keys())
 
+    def export_counts(self) -> dict:
+        """Export raw count data for merging across workers."""
+        return {
+            sub: {'counts': entry['counts'].copy(), 'n': entry['n']}
+            for sub, entry in self._data.items()
+        }
+
+    def merge_counts(self, other_data: dict):
+        """Merge count data from another accumulator (e.g., a worker)."""
+        for sub, entry in other_data.items():
+            if sub not in self._data:
+                self._data[sub] = {
+                    'counts': entry['counts'].copy(),
+                    'n': entry['n'],
+                }
+            else:
+                self._data[sub]['counts'] += entry['counts']
+                self._data[sub]['n'] += entry['n']
+
     def subtract_introns(self, subtype_dnt: str, seqs: list):
         """Remove specific introns' counts (for trimming).
 
@@ -159,6 +178,27 @@ class _BPSAccumulator:
     def get_all_subtypes(self) -> list:
         return list(self._data.keys())
 
+    def export_counts(self) -> dict:
+        """Export raw count data for merging across workers."""
+        return {
+            sub: {'counts': entry['counts'].copy(), 'total': entry['total'], 'n': entry['n']}
+            for sub, entry in self._data.items()
+        }
+
+    def merge_counts(self, other_data: dict):
+        """Merge count data from another accumulator."""
+        for sub, entry in other_data.items():
+            if sub not in self._data:
+                self._data[sub] = {
+                    'counts': entry['counts'].copy(),
+                    'total': entry['total'],
+                    'n': entry['n'],
+                }
+            else:
+                self._data[sub]['counts'] += entry['counts']
+                self._data[sub]['total'] += entry['total']
+                self._data[sub]['n'] += entry['n']
+
 
 class SpeciesBackground:
     """Compute and cache species-specific U2 background PWMs.
@@ -227,6 +267,28 @@ class SpeciesBackground:
     def n_introns(self) -> int:
         """Total introns accumulated."""
         return len(self._intron_seqs)
+
+    @property
+    def n_accumulated(self) -> int:
+        """Total introns accumulated (count-based, for parallel merging)."""
+        # When merging from workers, _intron_seqs may be empty but counts exist
+        if self._intron_seqs:
+            return len(self._intron_seqs)
+        # Fall back to five accumulator counts
+        return sum(e['n'] for e in self._five_acc._data.values())
+
+    def merge_worker_counts(self, five_counts: dict, three_counts: dict, bp_counts: dict):
+        """Merge count data from a parallel BG worker.
+
+        Args:
+            five_counts: From worker's _RegionAccumulator.export_counts()
+            three_counts: From worker's _RegionAccumulator.export_counts()
+            bp_counts: From worker's _BPSAccumulator.export_counts()
+        """
+        self._five_acc.merge_counts(five_counts)
+        self._three_acc.merge_counts(three_counts)
+        self._bp_acc.merge_counts(bp_counts)
+        self._corrected_pwms = None  # invalidate cache
 
     def accumulate(
         self,

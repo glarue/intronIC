@@ -315,7 +315,7 @@ def _apply_post_classification_adjustment(
             f"Cluster validation: insufficient confident U12-type intron calls "
             f"(n={cluster_validation_result['n_confident_u12']}) to compute valley depth"
         )
-        return cluster_validation_result
+        return cluster_validation_result, None
 
     messenger.info(
         f"Cluster validation: valley_depth={valley_depth:.3f} ({regime}), "
@@ -3317,6 +3317,141 @@ _streaming_classify_worker_scaler: Any = None
 _streaming_classify_worker_pwm_sets: Any = None
 _streaming_classify_worker_config: dict = {}
 
+# ── Parallel BG accumulation worker ──────────────────────────────────
+
+_bg_worker_genome_path: str = ""
+_bg_worker_annotation_db_path: str = ""
+_bg_worker_config: dict = {}
+
+
+def _init_bg_worker(genome_path: str, annotation_db_path: str, config_dict: dict) -> None:
+    """Initialize BG accumulation worker process."""
+    global _bg_worker_genome_path, _bg_worker_annotation_db_path, _bg_worker_config
+    _bg_worker_genome_path = genome_path
+    _bg_worker_annotation_db_path = annotation_db_path
+    _bg_worker_config = config_dict
+
+
+def _process_contigs_bg_worker(
+    contig_batch: list,
+) -> tuple:
+    """Accumulate BG nucleotide frequencies for a batch of contigs.
+
+    Args:
+        contig_batch: List of (contig_name, count) tuples
+
+    Returns:
+        (five_counts, three_counts, bp_counts, n_accumulated)
+        where *_counts are dicts suitable for merge_counts().
+    """
+    from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+    from intronIC.extraction.intronator import IntronGenerator
+    from intronIC.file_io.indexed_genome import IndexedGenomeReader
+    from intronIC.file_io.annotation_store import StreamingAnnotationStore
+    from intronIC.utils.sequences import reverse_complement
+    from intronIC.scoring.background import _RegionAccumulator, _BPSAccumulator
+
+    config_dict = _bg_worker_config
+    annotation_store = StreamingAnnotationStore(_bg_worker_annotation_db_path)
+    genome_reader = IndexedGenomeReader(_bg_worker_genome_path, use_cache=False)
+
+    five_start = config_dict['five_start']
+    five_end = config_dict['five_end']
+    three_start = config_dict['three_start']
+    three_end = config_dict['three_end']
+    bp_start_coord = config_dict['bp_start']
+    bp_end_coord = config_dict['bp_end']
+    five_len = config_dict['five_len']
+    three_len = config_dict['three_len']
+    clean_names = config_dict['clean_names']
+    debug = config_dict['debug']
+
+    five_acc = _RegionAccumulator(five_len)
+    three_acc = _RegionAccumulator(three_len)
+    bp_acc = _BPSAccumulator()
+    n_accumulated = 0
+
+    for contig_name, _count in contig_batch:
+        try:
+            annotations = annotation_store.get_annotations_for_contig(contig_name)
+        except Exception:
+            continue
+
+        builder = AnnotationHierarchyBuilder(
+            child_features=["cds", "exon"],
+            clean_names=clean_names,
+            messenger=None,
+        )
+        try:
+            contig_genes = builder.build_from_annotations(annotations)
+        except ValueError:
+            continue
+        if not contig_genes:
+            continue
+
+        generator = IntronGenerator(debug=debug, messenger=None)
+        contig_introns = generator.generate_from_genes(
+            contig_genes, builder.feature_index
+        )
+
+        for intron in contig_introns:
+            coord = intron.coordinates
+            if coord is None:
+                continue
+            if coord.stop - coord.start + 1 < 30:
+                continue
+
+            try:
+                up_start = max(1, coord.start + five_start)
+                up_seq = genome_reader.fetch(
+                    coord.chromosome, up_start, coord.start - 1
+                )
+                intro_start_seq = genome_reader.fetch(
+                    coord.chromosome, coord.start, coord.start + five_end - 1
+                )
+                intro_end_seq = genome_reader.fetch(
+                    coord.chromosome, coord.stop + three_start + 1, coord.stop,
+                )
+                dn_seq = genome_reader.fetch(
+                    coord.chromosome, coord.stop + 1, coord.stop + three_end,
+                )
+                bp_region_start = max(coord.start, coord.stop + bp_start_coord)
+                bp_region_end = coord.stop + bp_end_coord
+                bp_seq = genome_reader.fetch(
+                    coord.chromosome, bp_region_start, bp_region_end
+                )
+                dnt_start = genome_reader.fetch(
+                    coord.chromosome, coord.start, coord.start + 1
+                )
+                dnt_end = genome_reader.fetch(
+                    coord.chromosome, coord.stop - 1, coord.stop
+                )
+            except Exception:
+                continue
+
+            five_seq = (up_seq + intro_start_seq).upper()
+            three_seq = (intro_end_seq + dn_seq).upper()
+
+            if coord.strand == "-":
+                five_seq = reverse_complement(five_seq)
+                three_seq = reverse_complement(three_seq)
+                bp_seq = reverse_complement(bp_seq)
+                five_seq, three_seq = three_seq, five_seq
+                five_dnt = reverse_complement(dnt_end).upper()
+                three_dnt = reverse_complement(dnt_start).upper()
+            else:
+                five_dnt = dnt_start.upper()
+                three_dnt = dnt_end.upper()
+
+            five_acc.add(five_dnt, five_seq[:five_len])
+            three_acc.add(three_dnt, three_seq[-three_len:])
+            bp_acc.add(five_dnt, bp_seq.upper())
+            n_accumulated += 1
+
+    annotation_store.close()
+    return (five_acc.export_counts(), three_acc.export_counts(),
+            bp_acc.export_counts(), n_accumulated)
+
 
 def _init_streaming_classify_worker(
     genome_path: str,
@@ -3715,120 +3850,161 @@ def classify_streaming_per_contig(
     # Species-specific U2 background correction in streaming classify mode.
     # Lightweight first-pass: parse annotations → generate introns → fetch
     # only the short scored motif windows (~83 bytes/intron) → accumulate
-    # nucleotide frequencies. Much cheaper than full extraction.
+    # nucleotide frequencies. Parallelized across contigs when -p > 1.
     if config.species_background.enabled:
-        from intronIC.utils.sequences import reverse_complement
-
         bg, u12_sets_bg, _, five_len, three_len = _create_background_accumulator(
             config, pwm_sets
         )
 
-        five_start = config.scoring.scoring_regions.five_start
-        five_end = config.scoring.scoring_regions.five_end
-        three_start = config.scoring.scoring_regions.three_start
-        three_end = config.scoring.scoring_regions.three_end
-        bp_start_coord = config.scoring.scoring_regions.bp_start
-        bp_end_coord = config.scoring.scoring_regions.bp_end
+        bg_config_dict = {
+            'five_start': config.scoring.scoring_regions.five_start,
+            'five_end': config.scoring.scoring_regions.five_end,
+            'three_start': config.scoring.scoring_regions.three_start,
+            'three_end': config.scoring.scoring_regions.three_end,
+            'bp_start': config.scoring.scoring_regions.bp_start,
+            'bp_end': config.scoring.scoring_regions.bp_end,
+            'five_len': five_len,
+            'three_len': three_len,
+            'clean_names': config.output.clean_names,
+            'debug': config.output.debug,
+        }
 
-        messenger.info("Species background: accumulating frequencies across contigs...")
         n_bg_introns = 0
+        n_bg_workers = config.performance.processes
 
-        for contig_name, _count in contigs_with_counts:
-            try:
-                annotations = annotation_store.get_annotations_for_contig(contig_name)
-            except Exception:
-                continue
+        if n_bg_workers > 1:
+            # Parallel BG accumulation: split contigs into batches, dispatch
+            # to workers, merge count arrays.
+            from multiprocessing import Pool
 
-            builder = AnnotationHierarchyBuilder(
-                child_features=["cds", "exon"],
-                clean_names=config.output.clean_names,
-                messenger=None,
-            )
-            try:
-                contig_genes = builder.build_from_annotations(annotations)
-            except ValueError:
-                continue
-
-            if not contig_genes:
-                continue
-
-            generator = IntronGenerator(
-                debug=config.output.debug, messenger=None
-            )
-            contig_introns = generator.generate_from_genes(
-                contig_genes, builder.feature_index
+            messenger.info(
+                f"Species background: accumulating frequencies "
+                f"(parallel, {n_bg_workers} workers)..."
             )
 
-            for intron in contig_introns:
-                coord = intron.coordinates
-                if coord is None:
-                    continue
-                if coord.stop - coord.start + 1 < 30:
-                    continue
+            # Split contigs into roughly equal batches
+            batch_size = max(1, len(contigs_with_counts) // (n_bg_workers * 2))
+            contig_batches = [
+                contigs_with_counts[i:i + batch_size]
+                for i in range(0, len(contigs_with_counts), batch_size)
+            ]
 
-                # Fetch only the short sequences needed for BG accumulation
+            with Pool(
+                processes=n_bg_workers,
+                initializer=_init_bg_worker,
+                initargs=(
+                    str(config.input.genome),
+                    str(annotation_store.db_path),
+                    bg_config_dict,
+                ),
+            ) as pool:
+                for five_counts, three_counts, bp_counts, n_acc in pool.imap_unordered(
+                    _process_contigs_bg_worker, contig_batches
+                ):
+                    bg.merge_worker_counts(five_counts, three_counts, bp_counts)
+                    n_bg_introns += n_acc
+
+        else:
+            # Sequential BG accumulation (single process)
+            from intronIC.utils.sequences import reverse_complement
+
+            messenger.info("Species background: accumulating frequencies across contigs...")
+
+            five_start = bg_config_dict['five_start']
+            five_end = bg_config_dict['five_end']
+            three_start = bg_config_dict['three_start']
+            three_end = bg_config_dict['three_end']
+            bp_start_coord = bg_config_dict['bp_start']
+            bp_end_coord = bg_config_dict['bp_end']
+
+            for contig_name, _count in contigs_with_counts:
                 try:
-                    # 5'SS: upstream flank + intron start (1-based inclusive)
-                    up_start = max(1, coord.start + five_start)
-                    up_seq = genome_reader.fetch(
-                        coord.chromosome, up_start, coord.start - 1
-                    )
-                    intro_start_seq = genome_reader.fetch(
-                        coord.chromosome, coord.start, coord.start + five_end - 1
-                    )
-
-                    # 3'SS: intron end + downstream flank
-                    intro_end_seq = genome_reader.fetch(
-                        coord.chromosome,
-                        coord.stop + three_start + 1,
-                        coord.stop,
-                    )
-                    dn_seq = genome_reader.fetch(
-                        coord.chromosome,
-                        coord.stop + 1,
-                        coord.stop + three_end,
-                    )
-
-                    # BP region (inside intron, near 3' end)
-                    bp_region_start = max(coord.start, coord.stop + bp_start_coord)
-                    bp_region_end = coord.stop + bp_end_coord
-                    bp_seq = genome_reader.fetch(
-                        coord.chromosome, bp_region_start, bp_region_end
-                    )
-
-                    # Dinucleotides (first 2bp and last 2bp of intron)
-                    dnt_start = genome_reader.fetch(
-                        coord.chromosome, coord.start, coord.start + 1
-                    )
-                    dnt_end = genome_reader.fetch(
-                        coord.chromosome, coord.stop - 1, coord.stop
-                    )
+                    annotations = annotation_store.get_annotations_for_contig(contig_name)
                 except Exception:
                     continue
 
-                five_seq = (up_seq + intro_start_seq).upper()
-                three_seq = (intro_end_seq + dn_seq).upper()
-
-                if coord.strand == "-":
-                    five_seq = reverse_complement(five_seq)
-                    three_seq = reverse_complement(three_seq)
-                    bp_seq = reverse_complement(bp_seq)
-                    five_seq, three_seq = three_seq, five_seq
-                    five_dnt = reverse_complement(dnt_end).upper()
-                    three_dnt = reverse_complement(dnt_start).upper()
-                else:
-                    five_dnt = dnt_start.upper()
-                    three_dnt = dnt_end.upper()
-
-                bg.accumulate(
-                    intron.intron_id,
-                    five_dnt,
-                    three_dnt,
-                    five_seq[:five_len],
-                    three_seq[-three_len:],
-                    bp_seq.upper(),
+                builder = AnnotationHierarchyBuilder(
+                    child_features=["cds", "exon"],
+                    clean_names=config.output.clean_names,
+                    messenger=None,
                 )
-                n_bg_introns += 1
+                try:
+                    contig_genes = builder.build_from_annotations(annotations)
+                except ValueError:
+                    continue
+
+                if not contig_genes:
+                    continue
+
+                generator = IntronGenerator(
+                    debug=config.output.debug, messenger=None
+                )
+                contig_introns = generator.generate_from_genes(
+                    contig_genes, builder.feature_index
+                )
+
+                for intron in contig_introns:
+                    coord = intron.coordinates
+                    if coord is None:
+                        continue
+                    if coord.stop - coord.start + 1 < 30:
+                        continue
+
+                    try:
+                        up_start = max(1, coord.start + five_start)
+                        up_seq = genome_reader.fetch(
+                            coord.chromosome, up_start, coord.start - 1
+                        )
+                        intro_start_seq = genome_reader.fetch(
+                            coord.chromosome, coord.start, coord.start + five_end - 1
+                        )
+                        intro_end_seq = genome_reader.fetch(
+                            coord.chromosome,
+                            coord.stop + three_start + 1,
+                            coord.stop,
+                        )
+                        dn_seq = genome_reader.fetch(
+                            coord.chromosome,
+                            coord.stop + 1,
+                            coord.stop + three_end,
+                        )
+                        bp_region_start = max(coord.start, coord.stop + bp_start_coord)
+                        bp_region_end = coord.stop + bp_end_coord
+                        bp_seq = genome_reader.fetch(
+                            coord.chromosome, bp_region_start, bp_region_end
+                        )
+                        dnt_start = genome_reader.fetch(
+                            coord.chromosome, coord.start, coord.start + 1
+                        )
+                        dnt_end = genome_reader.fetch(
+                            coord.chromosome, coord.stop - 1, coord.stop
+                        )
+                    except Exception:
+                        continue
+
+                    five_seq = (up_seq + intro_start_seq).upper()
+                    three_seq = (intro_end_seq + dn_seq).upper()
+
+                    if coord.strand == "-":
+                        five_seq = reverse_complement(five_seq)
+                        three_seq = reverse_complement(three_seq)
+                        bp_seq = reverse_complement(bp_seq)
+                        five_seq, three_seq = three_seq, five_seq
+                        five_dnt = reverse_complement(dnt_end).upper()
+                        three_dnt = reverse_complement(dnt_start).upper()
+                    else:
+                        five_dnt = dnt_start.upper()
+                        three_dnt = dnt_end.upper()
+
+                    bg.accumulate(
+                        intron.intron_id,
+                        five_dnt,
+                        three_dnt,
+                        five_seq[:five_len],
+                        three_seq[-three_len:],
+                        bp_seq.upper(),
+                    )
+                    n_bg_introns += 1
 
         bg_config = config.species_background
         corrected = _finalize_background_correction(
