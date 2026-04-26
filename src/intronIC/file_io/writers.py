@@ -1088,6 +1088,7 @@ class ScoreWriter(BaseWriter):
             "max(5,3)",
             "decision_dist",
             "bp_offset",
+            "bp_scan_confidence",
             "ppt_ct",
             "ppt_raw",
             "core_3'_raw",
@@ -1146,6 +1147,7 @@ class ScoreWriter(BaseWriter):
         max_5_bp = null
         max_5_3 = null
         bp_offset = null
+        bp_scan_confidence = null
         ppt_ct = null
         ppt_raw = null
         core_three_raw = null
@@ -1200,6 +1202,8 @@ class ScoreWriter(BaseWriter):
             # PPT decomposition, BP offset, absolute fit
             if intron.scores.bp_offset is not None:
                 bp_offset = str(intron.scores.bp_offset)
+            if intron.scores.bp_scan_confidence is not None:
+                bp_scan_confidence = str(round(intron.scores.bp_scan_confidence, 6))
             if intron.scores.ppt_score is not None:
                 ppt_ct = str(round(intron.scores.ppt_score, 4))
             if intron.scores.ppt_raw_score is not None:
@@ -1258,6 +1262,7 @@ class ScoreWriter(BaseWriter):
             max_5_3,
             decision_dist,
             bp_offset,
+            bp_scan_confidence,
             ppt_ct,
             ppt_raw,
             core_three_raw,
