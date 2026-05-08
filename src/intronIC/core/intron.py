@@ -213,6 +213,27 @@ class IntronScores:
     ensemble_sigma: Optional[float] = None  # Std of per-model probabilities (0-100 scale)
     adjusted_score: Optional[float] = None  # Probability after valley prior + σ penalty
 
+    @property
+    def support2(self) -> Optional[float]:
+        """Second-largest of the clipped-at-zero z-scores (5', BP, 3').
+
+        Encodes "at least two of the three sites are strong U12 signals" —
+        a derived feature consumed by the FI v3 model. Returns None if any
+        z-score is missing.
+
+        Definition: sorted([max(0, z) for z in (5', BP, 3')])[1].
+        """
+        if (self.five_z_score is None
+                or self.bp_z_score is None
+                or self.three_z_score is None):
+            return None
+        clipped = sorted(
+            (max(0.0, self.five_z_score),
+             max(0.0, self.bp_z_score),
+             max(0.0, self.three_z_score))
+        )
+        return clipped[1]
+
     def is_high_confidence(self, threshold: float = 90.0) -> bool:
         """
         Check if this intron has high-confidence U12 classification.

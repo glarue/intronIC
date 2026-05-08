@@ -89,6 +89,28 @@ class TestIntronScores:
         with pytest.raises(Exception):  # FrozenInstanceError
             scores.svm_score = 80.0
 
+    def test_support2_strong_all(self):
+        """support2 = second-largest of clipped z-scores when all three are strong."""
+        scores = IntronScores(five_z_score=2.0, bp_z_score=3.0, three_z_score=1.0)
+        assert scores.support2 == 2.0
+
+    def test_support2_clips_negatives(self):
+        """Negative z-scores clip to 0 before sorting."""
+        scores = IntronScores(five_z_score=-1.0, bp_z_score=3.0, three_z_score=1.0)
+        # clipped = [0, 3, 1]; sorted = [0, 1, 3]; second = 1
+        assert scores.support2 == 1.0
+
+    def test_support2_one_end_strong(self):
+        """One strong + two weak → second-largest is 0."""
+        scores = IntronScores(five_z_score=4.0, bp_z_score=-1.0, three_z_score=-2.0)
+        assert scores.support2 == 0.0
+
+    def test_support2_returns_none_if_any_missing(self):
+        """If any z-score is None, support2 is None."""
+        assert IntronScores(bp_z_score=2.0, three_z_score=1.0).support2 is None
+        assert IntronScores(five_z_score=2.0, three_z_score=1.0).support2 is None
+        assert IntronScores().support2 is None
+
 
 class TestIntronSequences:
     """Test IntronSequences dataclass."""
