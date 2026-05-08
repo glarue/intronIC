@@ -5,6 +5,30 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-05-08
+
+### Added
+- **FI v3 model bundle support** (`--pretrained <fi_v3_canonical.pkl>`).
+  v3 bundles ship the full ensemble (3 seeds × 42 calibrated SVMs = 126
+  sub-models) plus config and training metadata in a single self-describing
+  dict. Loading is automatic — `normalize_model_bundle()` detects v3 by the
+  `version` key and translates into the runtime shape the rest of the
+  pipeline already expects.
+- **`IntronScores.support2` derived feature** — second-largest of the
+  clipped-at-zero z-scores (5', BP, 3'). Used by FI v3 as a 6th feature; a
+  `@property` on the dataclass so it stays derivable from the existing
+  z-scores at zero memory cost.
+- v3 bundle schema spec at `docs/v3_bundle_schema.md`.
+
+### Notes
+- Existing v2.3 model bundles continue to load unchanged (the legacy
+  `{"ensemble": ..., "normalizer": ...}` dict is pass-through).
+- v3 bundles ship without a normalizer: the features were already z-scored
+  per-species during training, so production's adaptive normalizer mode
+  (which fits a fresh `RobustScaler` on the input species' raw scores) is
+  the correct runtime behavior. Streaming mode (`--streaming`) is not
+  supported for v3 bundles in this release; use standard classify mode.
+
 ## [2.3.0] - 2026-04-23
 
 ### Changed
