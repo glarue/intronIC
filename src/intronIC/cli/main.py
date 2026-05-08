@@ -41,7 +41,7 @@ from intronIC.utils.metadata import (
     generate_training_metadata,
     write_metadata,
 )
-from intronIC.utils.model_io import load_model
+from intronIC.utils.model_io import load_model, normalize_model_bundle
 from intronIC.visualization.plots import plot_classification_results
 
 from .args import IntronICArgumentParser
@@ -3769,7 +3769,9 @@ def classify_streaming_per_contig(
     messenger.info(
         f"Loading pretrained model from {config.training.pretrained_model_path}"
     )
-    model_data = load_model(config.training.pretrained_model_path)
+    model_data = normalize_model_bundle(
+        load_model(config.training.pretrained_model_path)
+    )
 
     # Handle both old and new model format
     if isinstance(model_data, dict):
@@ -4343,15 +4345,20 @@ def classify_with_pretrained_model(
     if not model_path.exists():
         raise FileNotFoundError(f"Pretrained model not found: {model_path}")
 
-    model_data = load_model(model_path)
+    model_data = normalize_model_bundle(load_model(model_path))
 
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
         # New format: {'ensemble': ..., 'normalizer': ..., 'threshold': ...}
+        # FI v3 bundles are normalized into this shape upstream.
         ensemble = model_data["ensemble"]
         saved_normalizer = model_data.get("normalizer", None)
         _saved_threshold = model_data.get("threshold", config.scoring.threshold)  # noqa: F841
-        messenger.log_only("Loaded model bundle (dict format)")
+        if "_v3_bundle" in model_data:
+            v3_id = model_data["_v3_bundle"].get("model_id", "<unknown>")
+            messenger.log_only(f"Loaded FI v3 bundle (model_id={v3_id})")
+        else:
+            messenger.log_only("Loaded model bundle (dict format)")
     else:
         # Old format: SVMEnsemble directly (backward compatibility)
         ensemble = model_data

@@ -7,8 +7,128 @@ Handles serialization of trained models with metadata.
 import json
 import joblib
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
+
+
+# ── FI v3 bundle support ──────────────────────────────────────────────
+# v3 bundles ship the model as a single self-describing dict that pairs
+# the trained sub-models with the config + training metadata used to
+# produce them, instead of the legacy v2.3 flat-dict-of-handles. The
+# loader normalizes both formats into the same runtime shape so the rest
+# of the pipeline stays format-agnostic.
+V3_VERSION = "v3"
+V3_DEFAULT_THRESHOLD = 50.0
+
+
+def _build_v3_ensemble(bundle: Dict[str, Any]) -> Tuple[Any, Tuple[str, ...]]:
+    """Construct a runtime SVMEnsemble from a v3 bundle's seeds dict.
+
+    Returns (ensemble, extra_features). Imports of SVMEnsemble/SVMModel/
+    SVMParameters are local because importing trainer/optimizer at module
+    scope would create a cycle through scoring/cluster_validation.
+    """
+    from intronIC.classification.optimizer import SVMParameters
+    from intronIC.classification.trainer import SVMEnsemble, SVMModel
+
+    config = bundle.get("config", {})
+    input_features = list(config.get(
+        "input_features",
+        ["five_z_score", "bp_z_score", "three_z_score"],
+    ))
+    if len(input_features) < 3:
+        raise ValueError(
+            f"v3 bundle config.input_features must list at least the three "
+            f"base z-scores; got {input_features!r}"
+        )
+    extra_features = tuple(input_features[3:])
+
+    # Synthesize SVMParameters that describe the trained models.
+    # Kernel/C/gamma are recorded for diagnostics; production reads
+    # extra_features and include_max from this struct.
+    params = SVMParameters(
+        C=float(config.get("C", 200.0)),
+        calibration_method=str(config.get("calibration_method", "isotonic")),
+        saturate_enabled=False,
+        include_max=False,
+        include_pairwise_mins=False,
+        penalty="l2",
+        class_weight_multiplier=1.0,
+        loss="squared_hinge",
+        gamma_imbalance=1.0,
+        kernel=str(config.get("kernel", "rbf")),
+        gamma=float(config.get("gamma", 0.0)),
+        extra_features=extra_features,
+    )
+
+    training = bundle.get("training", {})
+    n_train = int(training.get("n_train", 0))
+    u12_count = int(training.get("u12_positives", 0))
+    u2_count = max(0, n_train - u12_count)
+
+    sub_models = []
+    for seed_id in config.get("seeds", []):
+        seed_block = bundle["seeds"][seed_id]
+        for sub in seed_block["models"]:
+            sub_models.append(SVMModel(
+                model=sub,
+                train_size=n_train,
+                u12_count=u12_count,
+                u2_count=u2_count,
+                parameters=params,
+                dropped_feature=None,
+                feature_median=None,
+            ))
+
+    if not sub_models:
+        raise ValueError("v3 bundle contains no sub-models in config.seeds")
+
+    ensemble = SVMEnsemble(
+        models=tuple(sub_models),
+        subsample_ratio=float(config.get("easy_fraction", 0.85)),
+    )
+    return ensemble, extra_features
+
+
+def _v3_to_runtime(bundle: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate a v3 bundle into the v2.3-style runtime dict.
+
+    Preserves the original v3 metadata under a private key so downstream
+    code can still introspect model_id / training stats if needed.
+    """
+    ensemble, _ = _build_v3_ensemble(bundle)
+    training = bundle.get("training", {})
+    n_train = int(training.get("n_train", 0))
+    u12_total = int(training.get("u12_positives", 0))
+    # u12_positives is the corpus-wide count; subtract held-out positives
+    # so the prior reflects what the SVM actually trained against.
+    u12_train = u12_total - int(training.get("test_positives", 0))
+    if n_train > 0 and 0 < u12_train <= n_train:
+        training_prior = u12_train / n_train
+    else:
+        training_prior = 0.5
+
+    return {
+        "ensemble": ensemble,
+        "normalizer": None,            # v3 ships pre-z-scored features; adaptive at runtime
+        "threshold": V3_DEFAULT_THRESHOLD,
+        "training_prior": training_prior,
+        "human_negative_stats": None,  # not used by current production path
+        # Provenance — preserved so downstream can log/inspect; ignored otherwise.
+        "_v3_bundle": bundle,
+    }
+
+
+def normalize_model_bundle(model_data: Any) -> Any:
+    """Coerce a loaded model object into the runtime shape callers expect.
+
+    Pass-through for v2.3-style dicts and bare SVMEnsemble objects.
+    Translates FI v3 bundles ({"version": "v3", ...}) into the runtime
+    dict shape with `ensemble`, `normalizer`, `threshold`, `training_prior`.
+    """
+    if isinstance(model_data, dict) and model_data.get("version") == V3_VERSION:
+        return _v3_to_runtime(model_data)
+    return model_data
 
 
 def save_model(
