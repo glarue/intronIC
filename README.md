@@ -25,13 +25,20 @@ intronIC test -p 4
 
 ---
 
+## What's New in v2.4
+
+- **Default model is now the v3 multispecies bundle**: 3 seeds × 42 calibrated SVMs (126 total) trained on 41,333 introns across 97 species and 14 clades. Holdout F1 = 1.000 vs the v2.3 default's 0.9975, and ~54% lower production-equivalent FPR on U12-absent species.
+- **Default classification threshold lowered from 95 → 90**, made safe by the v3 model's tighter calibration. Pass `--threshold 95` to restore prior behavior.
+- **Self-describing model bundles** carry config + training metadata alongside the weights; see [`docs/v3_bundle_schema.md`](docs/v3_bundle_schema.md).
+- v2.3 model bundles continue to load unchanged; old runs reproduce by passing `--model <v2.3-bundle.pkl>`.
+- See [CHANGELOG.md](CHANGELOG.md) for full release history.
+
 ## What's New in v2.3
 
 - **42-model RBF SVM ensemble** on a streamlined 6D feature set
 - **Bayesian score adjustment** suppresses false positives in species lacking a distinct U12-type intron population, using a species-level valley prior and per-intron ensemble agreement
 - **Species-specific U2-type background correction** for cross-species composition bias
-- **Default threshold raised to 95%** for higher-confidence calls
-- See [CHANGELOG.md](CHANGELOG.md) for full release history
+- **Default threshold raised to 95%** for higher-confidence calls (now lowered to 90 in v2.4)
 
 ---
 

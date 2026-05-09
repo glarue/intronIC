@@ -7,27 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.4.0] - 2026-05-08
 
+### Changed
+- **Default bundled model upgraded to v3 multispecies** (3 seeds × 42 = 126
+  calibrated SVMs trained on 41,333 introns from 97 species across 14
+  clades). Holdout F1 = 1.000 vs v2.3 default 0.9975 on the 5-species
+  recall set; production-equivalent (valley-adjusted) FPR on U12-absent
+  species is ~54% lower than v2.3 (12 vs 26 across ~330k introns at
+  threshold 90).
+- **Default classification threshold lowered from 95 → 90.** The v3
+  multispecies model's adjusted-score distribution is tightly calibrated
+  (Brier ≈ 4×10⁻⁶) and dropping to 90 picks up real conserved U12s
+  without measurable FPR penalty (+1 absolute FP across 330k U12-absent
+  introns). Pass `--threshold 95` to restore the prior behavior.
+
 ### Added
-- **FI v3 model bundle support** (`--pretrained <fi_v3_canonical.pkl>`).
-  v3 bundles ship the full ensemble (3 seeds × 42 calibrated SVMs = 126
-  sub-models) plus config and training metadata in a single self-describing
-  dict. Loading is automatic — `normalize_model_bundle()` detects v3 by the
-  `version` key and translates into the runtime shape the rest of the
-  pipeline already expects.
+- **v3 multispecies model bundle support** (`--model <bundle.pkl>`).
+  v3 bundles ship the full ensemble plus config and training metadata
+  in a single self-describing dict. Loading is automatic —
+  `normalize_model_bundle()` detects v3 by the `version` key and
+  translates into the runtime shape the rest of the pipeline already
+  expects.
 - **`IntronScores.support2` derived feature** — second-largest of the
-  clipped-at-zero z-scores (5', BP, 3'). Used by FI v3 as a 6th feature; a
-  `@property` on the dataclass so it stays derivable from the existing
-  z-scores at zero memory cost.
+  clipped-at-zero z-scores (5', BP, 3'). Used by v3 multispecies as a
+  6th feature; a `@property` on the dataclass so it stays derivable
+  from the existing z-scores at zero memory cost.
 - v3 bundle schema spec at `docs/v3_bundle_schema.md`.
 
 ### Notes
 - Existing v2.3 model bundles continue to load unchanged (the legacy
   `{"ensemble": ..., "normalizer": ...}` dict is pass-through).
-- v3 bundles ship without a normalizer: the features were already z-scored
-  per-species during training, so production's adaptive normalizer mode
-  (which fits a fresh `RobustScaler` on the input species' raw scores) is
-  the correct runtime behavior. Streaming mode (`--streaming`) is not
-  supported for v3 bundles in this release; use standard classify mode.
+- v3 bundles ship without a saved normalizer; production's adaptive
+  normalizer mode (the default) fits a fresh `RobustScaler` on the
+  target species at runtime, which is the correct behavior since
+  training features were already z-scored per-species. Streaming mode
+  (`--streaming`) is therefore not supported with the v3 default; use
+  `--in-memory` (the implicit default) or supply a v2.3-format model
+  with a saved normalizer.
 
 ## [2.3.0] - 2026-04-23
 

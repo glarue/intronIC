@@ -1,8 +1,10 @@
-# FI v3 model bundle schema
+# v3 multispecies model bundle schema
 
 intronIC v2.4 introduces support for v3 model bundles — a single
 self-describing pickle that pairs the trained ensemble with the
-configuration and training metadata that produced it.
+configuration and training metadata that produced it. The bundled
+default model (`src/intronIC/data/default_pretrained.model.pkl`) is
+itself a v3 multispecies bundle as of v2.4.
 
 The v3 schema is the recommended format for new models. Existing v2.3
 bundles continue to load unchanged.
