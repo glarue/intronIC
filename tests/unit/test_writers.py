@@ -424,13 +424,24 @@ class TestSequenceWriter:
         assert len(fields) == 4  # name, upstream, seq, downstream (no score)
         assert fields[1] == "AGGCT"  # upstream flank is now field 1
 
-    def test_write_intron_without_sequences_fails(self, tmp_path, basic_intron):
-        """Test that writing intron without sequences raises error."""
+    def test_write_intron_without_sequences_skips(self, tmp_path, basic_intron):
+        """Introns without sequence data are skipped silently.
+
+        v2.1.3 changed this from raising ValueError to a no-op so that
+        introns referencing contigs missing from the FASTA (e.g.
+        organellar genes against nuclear-only assemblies) don't crash
+        the writer. SequenceExtractor flags these as
+        ``omitted_no_sequence`` upstream.
+        """
         seq_file = tmp_path / "test.introns.iic"
 
-        with pytest.raises(ValueError, match="no sequence data"):
-            with SequenceWriter(seq_file) as writer:
-                writer.write_intron(basic_intron)
+        with SequenceWriter(seq_file) as writer:
+            writer.write_intron(basic_intron)
+
+        # Nothing should have been written
+        assert writer.items_written == 0
+        # File exists but contains nothing for this intron
+        assert seq_file.read_text() == ""
 
     def test_empty_flanks(self, tmp_path):
         """Test writing sequences with empty flanks."""
@@ -534,11 +545,7 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[1].split("\t")
 
-        assert len(fields) == 32  # 30 original + adjusted_score + ensemble_sigma
-        # Header: name, rel_score, svm_score, 5'_seq, 5'_raw, 5'_z,
-        #         bp_seq, bp_seq_u2, bp_raw, bp_z, 3'_seq, 3'_raw, 3'_z,
-        #         min(5,bp), min(5,3), max(5,bp), max(5,3), decision_dist,
-        #         bp_offset, ppt_ct, ppt_raw, core_3'_raw, fit_u12, fit_u2
+        assert len(fields) == 33  # 30 original + bp_scan_confidence (v2.2) + adjusted_score + ensemble_sigma
         # Check scores are rounded correctly
         assert fields[1] == "5.5"  # rel_score
         assert fields[2] == "95.5"  # svm_score
@@ -563,8 +570,8 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[0].split("\t")
 
-        # Check that we have all 24 fields
-        assert len(fields) == 32  # 30 original + adjusted_score + ensemble_sigma
+        # All score-info fields present (NA-padded for unset scores)
+        assert len(fields) == 33  # 30 original + bp_scan_confidence + adjusted_score + ensemble_sigma
         # Relative and SVM scores should be available
         assert fields[1] == "2.3"  # rel_score available
         assert fields[2] == "12.3"  # svm_score available

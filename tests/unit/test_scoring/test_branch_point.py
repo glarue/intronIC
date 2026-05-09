@@ -112,12 +112,15 @@ def complex_intron() -> Intron:
     Create intron with multiple possible branch points.
 
     Contains:
-    - Weak TACGAAC at position 60-66
-    - Strong TACTAAC at position 80-86
+    - Weak TACGAAC at position 50-56
+    - Strong TACTAAC at position 70-76
     Total length: 100bp
+
+    Both motifs sit inside the default BP search region (which excludes
+    the last 14 nt occupied by the 3'SS scoring window).
     """
-    # Build sequence with two potential BPs
-    seq = "N" * 60 + "TACGAAC" + "N" * 13 + "TACTAAC" + "N" * 13
+    # Build sequence with two potential BPs (both within search region)
+    seq = "N" * 50 + "TACGAAC" + "N" * 13 + "TACTAAC" + "N" * 23
 
     return Intron(
         intron_id="test_intron_2",
@@ -301,18 +304,15 @@ def test_multiple_candidates_chooses_best(u12_bp_pwm, u2_bp_pwm, complex_intron)
     """Test that scorer chooses highest-scoring match when multiple present."""
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
 
-    # Complex intron has TACGAAC (weak) and TACTAAC (strong)
+    # complex_intron has TACGAAC (weak) at 50-56 and TACTAAC (strong) at 70-76.
+    # Default three_coords=(-14, 4) keeps both inside the search region.
     match = scorer.find_best_match(complex_intron, search_window=(-50, -5))
 
     # Should find the stronger TACTAAC, not the weaker TACGAAC
     assert match.sequence == "TACTAAC"
 
-    # Verify it found the second occurrence (at position 80-86)
-    # Intron is 100bp, TACTAAC at 80-86
-    # Search window (-50, -5) starts at position 50
-    # TACTAAC is at offset 30 in the search region
-    # Position: -50 + 30 = -20
-    assert match.position == -20
+    # TACTAAC starts at intron index 70; for a 100bp intron that's -30 from 3' end.
+    assert match.position == -30
 
 
 # ============================================================================
@@ -336,15 +336,18 @@ def test_no_clear_winner_all_equal_scores(u12_bp_pwm, u2_bp_pwm):
 
 
 def test_search_window_at_intron_boundaries(u12_bp_pwm, u2_bp_pwm, simple_intron):
-    """Test search window at the edges of the intron."""
+    """Test search window at the edges of the intron.
+
+    Default three_coords=(-14, 4) excludes the last 14nt from BP search.
+    A search window of (-30, -5) on a 100bp intron clamps to seq[70:86]
+    (16nt), enough room for the 7bp PWM and the embedded TACTAAC at 70-76.
+    """
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
 
-    # Search very close to 3' end
-    match = scorer.find_best_match(simple_intron, search_window=(-20, -5))
+    match = scorer.find_best_match(simple_intron, search_window=(-30, -5))
 
-    # Should still work, just searching a smaller region
     assert match is not None
-    assert match.sequence is not None
+    assert match.sequence == "TACTAAC"
 
 
 def test_search_window_too_small_for_pwm(u12_bp_pwm, u2_bp_pwm, simple_intron):
@@ -361,23 +364,19 @@ def test_search_window_too_small_for_pwm(u12_bp_pwm, u2_bp_pwm, simple_intron):
 
 
 def test_short_intron_excludes_five_prime_region(u12_bp_pwm, u2_bp_pwm):
-    """Test that short introns properly exclude 5' scoring region from BP search.
+    """Short introns must exclude both 5' and 3' SS scoring regions from BP search.
 
-    This tests the fix for the issue where very short introns had BPS overlapping
-    with the 5' splice site scoring region.
-
-    Note: The original intronIC v1.5.1 ONLY excludes the 5' region. BP is allowed
-    to overlap with the 3' region (typically 1 position overlap in short introns).
+    v2.2 changelog: "BPS search region no longer overlaps with 3'SS scoring
+    region (was 1bp overlap)". For a 47bp intron with five_coords=(-3, 9)
+    and three_coords=(-6, 4), the searchable BP region is exactly
+    seq[9:41] = 32bp.
     """
     scorer = BranchPointScorer(u12_bp_pwm, u2_bp_pwm)
 
-    # Create a 47bp intron (like the examples in the bug report)
-    # Structure: 9bp (5' region) + 33bp (searchable) + 6bp (3' region) = 48bp total
-    # Note: 1bp overlap at position 41 (searchable goes to 41, 3' starts at 41)
-    # Put TACTAAC in the middle of the searchable region (position 20-26)
+    # 47bp intron: 9bp (5' region) + 32bp (searchable) + 6bp (3' region)
+    # Place TACTAAC at intron position 20-26 (well inside searchable region).
     seq = "GTAAGTNNN" + "NNNNNNNNN" + "NN" + "TACTAAC" + "N" * 14 + "TTTCAG"
     #     ^^^^^^^^^ 5' region (0-8, 9bp)
-    #     0-8         9-17 (9bp)    18-19  20-26 (7bp)  27-40 (14bp)  41-46 (6bp 3' region)
     #                               TACTAAC at absolute position 20-26
     #     Total length: 9+9+2+7+14+6 = 47bp
 
@@ -397,38 +396,30 @@ def test_short_intron_excludes_five_prime_region(u12_bp_pwm, u2_bp_pwm):
         metadata=IntronMetadata(parent="transcript_short", grandparent="gene_short"),
     )
 
-    # Search with standard window (-55, -5)
-    # For 47bp intron: start would be 47+(-55)=-8, stop would be 47+(-5)=42
-    # After clamping: start=max(-8, 9)=9, stop=min(42, 47)=42
+    # Search with standard window (-55, -5).
+    # 47bp intron: start = 47-55 = -8, stop = 47-5 = 42.
+    # five_end = 9, three_start = 47-6 = 41.
+    # After clamping: start = max(-8, 9) = 9, stop = min(42, 41) = 41.
     match = scorer.find_best_match(
         intron, search_window=(-55, -5), five_coords=(-3, 9), three_coords=(-6, 4)
     )
 
-    # Should find TACTAAC
     assert match is not None, "Should find a match in the valid search region"
     assert match.sequence == "TACTAAC"
 
-    # Verify that the search region excludes the 5' region
-    # Position should be relative to 3' end
-    # TACTAAC at position 20, intron length 47
-    # Position: 20 - 47 = -27
+    # TACTAAC starts at intron index 20 → -27 from 3' end (47-20).
     assert match.position == -27
 
-    # Extract the actual search region to verify it excludes 5' region
     search_region, start_pos = scorer._extract_search_region(
         intron, search_window=(-55, -5), five_coords=(-3, 9), three_coords=(-6, 4)
     )
 
-    # Search region should be positions [9, 42) = 33bp
-    assert len(search_region) == 33, f"Expected 33bp, got {len(search_region)}"
+    # seq[9:41] = 32bp, no overlap with either SS scoring region.
+    assert len(search_region) == 32, f"Expected 32bp, got {len(search_region)}"
     assert start_pos == 9
-    assert search_region == seq[9:42]
-
-    # Verify no overlap with 5' region (first 9bp)
-    assert search_region != seq[0:33]  # Would include 5' region at start
-
-    # Note: 1bp overlap with 3' region at position 41 is EXPECTED and ALLOWED
-    # (matches original intronIC v1.5.1 behavior)
+    assert search_region == seq[9:41]
+    # Stop position (exclusive) does not extend into the 3' region [41-46].
+    assert seq[41:47] == "TTTCAG"
 
 
 def test_negative_strand_intron(u12_bp_pwm, u2_bp_pwm):
