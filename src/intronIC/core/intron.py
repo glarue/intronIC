@@ -1046,15 +1046,19 @@ class Intron:
         bp_start_idx = intron_length + bp_start
         bp_stop_idx = intron_length + bp_stop
 
-        # Clamp to valid range, EXCLUDING the 5' splice site scoring region
-        # This matches BranchPointScorer._extract_search_region() which does:
+        # Clamp to valid range, excluding the 5' AND 3' splice site scoring
+        # regions to match BranchPointScorer._extract_search_region(), which
+        # does both:
         #   start_pos = max(start_pos, five_end)
-        # where five_end is the end position of the 5' scoring region.
-        # This prevents the BP search from overlapping with the 5' splice site,
-        # which is critical for short introns.
+        #   stop_pos  = min(stop_pos,  three_start)
+        # The 3' clamp was added in v2.2 to remove a 1bp overlap with the
+        # 3'SS scoring region (changelog: "BPS search region no longer
+        # overlaps with 3'SS scoring region"). The streaming mirror here
+        # previously only clamped the start; this aligns it with standard.
         five_end = five_coords[1]  # e.g., 10 for (-3, 10) - end of 5' region
+        three_start_idx = intron_length + three_coords[0]  # negative coord
         bp_start_idx = max(bp_start_idx, five_end)
-        bp_stop_idx = max(0, min(intron_length, bp_stop_idx))
+        bp_stop_idx = max(0, min(intron_length, three_start_idx, bp_stop_idx))
 
         bp_region = seq[bp_start_idx:bp_stop_idx] if bp_start_idx < bp_stop_idx else ""
 
