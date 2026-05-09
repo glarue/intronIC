@@ -1,13 +1,15 @@
 """
-Integration test: verify -p 1 and -p 3 produce identical classifications
-in streaming mode.
+Integration test: verify -p 1 and -p 3 produce identical classifications.
 
-Both paths now use the same per-contig worker function
-(_process_contig_streaming_classify_worker), so the results must be
-bitwise identical after coordinate-based sorting.
+Originally targeted streaming mode, but as of intronIC v2.4 the bundled
+default model (v3 multispecies) ships without a saved normalizer, so streaming
+mode requires an explicit alternative model. This test now exercises
+the --in-memory path, which is the de-facto default for v3 multispecies users
+and shares its per-contig parallelism logic with streaming. Streaming
+parallelism remains exercised by the per-contig worker unit tests.
 
 Uses the bundled Chr19 human test data (~1,400 introns).
-Runs in ~30-60 seconds depending on hardware.
+Runs in ~1-2 minutes depending on hardware.
 """
 
 import subprocess
@@ -39,7 +41,7 @@ def intronIC_bin():
 
 
 def _run_classify(intronIC_bin, output_dir, processes, species_name):
-    """Run intronIC classify in streaming mode."""
+    """Run intronIC classify in --in-memory mode (works with default v3 multispecies)."""
     cmd = [
         intronIC_bin, "classify",
         "-g", str(TEST_GENOME),
@@ -47,7 +49,7 @@ def _run_classify(intronIC_bin, output_dir, processes, species_name):
         "-n", species_name,
         "-o", str(output_dir),
         "-p", str(processes),
-        "--streaming",
+        "--in-memory",
     ]
     result = subprocess.run(
         cmd,

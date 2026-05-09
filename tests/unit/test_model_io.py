@@ -3,7 +3,7 @@
 Covers all three model formats the loader has to accept:
 - bare SVMEnsemble (legacy)
 - v2.3 dict (current production training save format)
-- v3 dict (FI v3 bundle)
+- v3 dict (v3 multispecies bundle)
 """
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -118,7 +118,7 @@ class TestV3EnsembleConstruction:
         assert params.gamma == 0.001
         assert params.extra_features == ("bp_offset", "bp_scan_confidence", "support2")
         assert params.include_max is False  # never used in new arch
-        assert ensemble.models[0].dropped_feature is None  # no feature dropout in FI v3
+        assert ensemble.models[0].dropped_feature is None  # no feature dropout in v3 multispecies
 
     def test_rejects_too_few_input_features(self):
         bundle = _make_v3_bundle()
@@ -150,7 +150,7 @@ _FI_V3_BUNDLE = Path(
 
 @pytest.mark.skipif(
     not _FI_V3_BUNDLE.exists(),
-    reason="FI v3 canonical bundle not present in this environment",
+    reason="v3 multispecies canonical bundle not present in this environment",
 )
 class TestRealFIv3Bundle:
     """Integration: the real fi_v3_canonical.pkl loads and is well-formed."""

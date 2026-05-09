@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
 
-# ── FI v3 bundle support ──────────────────────────────────────────────
+# ── v3 multispecies bundle support ────────────────────────────────────
 # v3 bundles ship the model as a single self-describing dict that pairs
 # the trained sub-models with the config + training metadata used to
 # produce them, instead of the legacy v2.3 flat-dict-of-handles. The
@@ -123,8 +123,9 @@ def normalize_model_bundle(model_data: Any) -> Any:
     """Coerce a loaded model object into the runtime shape callers expect.
 
     Pass-through for v2.3-style dicts and bare SVMEnsemble objects.
-    Translates FI v3 bundles ({"version": "v3", ...}) into the runtime
-    dict shape with `ensemble`, `normalizer`, `threshold`, `training_prior`.
+    Translates v3 multispecies bundles ({"version": "v3", ...}) into
+    the runtime dict shape with `ensemble`, `normalizer`, `threshold`,
+    `training_prior`.
     """
     if isinstance(model_data, dict) and model_data.get("version") == V3_VERSION:
         return _v3_to_runtime(model_data)

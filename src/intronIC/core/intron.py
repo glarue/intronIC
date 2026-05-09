@@ -218,8 +218,8 @@ class IntronScores:
         """Second-largest of the clipped-at-zero z-scores (5', BP, 3').
 
         Encodes "at least two of the three sites are strong U12 signals" —
-        a derived feature consumed by the FI v3 model. Returns None if any
-        z-score is missing.
+        a derived feature consumed by the v3 multispecies model. Returns
+        None if any z-score is missing.
 
         Definition: sorted([max(0, z) for z in (5', BP, 3')])[1].
         """

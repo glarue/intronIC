@@ -4350,13 +4350,13 @@ def classify_with_pretrained_model(
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
         # New format: {'ensemble': ..., 'normalizer': ..., 'threshold': ...}
-        # FI v3 bundles are normalized into this shape upstream.
+        # v3 multispecies bundles are normalized into this shape upstream.
         ensemble = model_data["ensemble"]
         saved_normalizer = model_data.get("normalizer", None)
         _saved_threshold = model_data.get("threshold", config.scoring.threshold)  # noqa: F841
         if "_v3_bundle" in model_data:
             v3_id = model_data["_v3_bundle"].get("model_id", "<unknown>")
-            messenger.log_only(f"Loaded FI v3 bundle (model_id={v3_id})")
+            messenger.log_only(f"Loaded v3 multispecies bundle (model_id={v3_id})")
         else:
             messenger.log_only("Loaded model bundle (dict format)")
     else:

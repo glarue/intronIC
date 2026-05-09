@@ -1,4 +1,4 @@
-"""Integration tests: end-to-end classify with the FI v3 model bundle.
+"""Integration tests: end-to-end classify with the v3 multispecies bundle.
 
 Exercises the v3 load path under various CLI flag combinations to make
 sure flags that consumers actually rely on (--threshold, --no-nc,
@@ -140,7 +140,7 @@ class TestBaseline:
         # The v3 detection log line goes to the run's .iic.log file via
         # messenger.log_only(...) — not to stdout.
         run_log = baseline_run["log"]
-        assert "FI v3 bundle" in run_log, (
+        assert "v3 multispecies bundle" in run_log, (
             "v3 detection / model_id log not emitted — "
             "loader may have fallen through to the legacy branch"
         )
