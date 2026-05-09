@@ -39,7 +39,12 @@ scoring:
   # The adjusted_score incorporates species-level valley prior and ensemble σ
   # penalty (see score_adjustment below). The binary type_id (U12/U2) is set
   # by the raw SVM decision boundary and is not affected by this threshold.
-  threshold: 95.0
+  #
+  # Lowered from 95 → 90 in v2.4: with the FI v3 canonical model the
+  # adjusted-score distribution is tightly calibrated (Brier ≈ 4×10⁻⁶) and
+  # 90 picks up real conserved U12s without an FPR penalty (~1 extra FP
+  # across 330k introns on the U12-absent panel; see eval_thresholds_v3).
+  threshold: 90.0
 
   # Feature type to extract introns from:
   #   "cds"  — coding sequence only (excludes UTR introns)
