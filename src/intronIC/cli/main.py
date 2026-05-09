@@ -3929,6 +3929,20 @@ def classify_streaming_per_contig(
     messenger.info(f"Using indexed genome access: {config.input.genome}")
     genome_reader = IndexedGenomeReader(str(config.input.genome), use_cache=False)
 
+    # Force the pyfastx .fxi index to be built single-threaded in the main
+    # process before any worker pool starts. Without this, workers in the
+    # BG-correction phase (or the adaptive-fit phase, or the classify phase)
+    # all race to build the same .fxi file, leaving it 0-byte and
+    # corrupting later access. get_contig_lengths is the lightest call
+    # that materialises the index — we need contig lengths later for
+    # progress tracking anyway, so capture them once here and reuse.
+    from intronIC.file_io.indexed_genome import get_contig_lengths
+    assert config.input.genome is not None, "Genome path required"
+    contig_lengths = get_contig_lengths(config.input.genome)
+    messenger.log_only(
+        f"Built pyfastx index covering {len(contig_lengths):,} contigs"
+    )
+
     # Species-specific U2 background correction in streaming classify mode.
     # Lightweight first-pass: parse annotations → generate introns → fetch
     # only the short scored motif windows (~83 bytes/intron) → accumulate
@@ -4135,13 +4149,9 @@ def classify_streaming_per_contig(
     accumulated_duplicate_map: Dict[str, Set[str]] = {}
     accumulated_overlap_map: Dict[str, Set[str]] = {}
 
-    # Get contig lengths for length-weighted progress reporting
+    # Use contig lengths captured up-front (used here for length-weighted
+    # progress reporting and for filtering out missing contigs).
     import numpy as np
-
-    from intronIC.file_io.indexed_genome import get_contig_lengths
-
-    assert config.input.genome is not None, "Genome path required"
-    contig_lengths = get_contig_lengths(config.input.genome)
 
     # Filter out annotation contigs missing from the genome FASTA
     # (e.g. organellar genes referencing contigs not in nuclear assemblies)
