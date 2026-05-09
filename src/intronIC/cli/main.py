@@ -249,10 +249,21 @@ def apply_species_background(
     bp_start = config.scoring.scoring_regions.bp_start
     bp_end = config.scoring.scoring_regions.bp_end
 
+    include_duplicates = config.extraction.include_duplicates
+
     n_accumulated = 0
     for intron in introns:
         seqs = intron.sequences
         if seqs is None or seqs.seq is None:
+            continue
+
+        # Skip coordinate-duplicate isoforms (they share sequences with the
+        # first occurrence via extract_sequences_with_deduplication; counting
+        # them here would over-weight genes with many alternative
+        # transcripts in the empirical U2 background and produce different
+        # corrected PWMs than the streaming-classify path, which applies the
+        # same dedup via IntronFilter after boundary correction).
+        if not include_duplicates and intron.metadata and intron.metadata.duplicate:
             continue
 
         five_dnt = seqs.five_prime_dnt or (seqs.seq[:2] if seqs.seq else "")
@@ -3326,6 +3337,10 @@ _bg_worker_config: dict = {}
 
 def _init_bg_worker(genome_path: str, annotation_db_path: str, config_dict: dict) -> None:
     """Initialize BG accumulation worker process."""
+    from intronIC.file_io.indexed_genome import init_worker_genome
+
+    init_worker_genome(genome_path)
+
     global _bg_worker_genome_path, _bg_worker_annotation_db_path, _bg_worker_config
     _bg_worker_genome_path = genome_path
     _bg_worker_annotation_db_path = annotation_db_path
@@ -3337,6 +3352,12 @@ def _process_contigs_bg_worker(
 ) -> tuple:
     """Accumulate BG nucleotide frequencies for a batch of contigs.
 
+    Calls the shared :func:`_streaming_extract_and_filter_contig` helper
+    so the BG accumulator sees the same intron set that the adaptive-fit
+    pre-pass and the main classify pass will see (and that the in-memory
+    pipeline accumulates over). This is required for streaming and
+    in-memory to produce identical classifications.
+
     Args:
         contig_batch: List of (contig_name, count) tuples
 
@@ -3344,146 +3365,98 @@ def _process_contigs_bg_worker(
         (five_counts, three_counts, bp_counts, n_accumulated)
         where *_counts are dicts suitable for merge_counts().
     """
-    from intronIC.extraction.annotator import AnnotationHierarchyBuilder
-    from intronIC.extraction.intronator import IntronGenerator
-    from intronIC.file_io.indexed_genome import IndexedGenomeReader
-    from intronIC.file_io.annotation_store import StreamingAnnotationStore
-    from intronIC.utils.sequences import reverse_complement
+    from intronIC.file_io.indexed_genome import get_worker_genome
     from intronIC.scoring.background import _RegionAccumulator, _BPSAccumulator
 
     config_dict = _bg_worker_config
-    annotation_store = StreamingAnnotationStore(_bg_worker_annotation_db_path)
-    genome_reader = IndexedGenomeReader(_bg_worker_genome_path, use_cache=False)
-
+    five_len = config_dict['five_len']
+    three_len = config_dict['three_len']
     five_start = config_dict['five_start']
     five_end = config_dict['five_end']
     three_start = config_dict['three_start']
     three_end = config_dict['three_end']
-    bp_start_coord = config_dict['bp_start']
-    bp_end_coord = config_dict['bp_end']
-    five_len = config_dict['five_len']
-    three_len = config_dict['three_len']
-    clean_names = config_dict['clean_names']
-    debug = config_dict['debug']
+    bp_start = config_dict['bp_start']
+    bp_end = config_dict['bp_end']
+    include_duplicates = config_dict.get('include_duplicates', False)
 
     five_acc = _RegionAccumulator(five_len)
     three_acc = _RegionAccumulator(three_len)
     bp_acc = _BPSAccumulator()
     n_accumulated = 0
 
+    indexed_genome = get_worker_genome()
+
     for contig_name, _count in contig_batch:
-        try:
-            annotations = annotation_store.get_annotations_for_contig(contig_name)
-        except Exception:
-            continue
-
-        builder = AnnotationHierarchyBuilder(
-            child_features=["cds", "exon"],
-            clean_names=clean_names,
-            messenger=None,
-        )
-        try:
-            contig_genes = builder.build_from_annotations(annotations)
-        except ValueError:
-            continue
-        if not contig_genes:
-            continue
-
-        generator = IntronGenerator(debug=debug, messenger=None)
-        contig_introns = generator.generate_from_genes(
-            contig_genes, builder.feature_index
+        _, scorable, _ = _streaming_extract_and_filter_contig(
+            contig=contig_name,
+            annotation_db_path=_bg_worker_annotation_db_path,
+            config=config_dict,
+            indexed_genome=indexed_genome,
         )
 
-        for intron in contig_introns:
-            coord = intron.coordinates
-            if coord is None:
+        for intron in scorable:
+            seqs = intron.sequences
+            if seqs is None or seqs.seq is None:
                 continue
-            if coord.stop - coord.start + 1 < 30:
-                continue
-
-            try:
-                up_start = max(1, coord.start + five_start)
-                up_seq = genome_reader.fetch(
-                    coord.chromosome, up_start, coord.start - 1
-                )
-                intro_start_seq = genome_reader.fetch(
-                    coord.chromosome, coord.start, coord.start + five_end - 1
-                )
-                intro_end_seq = genome_reader.fetch(
-                    coord.chromosome, coord.stop + three_start + 1, coord.stop,
-                )
-                dn_seq = genome_reader.fetch(
-                    coord.chromosome, coord.stop + 1, coord.stop + three_end,
-                )
-                bp_region_start = max(coord.start, coord.stop + bp_start_coord)
-                bp_region_end = coord.stop + bp_end_coord
-                bp_seq = genome_reader.fetch(
-                    coord.chromosome, bp_region_start, bp_region_end
-                )
-                dnt_start = genome_reader.fetch(
-                    coord.chromosome, coord.start, coord.start + 1
-                )
-                dnt_end = genome_reader.fetch(
-                    coord.chromosome, coord.stop - 1, coord.stop
-                )
-            except Exception:
+            if (
+                not include_duplicates
+                and intron.metadata
+                and intron.metadata.duplicate
+            ):
+                # Belt-and-suspenders: helper already drops duplicates,
+                # but mirror in-memory's apply_species_background guard.
                 continue
 
-            five_seq = (up_seq + intro_start_seq).upper()
-            three_seq = (intro_end_seq + dn_seq).upper()
+            five_dnt = seqs.five_prime_dnt or (seqs.seq[:2] if seqs.seq else "")
+            three_dnt = seqs.three_prime_dnt or (seqs.seq[-2:] if seqs.seq else "")
+            if not five_dnt or not three_dnt:
+                continue
 
-            if coord.strand == "-":
-                five_seq = reverse_complement(five_seq)
-                three_seq = reverse_complement(three_seq)
-                bp_seq = reverse_complement(bp_seq)
-                five_seq, three_seq = three_seq, five_seq
-                five_dnt = reverse_complement(dnt_end).upper()
-                three_dnt = reverse_complement(dnt_start).upper()
-            else:
-                five_dnt = dnt_start.upper()
-                three_dnt = dnt_end.upper()
+            upstream = seqs.upstream_flank or ""
+            seq = seqs.seq or ""
+            downstream = seqs.downstream_flank or ""
 
-            five_acc.add(five_dnt, five_seq[:five_len])
-            three_acc.add(three_dnt, three_seq[-three_len:])
-            bp_acc.add(five_dnt, bp_seq.upper())
+            five_seq = (upstream[five_start:] + seq[:five_end]).upper()
+            three_seq = (seq[three_start:] + downstream[:three_end]).upper()
+            bp_region = seq[
+                max(0, len(seq) + bp_start) : len(seq) + bp_end
+            ].upper()
+
+            five_acc.add(five_dnt.upper(), five_seq)
+            three_acc.add(three_dnt.upper(), three_seq)
+            bp_acc.add(five_dnt.upper(), bp_region)
             n_accumulated += 1
 
-    annotation_store.close()
     return (five_acc.export_counts(), three_acc.export_counts(),
             bp_acc.export_counts(), n_accumulated)
 
 
-def _streaming_extract_and_score_contig(
+def _streaming_extract_and_filter_contig(
     contig: str,
     annotation_db_path: str,
-    pwm_sets: Any,
     config: dict,
     indexed_genome: Any,
 ) -> tuple[List[Intron], List[Intron], dict]:
-    """Extract, filter, and PWM-score introns for one contig.
+    """Extract, sequence, U12-correct, and filter introns for one contig.
 
-    Shared logic for both ``_process_contig_streaming_classify_worker`` and
-    ``_process_contig_streaming_fit_worker``. Returns introns with raw
-    (un-normalized) scores populated; the caller is responsible for any
-    normalization, classification, and boundary tracking.
+    Shared by every per-contig pass in the streaming-classify pipeline:
+    BG correction, adaptive normalizer fit, and the main classify pass.
+    Centralising it guarantees all three see the same intron set, which
+    is required for streaming results to match the in-memory pipeline.
 
     Returns:
-        (filtered_introns, scorable_with_raw_scores, stats)
-        - filtered_introns: ALL introns including omitted ones (for output).
-        - scorable_with_raw_scores: subset that passed filtering and were
-          scored with PWMs. Each has ``scores.{five,bp,three}_raw_score``
-          populated; z-scores are ``None``.
-        - stats: dict with keys "genes", "introns_generated", "scored",
-          "filter_stats", "duplicate_map", "overlap_map".
+        (filtered_introns, scorable, stats)
+        - filtered_introns: ALL introns including omitted (for output).
+        - scorable: subset that passed filtering, has sequences, and is
+          eligible for scoring (``omitted == NONE`` and not a
+          coordinate-duplicate when ``include_duplicates`` is False).
+        - stats: dict with the standard streaming stats keys.
     """
-    from collections import Counter  # noqa: F401  (used by callers via stats)
-
     from intronIC.extraction.annotator import AnnotationHierarchyBuilder
     from intronIC.extraction.filters import FilterStats, IntronFilter
     from intronIC.extraction.intronator import IntronGenerator
     from intronIC.extraction.sequences import SequenceExtractor
     from intronIC.file_io.annotation_store import StreamingAnnotationStore
-    from intronIC.scoring.scorer import IntronScorer
 
     stats: dict = {
         "genes": 0,
@@ -3584,6 +3557,18 @@ def _streaming_extract_and_score_contig(
     )
     filtered_introns = intron_filter.filter_introns(contig_with_seqs)
 
+    # Match the in-memory standard pipeline: prefilter_introns drops
+    # coordinate-duplicates before scoring (and the pre-write filter drops
+    # them again before output). IntronFilter only TAGS duplicates here,
+    # so we drop them explicitly. Without this, streaming would score and
+    # emit each isoform of a shared intron, while in-memory writes each
+    # unique locus once — producing different counts on identical input.
+    if not config["include_duplicates"]:
+        filtered_introns = [
+            i for i in filtered_introns
+            if i.metadata is None or not i.metadata.duplicate
+        ]
+
     stats["filter_stats"] = intron_filter.stats
     stats["duplicate_map"] = intron_filter.get_duplicate_map()
     stats["overlap_map"] = intron_filter.get_overlap_map()
@@ -3593,6 +3578,32 @@ def _streaming_extract_and_score_contig(
         if i.has_sequences
         and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
     ]
+
+    return filtered_introns, scorable, stats
+
+
+def _streaming_extract_and_score_contig(
+    contig: str,
+    annotation_db_path: str,
+    pwm_sets: Any,
+    config: dict,
+    indexed_genome: Any,
+) -> tuple[List[Intron], List[Intron], dict]:
+    """Extract, filter, and PWM-score introns for one contig.
+
+    Thin wrapper around :func:`_streaming_extract_and_filter_contig` that
+    additionally scores the scorable introns with the given (possibly
+    BG-corrected) PWMs. Returns introns with raw scores populated; the
+    caller handles normalization and classification.
+    """
+    from intronIC.scoring.scorer import IntronScorer
+
+    filtered_introns, scorable, stats = _streaming_extract_and_filter_contig(
+        contig=contig,
+        annotation_db_path=annotation_db_path,
+        config=config,
+        indexed_genome=indexed_genome,
+    )
 
     if not scorable:
         return filtered_introns, [], stats
@@ -3952,6 +3963,8 @@ def classify_streaming_per_contig(
             config, pwm_sets
         )
 
+        # Build a single config dict with everything the shared
+        # extract+filter helper needs, plus the BG-specific lengths.
         bg_config_dict = {
             'five_start': config.scoring.scoring_regions.five_start,
             'five_end': config.scoring.scoring_regions.five_end,
@@ -3963,6 +3976,19 @@ def classify_streaming_per_contig(
             'three_len': three_len,
             'clean_names': config.output.clean_names,
             'debug': config.output.debug,
+            'include_duplicates': config.extraction.include_duplicates,
+            'min_intron_len': config.extraction.min_intron_len,
+            # Required by _streaming_extract_and_filter_contig:
+            'feature_type': config.extraction.feature_type,
+            'flank_len': config.extraction.flank_len,
+            'u12_boundary_correction': (
+                config.extraction.u12_boundary_correction
+            ),
+            'u12_correction_require_canonical': (
+                config.extraction.u12_correction_require_canonical
+            ),
+            'exclude_noncanonical': config.scoring.exclude_noncanonical,
+            'no_intron_overlap': config.extraction.no_intron_overlap,
         }
 
         n_bg_introns = 0
@@ -4541,6 +4567,22 @@ def classify_with_pretrained_model(
             "model_path": str(model_path),
             "n_classified": 0,
         }
+
+    # Drop coordinate-duplicate introns up-front so the adaptive normalizer
+    # is fit on the same intron set the streaming-classify path uses (which
+    # filters duplicates in its per-contig pre-pass) and so the same set is
+    # transformed and classified. Without this, in-memory fits on a larger
+    # set with duplicate observations skewing the median/IQR, then writes
+    # different z-scores than streaming for the same locus.
+    if not config.extraction.include_duplicates:
+        n_before = len(introns)
+        introns = [i for i in introns if not (i.metadata and i.metadata.duplicate)]
+        n_dropped = n_before - len(introns)
+        if n_dropped > 0:
+            messenger.log_only(
+                f"Dropping {n_dropped:,} coordinate-duplicate introns before "
+                "classification (use -d to include)"
+            )
 
     messenger.info(f"Loading pretrained model from {model_path}")
 
@@ -5128,7 +5170,11 @@ def write_outputs(
     """
     messenger.info("Writing output files")
 
-    # Filter duplicates if not including them
+    # Filter duplicates from BOTH the all-introns list AND the score-info
+    # source list. Without filtering ``scored_only``, coordinate-duplicate
+    # introns get an SVM score and end up in score_info.iic even though
+    # they're absent from .bed/.meta/.introns. That breaks streaming-vs-
+    # in-memory equivalence; --include_duplicates is the explicit opt-in.
     # Port from: intronIC.py:4806-4807
     if not config.extraction.include_duplicates:
         original_count = len(introns)
@@ -5138,6 +5184,11 @@ def write_outputs(
             messenger.log_only(
                 f"Filtered out {filtered_count} duplicate introns (use -d to include)"
             )
+        if scored_only is not None:
+            scored_only = [
+                i for i in scored_only
+                if not (i.metadata and i.metadata.duplicate)
+            ]
 
     output_dir = config.output.output_dir
     base_name = config.output.base_filename

@@ -368,7 +368,13 @@ class SpeciesBackground:
         Returns:
             Dict mapping region name to PWMSet with corrected U2 PWMs.
         """
-        if self.n_introns < self.config.min_introns:
+        # Use n_accumulated (not n_introns) so this guard works for both the
+        # in-memory path (which calls accumulate() and populates _intron_seqs)
+        # and the streaming path (which calls merge_worker_counts() and only
+        # populates the _RegionAccumulator counts). Without this, streaming
+        # always returns the human U2 PWMs unchanged because _intron_seqs is
+        # empty, and the streaming/in-memory pipelines disagree on every score.
+        if self.n_accumulated < self.config.min_introns:
             # Not enough introns — return human U2 PWMs unchanged
             if u12_pwm_sets is not None:
                 return _merge_u12_u2(u12_pwm_sets, self.human_u2)

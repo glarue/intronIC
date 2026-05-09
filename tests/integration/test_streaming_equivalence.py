@@ -244,3 +244,147 @@ class TestStreamingEquivalenceWithV3:
                     f"  p1: {r1.strip()[:160]}\n"
                     f"  p3: {r3.strip()[:160]}"
                 )
+
+
+def _normalize_score_row(row: str, header: str) -> tuple:
+    """Drop the species-name prefix from the label column, keep everything else.
+
+    The species-name prefix differs between runs (e.g. ``HomSt-`` vs
+    ``HomIm-``) but the rest of the row should be identical between
+    classify modes on the same input.
+    """
+    fields = row.rstrip("\n").split("\t")
+    if not fields:
+        return ()
+    label = fields[0]
+    if "-" in label:
+        label = label.split("-", 1)[1]
+    fields[0] = label
+    return tuple(fields)
+
+
+@pytest.mark.skipif(
+    not TEST_GENOME.exists() or not TEST_ANNOTATION.exists(),
+    reason="Chr19 test data not found",
+)
+class TestStreamingMatchesInMemory:
+    """Streaming and in-memory must produce equivalent classifications.
+
+    The two paths ultimately call the same scoring + classification
+    components on the same intron set; the only legitimate differences
+    in output are species-name prefixes and ordering. This test asserts
+    every scored intron has the same SVM/adjusted/relative scores in
+    both modes, and that they classify the same locus the same way.
+
+    Regression guard: in v2.4-development the streaming-classify worker
+    inherited a pre-existing bug where coordinate-duplicate introns were
+    scored (one entry per isoform) while in-memory's prefilter dropped
+    them, producing ~5,900 extra rows and ~21 inflated U12 calls on
+    full human. The v2.4 fix unifies the duplicate handling so this
+    test passes.
+    """
+
+    @pytest.fixture(scope="class")
+    def run_results(self, intronIC_bin):
+        with tempfile.TemporaryDirectory(prefix="intronIC_mode_equiv_") as tmpdir:
+            dir_stream = Path(tmpdir) / "streaming"
+            dir_inmem = Path(tmpdir) / "inmemory"
+            dir_stream.mkdir()
+            dir_inmem.mkdir()
+
+            _run_classify(
+                intronIC_bin, dir_stream, processes=2,
+                species_name="ModeStream", mode="streaming",
+            )
+            _run_classify(
+                intronIC_bin, dir_inmem, processes=2,
+                species_name="ModeInmem", mode="in-memory",
+            )
+
+            sh, srows = _read_score_info(dir_stream, "ModeStream")
+            ih, irows = _read_score_info(dir_inmem, "ModeInmem")
+
+            yield {
+                "stream_header": sh,
+                "inmem_header": ih,
+                "stream_rows": srows,
+                "inmem_rows": irows,
+            }
+
+    def test_score_info_headers_match(self, run_results):
+        assert run_results["stream_header"] == run_results["inmem_header"]
+
+    def test_scored_intron_set_matches(self, run_results):
+        """Every locus scored in one mode must be scored in the other.
+
+        Compares the set of intron labels (sans species prefix) that have
+        a non-NA SVM score in each output. Symmetric difference must be empty.
+        """
+        def _scored_labels(rows):
+            out = set()
+            for row in rows:
+                fields = row.rstrip("\n").split("\t")
+                if len(fields) < 3:
+                    continue
+                if fields[2] in ("NA", ""):
+                    continue
+                label = fields[0]
+                if "-" in label:
+                    label = label.split("-", 1)[1]
+                out.add(label)
+            return out
+
+        stream_set = _scored_labels(run_results["stream_rows"])
+        inmem_set = _scored_labels(run_results["inmem_rows"])
+
+        only_stream = stream_set - inmem_set
+        only_inmem = inmem_set - stream_set
+
+        if only_stream or only_inmem:
+            pytest.fail(
+                f"Scored-intron set differs between modes:\n"
+                f"  streaming-only: {len(only_stream)} (sample: "
+                f"{sorted(only_stream)[:3]})\n"
+                f"  in-memory-only: {len(only_inmem)} (sample: "
+                f"{sorted(only_inmem)[:3]})"
+            )
+
+    def test_per_intron_scores_match(self, run_results):
+        """Every scored intron has identical SVM/adjusted/relative scores in both modes."""
+        def _by_label(rows):
+            out = {}
+            for row in rows:
+                fields = row.rstrip("\n").split("\t")
+                if len(fields) < 3 or fields[2] in ("NA", ""):
+                    continue
+                label = fields[0]
+                if "-" in label:
+                    label = label.split("-", 1)[1]
+                out[label] = fields
+            return out
+
+        stream = _by_label(run_results["stream_rows"])
+        inmem = _by_label(run_results["inmem_rows"])
+
+        common = sorted(set(stream) & set(inmem))
+        assert common, "no intron labels in common between modes"
+
+        # Compare columns: rel_score (1), svm_score (2), adjusted_score (-2), ensemble_sigma (-1)
+        mismatches = []
+        for label in common:
+            s_row, i_row = stream[label], inmem[label]
+            for idx, name in [(1, "rel_score"), (2, "svm_score"),
+                              (-2, "adjusted_score"), (-1, "ensemble_sigma")]:
+                if s_row[idx] != i_row[idx]:
+                    mismatches.append((label, name, s_row[idx], i_row[idx]))
+                    break  # one mismatch per intron is enough
+        if mismatches:
+            sample = mismatches[:5]
+            msg = (
+                f"{len(mismatches)} introns have differing scores between modes:\n"
+                + "\n".join(
+                    f"  [{lab}] {name}: streaming={s} vs in-memory={i}"
+                    for lab, name, s, i in sample
+                )
+            )
+            pytest.fail(msg)
