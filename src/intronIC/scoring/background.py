@@ -464,7 +464,15 @@ class SpeciesBackground:
             if human_ps is None:
                 continue
 
-            for subtype_dnt in acc.get_all_subtypes():
+            # Iterate subtypes in sorted order so that when multiple
+            # subtypes map to the same pwm_subtype (e.g., non-canonical 5'
+            # dnts all default to 'gtag'), the last-writer-wins assignment
+            # to ``matrices[human_key]`` is deterministic. Without this,
+            # streaming and in-memory pipelines can produce different
+            # corrected PWMs for the same data because the underlying
+            # ``_data`` dict's insertion order differs (sequential
+            # accumulate vs parallel merge_worker_counts).
+            for subtype_dnt in sorted(acc.get_all_subtypes()):
                 pwm_subtype = self.FIVE_DNT_TO_SUBTYPE.get(
                     subtype_dnt,
                     self.THREE_DNT_TO_SUBTYPE.get(subtype_dnt, 'gtag')
@@ -550,7 +558,7 @@ class SpeciesBackground:
 
         human_bp = self.human_u2.get('bp')
         if human_bp:
-            for subtype_dnt in self._bp_acc.get_all_subtypes():
+            for subtype_dnt in sorted(self._bp_acc.get_all_subtypes()):
                 pwm_subtype = self.FIVE_DNT_TO_SUBTYPE.get(subtype_dnt, 'gtag')
                 human_key = ('u2', pwm_subtype)
                 human_pwm = human_bp.matrices.get(human_key)

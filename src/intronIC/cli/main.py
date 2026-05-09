@@ -5958,8 +5958,18 @@ def main_classify(config: IntronICConfig):
         messenger.success(f"Processed {len(introns):,} introns from annotation")
 
         # Important: Use filtered_introns for scoring, but keep original introns list
-        # for potential output (user may want duplicates via -d flag)
-        introns_for_scoring = filtered_introns
+        # for potential output (user may want duplicates via -d flag).
+        #
+        # Drop omitted introns (AMBIGUOUS, SHORT, NONCANONICAL, etc.) from the
+        # scoring list — IntronFilter has already tagged them and they will be
+        # re-merged with NA scores by merge_scored_and_omitted_introns. Without
+        # this filter, all-N motifs get scored with raw=0 and produce garbage
+        # z-scores / SVM calls in score_info, while the streaming-classify path
+        # correctly omits them (see _streaming_extract_and_filter_contig).
+        introns_for_scoring = [
+            i for i in filtered_introns
+            if i.metadata is None or i.metadata.omitted == OmissionReason.NONE
+        ]
 
         # Step 2: Score introns
         messenger.step(2, "Score Introns with PWMs", pipeline_steps)

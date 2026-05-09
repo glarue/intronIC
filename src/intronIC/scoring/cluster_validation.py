@@ -121,13 +121,24 @@ def compute_valley_depth(
             'reason': 'U12 cluster overlaps with U2 bulk',
         }
 
-    # Subsample U2 for KDE
+    # Subsample U2 for KDE.
+    #
+    # Sort the projection before sampling so that the random indices produce
+    # the same subsample regardless of the upstream iteration order. Without
+    # this, the streaming path (parallel imap_unordered over contigs) and the
+    # in-memory path (sequential per-contig) feed introns in different orders,
+    # so np.random.choice picks different points and the KDE valley depth
+    # diverges by a few percent — which then leaks into adjusted_score and
+    # rel_score for thousands of introns in score_info.iic.
     np.random.seed(random_seed)
-    if len(u2_proj) > max_u2_sample:
-        u2_sample = u2_proj[np.random.choice(len(u2_proj), max_u2_sample, replace=False)]
+    u2_proj_sorted = np.sort(u2_proj)
+    if len(u2_proj_sorted) > max_u2_sample:
+        u2_sample = u2_proj_sorted[
+            np.random.choice(len(u2_proj_sorted), max_u2_sample, replace=False)
+        ]
     else:
-        u2_sample = u2_proj
-    all_sample = np.concatenate([u2_sample, u12_proj])
+        u2_sample = u2_proj_sorted
+    all_sample = np.concatenate([u2_sample, np.sort(u12_proj)])
 
     # Silverman bandwidth (data-driven)
     silverman_bw = 1.06 * np.std(all_sample) * len(all_sample) ** (-1 / 5)
