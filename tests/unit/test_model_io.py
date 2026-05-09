@@ -144,7 +144,7 @@ class TestV3TrainingPrior:
 
 
 _FI_V3_BUNDLE = Path(
-    "/mnt/data/u12/ipa/training_data/multispecies_v23/fi_v3_canonical.pkl"
+    "/mnt/data/u12/ipa/training_data/multispecies_v23/v3_multispecies_canonical.pkl"
 )
 
 
@@ -153,7 +153,7 @@ _FI_V3_BUNDLE = Path(
     reason="v3 multispecies canonical bundle not present in this environment",
 )
 class TestRealFIv3Bundle:
-    """Integration: the real fi_v3_canonical.pkl loads and is well-formed."""
+    """Integration: the real v3_multispecies_canonical.pkl loads and is well-formed."""
 
     def test_loads_with_expected_size_and_metadata(self):
         from intronIC.utils.model_io import load_model
@@ -161,7 +161,7 @@ class TestRealFIv3Bundle:
         ensemble = runtime["ensemble"]
         assert len(ensemble.models) == 126  # 3 seeds × 42
         v3 = runtime["_v3_bundle"]
-        assert v3["model_id"].startswith("fi_v3_")
+        assert v3["model_id"].startswith("v3_multispecies_")
         assert v3["config"]["seeds"] == [42, 100, 200]
 
     def test_predict_proba_path_works(self):

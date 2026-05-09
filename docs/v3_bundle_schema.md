@@ -14,7 +14,7 @@ bundles continue to load unchanged.
 ```python
 {
     "version":          "v3",
-    "model_id":         str,        # e.g. "fi_v3_C200_g0.001_ezf0.75_seeds42-100-200"
+    "model_id":         str,        # e.g. "v3_multispecies_C200_g0.001_ezf0.75_seeds42-100-200"
     "config":           dict,       # see below
     "training":         dict,       # see below
     "holdout_metrics":  dict,       # {seed_id: {"f1@50": ..., "precision@50": ..., ...}}

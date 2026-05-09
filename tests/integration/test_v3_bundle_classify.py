@@ -8,7 +8,7 @@ the bundle translation; these tests cover what happens after.
 
 Skipped automatically if either:
   - intronIC isn't installed in the dev env, or
-  - fi_v3_canonical.pkl isn't present (it's not committed to the repo)
+  - v3_multispecies_canonical.pkl isn't present (it's not committed to the repo)
 """
 import re
 import shutil
@@ -24,7 +24,7 @@ DATA_DIR = REPO_ROOT / "src" / "intronIC" / "data"
 TEST_GENOME = DATA_DIR / "test_data" / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
 TEST_ANNOTATION = DATA_DIR / "test_data" / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
 V3_BUNDLE = Path(
-    "/mnt/data/u12/ipa/training_data/multispecies_v23/fi_v3_canonical.pkl"
+    "/mnt/data/u12/ipa/training_data/multispecies_v23/v3_multispecies_canonical.pkl"
 )
 
 # A chr19 classify run takes ~30-60s on this machine. Each test variant
@@ -34,7 +34,7 @@ RUN_TIMEOUT = 300
 
 pytestmark = pytest.mark.skipif(
     not (TEST_GENOME.exists() and TEST_ANNOTATION.exists() and V3_BUNDLE.exists()),
-    reason="Chr19 test data or fi_v3_canonical.pkl not present",
+    reason="Chr19 test data or v3_multispecies_canonical.pkl not present",
 )
 
 
@@ -144,7 +144,7 @@ class TestBaseline:
             "v3 detection / model_id log not emitted — "
             "loader may have fallen through to the legacy branch"
         )
-        assert "model_id=fi_v3_" in run_log
+        assert "model_id=v3_multispecies_" in run_log
 
     def test_run_uses_adaptive_normalizer(self, baseline_run):
         # v3 ships normalizer=None → auto mode falls through to adaptive
