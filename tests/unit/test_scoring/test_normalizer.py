@@ -511,6 +511,53 @@ def test_get_frozen_scaler_before_fit():
         normalizer.get_frozen_scaler()
 
 
+def test_fit_from_array_matches_fit(reference_introns):
+    """fit_from_array on raw-score matrix matches fit() on introns."""
+    n_intron = ScoreNormalizer().fit(reference_introns, dataset_type="reference")
+
+    raw_matrix = np.array(
+        [
+            [
+                i.scores.five_raw_score,
+                i.scores.bp_raw_score,
+                i.scores.three_raw_score,
+            ]
+            for i in reference_introns
+        ]
+    )
+    n_array = ScoreNormalizer().fit_from_array(raw_matrix, dataset_type="reference")
+
+    np.testing.assert_allclose(
+        n_intron.get_frozen_scaler().center_,
+        n_array.get_frozen_scaler().center_,
+    )
+    np.testing.assert_allclose(
+        n_intron.get_frozen_scaler().scale_,
+        n_array.get_frozen_scaler().scale_,
+    )
+
+
+def test_fit_from_array_rejects_experimental():
+    """fit_from_array refuses 'experimental' dataset_type."""
+    matrix = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+    with pytest.raises(ValueError, match="experimental"):
+        ScoreNormalizer().fit_from_array(matrix, dataset_type="experimental")
+
+
+def test_fit_from_array_rejects_bad_shape():
+    """fit_from_array requires (n, 3) shape."""
+    with pytest.raises(ValueError, match="shape"):
+        ScoreNormalizer().fit_from_array(np.array([[0.1, 0.2]]))
+    with pytest.raises(ValueError, match="shape"):
+        ScoreNormalizer().fit_from_array(np.array([0.1, 0.2, 0.3]))
+
+
+def test_fit_from_array_rejects_empty():
+    """fit_from_array requires at least one row."""
+    with pytest.raises(ValueError, match="empty"):
+        ScoreNormalizer().fit_from_array(np.empty((0, 3)))
+
+
 def test_transform_scores_array(reference_introns):
     """Test direct numpy array transformation for streaming mode."""
     normalizer = ScoreNormalizer()

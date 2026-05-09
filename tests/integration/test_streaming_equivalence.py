@@ -1,15 +1,13 @@
 """
 Integration test: verify -p 1 and -p 3 produce identical classifications.
 
-Originally targeted streaming mode, but as of intronIC v2.4 the bundled
-default model (v3 multispecies) ships without a saved normalizer, so streaming
-mode requires an explicit alternative model. This test now exercises
-the --in-memory path, which is the de-facto default for v3 multispecies users
-and shares its per-contig parallelism logic with streaming. Streaming
-parallelism remains exercised by the per-contig worker unit tests.
+Exercises both --in-memory and --streaming paths against the bundled
+Chr19 human test data. Streaming-with-v3 fits a fresh adaptive
+RobustScaler on a per-contig pre-pass before classify; this test also
+verifies that pre-pass produces identical results regardless of
+parallelism.
 
-Uses the bundled Chr19 human test data (~1,400 introns).
-Runs in ~1-2 minutes depending on hardware.
+Runs in ~3-5 minutes depending on hardware (two full pipelines per mode).
 """
 
 import subprocess
@@ -40,8 +38,8 @@ def intronIC_bin():
     pytest.skip("intronIC not found on PATH or in dev env")
 
 
-def _run_classify(intronIC_bin, output_dir, processes, species_name):
-    """Run intronIC classify in --in-memory mode (works with default v3 multispecies)."""
+def _run_classify(intronIC_bin, output_dir, processes, species_name, mode="in-memory"):
+    """Run intronIC classify in either --in-memory or --streaming mode."""
     cmd = [
         intronIC_bin, "classify",
         "-g", str(TEST_GENOME),
@@ -49,17 +47,17 @@ def _run_classify(intronIC_bin, output_dir, processes, species_name):
         "-n", species_name,
         "-o", str(output_dir),
         "-p", str(processes),
-        "--in-memory",
+        f"--{mode}",
     ]
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=600,
     )
     if result.returncode != 0:
         pytest.fail(
-            f"intronIC classify (p={processes}) failed:\n"
+            f"intronIC classify ({mode}, p={processes}) failed:\n"
             f"STDOUT:\n{result.stdout[-2000:]}\n"
             f"STDERR:\n{result.stderr[-2000:]}"
         )
@@ -168,3 +166,81 @@ class TestStreamingEquivalence:
             for idx, r1, r3 in sample:
                 msg += f"  [{idx}] p1: {r1}\n       p3: {r3}\n"
             pytest.fail(msg)
+
+
+@pytest.mark.skipif(
+    not TEST_GENOME.exists() or not TEST_ANNOTATION.exists(),
+    reason="Chr19 test data not found",
+)
+class TestStreamingEquivalenceWithV3:
+    """Verify streaming + v3 default: -p 1 and -p 3 produce identical results.
+
+    Exercises the adaptive normalizer pre-pass (added in v2.4) end-to-end
+    in the per-contig streaming-classify path. Identical output across
+    parallelism levels confirms the fitting pass and the classify pass
+    are both deterministic regardless of contig dispatch order.
+    """
+
+    @pytest.fixture(scope="class")
+    def run_results(self, intronIC_bin):
+        with tempfile.TemporaryDirectory(prefix="intronIC_stream_equiv_") as tmpdir:
+            dir_p1 = Path(tmpdir) / "p1"
+            dir_p3 = Path(tmpdir) / "p3"
+            dir_p1.mkdir()
+            dir_p3.mkdir()
+
+            _run_classify(
+                intronIC_bin, dir_p1, processes=1,
+                species_name="stream_test", mode="streaming",
+            )
+            _run_classify(
+                intronIC_bin, dir_p3, processes=3,
+                species_name="stream_test", mode="streaming",
+            )
+
+            h1, score_rows_p1 = _read_score_info(dir_p1, "stream_test")
+            h3, score_rows_p3 = _read_score_info(dir_p3, "stream_test")
+            mh1, meta_rows_p1 = _read_meta(dir_p1)
+            mh3, meta_rows_p3 = _read_meta(dir_p3)
+
+            yield {
+                "score_header_p1": h1,
+                "score_header_p3": h3,
+                "score_rows_p1": score_rows_p1,
+                "score_rows_p3": score_rows_p3,
+                "meta_header_p1": mh1,
+                "meta_header_p3": mh3,
+                "meta_rows_p1": meta_rows_p1,
+                "meta_rows_p3": meta_rows_p3,
+            }
+
+    def test_score_info_headers_match(self, run_results):
+        assert run_results["score_header_p1"] == run_results["score_header_p3"]
+
+    def test_score_info_row_count_match(self, run_results):
+        n1 = len(run_results["score_rows_p1"])
+        n3 = len(run_results["score_rows_p3"])
+        assert n1 == n3, f"streaming row count mismatch: p1={n1}, p3={n3}"
+        assert n1 > 0, "streaming produced no introns"
+
+    def test_score_info_rows_identical(self, run_results):
+        rows_p1 = run_results["score_rows_p1"]
+        rows_p3 = run_results["score_rows_p3"]
+        for i, (r1, r3) in enumerate(zip(rows_p1, rows_p3)):
+            if r1 != r3:
+                pytest.fail(
+                    f"streaming p1 vs p3 differ at row {i}:\n"
+                    f"  p1: {r1.strip()[:160]}\n"
+                    f"  p3: {r3.strip()[:160]}"
+                )
+
+    def test_meta_rows_identical(self, run_results):
+        rows_p1 = run_results["meta_rows_p1"]
+        rows_p3 = run_results["meta_rows_p3"]
+        for i, (r1, r3) in enumerate(zip(rows_p1, rows_p3)):
+            if r1 != r3:
+                pytest.fail(
+                    f"streaming meta p1 vs p3 differ at row {i}:\n"
+                    f"  p1: {r1.strip()[:160]}\n"
+                    f"  p3: {r3.strip()[:160]}"
+                )

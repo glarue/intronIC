@@ -340,6 +340,48 @@ class ScoreNormalizer:
 
         return self
 
+    def fit_from_array(
+        self,
+        score_matrix: np.ndarray,
+        dataset_type: DatasetType = "unlabeled",
+    ) -> "ScoreNormalizer":
+        """Fit scaler directly from a raw-score matrix.
+
+        Equivalent to ``fit()`` but skips the intron-object iteration step.
+        Useful in streaming classify mode where introns are not held in
+        memory and only the Nx3 raw-score matrix is materialized in the
+        main process.
+
+        Args:
+            score_matrix: Nx3 array of [five_raw, bp_raw, three_raw] scores.
+            dataset_type: "reference" or "unlabeled" (default "unlabeled" since
+                this entry point is intended for cross-species adaptive fitting
+                from experimental introns). "experimental" is forbidden.
+
+        Returns:
+            self (for method chaining).
+        """
+        if dataset_type == "experimental":
+            raise ValueError(
+                "Cannot fit normalizer on experimental data! "
+                "Use dataset_type='reference' or 'unlabeled'."
+            )
+        if score_matrix.ndim != 2 or score_matrix.shape[1] != 3:
+            raise ValueError(
+                f"score_matrix must have shape (n, 3); got {score_matrix.shape}"
+            )
+        if score_matrix.shape[0] == 0:
+            raise ValueError("Cannot fit on empty score matrix")
+
+        from sklearn.preprocessing import RobustScaler
+
+        self._scaler = RobustScaler(with_centering=True, with_scaling=True).fit(
+            score_matrix
+        )
+        self._fitted_on = dataset_type
+        self._is_fitted = True
+        return self
+
     def get_frozen_scaler(self) -> "RobustScaler":
         """
         Get the fitted sklearn scaler for direct use in streaming mode.

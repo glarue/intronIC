@@ -834,6 +834,43 @@ def test_score_and_normalize_batch_empty(simple_pwms, fitted_scaler):
     assert results == []
 
 
+def test_apply_scaler_to_scored_batch_matches_combined(
+    simple_pwms, u12_like_intron, u2_like_intron, fitted_scaler
+):
+    """Splitting score+scale into two steps must equal score_and_normalize_batch."""
+    from intronIC.scoring.scorer import (
+        apply_scaler_to_scored_batch,
+        score_and_normalize_batch,
+    )
+
+    scorer = IntronScorer(
+        pwm_sets=simple_pwms,
+        five_coords=(-3, 5),
+        bp_coords=(-80, -5),
+        three_coords=(-6, 2),
+    )
+    introns = [u12_like_intron, u2_like_intron]
+
+    combined = score_and_normalize_batch(introns, scorer, fitted_scaler)
+
+    scored_only = [scorer.score_intron(i) for i in introns]
+    split = apply_scaler_to_scored_batch(scored_only, fitted_scaler)
+
+    assert len(combined) == len(split) == 2
+    for a, b in zip(combined, split):
+        assert a.scores.five_z_score == pytest.approx(b.scores.five_z_score)
+        assert a.scores.bp_z_score == pytest.approx(b.scores.bp_z_score)
+        assert a.scores.three_z_score == pytest.approx(b.scores.three_z_score)
+        assert a.scores.five_raw_score == pytest.approx(b.scores.five_raw_score)
+
+
+def test_apply_scaler_to_scored_batch_empty(fitted_scaler):
+    """Empty input → empty output, no scaler call."""
+    from intronIC.scoring.scorer import apply_scaler_to_scored_batch
+
+    assert apply_scaler_to_scored_batch([], fitted_scaler) == []
+
+
 def test_batch_matches_streaming(
     simple_pwms, u12_like_intron, u2_like_intron, fitted_scaler
 ):

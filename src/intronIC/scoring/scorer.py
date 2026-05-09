@@ -973,6 +973,53 @@ def score_and_normalize_introns(
         yield replace(scored, scores=updated_scores)
 
 
+def apply_scaler_to_scored_batch(
+    scored_introns: list[Intron],
+    scaler: "RobustScaler",
+) -> list[Intron]:
+    """Apply a pre-fitted scaler to introns whose raw scores are already populated.
+
+    Used by streaming classify mode after the extract+score pass produces
+    raw 5'/BP/3' scores; this step adds the z-scores.
+
+    Args:
+        scored_introns: List of introns with raw scores already populated
+            via ``IntronScorer.score_intron``.
+        scaler: Pre-fitted sklearn RobustScaler.
+
+    Returns:
+        List of new Intron objects with z-scores populated.
+    """
+    import numpy as np
+
+    if not scored_introns:
+        return []
+
+    raw_scores = np.array(
+        [
+            [
+                intron.scores.five_raw_score,
+                intron.scores.bp_raw_score,
+                intron.scores.three_raw_score,
+            ]
+            for intron in scored_introns
+        ]
+    )
+    z_scores = scaler.transform(raw_scores)
+
+    result = []
+    for i, intron in enumerate(scored_introns):
+        updated_scores = replace(
+            intron.scores,
+            five_z_score=float(z_scores[i, 0]),
+            bp_z_score=float(z_scores[i, 1]),
+            three_z_score=float(z_scores[i, 2]),
+        )
+        result.append(replace(intron, scores=updated_scores))
+
+    return result
+
+
 def score_and_normalize_batch(
     introns: list[Intron],
     scorer: IntronScorer,
@@ -996,38 +1043,8 @@ def score_and_normalize_batch(
         >>> chromosome_introns = list(generate_introns(chromosome_genes))
         >>> scored_introns = score_and_normalize_batch(chromosome_introns, scorer, scaler)
     """
-    import numpy as np
-
     if not introns:
         return []
 
-    # Score all introns (collect raw scores)
     scored_introns = [scorer.score_intron(intron) for intron in introns]
-
-    # Extract all raw scores as matrix
-    raw_scores = np.array(
-        [
-            [
-                intron.scores.five_raw_score,
-                intron.scores.bp_raw_score,
-                intron.scores.three_raw_score,
-            ]
-            for intron in scored_introns
-        ]
-    )
-
-    # Vectorized transform
-    z_scores = scaler.transform(raw_scores)
-
-    # Update introns with z-scores
-    result = []
-    for i, intron in enumerate(scored_introns):
-        updated_scores = replace(
-            intron.scores,
-            five_z_score=float(z_scores[i, 0]),
-            bp_z_score=float(z_scores[i, 1]),
-            three_z_score=float(z_scores[i, 2]),
-        )
-        result.append(replace(intron, scores=updated_scores))
-
-    return result
+    return apply_scaler_to_scored_batch(scored_introns, scaler)

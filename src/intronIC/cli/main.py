@@ -3453,6 +3453,247 @@ def _process_contigs_bg_worker(
             bp_acc.export_counts(), n_accumulated)
 
 
+def _streaming_extract_and_score_contig(
+    contig: str,
+    annotation_db_path: str,
+    pwm_sets: Any,
+    config: dict,
+    indexed_genome: Any,
+) -> tuple[List[Intron], List[Intron], dict]:
+    """Extract, filter, and PWM-score introns for one contig.
+
+    Shared logic for both ``_process_contig_streaming_classify_worker`` and
+    ``_process_contig_streaming_fit_worker``. Returns introns with raw
+    (un-normalized) scores populated; the caller is responsible for any
+    normalization, classification, and boundary tracking.
+
+    Returns:
+        (filtered_introns, scorable_with_raw_scores, stats)
+        - filtered_introns: ALL introns including omitted ones (for output).
+        - scorable_with_raw_scores: subset that passed filtering and were
+          scored with PWMs. Each has ``scores.{five,bp,three}_raw_score``
+          populated; z-scores are ``None``.
+        - stats: dict with keys "genes", "introns_generated", "scored",
+          "filter_stats", "duplicate_map", "overlap_map".
+    """
+    from collections import Counter  # noqa: F401  (used by callers via stats)
+
+    from intronIC.extraction.annotator import AnnotationHierarchyBuilder
+    from intronIC.extraction.filters import FilterStats, IntronFilter
+    from intronIC.extraction.intronator import IntronGenerator
+    from intronIC.extraction.sequences import SequenceExtractor
+    from intronIC.file_io.annotation_store import StreamingAnnotationStore
+    from intronIC.scoring.scorer import IntronScorer
+
+    stats: dict = {
+        "genes": 0,
+        "introns_generated": 0,
+        "scored": 0,
+        "filter_stats": FilterStats(),
+        "duplicate_map": {},
+        "overlap_map": {},
+    }
+
+    annotation_store = StreamingAnnotationStore(annotation_db_path)
+    contig_annotations = annotation_store.get_annotations_for_contig(contig)
+    annotation_store.close()
+
+    if not contig_annotations or all(
+        a.feat_type == "region" for a in contig_annotations
+    ):
+        return [], [], stats
+
+    builder = AnnotationHierarchyBuilder(
+        child_features=["cds", "exon"],
+        clean_names=config["clean_names"],
+        messenger=None,
+    )
+    try:
+        contig_genes = builder.build_from_annotations(contig_annotations)
+    except ValueError as e:
+        if "Could not establish parent-child relationships" in str(e):
+            return [], [], stats
+        raise
+    del contig_annotations
+
+    if not contig_genes:
+        return [], [], stats
+
+    stats["genes"] = len(contig_genes)
+
+    generator = IntronGenerator(debug=config["debug"], messenger=None)
+    contig_introns = list(
+        generator.generate_from_genes(contig_genes, builder.feature_index)
+    )
+
+    if config["feature_type"] == "cds":
+        contig_introns = [
+            i for i in contig_introns
+            if i.metadata is not None and i.metadata.defined_by == "cds"
+        ]
+    elif config["feature_type"] == "exon":
+        contig_introns = [
+            i for i in contig_introns
+            if i.metadata is not None and i.metadata.defined_by == "exon"
+        ]
+
+    stats["introns_generated"] = len(contig_introns)
+
+    if not contig_introns:
+        return [], [], stats
+
+    extractor = SequenceExtractor.__new__(SequenceExtractor)
+    extractor.genome_file = None  # type: ignore[assignment]
+    extractor.genome_reader = indexed_genome  # type: ignore[assignment]
+    extractor.use_cache = False
+
+    contig_with_seqs = list(
+        extractor.extract_sequences_with_deduplication(
+            contig_introns, flank_size=config["flank_len"]
+        )
+    )
+
+    if config["u12_boundary_correction"]:
+        from intronIC.extraction.boundary_correction import correct_intron_if_needed
+
+        corrected_contig_introns = []
+        for intron in contig_with_seqs:
+            corrected_intron, was_corrected = correct_intron_if_needed(
+                intron, correction_enabled=True, use_strict_motif=True,
+                require_canonical=config.get("u12_correction_require_canonical", True),
+            )
+            if was_corrected:
+                corrected_with_seq = list(
+                    extractor.extract_sequences(
+                        [corrected_intron], flank_size=config["flank_len"]
+                    )
+                )[0]
+                corrected_contig_introns.append(corrected_with_seq)
+            else:
+                corrected_contig_introns.append(corrected_intron)
+        contig_with_seqs = corrected_contig_introns
+
+    intron_filter = IntronFilter(
+        min_length=config["min_intron_len"],
+        bp_matrix_length=7,
+        scoring_regions=["five", "three"],
+        allow_noncanonical=not config["exclude_noncanonical"],
+        allow_overlap=not config["no_intron_overlap"],
+        longest_only=True,
+        include_duplicates=config["include_duplicates"],
+    )
+    filtered_introns = intron_filter.filter_introns(contig_with_seqs)
+
+    stats["filter_stats"] = intron_filter.stats
+    stats["duplicate_map"] = intron_filter.get_duplicate_map()
+    stats["overlap_map"] = intron_filter.get_overlap_map()
+
+    scorable = [
+        i for i in filtered_introns
+        if i.has_sequences
+        and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
+    ]
+
+    if not scorable:
+        return filtered_introns, [], stats
+
+    scorer = IntronScorer(
+        pwm_sets=pwm_sets,
+        five_coords=(config["five_start"], config["five_end"]),
+        bp_coords=(config["bp_start"], config["bp_end"]),
+        three_coords=(config["three_start"], config["three_end"]),
+        ignore_nc_dnts=config["ignore_nc_dnts"],
+    )
+
+    scored_scorable = [scorer.score_intron(i) for i in scorable]
+    stats["scored"] = len(scored_scorable)
+
+    return filtered_introns, scored_scorable, stats
+
+
+# =============================================================================
+# Adaptive-fit worker for streaming v3 path
+# =============================================================================
+# Used when streaming-classify is requested but the model bundle has no
+# saved frozen scaler (v3 multispecies default). Calls the same
+# extract+filter+score helper as the classify worker so the normalizer is
+# fit on the same intron set the classify pass will see.
+
+_streaming_fit_worker_genome_path: str = ""
+_streaming_fit_worker_annotation_db_path: str = ""
+_streaming_fit_worker_pwm_sets: Any = None
+_streaming_fit_worker_config: dict = {}
+
+
+def _init_streaming_fit_worker(
+    genome_path: str,
+    annotation_db_path: str,
+    pwm_sets: Any,
+    config_dict: dict,
+) -> None:
+    """Initialize the per-contig adaptive-fit worker process."""
+    from intronIC.file_io.indexed_genome import init_worker_genome
+
+    init_worker_genome(genome_path)
+
+    global _streaming_fit_worker_genome_path
+    global _streaming_fit_worker_annotation_db_path
+    global _streaming_fit_worker_pwm_sets
+    global _streaming_fit_worker_config
+
+    _streaming_fit_worker_genome_path = genome_path
+    _streaming_fit_worker_annotation_db_path = annotation_db_path
+    _streaming_fit_worker_pwm_sets = pwm_sets
+    _streaming_fit_worker_config = config_dict
+
+
+def _process_contig_streaming_fit_worker(
+    contig_input: tuple[str, int],
+) -> tuple[str, "np.ndarray"]:
+    """Extract+score one contig and return only raw 5'/BP/3' scores.
+
+    Returns:
+        (contig_name, raw_score_array) where raw_score_array has shape
+        (n_scorable, 3) with columns [five_raw, bp_raw, three_raw]. Empty
+        or skipped contigs return a (0, 3) array.
+    """
+    import numpy as np
+
+    from intronIC.file_io.indexed_genome import get_worker_genome
+
+    contig, _count = contig_input
+    empty = np.empty((0, 3), dtype=np.float64)
+
+    indexed_genome = get_worker_genome()
+    _, scored_scorable, _ = _streaming_extract_and_score_contig(
+        contig=contig,
+        annotation_db_path=_streaming_fit_worker_annotation_db_path,
+        pwm_sets=_streaming_fit_worker_pwm_sets,
+        config=_streaming_fit_worker_config,
+        indexed_genome=indexed_genome,
+    )
+
+    if not scored_scorable:
+        return contig, empty
+
+    rows: list[tuple[float, float, float]] = []
+    for intron in scored_scorable:
+        s = intron.scores
+        if (
+            s is None
+            or s.five_raw_score is None
+            or s.bp_raw_score is None
+            or s.three_raw_score is None
+        ):
+            continue
+        rows.append((s.five_raw_score, s.bp_raw_score, s.three_raw_score))
+
+    if not rows:
+        return contig, empty
+
+    return contig, np.asarray(rows, dtype=np.float64)
+
+
 def _init_streaming_classify_worker(
     genome_path: str,
     annotation_db_path: str,
@@ -3505,17 +3746,12 @@ def _process_contig_streaming_classify_worker(
         - classified_introns: Introns that were scored and classified
         - filtered_introns: ALL introns including omitted ones (for output files)
     """
-    contig, contig_annotation_count = contig_input
+    contig, _count = contig_input
     from collections import Counter
 
     from intronIC.classification.predictor import classify_introns_batch
-    from intronIC.extraction.annotator import AnnotationHierarchyBuilder
-    from intronIC.extraction.filters import IntronFilter
-    from intronIC.extraction.intronator import IntronGenerator
-    from intronIC.extraction.sequences import SequenceExtractor
-    from intronIC.file_io.annotation_store import StreamingAnnotationStore
     from intronIC.file_io.indexed_genome import get_worker_genome
-    from intronIC.scoring.scorer import IntronScorer, score_and_normalize_batch
+    from intronIC.scoring.scorer import apply_scaler_to_scored_batch
 
     # Access worker globals
     config = _streaming_classify_worker_config
@@ -3523,166 +3759,29 @@ def _process_contig_streaming_classify_worker(
     scaler = _streaming_classify_worker_scaler
     pwm_sets = _streaming_classify_worker_pwm_sets
 
-    # Statistics for this contig
-    from intronIC.extraction.filters import FilterStats
+    indexed_genome = get_worker_genome()
+    filtered_introns, scored_scorable, base_stats = _streaming_extract_and_score_contig(
+        contig=contig,
+        annotation_db_path=_streaming_classify_worker_annotation_db_path,
+        pwm_sets=pwm_sets,
+        config=config,
+        indexed_genome=indexed_genome,
+    )
 
     stats = {
-        "genes": 0,
-        "introns_generated": 0,
-        "scored": 0,
+        **base_stats,
         "classified": 0,
         "boundaries_u12": Counter(),
         "boundaries_u2": Counter(),
-        "filter_stats": FilterStats(),  # Initialize empty, will be updated if filtering occurs
-        "duplicate_map": {},  # Initialize empty, will be updated if filtering occurs
-        "overlap_map": {},  # Initialize empty, will be updated if filtering occurs
     }
 
-    # Open annotation store (read-only, each worker gets own connection)
-    annotation_store = StreamingAnnotationStore(
-        _streaming_classify_worker_annotation_db_path
-    )
-
-    # Get annotations for this contig
-    contig_annotations = annotation_store.get_annotations_for_contig(contig)
-    annotation_store.close()
-
-    # Skip empty contigs
-    if not contig_annotations or all(
-        a.feat_type == "region" for a in contig_annotations
-    ):
-        return contig, [], [], stats
-
-    # Build gene hierarchy
-    builder = AnnotationHierarchyBuilder(
-        child_features=["cds", "exon"],
-        clean_names=config["clean_names"],
-        messenger=None,  # No logging from workers
-    )
-
-    try:
-        contig_genes = builder.build_from_annotations(contig_annotations)
-    except ValueError as e:
-        if "Could not establish parent-child relationships" in str(e):
-            return contig, [], [], stats
-        raise
-
-    del contig_annotations
-
-    if not contig_genes:
-        return contig, [], [], stats
-
-    stats["genes"] = len(contig_genes)
-
-    # Generate introns
-    generator = IntronGenerator(debug=config["debug"], messenger=None)
-    contig_introns = list(
-        generator.generate_from_genes(contig_genes, builder.feature_index)
-    )
-
-    # Filter by feature type
-    if config["feature_type"] == "cds":
-        contig_introns = [
-            i
-            for i in contig_introns
-            if i.metadata is not None and i.metadata.defined_by == "cds"
-        ]
-    elif config["feature_type"] == "exon":
-        contig_introns = [
-            i
-            for i in contig_introns
-            if i.metadata is not None and i.metadata.defined_by == "exon"
-        ]
-
-    stats["introns_generated"] = len(contig_introns)
-
-    if not contig_introns:
-        del contig_genes, builder
-        return contig, [], [], stats
-
-    # Get worker's genome reader and create extractor
-    indexed_genome = get_worker_genome()
-    extractor = SequenceExtractor.__new__(SequenceExtractor)
-    extractor.genome_file = None  # type: ignore[assignment]
-    extractor.genome_reader = indexed_genome  # type: ignore[assignment]
-    extractor.use_cache = False
-
-    # Extract sequences
-    contig_with_seqs = list(
-        extractor.extract_sequences_with_deduplication(
-            contig_introns, flank_size=config["flank_len"]
-        )
-    )
-
-    # Apply U12 corrections if enabled
-    if config["u12_boundary_correction"]:
-        from intronIC.extraction.boundary_correction import correct_intron_if_needed
-
-        corrected_contig_introns = []
-        for intron in contig_with_seqs:
-            corrected_intron, was_corrected = correct_intron_if_needed(
-                intron, correction_enabled=True, use_strict_motif=True,
-                require_canonical=config.get("u12_correction_require_canonical", True)
-            )
-            if was_corrected:
-                corrected_with_seq = list(
-                    extractor.extract_sequences(
-                        [corrected_intron], flank_size=config["flank_len"]
-                    )
-                )[0]
-                corrected_contig_introns.append(corrected_with_seq)
-            else:
-                corrected_contig_introns.append(corrected_intron)
-        contig_with_seqs = corrected_contig_introns
-
-    # Create filter
-    intron_filter = IntronFilter(
-        min_length=config["min_intron_len"],
-        bp_matrix_length=7,
-        scoring_regions=["five", "three"],
-        allow_noncanonical=not config["exclude_noncanonical"],
-        allow_overlap=not config["no_intron_overlap"],
-        longest_only=True,
-        include_duplicates=config["include_duplicates"],
-    )
-
-    # Filter introns
-    filtered_introns = intron_filter.filter_introns(contig_with_seqs)
-
-    # Capture filter statistics and maps
-    stats["filter_stats"] = intron_filter.stats
-    stats["duplicate_map"] = intron_filter.get_duplicate_map()
-    stats["overlap_map"] = intron_filter.get_overlap_map()
-
-    # Filter to only scorable introns
-    scorable = [
-        i
-        for i in filtered_introns
-        if i.has_sequences
-        and (i.metadata is None or i.metadata.omitted == OmissionReason.NONE)
-    ]
-
-    if not scorable:
-        del contig_genes, builder, contig_introns, contig_with_seqs
-        # Return filtered_introns even when no scorable - these are omitted introns
+    if not scored_scorable:
         return contig, [], filtered_introns, stats
 
-    # Create scorer
-    scorer = IntronScorer(
-        pwm_sets=pwm_sets,
-        five_coords=(config["five_start"], config["five_end"]),
-        bp_coords=(config["bp_start"], config["bp_end"]),
-        three_coords=(config["three_start"], config["three_end"]),
-        ignore_nc_dnts=config["ignore_nc_dnts"],
-    )
-
-    # Score and normalize
-    scored_introns = score_and_normalize_batch(scorable, scorer, scaler)
-    stats["scored"] = len(scored_introns)
-
-    # Classify
+    # Apply frozen scaler → z-scores, then classify
+    normalized_introns = apply_scaler_to_scored_batch(scored_scorable, scaler)
     classified_introns = classify_introns_batch(
-        scored_introns,
+        normalized_introns,
         ensemble,
         threshold=config["threshold"],
     )
@@ -3704,10 +3803,6 @@ def _process_contig_streaming_classify_worker(
                 stats["boundaries_u12"][dnts] += 1
             else:
                 stats["boundaries_u2"][dnts] += 1
-
-    # Clean up
-    del contig_genes, builder, contig_introns, contig_with_seqs
-    del scorable, scored_introns
 
     return contig, classified_introns, filtered_introns, stats
 
@@ -3783,16 +3878,21 @@ def classify_streaming_per_contig(
 
     messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
 
-    # Extract frozen scaler from normalizer
-    if saved_normalizer is None:
-        raise ValueError(
-            "Model bundle does not contain a normalizer. "
-            "Cannot use true streaming mode without frozen scaler. "
-            "Use standard --streaming mode instead."
+    # Resolve the frozen scaler used by the per-contig classify workers.
+    # v2.3-format bundles ship a saved normalizer; we extract the frozen
+    # scaler from it here. v3 multispecies bundles ship without a saved
+    # normalizer (training features were already z-scored per-species);
+    # for those we defer scaler resolution and fit an adaptive RobustScaler
+    # in a lightweight pass after BG correction (see below).
+    if saved_normalizer is not None:
+        scaler = saved_normalizer.get_frozen_scaler()
+        messenger.log_only("Extracted frozen scaler from model normalizer")
+    else:
+        scaler = None
+        messenger.log_only(
+            "Model bundle has no saved normalizer (v3 multispecies); "
+            "will fit adaptive normalizer on a per-contig pre-pass"
         )
-
-    scaler = saved_normalizer.get_frozen_scaler()
-    messenger.log_only("Extracted frozen scaler from model normalizer")
 
     # Load PWM matrices
     messenger.info("Loading PWM matrices")
@@ -3903,6 +4003,99 @@ def classify_streaming_per_contig(
         )
         if corrected is not None:
             pwm_sets = corrected
+
+    # =========================================================================
+    # ADAPTIVE NORMALIZER FITTING PASS (v3 streaming only)
+    # When saved_normalizer is None, run a lightweight per-contig pre-pass
+    # that extracts+filters+scores introns with the (possibly BG-corrected)
+    # PWMs and returns only their raw 5'/BP/3' scores. We fit a RobustScaler
+    # on the pooled raw-score distribution and use it as the frozen scaler
+    # for the classify pass. This mirrors the cross-species adaptive
+    # normalization used by the in-memory pretrained classify path.
+    # =========================================================================
+    if scaler is None:
+        # Build the same worker config the classify pass will use, so the
+        # fitting pass sees an identical intron set.
+        fit_worker_config = {
+            "clean_names": config.output.clean_names,
+            "debug": config.output.debug,
+            "feature_type": config.extraction.feature_type,
+            "flank_len": config.extraction.flank_len,
+            "u12_boundary_correction": config.extraction.u12_boundary_correction,
+            "u12_correction_require_canonical": (
+                config.extraction.u12_correction_require_canonical
+            ),
+            "min_intron_len": config.extraction.min_intron_len,
+            "exclude_noncanonical": config.scoring.exclude_noncanonical,
+            "no_intron_overlap": config.extraction.no_intron_overlap,
+            "include_duplicates": config.extraction.include_duplicates,
+            "ignore_nc_dnts": config.scoring.ignore_nc_dnts,
+            "five_start": config.scoring.scoring_regions.five_start,
+            "five_end": config.scoring.scoring_regions.five_end,
+            "bp_start": config.scoring.scoring_regions.bp_start,
+            "bp_end": config.scoring.scoring_regions.bp_end,
+            "three_start": config.scoring.scoring_regions.three_start,
+            "three_end": config.scoring.scoring_regions.three_end,
+        }
+
+        n_fit_workers = config.performance.processes
+        fit_init_args = (
+            str(config.input.genome),
+            str(annotation_store.db_path),
+            pwm_sets,
+            fit_worker_config,
+        )
+        fit_inputs = [(c, n) for c, n in contigs_with_counts]
+
+        if n_fit_workers > 1:
+            messenger.info(
+                f"Adaptive normalizer fit: scoring introns "
+                f"(parallel, {n_fit_workers} workers)..."
+            )
+            with Pool(
+                processes=n_fit_workers,
+                initializer=_init_streaming_fit_worker,
+                initargs=fit_init_args,
+            ) as pool:
+                contig_score_arrays = [
+                    arr for _, arr in pool.imap_unordered(
+                        _process_contig_streaming_fit_worker, fit_inputs
+                    )
+                    if arr.shape[0] > 0
+                ]
+        else:
+            messenger.info("Adaptive normalizer fit: scoring introns sequentially...")
+            _init_streaming_fit_worker(*fit_init_args)
+            contig_score_arrays = []
+            for ci in fit_inputs:
+                _, arr = _process_contig_streaming_fit_worker(ci)
+                if arr.shape[0] > 0:
+                    contig_score_arrays.append(arr)
+
+        if not contig_score_arrays:
+            raise ValueError(
+                "Adaptive normalizer fitting produced no scored introns. "
+                "Check that the genome and annotation contain canonical "
+                "introns scoreable by the loaded PWMs."
+            )
+
+        import numpy as np
+
+        pooled_raw = np.vstack(contig_score_arrays)
+        del contig_score_arrays
+
+        from intronIC.scoring.normalizer import ScoreNormalizer
+
+        normalizer = ScoreNormalizer().fit_from_array(
+            pooled_raw, dataset_type="unlabeled"
+        )
+        scaler = normalizer.get_frozen_scaler()
+        messenger.log_only(
+            f"Fitted adaptive scaler on {pooled_raw.shape[0]:,} introns "
+            f"(median={[float(c) for c in scaler.center_]}, "
+            f"IQR={[float(s) for s in scaler.scale_]})"
+        )
+        del pooled_raw
 
     # Initialize output writer
     output_writer = StreamingOutputWriter(
