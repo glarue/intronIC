@@ -82,6 +82,6 @@
     "pr_auc": 1.0,
     "roc_auc": 1.0
   },
-  "notes": "intronIC v3 multispecies model: 6D RBF SVM ensemble (3 seeds \u00d7 42 = 126 calibrated SVMs). Trained on 41,333 introns from 97 species across 14 clades, with IPA-orthology-validated U12 labels. Holdout F1 = 1.000 (precision 1.000, recall 1.000) on the 5-species recall set; v2.3 baseline on the same set is F1 = 0.9975. Production-equivalent (valley-adjusted) FPR on U12-absent species is ~54% lower than v2.3 at threshold 90 (12 vs 26 across ~330k introns). feature_subtypes value 'forceinclude_eb' is the technical training-mode tag (force-include easy_biology subtype during training); not a user-facing identifier.",
+  "notes": "intronIC v3 multispecies model: 6D RBF SVM ensemble (3 seeds \u00d7 42 = 126 calibrated SVMs). Trained on 41,333 introns from 97 species across 14 clades, with U12 labels assigned by orthology-based comparative genomic analysis. Holdout F1 = 1.000 (precision 1.000, recall 1.000) on the 5-species recall set; v2.3 baseline on the same set is F1 = 0.9975. Production-equivalent (valley-adjusted) FPR on U12-absent species is ~54% lower than v2.3 at threshold 90 (12 vs 26 across ~330k scored introns). feature_subtypes value 'forceinclude_eb' is the technical training-mode tag (force-include easy_biology subtype during training); not a user-facing identifier.",
   "schema_doc": "docs/v3_bundle_schema.md"
 }

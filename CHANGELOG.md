@@ -5,20 +5,24 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.4.0] - 2026-05-08
+## [2.4.0] - 2026-05-09
 
 ### Changed
 - **Default bundled model upgraded to v3 multispecies** (3 seeds × 42 = 126
   calibrated SVMs trained on 41,333 introns from 97 species across 14
   clades). Holdout F1 = 1.000 vs v2.3 default 0.9975 on the 5-species
   recall set; production-equivalent (valley-adjusted) FPR on U12-absent
-  species is ~54% lower than v2.3 (12 vs 26 across ~330k introns at
+  species is ~54% lower than v2.3 (12 vs 26 across ~330k scored introns at
   threshold 90).
 - **Default classification threshold lowered from 95 → 90.** The v3
   multispecies model's adjusted-score distribution is tightly calibrated
   (Brier ≈ 4×10⁻⁶) and dropping to 90 picks up real conserved U12s
-  without measurable FPR penalty (+1 absolute FP across 330k U12-absent
+  without measurable FPR penalty (+1 absolute FP across 330k scored U12-absent
   introns). Pass `--threshold 95` to restore the prior behavior.
+- **Streaming classify path refactored** to share its extract+filter+score
+  logic with the new adaptive-fit worker (see Added). v2.3-format bundles
+  with a saved normalizer continue to behave identically; the refactor is
+  covered by the existing `-p 1` vs `-p 3` equivalence tests.
 
 ### Added
 - **v3 multispecies model bundle support** (`--model <bundle.pkl>`).
@@ -27,22 +31,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `normalize_model_bundle()` detects v3 by the `version` key and
   translates into the runtime shape the rest of the pipeline already
   expects.
+- **Adaptive normalizer fitting in streaming mode.** When a model bundle
+  has no saved scaler (v3 multispecies default), `intronIC classify
+  --streaming` runs a lightweight per-contig pre-pass that scores all
+  introns with the (BG-corrected, if enabled) PWMs, then fits a
+  `RobustScaler` on the pooled raw 5'/BP/3' distribution. The classify
+  pass uses that scaler. Cost: one extra genome pass — comparable to
+  the BG-correction pre-pass that already runs by default. Bundles with
+  a saved normalizer (v2.3 format) skip this step.
 - **`IntronScores.support2` derived feature** — second-largest of the
   clipped-at-zero z-scores (5', BP, 3'). Used by v3 multispecies as a
   6th feature; a `@property` on the dataclass so it stays derivable
   from the existing z-scores at zero memory cost.
+- `ScoreNormalizer.fit_from_array()` — fit directly from a raw-score
+  matrix (skips the intron-object iteration step). Used by the
+  streaming adaptive-fit pre-pass.
+- `apply_scaler_to_scored_batch()` — splits the scale-then-classify
+  step out of `score_and_normalize_batch()` so the streaming worker can
+  score once and apply a scaler that's resolved later in the same run.
 - v3 bundle schema spec at `docs/v3_bundle_schema.md`.
 
 ### Notes
 - Existing v2.3 model bundles continue to load unchanged (the legacy
   `{"ensemble": ..., "normalizer": ...}` dict is pass-through).
-- v3 bundles ship without a saved normalizer; production's adaptive
-  normalizer mode (the default) fits a fresh `RobustScaler` on the
-  target species at runtime, which is the correct behavior since
-  training features were already z-scored per-species. Streaming mode
-  (`--streaming`) is therefore not supported with the v3 default; use
-  `--in-memory` (the implicit default) or supply a v2.3-format model
-  with a saved normalizer.
+- The pre-existing divergence in scored-intron counts between
+  `--streaming` and `--in-memory` (streaming includes coordinate-duplicate
+  introns in `score_info.iic`, in-memory pre-filters them) is unchanged
+  from v2.3 and v2.4 behaviour. Final post-valley-adjustment U12 calls
+  agree across modes.
 
 ## [2.3.0] - 2026-04-23
 

@@ -107,7 +107,7 @@ doesn't require changes to consumers.
 | Runtime key | v3 source | Notes |
 |---|---|---|
 | `ensemble` | `seeds` × `config` | `SVMEnsemble[SVMModel]`, one wrapper per sub-model |
-| `normalizer` | (none) | `None` — v3 features are already z-scored, so production's adaptive mode is correct |
+| `normalizer` | (none) | `None` — v3 training features were already per-species z-scored, so inference re-fits a fresh `RobustScaler`. The in-memory pretrained classify path fits adaptively at scoring time; the streaming classify path runs a lightweight per-contig pre-pass to fit before the main classify pass |
 | `threshold` | `V3_DEFAULT_THRESHOLD` | 50.0 (matches the [0,100] score scale) |
 | `training_prior` | `(u12_positives - test_positives) / n_train` | Used by `--species_prior` adjustment |
 | `human_negative_stats` | (none) | `None` — currently unused by the classify pipeline |
