@@ -4692,8 +4692,16 @@ def classify_with_pretrained_model(
     # 200 keeps IQR standard error at ~7% of σ.
     MIN_ADAPTIVE_INTRONS = 200
 
-    # Apply normalizer strategy
-    if normalizer_mode == "human":
+    # --load-normalizer takes precedence over --normalizer-mode in both
+    # in-memory and streaming paths: when the user supplies a saved
+    # scaler explicitly, use it regardless of any other mode setting.
+    if config.scoring.load_normalizer is not None:
+        messenger.info(
+            f"Loading saved normalizer from {config.scoring.load_normalizer}"
+        )
+        normalizer = load_model(config.scoring.load_normalizer)
+        messenger.log_only("Using saved normalizer for reproducible normalization")
+    elif normalizer_mode == "human":
         if bundled_saved is None:
             raise ValueError(
                 "Normalizer mode 'human' requested but model has no saved scaler "
@@ -4704,14 +4712,7 @@ def classify_with_pretrained_model(
         messenger.log_only("This preserves composition bias correction across species")
         normalizer = bundled_saved
     else:  # adaptive
-        # Check if user wants to load a saved normalizer
-        if config.scoring.load_normalizer is not None:
-            messenger.info(
-                f"Loading saved normalizer from {config.scoring.load_normalizer}"
-            )
-            normalizer = load_model(config.scoring.load_normalizer)
-            messenger.log_only("Using saved normalizer for reproducible normalization")
-        elif len(introns) < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
+        if len(introns) < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
             # Too few introns to fit adaptive reliably; fall through to bundled fallback.
             messenger.warning(
                 f"Only {len(introns)} introns available — below the "

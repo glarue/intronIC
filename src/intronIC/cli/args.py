@@ -700,11 +700,12 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             type=Path,
             default=None,
             metavar="PATH",
-            help="""Load a saved normalizer from a previous run (for reproducible normalization).
-              When using adaptive mode on a species, the first run on the full genome should
-              fit and save a normalizer. Subsequent runs on subsets can reuse this normalizer
-              for consistency. Only applies when using --normalizer-mode adaptive.
-              The normalizer is automatically saved as <output_prefix>.normalizer.pkl""",
+            help="""Load a saved normalizer (from a previous run, or any compatible scaler pickle)
+              and use it instead of fitting one. Honored in both streaming and in-memory modes.
+              When passed, this overrides whatever scaler the model bundle ships with and skips
+              the per-input adaptive fit. Typical use: pass --save-normalizer on a first
+              full-genome run, then --load-normalizer <path>.normalizer.pkl on subsequent runs
+              over subsets of the same genome to keep z-scores consistent.""",
         )
 
         # Save fitted normalizer (for future reproducibility)
