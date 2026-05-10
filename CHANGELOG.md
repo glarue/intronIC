@@ -5,6 +5,43 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-05-10
+
+### Changed
+- **Valley-depth detection now uses Fisher's linear discriminant in 3D**
+  (5'z, BPz, 3'z) instead of the naive 2D (5'z + BPz) projection. Fisher's
+  direction Σ⁻¹(μ_U12 − μ_U2) — with shrinkage — gives the maximum-
+  separation axis for the multi-bandwidth KDE valley search, which makes
+  the depth metric more robust on lineages where the 3' motif carries
+  meaningful signal (e.g. dinoflagellates, some basal eukaryotes) without
+  reducing sensitivity on canonical U12-rich species. No false positives
+  introduced on the U12-absent panel.
+
+### Added
+- **Bundled multispecies fallback scaler** for very small inputs. v2.4.0
+  shipped without a saved scaler in the v3 model bundle, which prevented
+  single-intron / tiny-annotation scoring (regression from v1 / early v2;
+  adaptive RobustScaler needs ≥30 introns to give stable median/IQR).
+  v2.4.2 ships `v3_fallback_normalizer.pkl` — a frozen RobustScaler fit on
+  476,848 raw scores from the 90-species v3 training corpus — and the
+  classify pipeline now falls through to it when the adaptive fit pool is
+  empty or below 30 introns. Validation: chr19 fallback restores valley
+  detection (depth 0.79 vs adaptive 0.08); Drosophila fallback calls 17
+  U12s (adaptive 20, gold ~18); Tetrahymena fallback correctly calls 0
+  (adaptive 8 raw, both reach 0 post-valley adjustment). Single-intron
+  scoring via `-q` now works again. Loader detects the sibling .pkl via
+  `_v3_to_runtime`; both streaming and in-memory paths gated on the
+  30-intron floor.
+
+### Fixed
+- **`intronIC test` smoke fixture switched to Drosophila melanogaster.**
+  The chr19 fixture fit an adaptive RobustScaler on chr19's ~12K introns
+  only, which compressed the U2 distribution enough that the U12 lower
+  tail blended in — valley_depth came out 0.08 (no_valley) even though a
+  real U12 cluster was present. A small full genome (Drosophila R6,
+  ~47K introns) avoids that artifact and exercises the default adaptive
+  path with valley_depth ≈ 0.85.
+
 ## [2.4.1] - 2026-05-10
 
 ### Changed
