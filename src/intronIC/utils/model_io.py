@@ -95,6 +95,14 @@ def _v3_to_runtime(bundle: Dict[str, Any]) -> Dict[str, Any]:
 
     Preserves the original v3 metadata under a private key so downstream
     code can still introspect model_id / training stats if needed.
+
+    Adaptive vs fallback normalizer:
+      - "normalizer": absent (None) by design — v3 uses adaptive RobustScaler
+        fitting on the experimental data, fit on a per-contig pre-pass.
+      - "fallback_normalizer": optional. When adaptive fit can't be done
+        (input too small, e.g. single-intron scoring), the streaming
+        classify path falls through to this pre-fit scaler. Bundled as
+        v3_fallback_normalizer.pkl sibling and loaded here if present.
     """
     ensemble, _ = _build_v3_ensemble(bundle)
     training = bundle.get("training", {})
@@ -108,15 +116,45 @@ def _v3_to_runtime(bundle: Dict[str, Any]) -> Dict[str, Any]:
     else:
         training_prior = 0.5
 
+    # Look for a bundled fallback normalizer next to the model file. Kept
+    # as a sibling .pkl (rather than embedded in the bundle dict) so it
+    # can be updated independently without re-pickling the SVM ensemble.
+    fallback_normalizer = _load_fallback_normalizer(bundle)
+
     return {
         "ensemble": ensemble,
         "normalizer": None,            # v3 ships pre-z-scored features; adaptive at runtime
+        "fallback_normalizer": fallback_normalizer,
         "threshold": V3_DEFAULT_THRESHOLD,
         "training_prior": training_prior,
         "human_negative_stats": None,  # not used by current production path
         # Provenance — preserved so downstream can log/inspect; ignored otherwise.
         "_v3_bundle": bundle,
     }
+
+
+def _load_fallback_normalizer(bundle: Dict[str, Any]) -> Any:
+    """Load v3_fallback_normalizer.pkl from the same directory as the bundle.
+
+    Returns the unpickled ScoreNormalizer instance, or None if the file
+    isn't present or can't be loaded. Bundle path is recovered from
+    bundle's ``_source_path`` if set; otherwise checks the package data dir.
+    """
+    candidates = []
+    src = bundle.get("_source_path")
+    if src:
+        candidates.append(Path(src).parent / "v3_fallback_normalizer.pkl")
+    # Fall back to the package's bundled data dir
+    candidates.append(
+        Path(__file__).parent.parent / "data" / "v3_fallback_normalizer.pkl"
+    )
+    for path in candidates:
+        if path.exists():
+            try:
+                return joblib.load(path)
+            except Exception:
+                continue
+    return None
 
 
 def normalize_model_bundle(model_data: Any) -> Any:

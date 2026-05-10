@@ -4113,30 +4113,62 @@ def classify_streaming_per_contig(
                 if arr.shape[0] > 0:
                     contig_score_arrays.append(arr)
 
-        if not contig_score_arrays:
-            raise ValueError(
-                "Adaptive normalizer fitting produced no scored introns. "
-                "Check that the genome and annotation contain canonical "
-                "introns scoreable by the loaded PWMs."
-            )
-
         import numpy as np
 
-        pooled_raw = np.vstack(contig_score_arrays)
-        del contig_score_arrays
+        # Minimum intron count for adaptive RobustScaler to give stable
+        # median/IQR estimates. Below this, the empirical distribution is
+        # too noisy and we fall through to the bundled fallback scaler
+        # (if available). 30 is the conventional threshold for "small
+        # sample" median estimation; tightening doesn't help, loosening
+        # produces poor calibration on small inputs.
+        MIN_ADAPTIVE_INTRONS = 30
 
-        from intronIC.scoring.normalizer import ScoreNormalizer
+        fallback_normalizer = model_data.get("fallback_normalizer")
 
-        normalizer = ScoreNormalizer().fit_from_array(
-            pooled_raw, dataset_type="unlabeled"
-        )
-        scaler = normalizer.get_frozen_scaler()
-        messenger.log_only(
-            f"Fitted adaptive scaler on {pooled_raw.shape[0]:,} introns "
-            f"(median={[float(c) for c in scaler.center_]}, "
-            f"IQR={[float(s) for s in scaler.scale_]})"
-        )
-        del pooled_raw
+        if not contig_score_arrays:
+            if fallback_normalizer is not None:
+                scaler = fallback_normalizer.get_frozen_scaler()
+                messenger.warning(
+                    "Adaptive normalizer fit produced no scored introns. "
+                    "Falling through to bundled fallback scaler "
+                    "(suitable for very small inputs but adaptive normalization "
+                    "is preferable when feasible)."
+                )
+            else:
+                raise ValueError(
+                    "Adaptive normalizer fitting produced no scored introns "
+                    "and no fallback normalizer is available. Check that "
+                    "the genome and annotation contain canonical introns "
+                    "scoreable by the loaded PWMs."
+                )
+        else:
+            pooled_raw = np.vstack(contig_score_arrays)
+            del contig_score_arrays
+
+            if pooled_raw.shape[0] < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
+                scaler = fallback_normalizer.get_frozen_scaler()
+                messenger.warning(
+                    f"Adaptive normalizer fit pool has only "
+                    f"{pooled_raw.shape[0]:,} introns (< {MIN_ADAPTIVE_INTRONS} "
+                    f"required for stable median/IQR estimation). Falling "
+                    f"through to bundled fallback scaler. Results on inputs "
+                    f"this small are approximate; cross-species adaptive "
+                    f"normalization is recommended for normal genome-scale "
+                    f"runs."
+                )
+            else:
+                from intronIC.scoring.normalizer import ScoreNormalizer
+
+                normalizer = ScoreNormalizer().fit_from_array(
+                    pooled_raw, dataset_type="unlabeled"
+                )
+                scaler = normalizer.get_frozen_scaler()
+                messenger.log_only(
+                    f"Fitted adaptive scaler on {pooled_raw.shape[0]:,} introns "
+                    f"(median={[float(c) for c in scaler.center_]}, "
+                    f"IQR={[float(s) for s in scaler.scale_]})"
+                )
+            del pooled_raw
 
     # Initialize output writer
     output_writer = StreamingOutputWriter(
@@ -4623,8 +4655,16 @@ def classify_with_pretrained_model(
 
     # Determine normalizer mode
     normalizer_mode = config.scoring.normalizer_mode
+    # The v3 bundle ships a fallback_normalizer for the small-input case.
+    # Treat that as an acceptable saved-scaler under 'human' mode.
+    fallback_normalizer = model_data.get("fallback_normalizer") if isinstance(model_data, dict) else None
+    bundled_saved = saved_normalizer if saved_normalizer is not None else fallback_normalizer
+
     if normalizer_mode == "auto":
-        # Use human scaler if available, otherwise adaptive
+        # v2.3 bundles ship a true `normalizer`: use it (saved_normalizer
+        # path). v3 bundles ship only a fallback_normalizer: prefer
+        # adaptive, fall through to fallback only if the input is too
+        # small for stable median/IQR estimation.
         if saved_normalizer is not None:
             normalizer_mode = "human"
             messenger.log_only("Auto mode: Using saved human scaler (recommended)")
@@ -4632,16 +4672,21 @@ def classify_with_pretrained_model(
             normalizer_mode = "adaptive"
             messenger.log_only("Auto mode: Falling back to adaptive (no saved scaler)")
 
+    # Minimum intron count for adaptive RobustScaler to produce stable
+    # median/IQR. Below this, fall through to the bundled fallback scaler.
+    MIN_ADAPTIVE_INTRONS = 30
+
     # Apply normalizer strategy
     if normalizer_mode == "human":
-        if saved_normalizer is None:
+        if bundled_saved is None:
             raise ValueError(
-                "Normalizer mode 'human' requested but model has no saved scaler. "
-                "Retrain model or use '--normalizer_mode adaptive'."
+                "Normalizer mode 'human' requested but model has no saved scaler "
+                "(neither v2.3-style normalizer nor v3 fallback_normalizer is "
+                "available). Retrain model or use '--normalizer_mode adaptive'."
             )
         messenger.info("Using human-trained normalizer (scaler from training species)")
         messenger.log_only("This preserves composition bias correction across species")
-        normalizer = saved_normalizer
+        normalizer = bundled_saved
     else:  # adaptive
         # Check if user wants to load a saved normalizer
         if config.scoring.load_normalizer is not None:
@@ -4650,6 +4695,17 @@ def classify_with_pretrained_model(
             )
             normalizer = load_model(config.scoring.load_normalizer)
             messenger.log_only("Using saved normalizer for reproducible normalization")
+        elif len(introns) < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
+            # Too few introns to fit adaptive reliably; fall through to bundled fallback.
+            messenger.warning(
+                f"Only {len(introns)} introns available — below the "
+                f"{MIN_ADAPTIVE_INTRONS}-intron floor required for stable "
+                f"adaptive RobustScaler fitting. Falling through to the "
+                f"bundled fallback scaler. Adaptive normalization is "
+                f"preferable when feasible; this mode is for small inputs "
+                f"(single-intron queries, tiny annotation subsets) only."
+            )
+            normalizer = fallback_normalizer
         else:
             # Fit normalizer on experimental data (feature re-scaling)
             messenger.info(
