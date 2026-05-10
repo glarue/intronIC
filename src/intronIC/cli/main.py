@@ -4164,6 +4164,7 @@ def classify_streaming_per_contig(
     # Only stores 3 floats per classified intron (~24 bytes each)
     accumulated_five_z: list = []
     accumulated_bp_z: list = []
+    accumulated_three_z: list = []
     accumulated_svm_scores: list = []
     accumulated_type_ids: list = []
 
@@ -4332,12 +4333,14 @@ def classify_streaming_per_contig(
                         intron.scores
                         and intron.scores.five_z_score is not None
                         and intron.scores.bp_z_score is not None
+                        and intron.scores.three_z_score is not None
                         and intron.scores.svm_score is not None
                         and intron.metadata
                         and intron.metadata.type_id in ('u12', 'u2')
                     ):
                         accumulated_five_z.append(intron.scores.five_z_score)
                         accumulated_bp_z.append(intron.scores.bp_z_score)
+                        accumulated_three_z.append(intron.scores.three_z_score)
                         accumulated_svm_scores.append(intron.scores.svm_score)
                         accumulated_type_ids.append(intron.metadata.type_id)
 
@@ -4388,6 +4391,7 @@ def classify_streaming_per_contig(
         cluster_validation_result = validate_u12_cluster(
             five_z_scores=np.array(accumulated_five_z),
             bp_z_scores=np.array(accumulated_bp_z),
+            three_z_scores=np.array(accumulated_three_z),
             svm_scores=np.array(accumulated_svm_scores),
             type_ids=np.array(accumulated_type_ids),
             confidence_threshold=config.scoring.threshold,
@@ -4409,7 +4413,7 @@ def classify_streaming_per_contig(
         adjusted_hc_count = None
 
     # Free accumulated score data
-    del accumulated_five_z, accumulated_bp_z, accumulated_svm_scores, accumulated_type_ids
+    del accumulated_five_z, accumulated_bp_z, accumulated_three_z, accumulated_svm_scores, accumulated_type_ids
 
     # Build summary
     summary = output_writer.get_summary()
@@ -6259,28 +6263,30 @@ def main_classify(config: IntronICConfig):
         if classified_introns:
             from intronIC.scoring.cluster_validation import validate_u12_cluster
 
-            five_z = np.array([
-                i.scores.five_z_score for i in classified_introns
-                if i.scores and i.scores.five_z_score is not None
-            ])
-            bp_z = np.array([
-                i.scores.bp_z_score for i in classified_introns
-                if i.scores and i.scores.bp_z_score is not None
-            ])
-            svm_s = np.array([
-                i.scores.svm_score for i in classified_introns
-                if i.scores and i.scores.svm_score is not None
-            ])
+            # Filter to introns with all three z-scores + svm_score present,
+            # so the parallel arrays line up for the cluster validation call.
+            cv_introns = [
+                i for i in classified_introns
+                if i.scores
+                and i.scores.five_z_score is not None
+                and i.scores.bp_z_score is not None
+                and i.scores.three_z_score is not None
+                and i.scores.svm_score is not None
+            ]
+            five_z = np.array([i.scores.five_z_score for i in cv_introns])
+            bp_z = np.array([i.scores.bp_z_score for i in cv_introns])
+            three_z = np.array([i.scores.three_z_score for i in cv_introns])
+            svm_s = np.array([i.scores.svm_score for i in cv_introns])
             type_ids = np.array([
                 i.metadata.type_id if i.metadata else 'u2'
-                for i in classified_introns
-                if i.scores and i.scores.svm_score is not None
+                for i in cv_introns
             ])
 
             if len(five_z) > 0:
                 cv_result = validate_u12_cluster(
                     five_z_scores=five_z,
                     bp_z_scores=bp_z,
+                    three_z_scores=three_z,
                     svm_scores=svm_s,
                     type_ids=type_ids,
                     confidence_threshold=config.scoring.threshold,

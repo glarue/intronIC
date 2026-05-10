@@ -3,22 +3,37 @@ Species-level U12 cluster validation using multi-bandwidth density valley detect
 
 Assesses whether the SVM's confident U12 calls form a distinct cluster
 separated from the U2 distribution by a density valley. Projects all scored
-introns onto the U2→U12 discriminating axis (2D: 5'z, BPz), estimates
-1D density at multiple KDE bandwidths, and checks for a valley between
-the clusters that persists under smoothing.
+introns onto the U2→U12 discriminating axis (3D: 5'z, BPz, 3'z), estimates
+1D density along that axis at multiple KDE bandwidths, and checks for a
+valley between the clusters that persists under smoothing.
 
 Two-regime prior framework:
   - Valley detected (median depth > 0.3): U12 cluster confirmed, trust SVM
   - No valley (median depth ≤ 0.3): No distinct U12 cluster, discount prior
     to suppress borderline false positives
 
-Feature space: 2D (5'z, BPz) — the two dimensions where U12 and U2 populations
-are most distinct, corresponding to the two U12-specific spliceosomal recognition
-events (U11 snRNA ↔ 5'SS, U12 snRNA ↔ BPS). The 3' z-score adds within-U12
-variance (AT-AC vs GT-AG subtype variation) that degrades the valley signal.
+Feature space and projection direction
+--------------------------------------
+The discriminating direction is computed via Fisher's linear discriminant:
 
-Validated on 10 species: all confirmed U12 species show median depth ≥ 0.645;
-all confirmed U12-absent species show median depth ≤ 0.001.
+    w = Σ⁻¹ · (μ_U12 − μ_U2)
+
+where Σ is the diagonal-shrunk pooled within-class covariance. This is the
+optimal 1D projection under Gaussian assumptions: instead of just pointing
+from one centroid to the other (the naive choice), it down-weights features
+with high within-class variance — which is what makes adding 3'z safe here.
+
+Including 3'z with the *naive* centroid direction degrades the valley signal,
+because 3'z carries substantial within-U12 variance (driven by AT-AC vs GT-AG
+subtype differences). Fisher's reweighting absorbs that variance instead of
+inheriting it into the projection. Empirically, switching to 3D Fisher gains
++2–10% valley depth on real-U12 species (largest where the cluster is
+diffuse — Arabidopsis, vertebrates) without inflating depth on any
+U12-absent species.
+
+Validated on 16 species: all confirmed U12 species show median depth ≥ 0.57;
+all confirmed U12-absent species show median depth ≤ 0.005, well below the
+0.3 valley threshold.
 """
 
 import csv
@@ -35,6 +50,48 @@ if TYPE_CHECKING:
     from intronIC.core.intron import Intron
 
 
+def _fishers_discriminant_direction(
+    u12_points: np.ndarray,
+    u2_points: np.ndarray,
+    shrinkage: float = 0.05,
+) -> np.ndarray:
+    """Fisher's linear discriminant direction Σ⁻¹(μ_U12 − μ_U2), normalized.
+
+    Σ is the pooled within-class covariance with diagonal shrinkage:
+
+        Σ = (1 − α) · pooled_cov + α · diag(pooled_cov)
+
+    Shrinkage stabilizes when the U12 cluster is small or features are
+    highly correlated. A small ridge term is also added to guarantee
+    invertibility under all input conditions.
+
+    Returns a unit vector with the same dimensionality as the input
+    points; if the centroids coincide (degenerate case) returns a zero
+    vector.
+    """
+    n12, n2 = len(u12_points), len(u2_points)
+    mu12 = u12_points.mean(axis=0)
+    mu2 = u2_points.mean(axis=0)
+
+    if n12 > 1:
+        cov12 = np.cov(u12_points, rowvar=False)
+    else:
+        cov12 = np.zeros((u12_points.shape[1], u12_points.shape[1]))
+    cov2 = np.cov(u2_points, rowvar=False)
+    pooled = ((n12 - 1) * cov12 + (n2 - 1) * cov2) / max(n12 + n2 - 2, 1)
+
+    diag = np.diag(np.diag(pooled))
+    Sigma = (1 - shrinkage) * pooled + shrinkage * diag
+    Sigma = Sigma + 1e-6 * np.eye(Sigma.shape[0])
+
+    diff = mu12 - mu2
+    direction = np.linalg.solve(Sigma, diff)
+    norm = np.linalg.norm(direction)
+    if norm < 1e-10:
+        return np.zeros_like(diff)
+    return direction / norm
+
+
 def compute_valley_depth(
     u12_points: np.ndarray,
     u2_points: np.ndarray,
@@ -46,13 +103,15 @@ def compute_valley_depth(
     """
     Multi-bandwidth density valley detection between U12 and U2 clusters.
 
-    Projects all points onto the U2→U12 centroid axis, then estimates 1D
-    density at multiple bandwidths. A real valley persists across bandwidths;
-    tail artifacts vanish under smoothing.
+    Projects all points onto Fisher's linear discriminant direction
+    Σ⁻¹(μ_U12 − μ_U2), then estimates 1D density at multiple bandwidths.
+    A real valley persists across bandwidths; tail artifacts vanish under
+    smoothing.
 
     Args:
-        u12_points: (n_u12, 2) array of [5'z, BPz] for confident U12 calls
-        u2_points: (n_u2, 2) array of [5'z, BPz] for U2 introns
+        u12_points: (n_u12, D) array of features for confident U12 calls.
+            Production input is D=3 with columns (5'z, BPz, 3'z).
+        u2_points: (n_u2, D) array of the same features for U2 introns.
         bandwidth_multipliers: Multipliers of Silverman bandwidth to test
         n_eval: Number of points for density evaluation
         max_u2_sample: Max U2 introns to subsample for KDE
@@ -76,12 +135,14 @@ def compute_valley_depth(
             'reason': 'insufficient U12 points',
         }
 
-    # Direction vector from U2 centroid to U12 centroid (2D)
+    # Fisher's linear discriminant: Σ⁻¹(μ_U12 − μ_U2), shrunk and normalized.
+    # Down-weights features with large within-class variance (e.g., 3'z, where
+    # AT-AC / GT-AG subtype differences inflate the U12 spread) so they don't
+    # contaminate the projection direction.
     u2_centroid = u2_points.mean(axis=0)
     u12_centroid = u12_points.mean(axis=0)
-    direction = u12_centroid - u2_centroid
-    norm = np.linalg.norm(direction)
-    if norm < 1e-10:
+    direction = _fishers_discriminant_direction(u12_points, u2_points)
+    if np.linalg.norm(direction) < 1e-10:
         return {
             'median_depth': 0.0,
             'per_bandwidth_depths': [],
@@ -90,7 +151,6 @@ def compute_valley_depth(
             'centroid_sigma': 0.0,
             'reason': 'U12 and U2 centroids coincide',
         }
-    direction = direction / norm
 
     # Project all points onto discriminating axis
     all_points = np.vstack([u2_points, u12_points])
@@ -318,6 +378,7 @@ def validate_u12_cluster(
     svm_scores: np.ndarray,
     type_ids: np.ndarray,
     confidence_threshold: float = 90.0,
+    three_z_scores: Optional[np.ndarray] = None,
 ) -> dict:
     """
     Full cluster validation pipeline: compute valley depth and adjusted prior.
@@ -332,6 +393,10 @@ def validate_u12_cluster(
         svm_scores: Array of SVM scores (0-100) for all scored introns
         type_ids: Array of type assignments ('u12' or 'u2')
         confidence_threshold: SVM score threshold for confident calls (default: 90.0)
+        three_z_scores: Array of 3' z-scores for all scored introns. When
+            provided, valley detection runs in 3D (5'z, BPz, 3'z) using
+            Fisher's discriminant. When omitted, falls back to 2D (5'z, BPz)
+            for callers that don't have 3'z available.
 
     Returns:
         Dictionary with valley depth, regime, adjusted prior, and diagnostics
@@ -360,9 +425,20 @@ def validate_u12_cluster(
             'centroid_sigma': float('nan'),
         }
 
-    # Extract 2D points (5'z, BPz)
-    u12_points = np.column_stack([five_z_scores[u12_mask], bp_z_scores[u12_mask]])
-    u2_points = np.column_stack([five_z_scores[u2_mask], bp_z_scores[u2_mask]])
+    # Stack feature columns. 3D (5'z, BPz, 3'z) is the production default;
+    # 2D fallback for callers that lack 3'z (kept for backwards compat).
+    if three_z_scores is not None:
+        u12_points = np.column_stack([
+            five_z_scores[u12_mask], bp_z_scores[u12_mask],
+            three_z_scores[u12_mask],
+        ])
+        u2_points = np.column_stack([
+            five_z_scores[u2_mask], bp_z_scores[u2_mask],
+            three_z_scores[u2_mask],
+        ])
+    else:
+        u12_points = np.column_stack([five_z_scores[u12_mask], bp_z_scores[u12_mask]])
+        u2_points = np.column_stack([five_z_scores[u2_mask], bp_z_scores[u2_mask]])
 
     # Compute valley depth
     valley_result = compute_valley_depth(u12_points, u2_points)
