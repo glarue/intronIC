@@ -2,7 +2,7 @@
 
 # intronIC (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-Classify intron sequences as **U12-type** (minor spliceosome) or **U2-type** (major spliceosome). A 42-model RBF SVM ensemble scores each intron against position-weight matrices and outputs a calibrated probability (0-100%).
+Classify intron sequences as **U12-type** (minor spliceosome) or **U2-type** (major spliceosome). A 126-model multispecies RBF SVM ensemble scores each intron against position-weight matrices and outputs a calibrated probability (0-100%).
 
 ---
 
@@ -27,7 +27,7 @@ intronIC test -p 4
 
 ## What's New in v2.4
 
-- **Default model is now the v3 multispecies bundle**: 3 seeds × 42 calibrated SVMs (126 total) trained on 41,333 introns across 97 species and 14 clades. Holdout F1 = 1.000 vs the v2.3 default's 0.9975, and ~54% lower production-equivalent FPR on U12-absent species.
+- **Default model is now the v3 multispecies bundle**: 3 seeds × 42 calibrated SVMs (126 total) trained on 41,333 introns across 90 species and 14 clades. Holdout F1 = 1.000 vs the v2.3 default's 0.9975, and ~54% lower production-equivalent FPR on U12-absent species.
 - **Default classification threshold lowered from 95 → 90**, made safe by the v3 model's tighter calibration. Pass `--threshold 95` to restore prior behavior.
 - **`--streaming` (default) and `--in-memory` now produce bit-identical classifications**. Mode choice affects only the runtime/memory tradeoff. Reference run on Homo sapiens GRCh38 + Ensembl 104, `-p 6`, ~227k scored introns: streaming ~16 min / 5.4 GB peak, in-memory ~15 min / 10.1 GB peak.
 - **Self-describing model bundles** carry config + training metadata alongside the weights; see [`docs/v3_bundle_schema.md`](docs/v3_bundle_schema.md).
@@ -45,9 +45,9 @@ intronIC test -p 4
 
 ## Key Features
 
-- **Probability scores** (0-100%) from a 42-model ensemble with isotonic calibration
+- **Probability scores** (0-100%) from a 126-model calibrated SVM ensemble (3 seeds × 42 sub-models, isotonic calibration)
 - **Pretrained model** loaded automatically for cross-species analysis
-- **Streaming mode** (default) reduces memory ~85% on large genomes
+- **Streaming mode** (default) roughly halves peak memory on large genomes (e.g., ~5.4 GB vs ~10.1 GB for full human at `-p 6`); bit-identical classifications
 - **Parallel scoring** via `-p N` for linear speedup
 - **Comprehensive metadata**: phase, position, parent gene/transcript
 
@@ -62,7 +62,7 @@ intronIC identifies U12-type introns in five stages:
 1. **PWM scoring** — score the 5' splice site, branch point, and 3' splice site against position-weight matrices
 2. **Background correction** — blend species-specific nucleotide frequencies into U2-type PWMs to correct composition bias
 3. **Normalization** — convert raw log-odds to z-scores via robust scaling
-4. **SVM classification** — 42-model RBF SVM ensemble produces per-intron probabilities and ensemble agreement (sigma)
+4. **SVM classification** — 126-model RBF SVM ensemble (v2.4 default; 3 seeds × 42 sub-models) produces per-intron probabilities and ensemble agreement (sigma)
 5. **Score adjustment** — adjust probabilities using a species-level valley prior and an ensemble disagreement penalty
 
 See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) for the full algorithm description.

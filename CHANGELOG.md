@@ -5,15 +5,31 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-05-10
+
+### Changed
+- **v3 multispecies training corpus is now bundled** as the default
+  reference set for `intronIC train`. Files: `u12_reference_multispecies.introns.iic.gz`
+  (10,003 U12 introns) and `u2_reference_multispecies.introns.iic.gz`
+  (31,330 U2 introns) — the actual 41,333-row training pool the v3
+  ensemble was fit on (90 species, 14 clades, post-singleton-decay
+  filter). Sequences are bundled with 50 bp flanks per side, oriented
+  so the bases adjacent to each splice site are preserved (inside-out
+  trim).
+- **Legacy v2.3 reference sets renamed** to `u12_reference_human.introns.iic.gz`
+  and `u2_reference_human.introns.iic.gz`. Still bundled and selectable
+  via `--reference-u12s` / `--reference-u2s` for backwards-compatible
+  retraining.
+
 ## [2.4.0] - 2026-05-09
 
 ### Changed
 - **Default bundled model upgraded to v3 multispecies** (3 seeds × 42 = 126
-  calibrated SVMs trained on 41,333 introns from 97 species across 14
-  clades). Holdout F1 = 1.000 vs v2.3 default 0.9975 on the 5-species
-  recall set; production-equivalent (valley-adjusted) FPR on U12-absent
-  species is ~54% lower than v2.3 (12 vs 26 across ~330k scored introns at
-  threshold 90).
+  calibrated SVMs trained on 41,333 introns from 90 species across 14
+  clades, with 7 evaluation-only holdout species). Holdout F1 = 1.000 vs
+  v2.3 default 0.9975 on the 5-species recall set; production-equivalent
+  (valley-adjusted) FPR on U12-absent species is ~54% lower than v2.3
+  (12 vs 26 across ~330k scored introns at threshold 90).
 - **Default classification threshold lowered from 95 → 90.** The v3
   multispecies model's adjusted-score distribution is tightly calibrated
   (Brier ≈ 4×10⁻⁶) and dropping to 90 picks up real conserved U12s
