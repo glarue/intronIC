@@ -2996,12 +2996,12 @@ def normalize_scores(
     if config.scoring.reference_u12s:
         u12_file = config.scoring.reference_u12s
     else:
-        u12_file = data_dir / "u12_reference.introns.iic.gz"
+        u12_file = data_dir / "u12_reference_multispecies.introns.iic.gz"
 
     if config.scoring.reference_u2s:
         u2_file = config.scoring.reference_u2s
     else:
-        u2_file = data_dir / "u2_reference.introns.iic.gz"
+        u2_file = data_dir / "u2_reference_multispecies.introns.iic.gz"
 
     if not u12_file.exists() or not u2_file.exists():
         raise FileNotFoundError(
@@ -5429,10 +5429,10 @@ def main_train(config: IntronICConfig):
         data_dir = Path(__file__).parent.parent / "data"
 
         u12_file = config.scoring.reference_u12s or (
-            data_dir / "u12_reference.introns.iic.gz"
+            data_dir / "u12_reference_multispecies.introns.iic.gz"
         )
         u2_file = config.scoring.reference_u2s or (
-            data_dir / "u2_reference.introns.iic.gz"
+            data_dir / "u2_reference_multispecies.introns.iic.gz"
         )
 
         if not u12_file.exists() or not u2_file.exists():

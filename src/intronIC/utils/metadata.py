@@ -81,9 +81,9 @@ def generate_training_metadata(
     """
     # Determine reference file paths (use defaults if not specified)
     if u12_reference_path is None:
-        u12_reference_path = Path(__file__).parent.parent / "data" / "u12_reference.introns.iic.gz"
+        u12_reference_path = Path(__file__).parent.parent / "data" / "u12_reference_multispecies.introns.iic.gz"
     if u2_reference_path is None:
-        u2_reference_path = Path(__file__).parent.parent / "data" / "u2_reference.introns.iic.gz"
+        u2_reference_path = Path(__file__).parent.parent / "data" / "u2_reference_multispecies.introns.iic.gz"
 
     # Compute MD5 hashes for reproducibility
     u12_md5 = compute_file_md5(u12_reference_path) if u12_reference_path.exists() else None
