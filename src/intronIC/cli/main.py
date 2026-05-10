@@ -6344,10 +6344,18 @@ def main_test(args):
 
     console = Console()
 
-    # Find bundled test data
+    # Find bundled test data.
+    #
+    # Drosophila melanogaster (RefSeq R6, ~140 Mb genome, ~47k introns) was
+    # picked over a single human chromosome because the test must exercise
+    # the full pipeline including valley_depth detection. Single-chromosome
+    # fixtures make the on-the-fly RobustScaler fit on a non-representative
+    # intron pool, which compresses the projection axis enough that the
+    # multi-bandwidth median valley metric under-reports — even when the
+    # U12 cluster is real. A small full genome avoids that artifact.
     data_dir = Path(__file__).parent.parent / "data" / "test_data"
-    genome_file = data_dir / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
-    annotation_file = data_dir / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
+    genome_file = data_dir / "Drosophila_melanogaster.RefSeq_R6.fa.gz"
+    annotation_file = data_dir / "Drosophila_melanogaster.RefSeq_R6.gff3.gz"
 
     # Check if test data exists
     if not genome_file.exists() or not annotation_file.exists():
@@ -6371,7 +6379,7 @@ def main_test(args):
         console.print("\n[bold]To run test manually:[/bold]")
         console.print(f"  intronIC classify -g {genome_file} \\")
         console.print(f"                    -a {annotation_file} \\")
-        console.print(f"                    -n homo_sapiens_chr19 -p 4")
+        console.print(f"                    -n drosophila_melanogaster -p 4")
         return 0
 
     # Run quick classification test
@@ -6392,7 +6400,7 @@ def main_test(args):
         "classify",
         "-g", str(genome_file),
         "-a", str(annotation_file),
-        "-n", "test_chr19",
+        "-n", "drosophila_melanogaster",
         "-o", str(output_dir),
         "-p", str(args.processes),
     ]
@@ -6404,7 +6412,7 @@ def main_test(args):
         elapsed = time.time() - start_time
 
         # Check results
-        metrics_file = output_dir / "test_chr19.metrics.iic.json"
+        metrics_file = output_dir / "drosophila_melanogaster.metrics.iic.json"
         if metrics_file.exists():
             # Parse metrics to get counts
             import json
