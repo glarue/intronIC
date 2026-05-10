@@ -55,7 +55,7 @@ intronIC test -p 4
 
 ## How It Works
 
-Most eukaryotic introns (~99.5%) use the **major (U2-type) spliceosome**. A small fraction (~0.5%) use the **minor (U12-type) spliceosome**, characterized by a conserved **TCCTTAAC** branch point motif and either **AT-AC** (~25%) or **GT-AG** (~75%) terminal dinucleotides.
+Most eukaryotic introns (~99.5%) are spliced by the **major (U2-type) spliceosome**; a small fraction (~0.5%) are spliced by the **minor (U12-type) spliceosome**. U12-type introns carry a conserved **TCCTTAAC** branch point motif and have either **AT-AC** (~25%) or **GT-AG** (~75%) terminal dinucleotides.
 
 intronIC identifies U12-type introns in five stages:
 
