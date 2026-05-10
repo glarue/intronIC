@@ -29,6 +29,7 @@ intronIC test -p 4
 
 - **Default model is now the v3 multispecies bundle**: 3 seeds × 42 calibrated SVMs (126 total) trained on 41,333 introns across 97 species and 14 clades. Holdout F1 = 1.000 vs the v2.3 default's 0.9975, and ~54% lower production-equivalent FPR on U12-absent species.
 - **Default classification threshold lowered from 95 → 90**, made safe by the v3 model's tighter calibration. Pass `--threshold 95` to restore prior behavior.
+- **`--streaming` (default) and `--in-memory` now produce bit-identical classifications**. Mode choice affects only the runtime/memory tradeoff. Reference run on Homo sapiens GRCh38 + Ensembl 104, `-p 6`, ~227k scored introns: streaming ~16 min / 5.4 GB peak, in-memory ~15 min / 10.1 GB peak.
 - **Self-describing model bundles** carry config + training metadata alongside the weights; see [`docs/v3_bundle_schema.md`](docs/v3_bundle_schema.md).
 - v2.3 model bundles continue to load unchanged; old runs reproduce by passing `--model <v2.3-bundle.pkl>`.
 - See [CHANGELOG.md](CHANGELOG.md) for full release history.

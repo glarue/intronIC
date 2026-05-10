@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logic with the new adaptive-fit worker (see Added). v2.3-format bundles
   with a saved normalizer continue to behave identically; the refactor is
   covered by the existing `-p 1` vs `-p 3` equivalence tests.
+- **`--streaming` and `--in-memory` now produce bit-identical
+  classifications** on the same input. Previously the two paths diverged
+  on score values (BG correction and KDE valley depth depended on
+  upstream iteration order) and on which introns reached `score_info.iic`
+  (in-memory included [d]-tagged duplicates and AMBIGUOUS-omitted introns
+  with bogus 0.0 raws; streaming did not). Mode choice now affects only
+  runtime/memory tradeoff. Locked in by
+  `tests/integration/test_streaming_equivalence.py::TestStreamingMatchesInMemory`.
 
 ### Added
 - **v3 multispecies model bundle support** (`--model <bundle.pkl>`).
@@ -51,14 +59,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score once and apply a scaler that's resolved later in the same run.
 - v3 bundle schema spec at `docs/v3_bundle_schema.md`.
 
+### Fixed
+- `SpeciesBackground.build_corrected_pwm_sets` gated on `n_introns`
+  (`len(_intron_seqs)`), which is only populated by the in-memory
+  `accumulate()` path. Streaming uses `merge_worker_counts()` and left
+  `_intron_seqs` empty, so the `min_introns` guard always tripped and
+  the streaming path silently returned the human U2 PWMs unchanged
+  for every run with BG correction enabled. Switched to `n_accumulated`
+  (which has the right fallback over `_RegionAccumulator` counts).
+- `_build_final_pwm_sets` iterated `acc.get_all_subtypes()` in dict
+  insertion order. Multiple non-canonical 5' dnts collapse to the
+  same `('u2', 'gtag')` slot via the `FIVE_DNT_TO_SUBTYPE` fallback,
+  and last-writer-wins made the final PWM order-dependent. Sort
+  subtypes before iteration in both the 5'/3' and BPS loops.
+- `compute_valley_depth` subsampled `u2_proj` with `np.random.choice`
+  under a fixed seed, so the indices were deterministic but the points
+  at those indices inherited the upstream iteration order. Sort
+  `u2_proj` (and `u12_proj` for symmetry) before sampling so the KDE
+  input is data-determined, not order-determined.
+- In-memory `score_introns` ran on omitted introns and produced bogus
+  0.0 raw scores plus arbitrary z-scores for them; streaming was
+  already filtering on `omitted == NONE`. Filter the in-memory
+  `introns_for_scoring` list to match. Omitted introns still flow
+  through `merge_scored_and_omitted_introns` into `meta.iic` /
+  `bed.iic` with their omitted reason.
+- In-memory `apply_species_background`, `classify_with_pretrained_model`,
+  and `write_outputs` now uniformly skip coordinate-duplicate isoforms
+  when `include_duplicates=False`, matching streaming. In-memory
+  `score_info.iic` no longer includes `[d]`-tagged duplicate rows.
+
 ### Notes
 - Existing v2.3 model bundles continue to load unchanged (the legacy
   `{"ensemble": ..., "normalizer": ...}` dict is pass-through).
-- The pre-existing divergence in scored-intron counts between
-  `--streaming` and `--in-memory` (streaming includes coordinate-duplicate
-  introns in `score_info.iic`, in-memory pre-filters them) is unchanged
-  from v2.3 and v2.4 behaviour. Final post-valley-adjustment U12 calls
-  agree across modes.
 
 ## [2.3.0] - 2026-04-23
 
