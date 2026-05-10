@@ -1757,7 +1757,8 @@ def extract_introns_from_annotation(
        - Free contig memory before next
     4. Return all introns WITH sequences for scoring
 
-    Memory savings from pre-filtering: 28 GB → ~4-5 GB peak (82-85% reduction)
+    Per-contig pipeline + prefilter keeps peak RSS bounded by the largest contig's
+    intron set, not the whole genome's. Reference: ~5 GB peak on full human at -p 6.
 
     Note: A "contig" is a contiguous genomic sequence (chromosome, scaffold, or contig).
     This approach works for any assembly level and enables parallelization via -p flag.
@@ -2168,7 +2169,7 @@ def extract_introns_streaming(
     reporter: IntronICProgressReporter,
 ) -> Tuple[List[Intron], Path]:
     """
-    Extract introns in streaming mode (~85% memory savings).
+    Extract introns in streaming mode (roughly halves peak memory vs in-memory).
 
     This mode processes introns contig-by-contig and:
     1. Writes full sequences to SQLite for later output (preserving insertion order)
@@ -2196,7 +2197,7 @@ def extract_introns_streaming(
     from intronIC.file_io.sequence_store import StreamingSequenceStore
 
     messenger.info(f"Parsing annotation: {config.input.annotation}")
-    messenger.info("Using streaming mode (~85% memory savings)")
+    messenger.info("Using streaming mode (roughly half the peak memory of --in-memory)")
 
     # Parse annotation and group by contig
     messenger.log_only("Parsing annotation and grouping by contig")
@@ -5832,7 +5833,7 @@ def main_classify(config: IntronICConfig):
             # Don't load genome here - extraction handles it internally
             # (parallel mode uses indexed access, sequential uses cache)
             if config.performance.streaming:
-                # Streaming mode: ~85% memory savings, stores sequences in SQLite
+                # Streaming mode: roughly half the peak memory of in-memory; stores sequences in SQLite
                 introns, streaming_db_path = extract_introns_streaming(
                     config, messenger, reporter
                 )

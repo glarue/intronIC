@@ -370,7 +370,7 @@ class PerformanceConfig:
 
     processes: int = 1
     cv_processes: int = 1
-    streaming: bool = True  # Streaming mode (default): ~85% memory savings, faster with parallelization
+    streaming: bool = True  # Streaming mode (default): roughly half the peak memory of in-memory; bit-identical results
 
 
 @dataclass(frozen=True, slots=True)

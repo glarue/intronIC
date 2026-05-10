@@ -589,10 +589,10 @@ class Intron:
     - Maintain clear boundaries between pipeline stages
 
     Streaming mode optimization:
-        In streaming mode (--streaming flag), full sequences are written to
-        a temporary SQLite database during extraction. Only the minimal
-        scoring motifs (ScoringMotifs) are kept in memory, reducing RAM
-        usage by ~85% for large genomes.
+        In streaming mode (--streaming flag, default), full sequences are
+        written to a temporary SQLite database during extraction. Only the
+        minimal scoring motifs (ScoringMotifs) are kept in memory, roughly
+        halving peak RSS vs --in-memory on large genomes.
 
     Attributes:
         intron_id: Unique identifier

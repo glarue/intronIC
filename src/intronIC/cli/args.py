@@ -390,7 +390,7 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             action="store_true",
             dest="streaming",
             default=True,
-            help="Use streaming mode (default: ~85%% memory savings, faster with -p)",
+            help="Use streaming mode (default; roughly halves peak memory vs --in-memory; bit-identical results)",
         )
 
         # === Output Parameters ===
@@ -864,9 +864,9 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             action="store_true",
             dest="streaming",
             default=True,
-            help="Use streaming mode (default): stores sequences in temp storage, "
-            "keeps only scoring motifs in memory. ~85%% memory savings "
-            "(e.g., 11 GB → 2 GB for human), faster with parallel processing.",
+            help="Use streaming mode (default): stores sequences in temp on-disk storage, "
+            "keeps only scoring motifs in memory. Roughly halves peak RSS vs --in-memory "
+            "(e.g., ~5 GB vs ~10 GB for full human at -p 6). Bit-identical to in-memory.",
         )
 
         # === Output Options ===
