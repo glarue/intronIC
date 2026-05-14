@@ -3899,20 +3899,26 @@ def classify_streaming_per_contig(
     #
     # --load-normalizer is honored at this point in either bundle format:
     # the user-supplied scaler overrides whatever the bundle ships.
+    # scaler_source records which path produced the final scaler, surfaced
+    # to the user in the run summary so single-intron / sparse-input runs
+    # don't silently default to frozen-fallback behavior.
+    scaler_source = None
     if config.scoring.load_normalizer is not None:
         messenger.info(
             f"Loading saved normalizer from {config.scoring.load_normalizer}"
         )
         saved_normalizer = load_model(config.scoring.load_normalizer)
         scaler = saved_normalizer.get_frozen_scaler()
+        scaler_source = "user_supplied"
         messenger.log_only(
             "Using --load-normalizer scaler; skipping adaptive pre-pass"
         )
     elif saved_normalizer is not None:
         scaler = saved_normalizer.get_frozen_scaler()
+        scaler_source = "bundled_saved"
         messenger.log_only("Extracted frozen scaler from model normalizer")
     else:
-        scaler = None
+        scaler = None  # adaptive fit happens later
         messenger.log_only(
             "Model bundle has no saved normalizer (v3 multispecies); "
             "will fit adaptive normalizer on a per-contig pre-pass"
@@ -4142,6 +4148,7 @@ def classify_streaming_per_contig(
         if not contig_score_arrays:
             if fallback_normalizer is not None:
                 scaler = fallback_normalizer.get_frozen_scaler()
+                scaler_source = "frozen_fallback_no_introns"
                 messenger.warning(
                     "Adaptive normalizer fit produced no scored introns. "
                     "Falling through to bundled fallback scaler "
@@ -4161,6 +4168,7 @@ def classify_streaming_per_contig(
 
             if pooled_raw.shape[0] < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
                 scaler = fallback_normalizer.get_frozen_scaler()
+                scaler_source = "frozen_fallback_min_introns"
                 messenger.warning(
                     f"Adaptive normalizer fit pool has only "
                     f"{pooled_raw.shape[0]:,} introns (< {MIN_ADAPTIVE_INTRONS} "
@@ -4177,6 +4185,7 @@ def classify_streaming_per_contig(
                     pooled_raw, dataset_type="unlabeled"
                 )
                 scaler = normalizer.get_frozen_scaler()
+                scaler_source = "adaptive_fit"
                 messenger.log_only(
                     f"Fitted adaptive scaler on {pooled_raw.shape[0]:,} introns "
                     f"(median={[float(c) for c in scaler.center_]}, "
@@ -4478,6 +4487,7 @@ def classify_streaming_per_contig(
             "pretrained": True,
             "model_path": str(config.training.pretrained_model_path),
             "streaming_mode": "per_contig",
+            "normalizer_used": scaler_source,
             "u12_boundaries": dict(boundaries_u12.most_common(20)),
             "u2_boundaries": dict(boundaries_u2.most_common(20)),
         }
@@ -4506,6 +4516,21 @@ def classify_streaming_per_contig(
     messenger.info(
         f"Streaming classification complete: {total_classified:,} introns classified"
     )
+    # Surface the normalizer used so users see at a glance whether adaptive
+    # fitting actually ran or whether we fell back to frozen (e.g. sparse
+    # input).
+    _NORMALIZER_LABEL = {
+        "adaptive_fit": "adaptive (fitted per-species)",
+        "user_supplied": "user-supplied (--load-normalizer)",
+        "bundled_saved": "bundled saved scaler (training-species)",
+        "frozen_fallback_min_introns": "frozen fallback (input below adaptive-fit threshold)",
+        "frozen_fallback_no_introns": "frozen fallback (no scoreable introns produced)",
+    }
+    _norm_label = _NORMALIZER_LABEL.get(scaler_source, str(scaler_source))
+    if scaler_source and scaler_source.startswith("frozen_fallback"):
+        messenger.warning(f"Normalizer used: {_norm_label}")
+    else:
+        messenger.info(f"Normalizer used: {_norm_label}")
     messenger.log_only(
         f"Total genes: {total_genes:,}, introns generated: {total_introns_generated:,}"
     )
@@ -4695,11 +4720,13 @@ def classify_with_pretrained_model(
     # --load-normalizer takes precedence over --normalizer-mode in both
     # in-memory and streaming paths: when the user supplies a saved
     # scaler explicitly, use it regardless of any other mode setting.
+    normalizer_source = None
     if config.scoring.load_normalizer is not None:
         messenger.info(
             f"Loading saved normalizer from {config.scoring.load_normalizer}"
         )
         normalizer = load_model(config.scoring.load_normalizer)
+        normalizer_source = "user_supplied"
         messenger.log_only("Using saved normalizer for reproducible normalization")
     elif normalizer_mode == "human":
         if bundled_saved is None:
@@ -4711,6 +4738,7 @@ def classify_with_pretrained_model(
         messenger.info("Using human-trained normalizer (scaler from training species)")
         messenger.log_only("This preserves composition bias correction across species")
         normalizer = bundled_saved
+        normalizer_source = "bundled_human"
     else:  # adaptive
         if len(introns) < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
             # Too few introns to fit adaptive reliably; fall through to bundled fallback.
@@ -4723,6 +4751,7 @@ def classify_with_pretrained_model(
                 f"(single-intron queries, tiny annotation subsets) only."
             )
             normalizer = fallback_normalizer
+            normalizer_source = "frozen_fallback_min_introns"
         else:
             # Fit normalizer on experimental data (feature re-scaling)
             messenger.info(
@@ -4734,6 +4763,7 @@ def classify_with_pretrained_model(
             )
             normalizer = ScoreNormalizer()
             normalizer.fit(introns, dataset_type="unlabeled")
+            normalizer_source = "adaptive_fit"
 
             # Save normalizer if requested
             if config.scoring.save_normalizer:
@@ -4791,7 +4821,22 @@ def classify_with_pretrained_model(
         "n_models": len(ensemble.models),
         "pretrained": True,
         "model_path": str(model_path),
+        "normalizer_used": normalizer_source,
     }
+
+    # Surface the normalizer choice so users see it next to other run-level
+    # info; warn when we fell back rather than fitted adaptively.
+    _NORMALIZER_LABEL = {
+        "adaptive_fit": "adaptive (fitted per-species)",
+        "user_supplied": "user-supplied (--load-normalizer)",
+        "bundled_human": "bundled human/training-species scaler",
+        "frozen_fallback_min_introns": "frozen fallback (input below adaptive-fit threshold)",
+    }
+    _norm_label = _NORMALIZER_LABEL.get(normalizer_source, str(normalizer_source))
+    if normalizer_source and normalizer_source.startswith("frozen_fallback"):
+        messenger.warning(f"Normalizer used: {_norm_label}")
+    else:
+        messenger.info(f"Normalizer used: {_norm_label}")
 
     # Generate metadata for pretrained model usage
     run_metadata_path = config.output.get_output_path(".run_metadata.json")
