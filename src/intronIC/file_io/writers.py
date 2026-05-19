@@ -1102,6 +1102,9 @@ class ScoreWriter(BaseWriter):
             "ppt_t_weighted",
             "adjusted_score",
             "ensemble_sigma",
+            "svm_score_adaptive",
+            "svm_score_frozen",
+            "scaler_used",
         ]
         self.file.write("\t".join(header_fields) + "\n")
 
@@ -1161,6 +1164,9 @@ class ScoreWriter(BaseWriter):
         ppt_t_weighted = null
         adjusted_score = null
         ensemble_sigma = null
+        svm_score_adaptive = null
+        svm_score_frozen = null
+        scaler_used = null
 
         # Fill in scores if available
         if intron.scores:
@@ -1230,6 +1236,12 @@ class ScoreWriter(BaseWriter):
                 adjusted_score = str(round(intron.scores.adjusted_score, 2))
             if intron.scores.ensemble_sigma is not None:
                 ensemble_sigma = str(round(intron.scores.ensemble_sigma, 4))
+            if getattr(intron.scores, "svm_score_adaptive", None) is not None:
+                svm_score_adaptive = str(round(intron.scores.svm_score_adaptive, 2))
+            if getattr(intron.scores, "svm_score_frozen", None) is not None:
+                svm_score_frozen = str(round(intron.scores.svm_score_frozen, 2))
+            if getattr(intron.scores, "scaler_used", None) is not None:
+                scaler_used = str(intron.scores.scaler_used)
 
         # Fill in sequences if available
         if intron.sequences:
@@ -1276,6 +1288,9 @@ class ScoreWriter(BaseWriter):
             ppt_t_weighted,
             adjusted_score,
             ensemble_sigma,
+            svm_score_adaptive,
+            svm_score_frozen,
+            scaler_used,
         ]
 
         self.file.write("\t".join(fields) + "\n")

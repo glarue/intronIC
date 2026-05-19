@@ -719,6 +719,54 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
               Saved to <output_prefix>.normalizer.pkl""",
         )
 
+        # Mode-separation (v2.6+): activated automatically when the bundle is
+        # in modesep mode. CLI flags override the bundle's modesep_params.
+        parser.add_argument(
+            "--no-mode-sep",
+            dest="mode_sep_disable",
+            action="store_true",
+            default=False,
+            help="""Disable the mode-separation second pass even when the loaded bundle
+              ships in modesep mode. Emits only first-pass (cluster-aware) scores.
+              Use for diagnostics or when reproducing pre-v2.6 behavior.""",
+        )
+        parser.add_argument(
+            "--mode-sep-z-floor",
+            dest="mode_sep_z_floor",
+            type=float,
+            default=None,
+            help="""Override the mode-sep z_5p eligibility floor (default from bundle: 0.30).
+              Introns with z_5p below this are skipped by the second-pass ensemble
+              (kept at first-pass score). Lower values score more introns at higher cost;
+              the bundle default is empirically derived (Phase 0 #176).""",
+        )
+        parser.add_argument(
+            "--mode-sep-valley-min",
+            dest="mode_sep_valley_min",
+            type=float,
+            default=None,
+            help="""Override the mode-sep KDE valley-depth threshold (default from bundle: 0.30).
+              Species with valley depth below this fail the gate and emit first-pass scores only.""",
+        )
+        parser.add_argument(
+            "--mode-sep-n-floor",
+            dest="mode_sep_n_floor",
+            type=int,
+            default=None,
+            help="""Override the mode-sep n_eff_candidates floor (default from bundle: 5).
+              Species with fewer effective first-pass U12 candidates than this gate-fail.""",
+        )
+        parser.add_argument(
+            "--mode-sep-mu-u12-tolerance",
+            dest="mode_sep_mu_u12_tolerance",
+            type=float,
+            default=None,
+            help="""Override the mode-sep μ_U12 location-prior tolerance (default from bundle: 3.6
+              raw PWM units around the universal anchor 15.67). Species whose inferred
+              μ_U12_5'_raw drifts outside this band gate-fail. Catches first-pass classifiers
+              that confidently mis-locate the U12 mode (e.g., v3-era TetThe pattern).""",
+        )
+
         # Backward compatibility: old --pretrained_model flag
         if for_backward_compat:
             model_group.add_argument(

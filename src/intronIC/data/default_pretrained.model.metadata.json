@@ -1,87 +1,48 @@
 {
-  "model_name": "default_pretrained.model",
-  "bundled_as": "default in intronIC v2.4+",
-  "format": "v3 multispecies bundle",
-  "model_id": "v3_multispecies_C200_g0.001_ezf0.75_seeds42-100-200",
-  "training_date": "2026-05-08",
-  "pipeline_architecture": "v3_multispecies_2026",
-  "config": {
+  "model_id": "v5_modesep_aug_C200_g0.001_v2.6",
+  "version": "v3",
+  "schema": "v3+modesep",
+  "intronIC_version": "2.6.0",
+  "released": "2026-05-19",
+  "training": {
+    "corpus": "multispecies_corpus_v5_modesep.tsv",
+    "n_train": 502921,
+    "n_species": 101,
+    "n_phyla": 13,
+    "ensemble_size": 42,
+    "seeds": [42, 1042, 2042],
+    "total_models": 126,
     "C": 200.0,
     "gamma": 0.001,
-    "kernel": "rbf",
+    "ezf": 0.75,
     "calibration_method": "isotonic",
-    "easy_fraction": 0.75,
-    "ensemble_size": 42,
-    "seeds": [
-      42,
-      100,
-      200
-    ],
-    "feature_cols": [
-      "five_z",
-      "bp_z",
-      "three_z",
-      "bp_offset",
-      "bp_scan_confidence",
-      "support2"
-    ],
-    "input_features": [
-      "five_z_score",
-      "bp_z_score",
-      "three_z_score",
-      "bp_offset",
-      "bp_scan_confidence",
-      "support2"
-    ],
-    "feature_subtypes": [
-      "forceinclude_eb"
-    ],
-    "force_include_easy_biology": true
+    "kernel": "rbf",
+    "input_features": ["five_z", "bp_z", "three_z", "bp_offset", "bp_scan_confidence", "support2"]
   },
-  "training": {
-    "corpus_rows": 41333,
-    "u12_positives": 10003,
-    "n_species": 97,
-    "n_clades": 14,
-    "trained_date": "2026-05-08",
-    "notes": "FI v3 canonical: post-singleton-decay filter, post-orphan-recovery (TriAdh/HorVul/PlaFun/RhiMic re-paired against v23_runs panels). Hyperparameters from 100-config joint grid search.",
-    "fold": "recall",
-    "test_holdout": true,
-    "n_train": 33549,
-    "n_test": 225265,
-    "test_positives": 790,
-    "test_negatives": 224475
-  },
-  "holdout_metrics_per_seed": {
-    "42": {
-      "f1@50": 1.0,
-      "precision@50": 1.0,
-      "recall@50": 1.0,
-      "pr_auc": 1.0,
-      "roc_auc": 1.0
+  "modesep_params": {
+    "z_floor_eligibility": 0.30,
+    "valley_depth_min": 0.30,
+    "n_floor_candidates": 5,
+    "candidate_weight_center": 90.0,
+    "candidate_weight_steepness": 5.0,
+    "universal_anchors": {
+      "five_raw": 15.671,
+      "bp_raw": 6.704,
+      "three_raw": 1.764
     },
-    "100": {
-      "f1@50": 1.0,
-      "precision@50": 1.0,
-      "recall@50": 1.0,
-      "pr_auc": 1.0,
-      "roc_auc": 1.0
-    },
-    "200": {
-      "f1@50": 1.0,
-      "precision@50": 1.0,
-      "recall@50": 1.0,
-      "pr_auc": 1.0,
-      "roc_auc": 1.0
-    }
+    "mu_u12_5p_prior": 15.671,
+    "mu_u12_5p_tolerance": 3.6,
+    "first_pass_model_id": "v4_aug_cluster_aware_2026-05",
+    "pwm_set_id": "v2.5.x_post_bg_fix"
   },
-  "v2_3_baseline_holdout_metrics": {
-    "f1@50": 0.9974747474747475,
-    "precision@50": 0.9949622166246851,
-    "recall@50": 1.0,
-    "pr_auc": 1.0,
-    "roc_auc": 1.0
+  "validation": {
+    "panel_14_species_TP": 1950,
+    "panel_14_species_FN": 3,
+    "panel_14_species_FP_strong": 0,
+    "panel_14_species_FP_any": 217,
+    "panel_recall": 0.9985,
+    "apostasia_held_out_recall": "20/21 IPA-validated U12s",
+    "u12_absent_FP_strong_leakage": 0
   },
-  "notes": "intronIC v3 multispecies model: 6D RBF SVM ensemble (3 seeds \u00d7 42 = 126 calibrated SVMs). Trained on 41,333 introns from 97 species across 14 clades, with U12 labels assigned by orthology-based comparative genomic analysis. Holdout F1 = 1.000 (precision 1.000, recall 1.000) on the 5-species recall set; v2.3 baseline on the same set is F1 = 0.9975. Production-equivalent (valley-adjusted) FPR on U12-absent species is ~54% lower than v2.3 at threshold 90 (12 vs 26 across ~330k scored introns). feature_subtypes value 'forceinclude_eb' is the technical training-mode tag (force-include easy_biology subtype during training); not a user-facing identifier.",
-  "schema_doc": "docs/v3_bundle_schema.md"
+  "notes": "intronIC v2.6.0 default model: mode-separation 6D RBF SVM ensemble (3 seeds x 42 = 126 calibrated SVMs) plus the cluster-aware first-pass ensemble embedded as first_pass_seeds. The first pass scores all introns; mode-separation then performs per-species recalibration (z=(raw - mu_U2)/(mu_U12 - mu_U2)) and re-scores eligible introns with the second-pass ensemble. The classify path gates on n_eff floor + mu_U12 location prior + Fisher-discriminant KDE valley depth before applying recalibration; u12-absent species gate-fail cleanly to first-pass scores. See docs/mode_separation.md for the architecture."
 }

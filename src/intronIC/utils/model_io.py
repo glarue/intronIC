@@ -21,25 +21,32 @@ V3_VERSION = "v3"
 V3_DEFAULT_THRESHOLD = 50.0
 
 
-def _build_v3_ensemble(bundle: Dict[str, Any]) -> Tuple[Any, Tuple[str, ...]]:
+def _build_v3_ensemble(
+    bundle: Dict[str, Any],
+    config_key: str = "config",
+    seeds_key: str = "seeds",
+) -> Tuple[Any, Tuple[str, ...]]:
     """Construct a runtime SVMEnsemble from a v3 bundle's seeds dict.
 
     Returns (ensemble, extra_features). Imports of SVMEnsemble/SVMModel/
     SVMParameters are local because importing trainer/optimizer at module
     scope would create a cycle through scoring/cluster_validation.
+
+    `config_key` / `seeds_key` let v5 modesep bundles also build the
+    first-pass ensemble from `first_pass_config` / `first_pass_seeds`.
     """
     from intronIC.classification.optimizer import SVMParameters
     from intronIC.classification.trainer import SVMEnsemble, SVMModel
 
-    config = bundle.get("config", {})
+    config = bundle.get(config_key, {})
     input_features = list(config.get(
         "input_features",
         ["five_z_score", "bp_z_score", "three_z_score"],
     ))
     if len(input_features) < 3:
         raise ValueError(
-            f"v3 bundle config.input_features must list at least the three "
-            f"base z-scores; got {input_features!r}"
+            f"v3 bundle {config_key}.input_features must list at least the "
+            f"three base z-scores; got {input_features!r}"
         )
     extra_features = tuple(input_features[3:])
 
@@ -67,8 +74,9 @@ def _build_v3_ensemble(bundle: Dict[str, Any]) -> Tuple[Any, Tuple[str, ...]]:
     u2_count = max(0, n_train - u12_count)
 
     sub_models = []
+    seeds_dict = bundle.get(seeds_key, {})
     for seed_id in config.get("seeds", []):
-        seed_block = bundle["seeds"][seed_id]
+        seed_block = seeds_dict[seed_id]
         for sub in seed_block["models"]:
             sub_models.append(SVMModel(
                 model=sub,
@@ -81,7 +89,9 @@ def _build_v3_ensemble(bundle: Dict[str, Any]) -> Tuple[Any, Tuple[str, ...]]:
             ))
 
     if not sub_models:
-        raise ValueError("v3 bundle contains no sub-models in config.seeds")
+        raise ValueError(
+            f"v3 bundle {config_key}.seeds + {seeds_key} contains no sub-models"
+        )
 
     ensemble = SVMEnsemble(
         models=tuple(sub_models),
@@ -103,6 +113,11 @@ def _v3_to_runtime(bundle: Dict[str, Any]) -> Dict[str, Any]:
         (input too small, e.g. single-intron scoring), the streaming
         classify path falls through to this pre-fit scaler. Bundled as
         v3_fallback_normalizer.pkl sibling and loaded here if present.
+
+    Mode-separation bundles (v2.6+):
+      - config.normalizer_mode == "modesep": surface a second ensemble
+        from first_pass_seeds / first_pass_config and pass modesep_params
+        through to the runtime dict.
     """
     ensemble, _ = _build_v3_ensemble(bundle)
     training = bundle.get("training", {})
@@ -121,7 +136,7 @@ def _v3_to_runtime(bundle: Dict[str, Any]) -> Dict[str, Any]:
     # can be updated independently without re-pickling the SVM ensemble.
     fallback_normalizer = _load_fallback_normalizer(bundle)
 
-    return {
+    runtime = {
         "ensemble": ensemble,
         "normalizer": None,            # v3 ships pre-z-scored features; adaptive at runtime
         "fallback_normalizer": fallback_normalizer,
@@ -131,6 +146,29 @@ def _v3_to_runtime(bundle: Dict[str, Any]) -> Dict[str, Any]:
         # Provenance — preserved so downstream can log/inspect; ignored otherwise.
         "_v3_bundle": bundle,
     }
+
+    normalizer_mode = bundle.get("config", {}).get("normalizer_mode")
+    if normalizer_mode == "modesep":
+        if "first_pass_seeds" not in bundle or "first_pass_config" not in bundle:
+            raise ValueError(
+                "v5 modesep bundle missing required first_pass_seeds / "
+                "first_pass_config blocks"
+            )
+        first_pass_ensemble, _ = _build_v3_ensemble(
+            bundle,
+            config_key="first_pass_config",
+            seeds_key="first_pass_seeds",
+        )
+        # For modesep bundles, the existing classify path scores introns with
+        # the FIRST-PASS (cluster-aware) ensemble. Mode-sep post-processing
+        # then applies the per-species recalibration and re-scores eligible
+        # introns with the SECOND-PASS ensemble.
+        runtime["normalizer_mode"] = "modesep"
+        runtime["second_pass_ensemble"] = ensemble
+        runtime["ensemble"] = first_pass_ensemble
+        runtime["modesep_params"] = bundle.get("modesep_params", {})
+
+    return runtime
 
 
 def _load_fallback_normalizer(bundle: Dict[str, Any]) -> Any:

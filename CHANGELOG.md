@@ -5,6 +5,117 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-05-17
+
+### Added — Mode-separation classifier
+- **New default classifier (`v5_modesep_aug`)** uses per-species mode-
+  separation z-scoring to calibrate each species to its own U12/U2
+  spectrum: `z = (raw − μ_U2_species) / (μ_U12_species − μ_U2_species)`.
+  Collapses the cross-species variation in normalized U12/U2 separation
+  (the root cause of plant U12 recall problems in vertebrate-trained
+  classifiers).
+- **Two-pass classify orchestration**: first pass with the cluster-aware
+  ensemble produces candidate weights; mode estimation; gate decision;
+  second pass with the recalibrated SVM ensemble. Implemented as a
+  post-classify step on `score_info.iic`
+  (`intronIC.classification.mode_sep_pipeline`).
+- **Gate** combines three checks (`intronIC.scoring.mode_separation.evaluate_gate`):
+  - `n_eff_candidates` ≥ 5
+  - μ_U12_5p offset from the cross-species anchor (15.671 raw PWM units)
+    within ±3.6 (Phase 0 empirical derivation, 61 species, 12 phyla)
+  - multi-bandwidth Fisher-discriminant KDE valley depth ≥ 0.30
+    (reuses `cluster_validation.compute_valley_depth` via dependency
+    injection — robust 3D detector, not a moment proxy)
+- **Diagnostic JSON** (`.modesep.json` sidecar) with route, gate reason,
+  μ_U2/U12, valley depth, ensemble σ on called introns, and an A/B/C/F
+  quality tier per species. Per-intron columns added to score_info.iic:
+  `ensemble_sigma`, `first_pass_svm`, `modesep_route`.
+- **CLI flags**: `--no-mode-sep`, `--mode-sep-z-floor`,
+  `--mode-sep-valley-min`, `--mode-sep-n-floor`,
+  `--mode-sep-mu-u12-tolerance`.
+
+### Changed — Bundle schema
+- v3 bundles now support mode-sep mode via `config.normalizer_mode = "modesep"`.
+  Modesep bundles ship with an EMBEDDED first-pass ensemble
+  (`first_pass_seeds` + `first_pass_config`) and a `modesep_params` block
+  (z floor, valley min, n_eff floor, universal anchors, location-prior
+  tolerance, first-pass model id, PWM set id). `utils/model_io.py`
+  surfaces both ensembles at runtime.
+
+### Performance
+- Plant recall: AmbTri 90% → 100% (51/51), OrySat 94% → 100% (32/32),
+  AraTha 96% → 98% (47/48).
+- Apostasia (IPA-validated U12s, held-out from training): 17/21 → 20/21.
+- 14-species panel: 1944 → 1950 TP, 9 → 3 FN, FP_strong 0 → 0
+  (Pareto improvement over both v2.3 D and cluster-aware v4_aug).
+- U12-absent species (CaeEle, SacCer, SchPom, TetThe, ChlRei, AscSuu)
+  gate-fail cleanly to first-pass scores; zero FP_strong leakage.
+
+### Gate-fail defense-in-depth
+- When the modesep gate refuses to recalibrate (n_eff floor, location-prior,
+  or no-valley), the legacy valley-based log-odds score adjustment
+  (`compute_adjusted_scores_batch`) is applied to the first-pass scores.
+  This suppresses spurious first-pass calls in noisy or non-bimodal
+  species (e.g., Salpingoeca rosetta: 29 first-pass calls → 0 after
+  valley-depth=0.035 discount). Matches pre-v2.6 no-valley behavior.
+
+### Backwards compatibility
+- v4 cluster-aware bundles still load via `--model <path>`.
+- Path C' scaler gate is removed (`scaler_gate.py`, `--no-scaler-gate`).
+  v4 bundles now run adaptive-only at classify time; mode-separation
+  replaces the scaler-gate's call-asymmetry routing.
+
+## [2.5.0] - 2026-05-14
+
+### Added
+- **Path C' species-level scaler gate** (`intronIC.classification.scaler_gate`).
+  At classify time, each species is scored under BOTH the per-species
+  adaptive RobustScaler and the bundled frozen multispecies scaler.
+  Call-set asymmetry between the two modes decides which route the
+  species takes: `adaptive` (well-agreed; vertebrate-class), `frozen`
+  (adaptive-demotion of borderline U12s; apostasia-class), or `strict`
+  (adaptive over-calls into a U12-absent void; tetrahymena / ChlRei-class).
+  Threshold defaults (`only_f_thr=0.10`, `only_a_thr=0.50`,
+  `n_both_max=5`, `n_total_min=5`) were calibrated on a 45-species
+  pressure test (12 dev + 33 validation) with an asymmetric `n_total`
+  floor: frozen requires `n_total >= 5`, strict has no floor (so
+  ChlRei-class species with `n_total=2, only_a=100%, n_both=0` route
+  strict correctly). Gate is ON by default; disable via `--no-scaler-gate`.
+- **`--no-scaler-gate` CLI flag** for forcing the pre-2.5.0 adaptive-only
+  behavior when desired (debugging, reproducing v2.4.x output).
+- **New `score_info.iic` columns**: `svm_score_adaptive`, `svm_score_frozen`,
+  `scaler_used` — preserves per-mode scores and the route the gate
+  picked, so downstream tools can audit the decision.
+- **v4_aug default model** (`default_pretrained.model.pkl`). Same
+  corpus, same hyperparameters as the v2.4.x v3 bundle, but trained
+  with scaler-strategy=augment: each row appears in two forms
+  (adaptive-z and frozen-z) during training, doubling the effective
+  corpus to ~1.005M rows. The model learns a single decision boundary
+  that is robust to both scaling regimes — which is what makes the
+  gate's route-switching safe at inference. v2.4.2 model archived as
+  `default_pretrained.model.pkl.bak_v2.4.2`.
+
+### Changed
+- **Default-on scaler gate**: Production behavior now differs from
+  v2.4.x for species that hit a non-adaptive route. The vast majority
+  of well-represented species (vertebrates, drosophila, plants with
+  modest U12 counts) route adaptive and see identical behavior to
+  v2.4.2. Divergent species (apostasia-class, tetrahymena-class,
+  U12-absent species with adaptive-collapse) now route frozen or
+  strict and produce materially different call sets.
+- **`scaler_used`-aware downstream tools**: scripts that consume
+  `score_info.iic` should treat the three new columns as optional;
+  they are NA for pre-2.5.0 outputs and for the streaming-classify
+  path (where the gate is not yet wired — adaptive-only is enforced
+  with a warning).
+
+### Limitations
+- The scaler gate is not yet wired into the streaming-classify path
+  (`--streaming`). Streaming-mode users see a warning at run start and
+  get adaptive-only behavior. For divergent species, use in-memory
+  mode. Wiring the gate into streaming requires either a two-pass
+  approach or a post-streaming re-emit; planned for v2.5.x.
+
 ## [2.4.2] - 2026-05-10
 
 ### Added

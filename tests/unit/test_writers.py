@@ -545,7 +545,8 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[1].split("\t")
 
-        assert len(fields) == 33  # 30 original + bp_scan_confidence (v2.2) + adjusted_score + ensemble_sigma
+        # 33 v2.4 + 3 scaler-gate fields (svm_score_adaptive, svm_score_frozen, scaler_used) in v2.5
+        assert len(fields) == 36
         # Check scores are rounded correctly
         assert fields[1] == "5.5"  # rel_score
         assert fields[2] == "95.5"  # svm_score
@@ -571,7 +572,8 @@ class TestScoreWriter:
         fields = lines[0].split("\t")
 
         # All score-info fields present (NA-padded for unset scores)
-        assert len(fields) == 33  # 30 original + bp_scan_confidence + adjusted_score + ensemble_sigma
+        # 33 v2.4 + 3 scaler-gate fields in v2.5
+        assert len(fields) == 36
         # Relative and SVM scores should be available
         assert fields[1] == "2.3"  # rel_score available
         assert fields[2] == "12.3"  # svm_score available

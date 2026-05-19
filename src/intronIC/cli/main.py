@@ -4438,9 +4438,81 @@ def classify_streaming_per_contig(
     # 1. Compute valley depth from 2D (5'z, BPz) KDE bimodality
     # 2. Apply log-odds score adjustment: valley prior + σ penalty
     # 3. Rewrite output files with adjusted_score and updated rel_score
+    #
+    # Mode-separation (v2.6+) replaces this branch with a two-pass
+    # recalibration when the loaded bundle is in modesep mode.
     # =========================================================================
     cluster_validation_result = None
-    if accumulated_five_z:
+    modesep_result = None
+    is_modesep = (isinstance(model_data, dict)
+                  and model_data.get("normalizer_mode") == "modesep"
+                  and not getattr(config.scoring, "mode_sep_disable", False))
+
+    if is_modesep and accumulated_five_z:
+        from intronIC.classification.mode_sep_pipeline import (
+            apply_mode_separation_postprocess,
+        )
+        from intronIC.scoring.cluster_validation import (
+            compute_valley_depth, validate_u12_cluster,
+        )
+
+        # CLI overrides patch the bundle's modesep_params for this run only.
+        params = dict(model_data.get("modesep_params", {}))
+        for cli_key, bundle_key in (
+            ("mode_sep_z_floor", "z_floor_eligibility"),
+            ("mode_sep_valley_min", "valley_depth_min"),
+            ("mode_sep_n_floor", "n_floor_candidates"),
+            ("mode_sep_mu_u12_tolerance", "mu_u12_5p_tolerance"),
+        ):
+            v = getattr(config.scoring, cli_key, None)
+            if v is not None:
+                params[bundle_key] = v
+        patched_runtime = {**model_data, "modesep_params": params}
+
+        score_path = config.output.get_output_path(".score_info.iic")
+        meta_path = config.output.get_output_path(".meta.iic")
+        diagnostics_path = config.output.get_output_path(".modesep.json")
+        modesep_result = apply_mode_separation_postprocess(
+            score_info_path=score_path,
+            runtime=patched_runtime,
+            valley_depth_fn=compute_valley_depth,
+            threshold=config.scoring.threshold,
+            diagnostics_path=diagnostics_path,
+            messenger=messenger,
+        )
+        adjusted_hc_count = modesep_result.n_called_u12
+
+        # Gate-fail defense-in-depth: when mode-sep refuses to recalibrate,
+        # the existing svm_score column is the unmodified first-pass score.
+        # Apply the legacy valley-based log-odds discount (Phase 1 score
+        # adjustment) so spurious first-pass calls in noisy/non-bimodal
+        # species don't propagate. This matches pre-v2.6 behavior for the
+        # no-valley regime.
+        if modesep_result.route == "first_pass_fallback":
+            messenger.log_only(
+                "[modesep] gate-fail: running legacy valley-based score "
+                "adjustment to discount first-pass calls"
+            )
+            cluster_validation_result = validate_u12_cluster(
+                five_z_scores=np.array(accumulated_five_z),
+                bp_z_scores=np.array(accumulated_bp_z),
+                three_z_scores=np.array(accumulated_three_z),
+                svm_scores=np.array(accumulated_svm_scores),
+                type_ids=np.array(accumulated_type_ids),
+                confidence_threshold=config.scoring.threshold,
+            )
+            cluster_validation_result, leg_hc_count = (
+                _apply_post_classification_adjustment(
+                    cluster_validation_result,
+                    config,
+                    messenger,
+                    score_path=score_path,
+                    meta_path=meta_path,
+                )
+            )
+            if leg_hc_count is not None:
+                adjusted_hc_count = leg_hc_count
+    elif accumulated_five_z:
         from intronIC.scoring.cluster_validation import validate_u12_cluster
 
         cluster_validation_result = validate_u12_cluster(
@@ -4512,6 +4584,25 @@ def classify_streaming_per_contig(
                 "prior_floor": sa_cfg.prior_floor,
                 "k_sigma": sa_cfg.k_sigma,
             }
+
+    if modesep_result is not None:
+        summary["mode_separation"] = {
+            "route": modesep_result.route,
+            "gate_reason": modesep_result.gate_reason,
+            "quality_tier": modesep_result.quality_tier,
+            "n_introns": modesep_result.n_introns,
+            "n_eligible": modesep_result.n_eligible,
+            "n_called_u12": modesep_result.n_called_u12,
+            "n_eff_candidates": modesep_result.n_eff_candidates,
+            "valley_depth": modesep_result.valley_depth,
+            "mu_u2_5p": modesep_result.mu_u2_5p,
+            "mu_u12_5p": modesep_result.mu_u12_5p,
+            "mu_u12_5p_offset": modesep_result.mu_u12_5p_offset,
+            "median_ensemble_sigma_called": modesep_result.median_ensemble_sigma_called,
+            "p90_ensemble_sigma_called": modesep_result.p90_ensemble_sigma_called,
+            "first_pass_model_id": modesep_result.first_pass_model_id,
+            "second_pass_model_id": modesep_result.second_pass_model_id,
+        }
 
     messenger.info(
         f"Streaming classification complete: {total_classified:,} introns classified"
@@ -4823,7 +4914,6 @@ def classify_with_pretrained_model(
         "model_path": str(model_path),
         "normalizer_used": normalizer_source,
     }
-
     # Surface the normalizer choice so users see it next to other run-level
     # info; warn when we fell back rather than fitted adaptively.
     _NORMALIZER_LABEL = {

@@ -171,6 +171,17 @@ class IntronScores:
     relative_score: Optional[float] = None
     decision_distance: Optional[float] = None
 
+    # Path C' scaler gate fields (v2.5.0+).
+    # When the scaler gate is active, each intron is scored under BOTH the
+    # per-species adaptive scaler and the bundled frozen scaler. svm_score
+    # carries the route-chosen value (matches today's semantics); these two
+    # fields preserve the per-mode scores for diagnostics + downstream tools.
+    svm_score_adaptive: Optional[float] = None
+    svm_score_frozen: Optional[float] = None
+    # Which gate route was chosen for the species the intron came from
+    # ("adaptive" | "frozen" | "strict"). Same value across all rows in a run.
+    scaler_used: Optional[str] = None
+
     # PPT decomposition
     ppt_score: Optional[float] = None  # C+T fraction at 3'SS positions -14 to -7 (legacy)
     ppt_raw_score: Optional[float] = None  # PWM log-ratio for PPT region (-14 to -7)

@@ -25,6 +25,25 @@ intronIC test -p 4
 
 ---
 
+## What's New in v2.6
+
+- **Mode-separation classifier (default)**: per-species recalibration places
+  the U2 mode at z=0 and U12 mode at z=1 in every species. Plant recall
+  jumps (AmbTri 90% → 100%, OrySat 94% → 100%) and Apostasia IPA recall
+  17/21 → 20/21 without inflating false positives. See
+  [`docs/mode_separation.md`](docs/mode_separation.md) for the architecture.
+- **Three-check gate** (n_eff floor + μ_U12 location prior + multi-bandwidth
+  Fisher-KDE valley depth) protects against the failure modes of per-species
+  recalibration; U12-absent species fall back to first-pass scores cleanly.
+- **Diagnostic JSON sidecar** (`.modesep.json`) with route, gate reason,
+  μ_U2/U12, valley depth, ensemble σ on called introns, and an A/B/C/F
+  quality tier per species. Per-intron `ensemble_sigma`, `first_pass_svm`,
+  and `modesep_route` columns are added to `score_info.iic`.
+- New CLI flags: `--no-mode-sep`, `--mode-sep-z-floor`,
+  `--mode-sep-valley-min`, `--mode-sep-n-floor`,
+  `--mode-sep-mu-u12-tolerance`.
+- v4 cluster-aware bundles still load; pre-v2.6 behavior preserved for them.
+
 ## What's New in v2.4
 
 - **Default model is now the v3 multispecies bundle**: 3 seeds × 42 calibrated SVMs (126 total) trained on 41,333 introns across 90 species and 14 clades. Holdout F1 = 1.000 vs the v2.3 default's 0.9975, and ~54% lower production-equivalent FPR on U12-absent species.

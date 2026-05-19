@@ -108,6 +108,18 @@ class ScoringConfig:
         None  # Load saved normalizer for reproducible normalization
     )
     save_normalizer: bool = False  # Save fitted normalizer for future runs
+    # Path C' scaler gate (v2.5.0+): score under BOTH adaptive and frozen z,
+    # decide per-species routing by call-set asymmetry. When enabled, requires
+    # the model bundle to ship a fallback_normalizer (v3+ bundles do).
+    # Mode-separation (v2.6+): activated automatically when the loaded bundle
+    # has config.normalizer_mode == "modesep". CLI overrides let users tune
+    # the gate without rebuilding the bundle. Defaults are read from the
+    # bundle's modesep_params when present; CLI flags take precedence.
+    mode_sep_disable: bool = False  # force-off, even for modesep bundles
+    mode_sep_z_floor: Optional[float] = None  # override z_5p eligibility floor
+    mode_sep_valley_min: Optional[float] = None  # override KDE valley threshold
+    mode_sep_n_floor: Optional[int] = None  # override n_eff floor
+    mode_sep_mu_u12_tolerance: Optional[float] = None  # override location-prior tolerance
 
 
 @dataclass(frozen=True, slots=True)
@@ -690,6 +702,11 @@ class IntronICConfig:
             species_prior=getattr(args, "species_prior", None),
             load_normalizer=getattr(args, "load_normalizer", None),
             save_normalizer=getattr(args, "save_normalizer", False),
+            mode_sep_disable=getattr(args, "mode_sep_disable", False),
+            mode_sep_z_floor=getattr(args, "mode_sep_z_floor", None),
+            mode_sep_valley_min=getattr(args, "mode_sep_valley_min", None),
+            mode_sep_n_floor=getattr(args, "mode_sep_n_floor", None),
+            mode_sep_mu_u12_tolerance=getattr(args, "mode_sep_mu_u12_tolerance", None),
         )
 
         # Training configuration
