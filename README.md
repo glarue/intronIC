@@ -25,6 +25,21 @@ intronIC test -p 4
 
 ---
 
+## What's New in v2.7
+
+- **Continuous per-intron discount** (`adjusted_score` column): non-positive
+  log-odds penalty for SVM overcalls relative to motif log-LR or for weak
+  motif evidence. Empirically derived defaults; preserves panel TPs ≥99%
+  while trimming the long-tail of loose-or-NA calls.
+- **`adjusted_score` is the new recommended call column** — `svm_score`
+  remains the raw classifier output (auditability preserved).
+- **Diagnostic surface**: per-intron `raw_sum`, `svm_vs_naive`, `voting_frac`
+  columns added to score_info.iic; per-species `boundary_mass` reported in
+  `.modesep.json` (diagnostic only — no gate role).
+- New CLI flags: `--no-continuous-discount`, `--discount-k-overcall`,
+  `--discount-tau-overcall`, `--discount-k-weakmot`, `--discount-tau-motif`.
+- 628 unit + 13 integration tests passing.
+
 ## What's New in v2.6
 
 - **Mode-separation classifier (default)**: per-species recalibration places

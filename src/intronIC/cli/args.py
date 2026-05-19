@@ -767,6 +767,56 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
               that confidently mis-locate the U12 mode (e.g., v3-era TetThe pattern).""",
         )
 
+        # Continuous per-intron discount (v2.7+)
+        parser.add_argument(
+            "--no-continuous-discount",
+            dest="discount_disable",
+            action="store_true",
+            default=False,
+            help="""Disable the v2.7+ continuous per-intron discount that suppresses
+              SVM overcalls relative to motif log-LR. By default the discount writes
+              an `adjusted_score` column to score_info.iic; calls at threshold are
+              evaluated against adjusted_score. Pass this flag to preserve raw
+              svm_score as the calling column (pre-v2.7 behavior).""",
+        )
+        parser.add_argument(
+            "--discount-k-overcall",
+            dest="discount_k_overcall",
+            type=float,
+            default=1.0,
+            help="""Continuous discount coefficient for SVM overcall penalty (default 1.0).
+              Penalty = k_overcall × max(0, svm_vs_naive − tau_overcall) where
+              svm_vs_naive = logit(p_svm) − raw_sum. Higher = stronger suppression
+              of overcalls relative to motif evidence.""",
+        )
+        parser.add_argument(
+            "--discount-tau-overcall",
+            dest="discount_tau_overcall",
+            type=float,
+            default=0.0,
+            help="""svm_vs_naive threshold above which overcall penalty activates
+              (default 0.0). Empirically derived: panel TPs sit below 0; Salpingoeca-class
+              FPs sit well above.""",
+        )
+        parser.add_argument(
+            "--discount-k-weakmot",
+            dest="discount_k_weakmot",
+            type=float,
+            default=0.20,
+            help="""Continuous discount coefficient for weak-motif penalty (default 0.20).
+              Penalty = k_weakmot × max(0, tau_motif − raw_sum). Higher = stronger
+              suppression of calls with weak motif log-LR sums.""",
+        )
+        parser.add_argument(
+            "--discount-tau-motif",
+            dest="discount_tau_motif",
+            type=float,
+            default=10.0,
+            help="""raw_sum threshold below which weak-motif penalty activates
+              (default 10.0). Panel TPs have raw_sum ≈ +22; threshold of 10
+              ensures TPs unaffected while weak-motif candidates discounted.""",
+        )
+
         # Backward compatibility: old --pretrained_model flag
         if for_backward_compat:
             model_group.add_argument(

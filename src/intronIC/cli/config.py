@@ -120,6 +120,14 @@ class ScoringConfig:
     mode_sep_valley_min: Optional[float] = None  # override KDE valley threshold
     mode_sep_n_floor: Optional[int] = None  # override n_eff floor
     mode_sep_mu_u12_tolerance: Optional[float] = None  # override location-prior tolerance
+    # Continuous per-intron discount (v2.7+): non-positive log-odds adjustment
+    # for cases where SVM overcalls relative to motif log-LR sum, OR where
+    # motif evidence is weak. Writes adjusted_score; preserves svm_score.
+    discount_disable: bool = False
+    discount_k_overcall: float = 1.0       # per-unit penalty for svm_vs_naive > tau_overcall
+    discount_tau_overcall: float = 0.0     # svm_vs_naive threshold above which penalty fires
+    discount_k_weakmot: float = 0.20       # per-unit penalty for raw_sum < tau_motif
+    discount_tau_motif: float = 10.0       # motif log-LR threshold below which penalty fires
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,6 +715,11 @@ class IntronICConfig:
             mode_sep_valley_min=getattr(args, "mode_sep_valley_min", None),
             mode_sep_n_floor=getattr(args, "mode_sep_n_floor", None),
             mode_sep_mu_u12_tolerance=getattr(args, "mode_sep_mu_u12_tolerance", None),
+            discount_disable=getattr(args, "discount_disable", False),
+            discount_k_overcall=getattr(args, "discount_k_overcall", 1.0),
+            discount_tau_overcall=getattr(args, "discount_tau_overcall", 0.0),
+            discount_k_weakmot=getattr(args, "discount_k_weakmot", 0.20),
+            discount_tau_motif=getattr(args, "discount_tau_motif", 10.0),
         )
 
         # Training configuration

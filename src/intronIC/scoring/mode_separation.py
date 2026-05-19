@@ -49,6 +49,25 @@ DEFAULT_UNIVERSAL_ANCHORS = {
 # Location-prior tolerance on inferred μ_U12 5'_raw (deviation from anchor).
 DEFAULT_MU_U12_TOLERANCE_5P = 3.6
 
+# Continuous per-intron discount defaults (v2.7+).
+# Empirically derived from multi-species sweep (Salpingoeca / panel TPs):
+#   - k_overcall=1.0, tau_overcall=0 catches Salpingoeca-class svm-vs-naive
+#     overcalls without penalizing panel TPs (Sycon p95 svm_vs_naive ≈ -0.14)
+#   - k_weakmot=0.20, tau_motif=10 penalizes weak-motif calls (typical TPs
+#     have raw_sum ≈ +22, well above the threshold) without affecting any
+#     panel-TP recall (verified via empirical sweep)
+DEFAULT_DISCOUNT_K_OVERCALL = 1.0
+DEFAULT_DISCOUNT_TAU_OVERCALL = 0.0
+DEFAULT_DISCOUNT_K_WEAKMOT = 0.20
+DEFAULT_DISCOUNT_TAU_MOTIF = 10.0
+
+# Boundary-mass diagnostic: fraction of eligible introns where second-pass
+# mean P sits in [0.1, 0.9]. Subsample size for cost-efficient estimation.
+# At BM=0.05, standard error ≈ 0.003 — sufficient precision for diagnostic.
+DEFAULT_BM_SUBSAMPLE_SIZE = 5000
+DEFAULT_BM_LOWER = 0.1
+DEFAULT_BM_UPPER = 0.9
+
 
 # -----------------------------------------------------------------------------
 # Data classes
@@ -269,6 +288,99 @@ def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> flo
     return float(values[order][idx])
 
 
+# -----------------------------------------------------------------------------
+# Continuous per-intron discount (v2.7+)
+# -----------------------------------------------------------------------------
+
+def continuous_discount_logit_shift(
+    logit_svm: np.ndarray,
+    raw_sum: np.ndarray,
+    k_overcall: float = DEFAULT_DISCOUNT_K_OVERCALL,
+    tau_overcall: float = DEFAULT_DISCOUNT_TAU_OVERCALL,
+    k_weakmot: float = DEFAULT_DISCOUNT_K_WEAKMOT,
+    tau_motif: float = DEFAULT_DISCOUNT_TAU_MOTIF,
+) -> np.ndarray:
+    """Compute the per-intron continuous discount in log-odds space.
+
+    Two non-negative penalty terms:
+      penalty_overcall = k_overcall * max(0, svm_vs_naive - tau_overcall)
+      penalty_weakmot  = k_weakmot  * max(0, tau_motif - raw_sum)
+
+    where svm_vs_naive = logit(p_svm) - raw_sum. Both terms are zero in the
+    "healthy" regime (svm tracks naive log-LR + motif evidence is strong);
+    they activate only when the SVM is overcalling relative to motif log-LR
+    sum OR when motif evidence is weak.
+
+    Returns the (non-positive) logit shift to apply: logit_final = logit_svm - shift.
+    """
+    logit_svm = np.asarray(logit_svm, dtype=float)
+    raw_sum = np.asarray(raw_sum, dtype=float)
+    svm_vs_naive = logit_svm - raw_sum
+    penalty_oc = k_overcall * np.maximum(0.0, svm_vs_naive - tau_overcall)
+    penalty_wm = k_weakmot * np.maximum(0.0, tau_motif - raw_sum)
+    return penalty_oc + penalty_wm
+
+
+def apply_continuous_discount(
+    svm_scores: np.ndarray,
+    raw_sums: np.ndarray,
+    **kwargs,
+) -> np.ndarray:
+    """Apply continuous discount to svm_scores (0-100) given raw motif log-LR sums.
+
+    Returns adjusted scores (0-100). Per-intron shift is non-positive, so
+    adjusted_score <= svm_score always.
+
+    kwargs are forwarded to continuous_discount_logit_shift().
+    """
+    svm = np.asarray(svm_scores, dtype=float)
+    raw = np.asarray(raw_sums, dtype=float)
+    eps = 1e-9
+    p = np.clip(svm / 100.0, eps, 1 - eps)
+    logit_p = np.log(p / (1 - p))
+    shift = continuous_discount_logit_shift(logit_p, raw, **kwargs)
+    logit_adj = logit_p - shift
+    p_adj = 1.0 / (1.0 + np.exp(-logit_adj))
+    return p_adj * 100.0
+
+
+# -----------------------------------------------------------------------------
+# Boundary mass (species-level OOD diagnostic, v2.7+)
+# -----------------------------------------------------------------------------
+
+def compute_boundary_mass(
+    mean_p: np.ndarray,
+    lower: float = DEFAULT_BM_LOWER,
+    upper: float = DEFAULT_BM_UPPER,
+) -> float:
+    """Fraction of introns whose ensemble mean P sits in [lower, upper].
+
+    High boundary mass signals an OOD species — the SVM hovers diffusely
+    rather than committing cleanly to U2 vs U12 calls. Diagnostic only;
+    not used in any gate decision in v2.7.
+    """
+    mp = np.asarray(mean_p, dtype=float)
+    if len(mp) == 0:
+        return float("nan")
+    return float(((mp >= lower) & (mp <= upper)).mean())
+
+
+def voting_fraction(per_model_probs: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+    """Per-intron fraction of ensemble sub-models voting U12 (P > threshold).
+
+    Input shape: (n_models, n_introns). Returns 1-D array of length n_introns.
+    Diagnostic only — surfaced alongside ensemble_sigma for users to inspect
+    borderline cases where mean P is moderate but per-model agreement is high.
+    """
+    probs = np.asarray(per_model_probs, dtype=float)
+    if probs.ndim != 2:
+        raise ValueError(
+            f"per_model_probs must be 2-D (n_models × n_introns); got "
+            f"shape {probs.shape}"
+        )
+    return (probs > threshold).mean(axis=0)
+
+
 __all__ = [
     "DEFAULT_THRESHOLD",
     "DEFAULT_N_FLOOR",
@@ -278,6 +390,13 @@ __all__ = [
     "DEFAULT_CANDIDATE_STEEPNESS",
     "DEFAULT_UNIVERSAL_ANCHORS",
     "DEFAULT_MU_U12_TOLERANCE_5P",
+    "DEFAULT_DISCOUNT_K_OVERCALL",
+    "DEFAULT_DISCOUNT_TAU_OVERCALL",
+    "DEFAULT_DISCOUNT_K_WEAKMOT",
+    "DEFAULT_DISCOUNT_TAU_MOTIF",
+    "DEFAULT_BM_SUBSAMPLE_SIZE",
+    "DEFAULT_BM_LOWER",
+    "DEFAULT_BM_UPPER",
     "ModeSeparationStats",
     "GateDecision",
     "candidate_weight_from_svm",
@@ -285,4 +404,8 @@ __all__ = [
     "apply_mode_separation_z",
     "compute_support2",
     "evaluate_gate",
+    "continuous_discount_logit_shift",
+    "apply_continuous_discount",
+    "compute_boundary_mass",
+    "voting_fraction",
 ]

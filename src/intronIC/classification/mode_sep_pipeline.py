@@ -35,12 +35,22 @@ from intronIC.scoring.mode_separation import (
     apply_mode_separation_z,
     compute_support2,
     evaluate_gate,
+    apply_continuous_discount,
+    compute_boundary_mass,
+    voting_fraction,
     DEFAULT_THRESHOLD,
     DEFAULT_N_FLOOR,
     DEFAULT_VALLEY_MIN,
     DEFAULT_Z5P_ELIGIBILITY,
     DEFAULT_CANDIDATE_CENTER,
     DEFAULT_CANDIDATE_STEEPNESS,
+    DEFAULT_DISCOUNT_K_OVERCALL,
+    DEFAULT_DISCOUNT_TAU_OVERCALL,
+    DEFAULT_DISCOUNT_K_WEAKMOT,
+    DEFAULT_DISCOUNT_TAU_MOTIF,
+    DEFAULT_BM_SUBSAMPLE_SIZE,
+    DEFAULT_BM_LOWER,
+    DEFAULT_BM_UPPER,
 )
 
 
@@ -67,6 +77,11 @@ class ModeSepResult:
     quality_tier: str               # "A" | "B" | "C" | "F"
     first_pass_model_id: str
     second_pass_model_id: str
+    # v2.7+ additions (diagnostic-only species-level fields)
+    boundary_mass: Optional[float] = None  # frac eligible w/ second-pass P in [0.1, 0.9]
+    n_called_pre_discount: Optional[int] = None  # before continuous discount
+    n_called_post_discount: Optional[int] = None  # after continuous discount
+    continuous_discount_applied: bool = False
 
 
 def _f1_weighted_mean(probs: np.ndarray, ensemble) -> np.ndarray:
@@ -78,9 +93,18 @@ def _f1_weighted_mean(probs: np.ndarray, ensemble) -> np.ndarray:
     return np.dot(weights, probs)
 
 
-def _score_second_pass_ensemble(ensemble, X: np.ndarray, n_jobs: int = -1):
-    """Run all sub-models in parallel, return (mean × 100, std × 100)."""
+def _score_second_pass_ensemble(ensemble, X: np.ndarray, n_jobs: int = -1,
+                                  return_probas: bool = False):
+    """Run all sub-models in parallel.
+
+    Default returns (mean × 100, std × 100). If `return_probas=True`,
+    additionally returns the (n_models, n_introns) per-model probability
+    matrix — used for downstream voting fraction and boundary-mass
+    diagnostics.
+    """
     if X.shape[0] == 0:
+        if return_probas:
+            return np.array([]), np.array([]), np.zeros((0, 0))
         return np.array([]), np.array([])
     submodels = [m.model for m in ensemble.models]
     probas = Parallel(n_jobs=n_jobs, prefer="threads")(
@@ -89,6 +113,8 @@ def _score_second_pass_ensemble(ensemble, X: np.ndarray, n_jobs: int = -1):
     probas = np.asarray(probas)  # (n_models, n_introns)
     mean_p = _f1_weighted_mean(probas, ensemble)
     std_p = probas.std(axis=0)
+    if return_probas:
+        return mean_p * 100.0, std_p * 100.0, probas
     return mean_p * 100.0, std_p * 100.0
 
 
@@ -254,12 +280,13 @@ def apply_mode_separation_postprocess(
     second_pass_ensemble = runtime["second_pass_ensemble"]
     elig_idx = np.where(elig)[0]
     if n_elig > 0:
-        mean_scores, std_scores = _score_second_pass_ensemble(
-            second_pass_ensemble, X_all[elig]
+        mean_scores, std_scores, probas_elig = _score_second_pass_ensemble(
+            second_pass_ensemble, X_all[elig], return_probas=True
         )
     else:
         mean_scores = np.array([])
         std_scores = np.array([])
+        probas_elig = np.zeros((0, 0))
 
     # Rebuild svm_score: first-pass for ineligible, second-pass for eligible.
     final_svm = fp_svm.copy().astype(float)
@@ -268,6 +295,29 @@ def apply_mode_separation_postprocess(
     # Per-intron ensemble σ (0 for ineligible since first-pass scored).
     ensemble_sigma_all = np.zeros_like(fp_svm, dtype=float)
     ensemble_sigma_all[elig] = std_scores
+
+    # Per-intron voting fraction (v2.7 diagnostic): per-model votes among
+    # second-pass models. Ineligible introns: NaN (no second-pass scoring).
+    voting_all = np.full(len(fp_svm), np.nan, dtype=float)
+    if probas_elig.size > 0:
+        voting_all[elig] = voting_fraction(probas_elig)
+
+    # Species-level boundary mass (v2.7 diagnostic): fraction of eligible
+    # introns with second-pass mean P in [0.1, 0.9]. Subsample if large.
+    bm_val: Optional[float] = None
+    if probas_elig.size > 0:
+        mean_p_elig = probas_elig.mean(axis=0)
+        if len(mean_p_elig) > DEFAULT_BM_SUBSAMPLE_SIZE:
+            rng = np.random.default_rng(0)
+            sample = rng.choice(len(mean_p_elig),
+                                size=DEFAULT_BM_SUBSAMPLE_SIZE, replace=False)
+            bm_val = compute_boundary_mass(mean_p_elig[sample],
+                                            lower=DEFAULT_BM_LOWER,
+                                            upper=DEFAULT_BM_UPPER)
+        else:
+            bm_val = compute_boundary_mass(mean_p_elig,
+                                            lower=DEFAULT_BM_LOWER,
+                                            upper=DEFAULT_BM_UPPER)
 
     called = final_svm >= threshold
     n_called = int(called.sum())
@@ -297,6 +347,22 @@ def apply_mode_separation_postprocess(
     df_full["modesep_route"] = "modesep"
     df_full.loc[~df_full["name"].isin(update_keys), "modesep_route"] = "untouched"
 
+    # v2.7 diagnostic columns: raw_sum, svm_vs_naive, voting_frac
+    raw_sum_all = (df_valid["5'_raw"].to_numpy()
+                   + df_valid["bp_raw"].to_numpy()
+                   + df_valid["3'_raw"].to_numpy())
+    eps = 1e-9
+    p_clip = np.clip(final_svm / 100.0, eps, 1 - eps)
+    logit_svm = np.log(p_clip / (1 - p_clip))
+    svm_vs_naive_all = logit_svm - raw_sum_all
+
+    raw_sum_map = dict(zip(update_keys, raw_sum_all))
+    svn_map = dict(zip(update_keys, svm_vs_naive_all))
+    voting_map = dict(zip(update_keys, voting_all))
+    df_full["raw_sum"] = df_full["name"].map(raw_sum_map)
+    df_full["svm_vs_naive"] = df_full["name"].map(svn_map)
+    df_full["voting_frac"] = df_full["name"].map(voting_map)
+
     df_full.to_csv(score_info_path, sep="\t", index=False, float_format="%.6f")
     _log(f"[modesep] rewrote {score_info_path} (n_called={n_called}, "
          f"median σ on called = {('NA' if med_sigma is None else f'{med_sigma:.3f}')})")
@@ -319,6 +385,7 @@ def apply_mode_separation_postprocess(
         quality_tier="",  # filled below
         first_pass_model_id=first_pass_id,
         second_pass_model_id=second_pass_id,
+        boundary_mass=bm_val,
     )
     result = ModeSepResult(**{**asdict(result),
                               "quality_tier": _assign_quality_tier(result)})
@@ -336,4 +403,98 @@ def _maybe_write_diagnostics(result: ModeSepResult,
     Path(diagnostics_path).write_text(json.dumps(payload, indent=2))
 
 
-__all__ = ["apply_mode_separation_postprocess", "ModeSepResult"]
+def apply_continuous_per_intron_discount(
+    score_info_path: Path,
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    k_overcall: float = DEFAULT_DISCOUNT_K_OVERCALL,
+    tau_overcall: float = DEFAULT_DISCOUNT_TAU_OVERCALL,
+    k_weakmot: float = DEFAULT_DISCOUNT_K_WEAKMOT,
+    tau_motif: float = DEFAULT_DISCOUNT_TAU_MOTIF,
+    input_column: str = "svm_score",
+    messenger=None,
+) -> dict:
+    """Apply continuous per-intron discount to a score_info.iic file (v2.7).
+
+    Reads `input_column` (default `svm_score`) and writes the result to
+    `adjusted_score`:
+
+        penalty_oc = k_overcall * max(0, svm_vs_naive - tau_overcall)
+        penalty_wm = k_weakmot  * max(0, tau_motif - raw_sum)
+        logit_adj  = logit(p_input) - penalty_oc - penalty_wm
+        adjusted_score = sigmoid(logit_adj) * 100
+
+    where svm_vs_naive = logit(p_input) - raw_sum and
+          raw_sum     = 5'_raw + bp_raw + 3'_raw.
+
+    `svm_score` is preserved. `adjusted_score` is overwritten with the
+    discount applied.
+
+    To chain discounts (e.g., legacy valley-depth discount on gate-fail
+    species followed by this continuous discount), call this function with
+    `input_column="adjusted_score"` after the legacy step. Otherwise the
+    default `input_column="svm_score"` applies the discount directly to
+    the raw / mode-sep-recalibrated SVM output.
+
+    Returns a dict with summary stats (n_called pre/post, params used).
+    """
+    def _log(msg):
+        if messenger is not None:
+            messenger.info(msg)
+
+    df = pd.read_csv(score_info_path, sep="\t", low_memory=False)
+    for c in ("svm_score", "5'_raw", "bp_raw", "3'_raw", "adjusted_score"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    if input_column not in df.columns:
+        raise ValueError(
+            f"input_column '{input_column}' not in score_info; "
+            f"available: {list(df.columns)}"
+        )
+
+    base = df[input_column].fillna(df.get("svm_score", 0)).to_numpy()
+
+    valid = ~(df["5'_raw"].isna() | df["bp_raw"].isna() | df["3'_raw"].isna())
+    raw_sum = np.where(
+        valid,
+        df["5'_raw"].fillna(0).to_numpy()
+        + df["bp_raw"].fillna(0).to_numpy()
+        + df["3'_raw"].fillna(0).to_numpy(),
+        np.nan,
+    )
+
+    n_pre = int((base >= threshold).sum())
+    # Apply discount only on valid rows; ineligible rows pass through
+    adj = base.copy().astype(float)
+    valid_idx = np.where(valid)[0]
+    if len(valid_idx) > 0:
+        adj_valid = apply_continuous_discount(
+            base[valid_idx], raw_sum[valid_idx],
+            k_overcall=k_overcall, tau_overcall=tau_overcall,
+            k_weakmot=k_weakmot, tau_motif=tau_motif,
+        )
+        adj[valid_idx] = adj_valid
+    n_post = int((adj >= threshold).sum())
+
+    df["adjusted_score"] = adj
+    df.to_csv(score_info_path, sep="\t", index=False, float_format="%.6f")
+    _log(f"[continuous-discount] applied; n_called_pre={n_pre}, "
+         f"n_called_post={n_post}, suppressed={n_pre - n_post}")
+
+    return {
+        "n_called_pre_discount": n_pre,
+        "n_called_post_discount": n_post,
+        "n_suppressed": n_pre - n_post,
+        "k_overcall": k_overcall,
+        "tau_overcall": tau_overcall,
+        "k_weakmot": k_weakmot,
+        "tau_motif": tau_motif,
+    }
+
+
+__all__ = [
+    "apply_mode_separation_postprocess",
+    "apply_continuous_per_intron_discount",
+    "ModeSepResult",
+]

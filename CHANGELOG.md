@@ -5,6 +5,64 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-05-19
+
+### Added — Continuous per-intron discount
+
+Applied to every modesep run (gate-pass and gate-fail), the discount is a
+non-positive log-odds penalty in two terms:
+
+  penalty_overcall = k_overcall × max(0, svm_vs_naive − τ_overcall)
+  penalty_weakmot  = k_weakmot  × max(0, τ_motif       − raw_sum)
+
+where `svm_vs_naive = logit(p_svm) − raw_sum` and
+`raw_sum = 5'_raw + bp_raw + 3'_raw`. Both terms are zero in the healthy
+regime; they activate only when the SVM overcalls relative to motif log-LR
+or when motif evidence is weak. Empirically tuned defaults:
+`k_overcall = 1.0`, `τ_overcall = 0.0`, `k_weakmot = 0.20`, `τ_motif = 10.0`.
+
+### Added — Diagnostic surface
+
+Per-intron columns added to `score_info.iic`:
+- `raw_sum` — unweighted motif log-LR sum (5'_raw + bp_raw + 3'_raw)
+- `svm_vs_naive` — calibration delta = logit(p_svm) − raw_sum
+- `voting_frac` — fraction of ensemble sub-models voting U12 (P > 0.5)
+
+Per-species fields added to `.modesep.json`:
+- `boundary_mass` — fraction of eligible introns whose second-pass mean P
+  sits in [0.1, 0.9] (OOD-distribution diagnostic)
+- `n_called_pre_discount`, `n_called_post_discount`, `continuous_discount_applied`
+
+### Changed — Output semantics
+
+- `svm_score` column unchanged from v2.6 (raw classifier output, preserved
+  for auditability)
+- `adjusted_score` column is the new recommended call score after the
+  continuous discount
+- Calling decision: `adjusted_score ≥ threshold` (default 90)
+
+### CLI flags
+
+- `--no-continuous-discount` — disable v2.7 discount (preserves pre-v2.7
+  semantics where svm_score is the calling column)
+- `--discount-k-overcall` / `--discount-tau-overcall` — tune the overcall
+  penalty
+- `--discount-k-weakmot` / `--discount-tau-motif` — tune the weak-motif penalty
+
+### Test coverage
+
+- 27 unit tests for `intronIC.scoring.mode_separation` (14 new for v2.7
+  covering continuous discount math, voting fraction, boundary mass)
+- 9 integration tests for the full classify pipeline (4 new for v2.7
+  covering discount preservation of TPs, svm_score invariance under
+  discount, and zero-coefficient pass-through)
+
+### Backward compatibility
+
+- v2.6 v5_modesep bundle continues to work; v2.7 discount applies on top
+- `--no-continuous-discount` reproduces v2.6 behavior
+- v4 cluster-aware bundles continue to load
+
 ## [2.6.0] - 2026-05-17
 
 ### Added — Mode-separation classifier

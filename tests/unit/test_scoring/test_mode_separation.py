@@ -17,12 +17,20 @@ import pytest
 from intronIC.scoring.mode_separation import (
     DEFAULT_MU_U12_TOLERANCE_5P,
     DEFAULT_UNIVERSAL_ANCHORS,
+    DEFAULT_DISCOUNT_K_OVERCALL,
+    DEFAULT_DISCOUNT_K_WEAKMOT,
+    DEFAULT_DISCOUNT_TAU_MOTIF,
+    DEFAULT_DISCOUNT_TAU_OVERCALL,
     ModeSeparationStats,
+    apply_continuous_discount,
     apply_mode_separation_z,
     candidate_weight_from_svm,
+    compute_boundary_mass,
     compute_support2,
+    continuous_discount_logit_shift,
     evaluate_gate,
     fit_mode_separation,
+    voting_fraction,
 )
 
 
@@ -207,3 +215,132 @@ def test_evaluate_gate_no_valley_fails():
     assert not g.passes
     assert g.reason == "no_kde_valley"
     assert g.valley_depth == pytest.approx(0.10)
+
+
+# ---------------------------------------------------------------------------
+# v2.7: continuous per-intron discount
+# ---------------------------------------------------------------------------
+
+def test_continuous_discount_zero_in_healthy_regime():
+    """Strong-motif U12-call has no penalty (raw_sum > tau_motif, svm_vs_naive < 0)."""
+    # logit(0.99) ≈ +4.6; raw_sum = +22 → svm_vs_naive ≈ -17.4 (well below 0)
+    # raw_sum 22 > tau_motif 10 → no weak-motif penalty
+    shift = continuous_discount_logit_shift(
+        logit_svm=np.array([4.6]),
+        raw_sum=np.array([22.0]),
+    )
+    assert shift[0] == pytest.approx(0.0)
+
+
+def test_continuous_discount_overcall_penalty():
+    """High svm + negative raw_sum → strong overcall penalty + weak-motif penalty."""
+    # logit(0.99) ≈ 4.6, raw_sum = -3 → svm_vs_naive = 7.6
+    # k_overcall=1.0, tau=0 → overcall penalty = 7.6
+    # k_weakmot=0.20, tau_motif=10 → weak-motif penalty = 0.20*(10-(-3)) = 2.6
+    # Total shift = 10.2; adj logit = 4.6 - 10.2 = -5.6 → P ≈ 0.0037 → svm ≈ 0.37
+    shift = continuous_discount_logit_shift(
+        logit_svm=np.array([4.6]),
+        raw_sum=np.array([-3.0]),
+    )
+    assert shift[0] == pytest.approx(10.2, abs=0.01)
+
+
+def test_continuous_discount_weakmot_only():
+    """Moderate svm + weak motif → only weak-motif penalty fires."""
+    # logit(0.7) ≈ 0.847, raw_sum = 5 → svm_vs_naive = -4.15 (negative → no overcall penalty)
+    # k_weakmot=0.20, tau_motif=10 → weak-motif penalty = 0.20 * (10-5) = 1.0
+    shift = continuous_discount_logit_shift(
+        logit_svm=np.array([0.847]),
+        raw_sum=np.array([5.0]),
+    )
+    assert shift[0] == pytest.approx(1.0, abs=0.01)
+
+
+def test_apply_continuous_discount_monotone_in_overcall():
+    """Higher svm_vs_naive → larger penalty → lower adjusted score."""
+    svm = np.array([99.0, 99.0, 99.0])
+    raw_sums = np.array([+22.0, +5.0, -5.0])  # decreasing motif support
+    adj = apply_continuous_discount(svm, raw_sums)
+    # Strong-motif: no change; weak-motif: increasing penalty
+    assert adj[0] >= 98.0   # essentially unchanged
+    assert adj[1] < adj[0]  # mild penalty
+    assert adj[2] < adj[1]  # stronger penalty
+
+
+def test_apply_continuous_discount_no_increase():
+    """Discount is always non-positive — adjusted ≤ original."""
+    rng = np.random.default_rng(0)
+    svm = rng.uniform(0, 100, 100)
+    raw_sums = rng.uniform(-30, 30, 100)
+    adj = apply_continuous_discount(svm, raw_sums)
+    # Allow tiny numerical error
+    assert np.all(adj <= svm + 1e-6)
+
+
+def test_apply_continuous_discount_custom_params():
+    """k=0 disables discount entirely."""
+    svm = np.array([99.0, 95.0, 50.0])
+    raw_sums = np.array([22.0, -3.0, 5.0])
+    adj = apply_continuous_discount(
+        svm, raw_sums,
+        k_overcall=0.0, k_weakmot=0.0,
+    )
+    np.testing.assert_array_almost_equal(adj, svm, decimal=4)
+
+
+# ---------------------------------------------------------------------------
+# v2.7: voting fraction
+# ---------------------------------------------------------------------------
+
+def test_voting_fraction_unanimous():
+    probas = np.full((10, 5), 0.9)  # all 10 models call all 5 introns U12
+    v = voting_fraction(probas)
+    np.testing.assert_array_equal(v, np.ones(5))
+
+
+def test_voting_fraction_split():
+    probas = np.array([[0.99] * 5, [0.6] * 5, [0.4] * 5, [0.01] * 5])
+    # 2 of 4 models above 0.5 for each intron
+    v = voting_fraction(probas)
+    np.testing.assert_array_equal(v, np.full(5, 0.5))
+
+
+def test_voting_fraction_custom_threshold():
+    probas = np.array([[0.7] * 5, [0.3] * 5])
+    v = voting_fraction(probas, threshold=0.6)
+    np.testing.assert_array_equal(v, np.full(5, 0.5))  # only first model > 0.6
+
+
+def test_voting_fraction_shape_error():
+    with pytest.raises(ValueError, match="2-D"):
+        voting_fraction(np.array([0.5, 0.6, 0.7]))  # 1-D input
+
+
+# ---------------------------------------------------------------------------
+# v2.7: boundary mass
+# ---------------------------------------------------------------------------
+
+def test_boundary_mass_clean_bimodal():
+    """Bimodal distribution (all extremes) → BM ≈ 0."""
+    mean_p = np.concatenate([np.full(900, 0.01), np.full(100, 0.99)])
+    bm = compute_boundary_mass(mean_p)
+    assert bm == pytest.approx(0.0)
+
+
+def test_boundary_mass_diffuse():
+    """All in middle → BM ≈ 1.0."""
+    mean_p = np.full(1000, 0.5)
+    bm = compute_boundary_mass(mean_p)
+    assert bm == pytest.approx(1.0)
+
+
+def test_boundary_mass_custom_bounds():
+    mean_p = np.array([0.05, 0.15, 0.35, 0.55, 0.75, 0.95])
+    bm = compute_boundary_mass(mean_p, lower=0.2, upper=0.8)
+    # 0.35, 0.55, 0.75 in [0.2, 0.8] → 3/6 = 0.5
+    assert bm == pytest.approx(0.5)
+
+
+def test_boundary_mass_empty():
+    bm = compute_boundary_mass(np.array([]))
+    assert np.isnan(bm)

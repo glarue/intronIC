@@ -72,9 +72,13 @@ def runtime_and_gold():
     return runtime, gold, strong_set
 
 
-def _evaluate_species(sp: str, runtime, gold, strong_set):
+def _evaluate_species(sp: str, runtime, gold, strong_set,
+                       apply_discount: bool = True):
+    """Evaluate a species. apply_discount=True mirrors v2.7 production flow
+    (mode-sep + continuous discount); False mirrors v2.6 (mode-sep only)."""
     from intronIC.classification.mode_sep_pipeline import (
         apply_mode_separation_postprocess,
+        apply_continuous_per_intron_discount,
     )
     from intronIC.scoring.cluster_validation import compute_valley_depth
 
@@ -91,11 +95,21 @@ def _evaluate_species(sp: str, runtime, gold, strong_set):
             valley_depth_fn=compute_valley_depth,
             threshold=90.0,
         )
-        df = pd.read_csv(dst, sep="\t", low_memory=False,
-                         usecols=["name", "svm_score"])
+        # v2.7: apply continuous discount after mode-sep.
+        # On gate-fail, skip — the production cli/main.py applies the
+        # legacy valley-depth discount first; this regression test exercises
+        # only the modesep + continuous-discount portion.
+        call_col = "svm_score"
+        if apply_discount and result.route == "modesep":
+            apply_continuous_per_intron_discount(
+                score_info_path=dst, threshold=90.0,
+                input_column="svm_score",
+            )
+            call_col = "adjusted_score"
+        df = pd.read_csv(dst, sep="\t", low_memory=False)
     df["key"] = df["name"].astype(str).str.split(";", n=1).str[0].str.lower()
-    df["svm_score"] = pd.to_numeric(df["svm_score"], errors="coerce")
-    df["called"] = df["svm_score"] >= 90.0
+    df[call_col] = pd.to_numeric(df[call_col], errors="coerce")
+    df["called"] = df[call_col] >= 90.0
 
     sp_gold = gold[gold["species"] == sp].copy()
     sp_gold["key"] = sp_gold["intron_name"].astype(str).str.lower()

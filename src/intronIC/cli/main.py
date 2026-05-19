@@ -4512,6 +4512,45 @@ def classify_streaming_per_contig(
             )
             if leg_hc_count is not None:
                 adjusted_hc_count = leg_hc_count
+
+        # v2.7+: continuous per-intron discount applied AFTER mode-sep
+        # recalibration (gate-pass) AND AFTER legacy valley-depth discount
+        # (gate-fail). Writes adjusted_score; preserves svm_score. Calls at
+        # threshold are evaluated against adjusted_score.
+        if not getattr(config.scoring, "discount_disable", False):
+            from intronIC.classification.mode_sep_pipeline import (
+                apply_continuous_per_intron_discount,
+            )
+            # If legacy discount ran (gate-fail), chain from adjusted_score;
+            # otherwise (gate-pass), apply directly to svm_score.
+            discount_input = (
+                "adjusted_score"
+                if modesep_result.route == "first_pass_fallback"
+                else "svm_score"
+            )
+            disc_summary = apply_continuous_per_intron_discount(
+                score_info_path=score_path,
+                threshold=config.scoring.threshold,
+                k_overcall=getattr(config.scoring, "discount_k_overcall", 1.0),
+                tau_overcall=getattr(config.scoring, "discount_tau_overcall", 0.0),
+                k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.20),
+                tau_motif=getattr(config.scoring, "discount_tau_motif", 10.0),
+                input_column=discount_input,
+                messenger=messenger,
+            )
+            adjusted_hc_count = disc_summary["n_called_post_discount"]
+            # Surface in modesep_result for the diagnostic JSON
+            try:
+                from dataclasses import replace as _replace
+                modesep_result = _replace(
+                    modesep_result,
+                    n_called_pre_discount=disc_summary["n_called_pre_discount"],
+                    n_called_post_discount=disc_summary["n_called_post_discount"],
+                    n_called_u12=disc_summary["n_called_post_discount"],
+                    continuous_discount_applied=True,
+                )
+            except Exception:
+                pass
     elif accumulated_five_z:
         from intronIC.scoring.cluster_validation import validate_u12_cluster
 
