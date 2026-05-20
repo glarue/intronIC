@@ -50,15 +50,25 @@ DEFAULT_UNIVERSAL_ANCHORS = {
 DEFAULT_MU_U12_TOLERANCE_5P = 3.6
 
 # Continuous per-intron discount defaults (v2.7+).
-# Empirically derived from multi-species sweep (Salpingoeca / panel TPs):
-#   - k_overcall=1.0, tau_overcall=0 catches Salpingoeca-class svm-vs-naive
-#     overcalls without penalizing panel TPs (Sycon p95 svm_vs_naive ≈ -0.14)
-#   - k_weakmot=0.20, tau_motif=10 penalizes weak-motif calls (typical TPs
-#     have raw_sum ≈ +22, well above the threshold) without affecting any
-#     panel-TP recall (verified via empirical sweep)
-DEFAULT_DISCOUNT_K_OVERCALL = 1.0
+#
+# Empirically tuned against the 14-species panel + Salpingoeca:
+#   - k_overcall=2.0, tau_overcall=0.0 catches Salpingoeca-class
+#     overcalls (svm_vs_naive ≈ +24 → penalty ≈ 48) without affecting
+#     panel TPs (which have svm_vs_naive < 0; no overcall penalty fires)
+#   - k_weakmot=0.0 DISABLES the weak-motif penalty by default. Empirically
+#     it loses 4 IPA-validated borderline TPs (HomSap SUDS3 + ARPC5,
+#     DanRer ap4e1, XenTro mios) — confirmed-by-conservation U12s where
+#     the SVM correctly leverages non-motif features (bp_offset,
+#     bp_scan_confidence, support2) to recover real U12s with decayed
+#     primary motif evidence. The weak-motif penalty conflates these with
+#     Salpingoeca-class noise even though the SVM is using non-motif
+#     features differently in the two regimes.
+#
+# Empirical panel result with these defaults (vs raw v2.6 control 1950/3):
+#   TP=1950  FN=3  FP_strong=0  FP_any=216  Salpingoeca = 29 → 6
+DEFAULT_DISCOUNT_K_OVERCALL = 2.0
 DEFAULT_DISCOUNT_TAU_OVERCALL = 0.0
-DEFAULT_DISCOUNT_K_WEAKMOT = 0.20
+DEFAULT_DISCOUNT_K_WEAKMOT = 0.0
 DEFAULT_DISCOUNT_TAU_MOTIF = 10.0
 
 # Boundary-mass diagnostic: fraction of eligible introns where second-pass

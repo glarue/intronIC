@@ -4531,9 +4531,9 @@ def classify_streaming_per_contig(
             disc_summary = apply_continuous_per_intron_discount(
                 score_info_path=score_path,
                 threshold=config.scoring.threshold,
-                k_overcall=getattr(config.scoring, "discount_k_overcall", 1.0),
+                k_overcall=getattr(config.scoring, "discount_k_overcall", 2.0),
                 tau_overcall=getattr(config.scoring, "discount_tau_overcall", 0.0),
-                k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.20),
+                k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.0),
                 tau_motif=getattr(config.scoring, "discount_tau_motif", 10.0),
                 input_column=discount_input,
                 messenger=messenger,

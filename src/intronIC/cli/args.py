@@ -783,11 +783,12 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--discount-k-overcall",
             dest="discount_k_overcall",
             type=float,
-            default=1.0,
-            help="""Continuous discount coefficient for SVM overcall penalty (default 1.0).
+            default=2.0,
+            help="""Continuous discount coefficient for SVM overcall penalty (default 2.0).
               Penalty = k_overcall × max(0, svm_vs_naive − tau_overcall) where
               svm_vs_naive = logit(p_svm) − raw_sum. Higher = stronger suppression
-              of overcalls relative to motif evidence.""",
+              of overcalls relative to motif evidence. Empirically tuned against
+              14-species panel + Salpingoeca to preserve all IPA-validated TPs.""",
         )
         parser.add_argument(
             "--discount-tau-overcall",
@@ -802,10 +803,14 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--discount-k-weakmot",
             dest="discount_k_weakmot",
             type=float,
-            default=0.20,
-            help="""Continuous discount coefficient for weak-motif penalty (default 0.20).
-              Penalty = k_weakmot × max(0, tau_motif − raw_sum). Higher = stronger
-              suppression of calls with weak motif log-LR sums.""",
+            default=0.0,
+            help="""Continuous discount coefficient for weak-motif penalty (default 0.0 =
+              DISABLED). Penalty = k_weakmot × max(0, tau_motif − raw_sum). When enabled,
+              suppresses calls with weak motif log-LR sums. Disabled by default because
+              it loses IPA-validated borderline TPs where the SVM correctly leverages
+              non-motif features (bp_offset, bp_scan_confidence, support2) for borderline-
+              motif U12s. Enable only if your use case requires stricter motif-evidence
+              calls.""",
         )
         parser.add_argument(
             "--discount-tau-motif",

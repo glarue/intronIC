@@ -233,38 +233,63 @@ def test_continuous_discount_zero_in_healthy_regime():
 
 
 def test_continuous_discount_overcall_penalty():
-    """High svm + negative raw_sum → strong overcall penalty + weak-motif penalty."""
+    """High svm + negative raw_sum → strong overcall penalty (default k_oc=2.0)."""
     # logit(0.99) ≈ 4.6, raw_sum = -3 → svm_vs_naive = 7.6
-    # k_overcall=1.0, tau=0 → overcall penalty = 7.6
-    # k_weakmot=0.20, tau_motif=10 → weak-motif penalty = 0.20*(10-(-3)) = 2.6
-    # Total shift = 10.2; adj logit = 4.6 - 10.2 = -5.6 → P ≈ 0.0037 → svm ≈ 0.37
+    # k_overcall=2.0 → overcall penalty = 15.2
+    # k_weakmot=0.0 (default) → no weak-motif penalty
+    # Total shift = 15.2
     shift = continuous_discount_logit_shift(
         logit_svm=np.array([4.6]),
         raw_sum=np.array([-3.0]),
     )
-    assert shift[0] == pytest.approx(10.2, abs=0.01)
+    assert shift[0] == pytest.approx(15.2, abs=0.01)
 
 
-def test_continuous_discount_weakmot_only():
-    """Moderate svm + weak motif → only weak-motif penalty fires."""
-    # logit(0.7) ≈ 0.847, raw_sum = 5 → svm_vs_naive = -4.15 (negative → no overcall penalty)
-    # k_weakmot=0.20, tau_motif=10 → weak-motif penalty = 0.20 * (10-5) = 1.0
+def test_continuous_discount_weakmot_disabled_by_default():
+    """v2.7 default: k_weakmot=0 → no weak-motif penalty.
+
+    Borderline TP regime (moderate svm, weak motif, no overcall) gets
+    NO penalty under defaults, preserving IPA-validated TPs like SUDS3,
+    ARPC5, ap4e1, mios that have raw_sum < 10.
+    """
+    # logit(0.7) ≈ 0.847, raw_sum = 5 → svm_vs_naive = -4.15
+    # k_overcall=2.0, tau=0 → max(0, -4.15) = 0 → no overcall penalty
+    # k_weakmot=0.0 (default) → no weak-motif penalty
+    # Total shift = 0
     shift = continuous_discount_logit_shift(
         logit_svm=np.array([0.847]),
         raw_sum=np.array([5.0]),
     )
+    assert shift[0] == pytest.approx(0.0, abs=0.01)
+
+
+def test_continuous_discount_weakmot_when_enabled():
+    """Explicit k_weakmot > 0 fires the weak-motif penalty (opt-in)."""
+    shift = continuous_discount_logit_shift(
+        logit_svm=np.array([0.847]),
+        raw_sum=np.array([5.0]),
+        k_weakmot=0.20, tau_motif=10.0,
+    )
+    # 0.20 * (10 - 5) = 1.0
     assert shift[0] == pytest.approx(1.0, abs=0.01)
 
 
 def test_apply_continuous_discount_monotone_in_overcall():
-    """Higher svm_vs_naive → larger penalty → lower adjusted score."""
+    """Higher svm_vs_naive → larger overcall penalty → lower adjusted score.
+
+    Defaults: k_overcall=2.0, k_weakmot=0.0. So only overcall fires.
+    """
     svm = np.array([99.0, 99.0, 99.0])
-    raw_sums = np.array([+22.0, +5.0, -5.0])  # decreasing motif support
+    # All three at svm=99 → logit≈4.595. svm_vs_naive = 4.595 - raw_sum.
+    # raw_sums chosen so:
+    #   +22: svm_vs_naive=-17.4 → no penalty (well below tau_oc=0)
+    #   -1:  svm_vs_naive=+5.6 → moderate overcall penalty = 2*5.6 = 11.2
+    #   -8:  svm_vs_naive=+12.6 → strong overcall penalty = 2*12.6 = 25.2
+    raw_sums = np.array([+22.0, -1.0, -8.0])
     adj = apply_continuous_discount(svm, raw_sums)
-    # Strong-motif: no change; weak-motif: increasing penalty
-    assert adj[0] >= 98.0   # essentially unchanged
-    assert adj[1] < adj[0]  # mild penalty
-    assert adj[2] < adj[1]  # stronger penalty
+    assert adj[0] >= 98.0   # no penalty (svm_vs_naive < 0)
+    assert adj[1] < adj[0]  # moderate overcall penalty
+    assert adj[2] < adj[1]  # stronger overcall penalty
 
 
 def test_apply_continuous_discount_no_increase():

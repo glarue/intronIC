@@ -5,12 +5,12 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.0] - 2026-05-19
+## [2.7.0] - 2026-05-20
 
 ### Added — Continuous per-intron discount
 
 Applied to every modesep run (gate-pass and gate-fail), the discount is a
-non-positive log-odds penalty in two terms:
+non-positive log-odds penalty:
 
   penalty_overcall = k_overcall × max(0, svm_vs_naive − τ_overcall)
   penalty_weakmot  = k_weakmot  × max(0, τ_motif       − raw_sum)
@@ -18,8 +18,16 @@ non-positive log-odds penalty in two terms:
 where `svm_vs_naive = logit(p_svm) − raw_sum` and
 `raw_sum = 5'_raw + bp_raw + 3'_raw`. Both terms are zero in the healthy
 regime; they activate only when the SVM overcalls relative to motif log-LR
-or when motif evidence is weak. Empirically tuned defaults:
-`k_overcall = 1.0`, `τ_overcall = 0.0`, `k_weakmot = 0.20`, `τ_motif = 10.0`.
+or when motif evidence is weak.
+
+**Empirically tuned defaults** (against 14-species panel + Salpingoeca):
+`k_overcall = 2.0`, `τ_overcall = 0.0`, `k_weakmot = 0.0` (DISABLED by default),
+`τ_motif = 10.0`. The overcall penalty alone suppresses Salpingoeca-class
+overcalls (29 → 6 pre-legacy) while preserving all 1950 IPA-validated
+panel TPs. The weak-motif penalty is opt-in via CLI because it loses
+4 IPA-validated borderline TPs (SUDS3, ARPC5, ap4e1, mios) where the SVM
+correctly leverages non-motif features (bp_offset, bp_scan_confidence,
+support2) for borderline-motif U12s.
 
 ### Added — Diagnostic surface
 
@@ -126,6 +134,9 @@ tested neighborhood. Inherited HPs retained.
 - Apostasia (IPA-validated U12s, held-out from training): 17/21 → 20/21.
 - 14-species panel: 1944 → 1950 TP, 9 → 3 FN, FP_strong 0 → 0
   (Pareto improvement over both v2.3 D and cluster-aware v4_aug).
+- v2.7 panel net vs v2.6: TP=1950 (unchanged), FN=3 (unchanged),
+  FP_strong=0 (unchanged), FP_any=216 (was 217). All IPA-validated TPs
+  preserved; per-intron overcall defense added without recall regression.
 - U12-absent species (CaeEle, SacCer, SchPom, TetThe, ChlRei, AscSuu)
   gate-fail cleanly to first-pass scores; zero FP_strong leakage.
 
