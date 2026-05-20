@@ -63,6 +63,26 @@ Per-species fields added to `.modesep.json`:
 - `--no-continuous-discount` reproduces v2.6 behavior
 - v4 cluster-aware bundles continue to load
 
+### HP optimality verification
+
+Before v2.7 release, the inherited SVM hyperparameters (C=200, γ=0.001,
+ezf=0.75 — carried over from v4_aug cluster-aware) were empirically
+verified against 6 neighbor configurations:
+
+**Subsample sweep** (50K-row corpus, 14-species panel):
+- γ=0.0001 marginally edged out control by +4 TPs (1934 vs 1930)
+- C/2, 2C, ezf±0.15 statistically tied
+- γ=0.01 lost significantly (−24 TPs)
+
+**Full-corpus verification** (502K rows, γ=0.0001 only):
+- γ=0.0001 LOST 4 TPs vs control on full corpus (1946 vs 1950)
+- Bundle size penalty: 119 MB vs 78 MB (1.5×)
+- Subsample → full-corpus generalization failed; wider kernel
+  over-smooths fine-structure on dense data
+
+Conclusion: current HPs are at/near the global optimum within the
+tested neighborhood. Inherited HPs retained.
+
 ## [2.6.0] - 2026-05-17
 
 ### Added — Mode-separation classifier
