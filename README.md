@@ -46,7 +46,8 @@ intronIC test -p 4
   the U2 mode at z=0 and U12 mode at z=1 in every species. Plant recall
   jumps (AmbTri 90% → 100%, OrySat 94% → 100%) and Apostasia IPA recall
   17/21 → 20/21 without inflating false positives. See
-  [`docs/mode_separation.md`](docs/mode_separation.md) for the architecture.
+  [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm#stage-4-two-pass-classification)
+  in the wiki for the architecture.
 - **Three-check gate** (n_eff floor + μ_U12 location prior + multi-bandwidth
   Fisher-KDE valley depth) protects against the failure modes of per-species
   recalibration; U12-absent species fall back to first-pass scores cleanly.
@@ -101,7 +102,7 @@ intronIC v2.7 identifies U12-type introns in seven stages:
 6. **Second-pass classification (mode-separation)** — on gate-pass, re-z-score motif features so U2 → 0 and U12 → 1 in every species, then score eligible introns through the 126-model `v5_modesep_aug` ensemble (`svm_score`). On gate-fail, keep first-pass scores and apply the legacy Bayesian valley-depth + ensemble-agreement adjustment.
 7. **Continuous per-intron discount** — apply a non-positive log-odds penalty for SVM overcalls relative to motif log-LR; produces `adjusted_score` (the calling column).
 
-See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) for the full algorithm description and [`docs/mode_separation.md`](docs/mode_separation.md) for the two-pass mode-separation architecture.
+See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) in the wiki for the full algorithm description, including the [two-pass mode-separation architecture](https://github.com/glarue/intronIC/wiki/Technical-algorithm#stage-4-two-pass-classification) and the [v2.7 continuous discount](https://github.com/glarue/intronIC/wiki/Technical-algorithm#v27-continuous-discount-per-intron-overcall-penalty).
 
 ---
 
