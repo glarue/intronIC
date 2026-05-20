@@ -2,7 +2,7 @@
 
 # intronIC (intron <ins>I</ins>nterrogator and <ins>C</ins>lassifier)
 
-Classify intron sequences as **U12-type** (minor spliceosome) or **U2-type** (major spliceosome). A 126-model multispecies RBF SVM ensemble scores each intron against position-weight matrices and outputs a calibrated probability (0-100%).
+Classify intron sequences as **U12-type** (minor spliceosome) or **U2-type** (major spliceosome). A two-pass RBF SVM pipeline (first-pass cluster-aware + second-pass per-species mode-separation, each a 126-model multispecies ensemble) scores each intron against position-weight matrices and outputs a calibrated probability (0-100%) along with a continuous per-intron overcall discount.
 
 ---
 
@@ -63,7 +63,7 @@ intronIC test -p 4
 
 - **Default model is now the v3 multispecies bundle**: 3 seeds × 42 calibrated SVMs (126 total) trained on 41,333 introns across 90 species and 14 clades. Holdout F1 = 1.000 vs the v2.3 default's 0.9975, and ~54% lower production-equivalent FPR on U12-absent species.
 - **Default classification threshold lowered from 95 → 90**, made safe by the v3 model's tighter calibration. Pass `--threshold 95` to restore prior behavior.
-- **`--streaming` (default) and `--in-memory` now produce bit-identical classifications**. Mode choice affects only the runtime/memory tradeoff. Reference run on Homo sapiens GRCh38 + Ensembl 104, `-p 6`, ~227k scored introns: streaming ~16 min / 5.4 GB peak, in-memory ~15 min / 10.1 GB peak.
+- **`--streaming` (default) and `--in-memory` now produce bit-identical classifications**. Mode choice affects only the runtime/memory tradeoff. Reference run (v2.7, mode-sep two-pass) on Homo sapiens GRCh38.p13 + NCBI RefSeq GFF, `-p 5`, 257k scored introns: streaming ~40 min / 5.3 GB peak. In-memory was not re-measured for v2.7 (expected similar wall time at roughly 2× peak memory based on v2.4 ratios). The wall-time growth from v2.4 (~16 min) reflects the v2.6+ two-pass mode-separation architecture; both passes run the full 126-model ensemble.
 - **Self-describing model bundles** carry config + training metadata alongside the weights; see [`docs/v3_bundle_schema.md`](docs/v3_bundle_schema.md).
 - v2.3 model bundles continue to load unchanged; old runs reproduce by passing `--model <v2.3-bundle.pkl>`.
 - See [CHANGELOG.md](CHANGELOG.md) for full release history.
@@ -79,9 +79,9 @@ intronIC test -p 4
 
 ## Key Features
 
-- **Probability scores** (0-100%) from a 126-model calibrated SVM ensemble (3 seeds × 42 sub-models, isotonic calibration)
+- **Probability scores** (0-100%) from two 126-model calibrated SVM ensembles (3 seeds × 42 sub-models each, isotonic calibration) — a first-pass cluster-aware classifier and a second-pass per-species mode-separation classifier
 - **Pretrained model** loaded automatically for cross-species analysis
-- **Streaming mode** (default) roughly halves peak memory on large genomes (e.g., ~5.4 GB vs ~10.1 GB for full human at `-p 6`); bit-identical classifications
+- **Streaming mode** (default) roughly halves peak memory on large genomes (e.g., ~5.3 GB for full human at `-p 5`); bit-identical to in-memory
 - **Parallel scoring** via `-p N` for linear speedup
 - **Comprehensive metadata**: phase, position, parent gene/transcript
 
@@ -91,15 +91,17 @@ intronIC test -p 4
 
 Most eukaryotic introns (~99.5%) are spliced by the **major (U2-type) spliceosome**; a small fraction (~0.5%) are spliced by the **minor (U12-type) spliceosome**. U12-type introns carry a conserved **TCCTTAAC** branch point motif and have either **AT-AC** (~25%) or **GT-AG** (~75%) terminal dinucleotides.
 
-intronIC identifies U12-type introns in five stages:
+intronIC v2.7 identifies U12-type introns in seven stages:
 
 1. **PWM scoring** — score the 5' splice site, branch point, and 3' splice site against position-weight matrices
 2. **Background correction** — blend species-specific nucleotide frequencies into U2-type PWMs to correct composition bias
-3. **Normalization** — convert raw log-odds to z-scores via robust scaling
-4. **SVM classification** — 126-model RBF SVM ensemble (v2.4 default; 3 seeds × 42 sub-models) produces per-intron probabilities and ensemble agreement (sigma)
-5. **Score adjustment** — adjust probabilities using a species-level valley prior and an ensemble disagreement penalty
+3. **Adaptive normalizer fit** — score sampled introns and fit a per-species robust z-scaler (median/IQR) for the first-pass features
+4. **First-pass classification** — score every intron through the 126-model cluster-aware RBF SVM ensemble (`v4_aug`); produces `first_pass_svm` and the candidate weights used to estimate per-species U12/U2 modes
+5. **Mode estimation + gate** — estimate per-species μ_U12 / μ_U2 from soft candidate weights; gate against three checks (n_eff floor, μ_U12 location prior, Fisher-discriminant KDE valley depth)
+6. **Second-pass classification (mode-separation)** — on gate-pass, re-z-score motif features so U2 → 0 and U12 → 1 in every species, then score eligible introns through the 126-model `v5_modesep_aug` ensemble (`svm_score`). On gate-fail, keep first-pass scores and apply the legacy Bayesian valley-depth + ensemble-agreement adjustment.
+7. **Continuous per-intron discount** — apply a non-positive log-odds penalty for SVM overcalls relative to motif log-LR; produces `adjusted_score` (the calling column).
 
-See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) for the full algorithm description.
+See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algorithm) for the full algorithm description and [`docs/mode_separation.md`](docs/mode_separation.md) for the two-pass mode-separation architecture.
 
 ---
 
