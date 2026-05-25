@@ -74,7 +74,7 @@ class ModeSepResult:
     mu_u12_5p_offset: float
     median_ensemble_sigma_called: Optional[float]
     p90_ensemble_sigma_called: Optional[float]
-    quality_tier: str               # "A" | "B" | "C" | "F"
+    quality_tier: str               # "modesep_strong" | "modesep_standard" | "modesep_weak" | "first_pass_fallback"
     first_pass_model_id: str
     second_pass_model_id: str
     # v2.7+ additions (diagnostic-only species-level fields)
@@ -119,9 +119,17 @@ def _score_second_pass_ensemble(ensemble, X: np.ndarray, n_jobs: int = -1,
 
 
 def _assign_quality_tier(result: ModeSepResult) -> str:
-    """Quality tier rubric from MODESEP_INTEGRATION_PLAN.md §3.2."""
+    """Quality tier rubric from MODESEP_INTEGRATION_PLAN.md §3.2.
+
+    Tier strings (v2.7.1+): self-descriptive rename from the prior A/B/C/F
+    school-grade codes. Mapping:
+        modesep_strong       (was "A")
+        modesep_standard     (was "B")
+        modesep_weak         (was "C")
+        first_pass_fallback  (was "F")
+    """
     if result.route != "modesep":
-        return "F"
+        return "first_pass_fallback"
     valley = result.valley_depth if result.valley_depth is not None else 0.0
     n_eff = result.n_eff_candidates
     med_sig = result.median_ensemble_sigma_called
@@ -129,10 +137,10 @@ def _assign_quality_tier(result: ModeSepResult) -> str:
     sig_ok_loose = med_sig is not None and med_sig <= 15.0
 
     if valley >= 0.5 and n_eff >= 20 and sig_ok_strict:
-        return "A"
+        return "modesep_strong"
     if (valley >= 0.3 or n_eff >= 10) and sig_ok_loose:
-        return "B"
-    return "C"
+        return "modesep_standard"
+    return "modesep_weak"
 
 
 def apply_mode_separation_postprocess(
@@ -253,7 +261,7 @@ def apply_mode_separation_postprocess(
                               else float(s5.mu_u12 - anchor_5p)),
             median_ensemble_sigma_called=None,
             p90_ensemble_sigma_called=None,
-            quality_tier="F",
+            quality_tier="first_pass_fallback",
             first_pass_model_id=first_pass_id,
             second_pass_model_id=second_pass_id,
         )
@@ -478,9 +486,40 @@ def apply_continuous_per_intron_discount(
     n_post = int((adj >= threshold).sum())
 
     df["adjusted_score"] = adj
+
+    # v2.7.1: unified labels (type_id / confidence / history)
+    # See scoring/labeling.py for the rubric.
+    from intronIC.scoring.labeling import (
+        assign_labels, count_by_label, U2_STRONG_THRESHOLD,
+        PROMOTED_DEMOTED_THRESHOLD,
+    )
+    # For Tier F species the first_pass_svm column is absent; fall back to
+    # the input column (svm_score = first-pass output in that regime).
+    if "first_pass_svm" in df.columns:
+        adj_series = pd.Series(adj, index=df.index)
+        fp_col = pd.to_numeric(df["first_pass_svm"], errors="coerce").fillna(adj_series)
+    else:
+        fp_col = pd.Series(base, index=df.index)
+    fp_arr = fp_col.to_numpy()
+
+    labels = [assign_labels(float(fp), float(a)) for fp, a in zip(fp_arr, adj)]
+    df["type_id"] = [lab.type_id for lab in labels]
+    df["confidence"] = [lab.confidence for lab in labels]
+    df["history"] = [lab.history for lab in labels]
+
     df.to_csv(score_info_path, sep="\t", index=False, float_format="%.6f")
     _log(f"[continuous-discount] applied; n_called_pre={n_pre}, "
          f"n_called_post={n_post}, suppressed={n_pre - n_post}")
+
+    label_counts = count_by_label(labels)
+    _log(f"[labeling] u12={label_counts['u12_count']} "
+         f"(strong={label_counts['u12_strong_count']}, "
+         f"borderline={label_counts['u12_borderline_count']}, "
+         f"promoted={label_counts['u12_promoted_count']}); "
+         f"u2={label_counts['u2_count']} "
+         f"(strong={label_counts['u2_strong_count']}, "
+         f"borderline={label_counts['u2_borderline_count']}, "
+         f"demoted={label_counts['u2_demoted_count']})")
 
     return {
         "n_called_pre_discount": n_pre,
@@ -490,6 +529,7 @@ def apply_continuous_per_intron_discount(
         "tau_overcall": tau_overcall,
         "k_weakmot": k_weakmot,
         "tau_motif": tau_motif,
+        **label_counts,
     }
 
 

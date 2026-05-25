@@ -5,6 +5,105 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-05-25
+
+### Changed — unified per-intron labels (fixes misleading u2_count)
+
+Per-intron output (`score_info.iic`) now carries three orthogonal label
+axes derived after all score adjustments have been applied:
+
+  type_id     ∈ {"u12", "u2"}              binary call on adjusted_score
+  confidence  ∈ {"strong", "borderline"}    within-call gradation
+  history     ∈ {"stable", "promoted", "demoted"}  pipeline path indicator
+
+Decision logic:
+  type_id = "u12" if adjusted_score >= 50 else "u2"
+  confidence:
+    type_id=u12 → "strong" if adjusted_score >= 90 else "borderline"
+    type_id=u2  → "strong" if first_pass_svm < 10 else "borderline"
+  history:
+    u12 with first_pass_svm < 50  → "promoted"  (mode-sep rescued)
+    u2  with first_pass_svm >= 50 → "demoted"   (discount suppressed)
+    otherwise                     → "stable"
+
+Thresholds derived empirically from 73-species IPA-gold panel:
+`first_pass_svm < 10` captures 99.92% of true U2s with 0.02% U12 loss;
+demoted introns have median gap of ~70 score-units (no minimum-gap
+filter needed).
+
+`metrics.iic.json` now exposes counts on each axis: `u12_count`,
+`u12_strong_count`, `u12_borderline_count`, `u12_promoted_count`,
+`u2_count`, `u2_strong_count`, `u2_borderline_count`, `u2_demoted_count`.
+`high_confidence_u12` retained as alias for `u12_strong_count`.
+
+**Pre-v2.7.1 behavior superseded**: `u2_count` was previously computed as
+`total_classified - high_confidence_u12`, treating uncertain U2s the
+same as confidently U2; per-intron `type_id` was set with inconsistent
+thresholds across multiple code paths (50% in predictor.py, 90% in
+legacy margin alignment and prior adjustment in main.py). All three
+assignment paths superseded by the single source-of-truth function in
+`scoring/labeling.py`.
+
+Backfill script provided (`scripts/backfill_v271_labels.py`) to add the
+new columns to existing score_info.iic files without re-classifying.
+
+### Changed — single-seed ensemble bundle (3× faster classification)
+
+Default model bundle (`default_pretrained.model.pkl`) repacked to a single
+seed group of 42 sub-models per pass (down from 3 seeds × 42 = 126).
+Empirically validated identical TP/FN/FP/recall across:
+- 73-species IPA-gold panel (first-pass): bit-identical at N=42 vs N=126
+- 8-species gold panel (second-pass, dedup-fixed): bit-identical
+- AmbTri (mode-sep recovery target): 51/51 calls preserved
+- Symbio (divergent, gate-fail): 27/27 calls, sigma distributions within 3%
+- Drosophila smoke test: 20/20 calls preserved
+
+Runtime: ~3× per-pass speedup measured (e.g., Symbio classification:
+1h 53m → 39m 52s at -p 8). Bundle file 82 MB → 27 MB (33%). Theoretical
+justification: bagged ensemble variance saturates by N≈40 under 75%-overlap
+subsampling (variance floor at ρσ², not 1/N), so additional seeds provide
+no measurable boundary refinement. See `docs/scoring_pipeline.md` for
+details.
+
+The 3-seed bundles for both passes (v4_aug_cluster_aware,
+v5_modesep_aug) are preserved separately and can be reconstituted via
+`scripts/rebundle_single_seed.py`.
+
+### Changed — quality tier strings renamed
+
+Mode-separation diagnostic tiers in `<species>.modesep.json` renamed from
+single-character school grades to descriptive names:
+
+  "A"  → "modesep_strong"
+  "B"  → "modesep_standard"
+  "C"  → "modesep_weak"
+  "F"  → "first_pass_fallback"
+
+Motivation: the opaque "F" was easily misread as "the run failed" rather
+than "gate failed, the pipeline routed through first-pass + legacy
+adjustment cleanly". Pre-v2.7.1 `.modesep.json` files retain the old
+strings; new runs use the descriptive names.
+
+### Added — scoring pipeline documentation
+
+New `docs/scoring_pipeline.md` with a Mermaid flowchart covering all six
+stages (z-scoring → first-pass → quality gate → mode-sep recalibration →
+second-pass → continuous discount), the per-intron z_5p eligibility
+filter inside the mode-sep branch, the quality-tier rubric, and a
+complete parameter reference.
+
+### Fixed — gold-merge inflation bug in evaluation scripts
+
+Five evaluation scripts (`ensemble_size_sweep.py`, `sweep_broad_panel.py`,
+`eval_panel_modesep.py`, `eval_panel_v5_1.py`,
+`rescore_with_cluster_strong_u2.py`) merged the gold corpus per
+alignment_id rather than per intron, inflating TP/FN/FP counts by the
+per-intron IPA-partner multiplicity (typically 5-25×). Fixed all five.
+Cross-comparison conclusions were unaffected (the inflation applied
+symmetrically), but absolute counts in prior TSV outputs should be
+considered superseded.
+
+
 ## [2.7.0] - 2026-05-20
 
 ### Added — Continuous per-intron discount

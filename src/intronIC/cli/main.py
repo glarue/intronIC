@@ -4604,6 +4604,16 @@ def classify_streaming_per_contig(
         }
     )
 
+    # v2.7.1: surface unified label counts (overrides any legacy u12/u2_count
+    # the output_writer may have populated using the old "total - high_conf"
+    # logic — those were misleading and are deprecated).
+    if 'disc_summary' in locals():
+        for k in ("u12_count","u12_strong_count","u12_borderline_count",
+                  "u12_promoted_count","u2_count","u2_strong_count",
+                  "u2_borderline_count","u2_demoted_count"):
+            if k in disc_summary:
+                summary[k] = disc_summary[k]
+
     # Add cluster validation and score adjustment to summary
     if cluster_validation_result is not None:
         sa_cfg = config.score_adjustment

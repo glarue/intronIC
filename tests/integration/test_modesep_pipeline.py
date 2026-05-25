@@ -102,7 +102,7 @@ def test_modesep_ambtri_gate_passes_and_recalibrates(runtime, valley_depth_fn):
                                       Path(td))
     assert result.route == "modesep"
     assert result.gate_reason == "ok"
-    assert result.quality_tier in ("A", "B")
+    assert result.quality_tier in ("modesep_strong", "modesep_standard")
     # Offline panel measured 306 calls; allow ±5 slack for numerical drift.
     assert 295 <= result.n_called_u12 <= 320
     assert result.valley_depth is not None and result.valley_depth >= 0.30
@@ -117,7 +117,7 @@ def test_modesep_saccer_gate_fails_below_n_floor(runtime, valley_depth_fn):
                                       Path(td))
     assert result.route == "first_pass_fallback"
     assert result.gate_reason == "below_n_floor"
-    assert result.quality_tier == "F"
+    assert result.quality_tier == "first_pass_fallback"
     assert result.n_called_u12 == 0
     assert result.n_eff_candidates < 5
 
