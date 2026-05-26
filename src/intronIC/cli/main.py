@@ -4536,6 +4536,7 @@ def classify_streaming_per_contig(
                 k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.0),
                 tau_motif=getattr(config.scoring, "discount_tau_motif", 10.0),
                 input_column=discount_input,
+                meta_path=meta_path,
                 messenger=messenger,
             )
             adjusted_hc_count = disc_summary["n_called_post_discount"]

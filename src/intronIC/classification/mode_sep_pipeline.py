@@ -411,6 +411,68 @@ def _maybe_write_diagnostics(result: ModeSepResult,
     Path(diagnostics_path).write_text(json.dumps(payload, indent=2))
 
 
+def _sync_meta_from_score_info(meta_path: Path, df: "pd.DataFrame",
+                                messenger=None) -> None:
+    """Propagate rel_score and type_id from score_info DataFrame to meta.iic.
+
+    v2.7.1 introduces unified type_id labels and a discount-aware rel_score.
+    meta.iic historically copies these from the in-memory Intron object,
+    which is computed before the discount runs. This function syncs both
+    columns from the on-disk score_info DataFrame after the discount has
+    been applied.
+    """
+    import shutil
+    import tempfile
+
+    name_to_rel = dict(zip(df["name"].astype(str),
+                           df["rel_score"].astype(float)))
+    name_to_type = dict(zip(df["name"].astype(str),
+                            df["type_id"].astype(str)))
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".iic",
+        dir=meta_path.parent, delete=False,
+    )
+    n_synced = 0
+    try:
+        with open(meta_path) as f_in:
+            header_line = f_in.readline()
+            tmp.write(header_line)
+            hdr = header_line.rstrip("\n").split("\t")
+            try:
+                name_col = hdr.index("name")
+                rel_col = hdr.index("rel_score")
+                type_col = hdr.index("type_id")
+            except ValueError:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+                return
+
+            for line in f_in:
+                parts = line.rstrip("\n").split("\t")
+                if name_col < len(parts):
+                    nm = parts[name_col]
+                    if nm in name_to_rel:
+                        parts[rel_col] = f"{name_to_rel[nm]:.4f}"
+                        parts[type_col] = name_to_type[nm]
+                        n_synced += 1
+                tmp.write("\t".join(parts) + "\n")
+        tmp.close()
+        import os
+        orig_mode = meta_path.stat().st_mode if meta_path.exists() else 0o644
+        shutil.move(tmp.name, meta_path)
+        os.chmod(meta_path, orig_mode & 0o777)
+        if messenger is not None:
+            messenger.info(
+                f"[meta-sync] rewrote rel_score + type_id for "
+                f"{n_synced} rows in {meta_path.name}"
+            )
+    except Exception:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
 def apply_continuous_per_intron_discount(
     score_info_path: Path,
     *,
@@ -420,6 +482,7 @@ def apply_continuous_per_intron_discount(
     k_weakmot: float = DEFAULT_DISCOUNT_K_WEAKMOT,
     tau_motif: float = DEFAULT_DISCOUNT_TAU_MOTIF,
     input_column: str = "svm_score",
+    meta_path: Optional[Path] = None,
     messenger=None,
 ) -> dict:
     """Apply continuous per-intron discount to a score_info.iic file (v2.7).
@@ -486,6 +549,12 @@ def apply_continuous_per_intron_discount(
     n_post = int((adj >= threshold).sum())
 
     df["adjusted_score"] = adj
+    # v2.7.1 fix: rel_score must track adjusted_score (the canonical
+    # calling column post-discount). Without this, gate-pass species
+    # ship a stale rel_score that reflects first_pass_svm or the
+    # pre-discount mode-sep score, undercounting U12s in downstream
+    # filters that use `rel_score > 0`.
+    df["rel_score"] = np.round(adj - threshold, 4)
 
     # v2.7.1: unified labels (type_id / confidence / history)
     # See scoring/labeling.py for the rubric.
@@ -510,6 +579,15 @@ def apply_continuous_per_intron_discount(
     df.to_csv(score_info_path, sep="\t", index=False, float_format="%.6f")
     _log(f"[continuous-discount] applied; n_called_pre={n_pre}, "
          f"n_called_post={n_post}, suppressed={n_pre - n_post}")
+
+    # v2.7.1 fix: propagate updated rel_score and unified type_id to
+    # meta.iic. Without this, meta.iic shipped stale rel_score (and a
+    # legacy 50%-threshold type_id) that disagreed with score_info.iic
+    # for every gate-pass species.
+    if meta_path is not None and Path(meta_path).exists():
+        _sync_meta_from_score_info(
+            Path(meta_path), df, messenger=messenger
+        )
 
     label_counts = count_by_label(labels)
     _log(f"[labeling] u12={label_counts['u12_count']} "
