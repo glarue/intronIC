@@ -4783,7 +4783,7 @@ def classify_with_pretrained_model(
             "pretrained": True,
             "model_path": str(model_path),
             "n_classified": 0,
-        }
+        }, None
 
     # Drop coordinate-duplicate introns up-front so the adaptive normalizer
     # is fit on the same intron set the streaming-classify path uses (which
@@ -4987,7 +4987,11 @@ def classify_with_pretrained_model(
     write_metadata(run_metadata, run_metadata_path)
     messenger.log_only(f"Run metadata saved to {run_metadata_path}")
 
-    return classified_introns, metrics
+    # Return model_data so the in-memory caller can dispatch mode-sep + v2.7
+    # discount + unified labels in its post-classification block (same pipeline
+    # the streaming path runs). Without this the in-memory path silently falls
+    # back to the v2.3-era cluster_validation only — see task #203.
+    return classified_introns, metrics, model_data
 
 
 def classify_introns(
@@ -6259,7 +6263,7 @@ def main_classify(config: IntronICConfig):
         if config.training.pretrained_model_path:
             # Skip normalization/training - use pretrained model
             messenger.step(3, "Classify with Pretrained Model", pipeline_steps)
-            classified_introns, metrics = classify_with_pretrained_model(
+            classified_introns, metrics, model_data = classify_with_pretrained_model(
                 scored_introns,
                 config.training.pretrained_model_path,
                 config,
@@ -6286,6 +6290,10 @@ def main_classify(config: IntronICConfig):
                 messenger,
                 reporter,
             )
+            # Non-pretrained branch can never be in modesep mode (modesep is
+            # a property of the v3 multispecies bundle), so model_data is None
+            # and the post-classification block below falls through to legacy.
+            model_data = None
 
         # Count classifications based on threshold (for reporting "high confidence" U12s)
         # Note: type_id is based on raw classifier (>50%), but reporting uses threshold
@@ -6517,12 +6525,20 @@ def main_classify(config: IntronICConfig):
             skip_sequences=True,  # Sequences already written (standard mode) or just above (streaming mode)
         )
 
-        # Post-classification score adjustment (cluster validation + valley prior + σ penalty)
+        # Post-classification pipeline: mode-sep (v2.6+) + continuous discount
+        # (v2.7) + unified labels (v2.7.1), with legacy cluster-validation as
+        # the gate-fail fallback. Mirrors the streaming-classify path so the
+        # two routes produce equivalent output (task #203 — May 27 2026,
+        # in-memory previously fell through to the v2.3 legacy-only path).
+        cv_result = None
+        modesep_result = None
+        disc_summary = None
+        adjusted_hc_count = None
         if classified_introns:
             from intronIC.scoring.cluster_validation import validate_u12_cluster
 
             # Filter to introns with all three z-scores + svm_score present,
-            # so the parallel arrays line up for the cluster validation call.
+            # so the parallel arrays line up for cluster validation.
             cv_introns = [
                 i for i in classified_introns
                 if i.scores
@@ -6541,29 +6557,185 @@ def main_classify(config: IntronICConfig):
             ])
 
             if len(five_z) > 0:
-                cv_result = validate_u12_cluster(
-                    five_z_scores=five_z,
-                    bp_z_scores=bp_z,
-                    three_z_scores=three_z,
-                    svm_scores=svm_s,
-                    type_ids=type_ids,
-                    confidence_threshold=config.scoring.threshold,
-                )
-
                 score_path = config.output.get_output_path(".score_info.iic")
                 meta_path = config.output.get_output_path(".meta.iic")
 
-                cv_result, adjusted_hc_count = _apply_post_classification_adjustment(
-                    cv_result, config, messenger,
-                    score_path=score_path,
-                    meta_path=meta_path,
+                is_modesep = (
+                    isinstance(model_data, dict)
+                    and model_data.get("normalizer_mode") == "modesep"
+                    and not getattr(config.scoring, "mode_sep_disable", False)
                 )
+
+                if is_modesep:
+                    from intronIC.classification.mode_sep_pipeline import (
+                        apply_mode_separation_postprocess,
+                    )
+                    from intronIC.scoring.cluster_validation import (
+                        compute_valley_depth,
+                    )
+
+                    # CLI overrides patch the bundle's modesep_params.
+                    params = dict(model_data.get("modesep_params", {}))
+                    for cli_key, bundle_key in (
+                        ("mode_sep_z_floor", "z_floor_eligibility"),
+                        ("mode_sep_valley_min", "valley_depth_min"),
+                        ("mode_sep_n_floor", "n_floor_candidates"),
+                        ("mode_sep_mu_u12_tolerance", "mu_u12_5p_tolerance"),
+                    ):
+                        v = getattr(config.scoring, cli_key, None)
+                        if v is not None:
+                            params[bundle_key] = v
+                    patched_runtime = {**model_data, "modesep_params": params}
+
+                    diagnostics_path = config.output.get_output_path(".modesep.json")
+                    modesep_result = apply_mode_separation_postprocess(
+                        score_info_path=score_path,
+                        runtime=patched_runtime,
+                        valley_depth_fn=compute_valley_depth,
+                        threshold=config.scoring.threshold,
+                        diagnostics_path=diagnostics_path,
+                        messenger=messenger,
+                    )
+                    adjusted_hc_count = modesep_result.n_called_u12
+
+                    # Gate-fail: legacy valley-based adjustment for defense-in-depth.
+                    if modesep_result.route == "first_pass_fallback":
+                        messenger.log_only(
+                            "[modesep] gate-fail: running legacy valley-based "
+                            "score adjustment to discount first-pass calls"
+                        )
+                        cv_result = validate_u12_cluster(
+                            five_z_scores=five_z,
+                            bp_z_scores=bp_z,
+                            three_z_scores=three_z,
+                            svm_scores=svm_s,
+                            type_ids=type_ids,
+                            confidence_threshold=config.scoring.threshold,
+                        )
+                        cv_result, leg_hc_count = (
+                            _apply_post_classification_adjustment(
+                                cv_result, config, messenger,
+                                score_path=score_path,
+                                meta_path=meta_path,
+                            )
+                        )
+                        if leg_hc_count is not None:
+                            adjusted_hc_count = leg_hc_count
+
+                    # v2.7 continuous discount + unified labels.
+                    if not getattr(config.scoring, "discount_disable", False):
+                        from intronIC.classification.mode_sep_pipeline import (
+                            apply_continuous_per_intron_discount,
+                        )
+                        discount_input = (
+                            "adjusted_score"
+                            if modesep_result.route == "first_pass_fallback"
+                            else "svm_score"
+                        )
+                        disc_summary = apply_continuous_per_intron_discount(
+                            score_info_path=score_path,
+                            threshold=config.scoring.threshold,
+                            k_overcall=getattr(config.scoring,
+                                               "discount_k_overcall", 2.0),
+                            tau_overcall=getattr(config.scoring,
+                                                 "discount_tau_overcall", 0.0),
+                            k_weakmot=getattr(config.scoring,
+                                              "discount_k_weakmot", 0.0),
+                            tau_motif=getattr(config.scoring,
+                                              "discount_tau_motif", 10.0),
+                            input_column=discount_input,
+                            meta_path=meta_path,
+                            messenger=messenger,
+                        )
+                        adjusted_hc_count = disc_summary["n_called_post_discount"]
+                        try:
+                            from dataclasses import replace as _replace
+                            modesep_result = _replace(
+                                modesep_result,
+                                n_called_pre_discount=disc_summary["n_called_pre_discount"],
+                                n_called_post_discount=disc_summary["n_called_post_discount"],
+                                n_called_u12=disc_summary["n_called_post_discount"],
+                                continuous_discount_applied=True,
+                            )
+                        except Exception:
+                            pass
+                else:
+                    # Non-modesep bundle: legacy cluster_validation only.
+                    cv_result = validate_u12_cluster(
+                        five_z_scores=five_z,
+                        bp_z_scores=bp_z,
+                        three_z_scores=three_z,
+                        svm_scores=svm_s,
+                        type_ids=type_ids,
+                        confidence_threshold=config.scoring.threshold,
+                    )
+                    cv_result, adjusted_hc_count = (
+                        _apply_post_classification_adjustment(
+                            cv_result, config, messenger,
+                            score_path=score_path,
+                            meta_path=meta_path,
+                        )
+                    )
+
+                # Update metrics with adjusted HC count.
                 if adjusted_hc_count is not None and metrics:
                     metrics["high_confidence_u12"] = adjusted_hc_count
                     total = metrics.get("total_introns", 1)
                     metrics["high_confidence_percentage"] = (
                         adjusted_hc_count / total * 100 if total > 0 else 0.0
                     )
+
+                # Surface unified label counts (v2.7.1).
+                if disc_summary is not None and metrics is not None:
+                    for k in ("u12_count", "u12_strong_count",
+                              "u12_borderline_count", "u12_promoted_count",
+                              "u2_count", "u2_strong_count",
+                              "u2_borderline_count", "u2_demoted_count"):
+                        if k in disc_summary:
+                            metrics[k] = disc_summary[k]
+
+                # Add cluster_validation + score_adjustment blocks.
+                if cv_result is not None and metrics is not None:
+                    sa_cfg = config.score_adjustment
+                    metrics["cluster_validation"] = {
+                        "valley_depth": cv_result['valley_depth'],
+                        "has_valley": cv_result.get('has_valley'),
+                        "regime": cv_result['regime'],
+                        "n_confident_u12": cv_result['n_confident_u12'],
+                        "empirical_prior": cv_result['empirical_prior'],
+                        "centroid_sigma": cv_result.get('centroid_sigma'),
+                    }
+                    if sa_cfg.enabled:
+                        metrics["score_adjustment"] = {
+                            "enabled": True,
+                            "valley_midpoint": sa_cfg.valley_midpoint,
+                            "transition_width": sa_cfg.transition_width,
+                            "prior_floor": sa_cfg.prior_floor,
+                            "k_sigma": sa_cfg.k_sigma,
+                        }
+
+                # Add mode_separation block.
+                if modesep_result is not None and metrics is not None:
+                    metrics["mode_separation"] = {
+                        "route": modesep_result.route,
+                        "gate_reason": modesep_result.gate_reason,
+                        "quality_tier": modesep_result.quality_tier,
+                        "n_introns": modesep_result.n_introns,
+                        "n_eligible": modesep_result.n_eligible,
+                        "n_called_u12": modesep_result.n_called_u12,
+                        "n_eff_candidates": modesep_result.n_eff_candidates,
+                        "valley_depth": modesep_result.valley_depth,
+                        "mu_u2_5p": modesep_result.mu_u2_5p,
+                        "mu_u12_5p": modesep_result.mu_u12_5p,
+                        "mu_u12_5p_offset": modesep_result.mu_u12_5p_offset,
+                        "median_ensemble_sigma_called":
+                            modesep_result.median_ensemble_sigma_called,
+                        "p90_ensemble_sigma_called":
+                            modesep_result.p90_ensemble_sigma_called,
+                        "first_pass_model_id": modesep_result.first_pass_model_id,
+                        "second_pass_model_id":
+                            modesep_result.second_pass_model_id,
+                    }
 
         # Save classification metrics to JSON file (after score adjustment)
         if metrics:
