@@ -1,0 +1,11 @@
+##gff-version 3
+##sequence-region chr1 1 5000
+chr1	test	gene	100	3500	.	+	.	ID=gene:geneA;Name=geneA
+chr1	test	mRNA	100	3500	.	+	.	ID=transcript:isoA;Parent=gene:geneA;Name=isoA
+chr1	test	exon	100	499	.	+	.	Parent=transcript:isoA;ID=exon:isoA.1
+chr1	test	exon	800	1199	.	+	.	Parent=transcript:isoA;ID=exon:isoA.2
+chr1	test	exon	1500	3500	.	+	.	Parent=transcript:isoA;ID=exon:isoA.3
+chr1	test	mRNA	100	3000	.	+	.	ID=transcript:isoB;Parent=gene:geneA;Name=isoB
+chr1	test	exon	100	499	.	+	.	Parent=transcript:isoB;ID=exon:isoB.1
+chr1	test	exon	800	1199	.	+	.	Parent=transcript:isoB;ID=exon:isoB.2
+chr1	test	exon	1800	3000	.	+	.	Parent=transcript:isoB;ID=exon:isoB.3
