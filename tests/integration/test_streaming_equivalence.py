@@ -388,3 +388,107 @@ class TestStreamingMatchesInMemory:
                 )
             )
             pytest.fail(msg)
+
+
+# ---------------------------------------------------------------------------
+# Parametrized streaming/in-memory equivalence across (-i, -d) flag combos
+# ---------------------------------------------------------------------------
+# These tests exercise the synthetic alt-isoform fixture under all four flag
+# combinations. They run the worktree's intronIC (not the system-installed
+# binary, which may lag behind), so they are the canonical regression for
+# the v2.4.3 fix to ``-i`` / ``-d`` parity. The full Chr19 equivalence tests
+# above continue to exercise the no-flag bit-identity guarantee against the
+# installed binary.
+
+import os as _os
+
+
+_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "data" / "isoforms"
+_FIXTURE_FA = _FIXTURE_DIR / "synthetic.fa"
+_FIXTURE_GFF = _FIXTURE_DIR / "synthetic.gff3"
+
+
+def _run_intree_classify(out_dir, species_name, mode, flags):
+    """Run intronIC from the worktree source against the synthetic fixture."""
+    repo_root = Path(__file__).resolve().parents[2]
+    cmd = [
+        sys.executable, "-c",
+        "from intronIC.cli.main import main; import sys as _s; "
+        "_s.argv = ['intronIC'] + _s.argv[1:]; main()",
+        "classify",
+        "-g", str(_FIXTURE_FA),
+        "-a", str(_FIXTURE_GFF),
+        "-n", species_name,
+        "-o", str(out_dir),
+        "-p", "1",
+        "-f", "exon",
+        f"--{mode}",
+    ] + list(flags)
+    env = dict(_os.environ)
+    env["PYTHONPATH"] = str(repo_root / "src")
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=300, env=env,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"intree intronIC classify ({mode}, flags={flags}) failed:\n"
+            f"STDOUT (tail):\n{result.stdout[-1500:]}\n"
+            f"STDERR (tail):\n{result.stderr[-1500:]}"
+        )
+    bed = out_dir / f"{species_name}.bed.iic"
+    if not bed.exists():
+        pytest.fail(f"No bed.iic at {bed}; dir has {list(out_dir.iterdir())}")
+    return bed
+
+
+@pytest.mark.skipif(
+    not _FIXTURE_FA.exists() or not _FIXTURE_GFF.exists(),
+    reason="Synthetic isoform fixture not found",
+)
+@pytest.mark.parametrize("flags", [
+    pytest.param([], id="none"),
+    pytest.param(["-i"], id="i"),
+    pytest.param(["-d"], id="d"),
+    pytest.param(["-i", "-d"], id="id"),
+])
+def test_streaming_matches_in_memory_with_flags(flags, tmp_path):
+    """Streaming and in-memory must produce identical bed.iic output under
+    every flag combination of ``-i`` and ``-d``.
+
+    Prior to v2.4.3 this would have failed for ``-i``, ``-d``, and ``-i -d``
+    because the in-memory path silently ignored both flags while streaming
+    silently ignored ``-i`` only. After the fix both modes consult the
+    same config consistently and the bed.iic content is identical (modulo
+    the species-name prefix, which we strip).
+    """
+    stream_dir = tmp_path / "stream"
+    inmem_dir = tmp_path / "inmem"
+    stream_dir.mkdir()
+    inmem_dir.mkdir()
+
+    stream_bed = _run_intree_classify(stream_dir, "strm", "streaming", flags)
+    inmem_bed = _run_intree_classify(inmem_dir, "imem", "in-memory", flags)
+
+    def _normalize(path):
+        rows = []
+        with open(path) as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                fields = line.split("\t")
+                # Strip species-name prefix from column 4 (the label).
+                if len(fields) >= 4 and "-" in fields[3]:
+                    fields[3] = fields[3].split("-", 1)[1]
+                rows.append(tuple(fields))
+        return sorted(rows)
+
+    stream_rows = _normalize(stream_bed)
+    inmem_rows = _normalize(inmem_bed)
+    assert stream_rows == inmem_rows, (
+        f"streaming/in-memory diverge for flags={flags}:\n"
+        f"  streaming ({len(stream_rows)} rows):\n    "
+        + "\n    ".join("\t".join(r) for r in stream_rows)
+        + f"\n  in-memory ({len(inmem_rows)} rows):\n    "
+        + "\n    ".join("\t".join(r) for r in inmem_rows)
+    )
