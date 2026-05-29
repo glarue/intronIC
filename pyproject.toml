@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "intronIC"
-version = "2.7.0"
+version = "2.7.1"
 description = "Intron classification tool for identifying U2-type and U12-type introns using SVM"
 readme = "README.md"
 license = {text = "GPL-3.0"}

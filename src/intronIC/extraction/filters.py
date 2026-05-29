@@ -516,12 +516,17 @@ def should_extract_sequences_for(
             if not is_longest:
                 return False
 
-    # Check duplicates - only extract for first occurrence
-    # We reuse sequences for all duplicates regardless of include_duplicates flag
-    # The include_duplicates flag affects filtering/output, not extraction
+    # Check duplicates - only extract for first occurrence when caller plans
+    # to drop duplicates downstream. When include_duplicates is True the
+    # downstream IntronFilter / writers keep coord-duplicate introns, so they
+    # need sequences attached (extract_sequences_with_deduplication groups by
+    # coords and reuses the first occurrence's sequence buffer, so this is
+    # cheap). Skipping them here would put them in skip_list with no sequences,
+    # making them un-scoreable and dropping them from .bed.iic/.score_info.iic
+    # output — the bug that breaks the `-d` flag in the in-memory pipeline.
     coord_key = (intron.coordinates.start, intron.coordinates.stop)
-    if coord_key in seen_coordinates:
-        # This is a duplicate - skip extraction (will reuse from first occurrence)
+    if coord_key in seen_coordinates and not include_duplicates:
+        # This is a duplicate and the caller doesn't want them — skip extraction.
         return False
 
     # Extract by default
