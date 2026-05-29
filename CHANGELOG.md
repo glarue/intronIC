@@ -5,6 +5,70 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.3] - 2026-05-29
+
+### Fixed — `-i` (`--allow-multiple-isoforms`) and `-d` (`--include-duplicates`) flag parity
+
+Both flags are now respected end-to-end in both `--in-memory` and
+`--streaming` classify modes, with bit-identical bed.iic content
+across modes for every combination of the two flags.
+
+Three bugs fixed in `src/intronIC/cli/main.py`:
+
+- The in-memory post-extraction `IntronFilter` construction
+  hardcoded `longest_only=True` and `include_duplicates=False`,
+  silently overriding the CLI flags. Now reads
+  `config.extraction.allow_multiple_isoforms` and
+  `config.extraction.include_duplicates`.
+- The streaming per-contig worker filter
+  (`_streaming_extract_and_filter_contig`) hardcoded
+  `longest_only=True` and had no `allow_multiple_isoforms` plumbed
+  into the worker config_dict. The three streaming worker
+  config_dicts (BG accumulator, classify worker, fit worker) now
+  carry `allow_multiple_isoforms` next to the existing
+  `include_duplicates` entry, and the per-contig filter consumes it.
+- The streaming summary print hardcoded `include_isoforms=False`
+  regardless of the actual setting; now reflects
+  `config.extraction.allow_multiple_isoforms`.
+
+One additional fix in `src/intronIC/extraction/filters.py`:
+
+- `should_extract_sequences_for` always skipped coord-duplicates
+  from sequence extraction regardless of `include_duplicates`.
+  This made the `-d` flag a no-op for the in-memory pipeline: B-side
+  duplicates ended up in skip_list with no sequences, were
+  un-scoreable, and got dropped before the writer's
+  `include_duplicates` check ever ran. Now skips only when
+  `include_duplicates=False`; with `-d`, duplicates route to
+  extract_list where `extract_sequences_with_deduplication` reuses
+  the first occurrence's sequence buffer (no extra extraction cost).
+
+The four flag-combination truth table now holds, per the design in
+`IntronFilter`:
+
+| `-i` | `-d` | Behavior |
+|------|------|----------|
+| no   | no   | longest-isoform introns only, coord-dups collapsed (default) |
+| yes  | no   | every isoform's introns, coord-dups collapsed |
+| no   | yes  | longest-isoform introns only, every isoform's copy of a dup emitted |
+| yes  | yes  | every isoform's introns, every copy of every dup emitted |
+
+Tests added:
+- `tests/data/isoforms/synthetic.fa` + `synthetic.gff3` — minimal
+  alt-isoform fixture (1 gene, 2 isoforms, 1 shared intron, 1
+  alt-spliced intron).
+- `tests/integration/test_isoform_flag.py` — 16 behavior
+  assertions across (`in-memory`, `streaming`) x 4 flag combos
+  covering scored counts, presence of the alt-isoform-only intron,
+  duplicate emission, and streaming/in-memory parity on the fixture.
+- `tests/integration/test_streaming_equivalence.py` extended with
+  `test_streaming_matches_in_memory_with_flags` — 4 parametrized
+  cases asserting streaming == in-memory bed.iic content under all
+  four (`-i`, `-d`) combos using the worktree's code.
+- `tests/unit/test_filters.py` — two existing tests updated to
+  reflect the new (correct) behavior of
+  `should_extract_sequences_for` when `include_duplicates=True`.
+
 ## [2.4.2] - 2026-05-10
 
 ### Added

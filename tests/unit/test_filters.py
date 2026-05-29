@@ -129,17 +129,23 @@ class TestShouldExtractSequencesFor:
 
         assert result is False
 
-    def test_duplicate_always_skipped_for_extraction(self):
+    def test_duplicate_extraction_follows_include_duplicates(self):
         """
-        Test that duplicate coordinates are always skipped for extraction.
+        Duplicate coordinates are skipped for extraction only when the
+        caller plans to drop them downstream (``include_duplicates=False``).
 
-        The include_duplicates flag affects output, not extraction.
-        Sequences are always reused for duplicates to save memory.
+        Prior to v2.4.3 duplicates were always skipped, which silently
+        broke the ``--include-duplicates`` (``-d``) flag in the in-memory
+        pipeline: B-side duplicates ended up in skip_list with no
+        sequences, became un-scoreable, and got dropped from the .bed.iic
+        output before the writer's ``include_duplicates`` check ever ran.
+        Now extraction follows the same flag.
         """
         intron = self.create_test_intron(start=100, stop=200)
         seen_coords: Set[Tuple[int, int]] = {(100, 200)}  # Already seen
 
-        # With include_duplicates=False
+        # With include_duplicates=False: skip extraction (the caller will
+        # drop the duplicate anyway, so extracting is wasted work).
         result_without = should_extract_sequences_for(
             intron=intron,
             min_length=30,
@@ -148,8 +154,12 @@ class TestShouldExtractSequencesFor:
             seen_coordinates=seen_coords,
             include_duplicates=False
         )
+        assert result_without is False
 
-        # With include_duplicates=True
+        # With include_duplicates=True: extract so the duplicate has
+        # sequences for downstream scoring. extract_sequences_with_dedup
+        # groups by coords and reuses the first occurrence's buffer, so
+        # this stays cheap.
         result_with = should_extract_sequences_for(
             intron=intron,
             min_length=30,
@@ -158,10 +168,7 @@ class TestShouldExtractSequencesFor:
             seen_coordinates=seen_coords,
             include_duplicates=True
         )
-
-        # Both should skip extraction (reuse sequences)
-        assert result_without is False
-        assert result_with is False
+        assert result_with is True
 
     def test_first_occurrence_of_coordinates_extracted(self):
         """Test that first occurrence of coordinates is always extracted."""
@@ -296,8 +303,12 @@ class TestPrefilterIntrons:
         """
         Test pre-filtering with include_duplicates=True.
 
-        Note: include_duplicates affects output, not extraction.
-        Duplicates are always skipped during extraction to save memory.
+        With ``include_duplicates=True`` the prefilter must route duplicates
+        into the extract_list so they get sequences (via
+        ``extract_sequences_with_deduplication``, which reuses the first
+        occurrence's buffer). Pre-v2.4.3 they were silently shunted to
+        skip_list and lost their sequences, which broke the ``-d`` flag
+        end-to-end in the in-memory pipeline.
         """
         introns = self.create_test_introns()
 
@@ -308,11 +319,11 @@ class TestPrefilterIntrons:
             include_duplicates=True
         )
 
-        # Duplicates are ALWAYS skipped for extraction (sequences reused)
-        # Should extract: intron1, intron4, intron5
-        # Should skip: intron2 (duplicate), intron3 (too short)
-        assert len(result.extract_list) == 3
-        assert len(result.skip_list) == 2
+        # Should extract: intron1 + intron2 (coord-dup, but include_duplicates=True),
+        #                 intron4, intron5
+        # Should skip: intron3 (too short)
+        assert len(result.extract_list) == 4
+        assert len(result.skip_list) == 1
 
     def test_empty_input(self):
         """Test pre-filtering with empty intron list."""
