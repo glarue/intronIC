@@ -417,6 +417,11 @@ def _maybe_write_diagnostics(result: ModeSepResult,
         return
     payload = asdict(result)
     payload["score_info_path"] = str(score_info_path)
+    # Sanitize non-finite floats (gap_fraction = -inf for structural no-separation, or NaN)
+    # to null so the diagnostics file stays valid, portable JSON. gate_reason carries the
+    # categorical "why" for the gate-fail cases where these go null.
+    payload = {k: (None if (isinstance(v, float) and not np.isfinite(v)) else v)
+               for k, v in payload.items()}
     Path(diagnostics_path).write_text(json.dumps(payload, indent=2))
 
 
@@ -493,6 +498,8 @@ def apply_continuous_per_intron_discount(
     input_column: str = "svm_score",
     meta_path: Optional[Path] = None,
     messenger=None,
+    species_gap_fraction: Optional[float] = None,
+    species_gap_fraction_ucl: Optional[float] = None,
 ) -> dict:
     """Apply continuous per-intron discount to a score_info.iic file (v2.7).
 
@@ -584,6 +591,15 @@ def apply_continuous_per_intron_discount(
     df["type_id"] = [lab.type_id for lab in labels]
     df["confidence"] = [lab.confidence for lab in labels]
     df["history"] = [lab.history for lab in labels]
+
+    # v3 gate-gapfrac (Step 5): surface the per-species separation statistic that drove the
+    # π_species prior as constant columns (route-appropriate value passed by the caller — the
+    # gate's UCL on the modesep route, validate_u12_cluster's on fallback). Diagnostic /
+    # traceability only; the harness can also recompute from the 5'_z/bp_z/3'_z columns.
+    if species_gap_fraction is not None:
+        df["gap_fraction"] = species_gap_fraction
+    if species_gap_fraction_ucl is not None:
+        df["gap_fraction_ucl"] = species_gap_fraction_ucl
 
     df.to_csv(score_info_path, sep="\t", index=False, float_format="%.6f")
     _log(f"[continuous-discount] applied; n_called_pre={n_pre}, "

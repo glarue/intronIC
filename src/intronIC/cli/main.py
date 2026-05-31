@@ -4506,6 +4506,12 @@ def classify_streaming_per_contig(
         # adjustment) so spurious first-pass calls in noisy/non-bimodal
         # species don't propagate. This matches pre-v2.6 behavior for the
         # no-valley regime.
+        #
+        # Per-species separation stat that drove π_species, surfaced in score_info (Step 5):
+        # default to the gate's UCL (modesep route); the fallback branch overrides with the
+        # validate_u12_cluster UCL that actually drove its prior.
+        _species_gf = modesep_result.gap_fraction
+        _species_ucl = modesep_result.gap_fraction_ucl
         if modesep_result.route == "first_pass_fallback":
             messenger.log_only(
                 "[modesep] gate-fail: running legacy valley-based score "
@@ -4530,6 +4536,8 @@ def classify_streaming_per_contig(
             )
             if leg_hc_count is not None:
                 adjusted_hc_count = leg_hc_count
+            _species_gf = cluster_validation_result.get('gap_fraction')
+            _species_ucl = cluster_validation_result.get('gap_fraction_ucl')
         else:
             # v3 gate-gapfrac (Step 3d, approach A): give the modesep route the species
             # prior it lacked — apply the confidence-shrunk gap_fraction-UCL prior (from the
@@ -4578,6 +4586,8 @@ def classify_streaming_per_contig(
                 input_column=discount_input,
                 meta_path=meta_path,
                 messenger=messenger,
+                species_gap_fraction=_species_gf,
+                species_gap_fraction_ucl=_species_ucl,
             )
             adjusted_hc_count = disc_summary["n_called_post_discount"]
             # Surface in modesep_result for the diagnostic JSON
@@ -6638,6 +6648,10 @@ def main_classify(config: IntronICConfig):
                     )
                     adjusted_hc_count = modesep_result.n_called_u12
 
+                    # Per-species separation stat that drove π_species (surfaced in score_info,
+                    # Step 5): gate's UCL default (modesep route); fallback overrides below.
+                    _species_gf = modesep_result.gap_fraction
+                    _species_ucl = modesep_result.gap_fraction_ucl
                     # Gate-fail: legacy valley-based adjustment for defense-in-depth.
                     if modesep_result.route == "first_pass_fallback":
                         messenger.log_only(
@@ -6661,6 +6675,8 @@ def main_classify(config: IntronICConfig):
                         )
                         if leg_hc_count is not None:
                             adjusted_hc_count = leg_hc_count
+                        _species_gf = cv_result.get('gap_fraction')
+                        _species_ucl = cv_result.get('gap_fraction_ucl')
                     else:
                         # v3 gate-gapfrac (Step 3d, approach A): modesep-route species prior.
                         # Apply the gap_fraction-UCL prior (from the gate) to svm_score before
@@ -6706,6 +6722,8 @@ def main_classify(config: IntronICConfig):
                             input_column=discount_input,
                             meta_path=meta_path,
                             messenger=messenger,
+                            species_gap_fraction=_species_gf,
+                            species_gap_fraction_ucl=_species_ucl,
                         )
                         adjusted_hc_count = disc_summary["n_called_post_discount"]
                         try:
