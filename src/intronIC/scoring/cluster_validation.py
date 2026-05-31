@@ -60,14 +60,26 @@ if TYPE_CHECKING:
     from intronIC.core.intron import Intron
 
 
-# gap_fraction → π_species mapping (the species-level prior). midpoint/width bracket the audit-E
-# separation band (gap_fraction ≈ 0.28–0.42 separates real-U12 from U12-absent species). The UCL
-# quantile sets how conservative the low-N guard is: π_species keys on the q-th bootstrap percentile
-# of gap_fraction (an OPTIMISTIC estimate), so higher q ⇒ more benefit-of-the-doubt ⇒ we only
-# suppress when CONFIDENT the separation is poor. STEP-3 starting values — Step 6 calibrates these on
-# snRNA + conservation ground-truth.
+# gap_fraction → π_species mapping (the species-level prior). midpoint/width bracket the separation
+# band where real-U12 and U12-absent species' UCLs begin to interleave. The UCL quantile sets how
+# conservative the low-N guard is: π_species keys on the q-th bootstrap percentile of gap_fraction (an
+# OPTIMISTIC estimate), so higher q ⇒ more benefit-of-the-doubt ⇒ we only suppress when CONFIDENT the
+# separation is poor.
+#
+# STEP-6 CALIBRATED (2026-05-31; conservation_corpus/scripts/pi_species_refine.py) on the 14-species
+# panel + green-algae anchors, net-quality objective. Key empirical finding: real and absent species'
+# UCLs INTERLEAVE at the edges (clean chlorophyte-absents Coccomyxa/Chlorella 0.27-0.29 < all reals,
+# but TetThe-absent 0.46 sits inside the vertebrate real range 0.45-0.51, and real Klebs 0.37 < real
+# AmbTri/OrySat 0.40-0.44). So π_species CANNOT be aggressive — a high midpoint over-kills moderate-UCL
+# reals (esp. diverged plants) to chase TetThe. midpoint=0.35 is the knee: captures the safely-available
+# FP reduction (chlorophytes well below it) without reaching into the real range; below it FP is flat
+# (the per-intron discount, not π_species, is the FP lever there); 0.42 cut FP 21→12 but jumped hard-TP
+# loss 12→17 (all diverged-plant AmbTri). width=0.10 (sharper) strictly dominated 0.14 (lower FP, ≥ TP
+# retention per-species, 0 new hard loss). q: UCLs barely move over q 0.7-0.9 (bootstrap converged) → 0.8.
+# The motif-calibrated absent residual (TetThe etc.) is irreducible by any species-internal prior →
+# offline-snRNA clean-negative case. See [[tp-loss-vs-fp-tradeoff-preference]] / calibration_plan §6b.
 DEFAULT_GAP_FRACTION_MIDPOINT = 0.35
-DEFAULT_GAP_FRACTION_WIDTH = 0.14
+DEFAULT_GAP_FRACTION_WIDTH = 0.10
 DEFAULT_GAP_FRACTION_UCL_QUANTILE = 0.8
 
 
