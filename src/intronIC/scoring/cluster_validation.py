@@ -174,6 +174,16 @@ def compute_valley_depth(
             'reason': 'insufficient U12 points',
         }
 
+    # Determinism: canonically sort both point sets at entry. np.mean/np.cov/np.percentile
+    # accumulate in array order, so float non-associativity makes every downstream reduction
+    # (Fisher direction → projections → gap_fraction/centroid_sigma) depend on the caller's row
+    # order at the ULP level — which differs between the streaming path (imap_unordered over contigs)
+    # and the in-memory path. Lexsorting the rows fixes the accumulation order, so the result is
+    # bit-identical regardless of input order (the values are unchanged; only their order is
+    # canonicalized — every statistic here is mathematically permutation-invariant).
+    u12_points = u12_points[np.lexsort(u12_points.T)]
+    u2_points = u2_points[np.lexsort(u2_points.T)]
+
     # Fisher's linear discriminant: Σ⁻¹(μ_U12 − μ_U2), shrunk and normalized.
     # Down-weights features with large within-class variance (e.g., 3'z, where
     # AT-AC / GT-AG subtype differences inflate the U12 spread) so they don't
@@ -217,8 +227,9 @@ def compute_valley_depth(
 
     # gap_fraction = gap_width / Δmean on the Fisher axis — the dimensionless, clade-invariant
     # separation statistic that replaces median_depth as the gate / π_species decision input.
-    # RNG-free and order-invariant by construction (percentiles + means), so its point estimate is
-    # fully deterministic per run regardless of streaming-vs-in-memory iteration order.
+    # RNG-free; bit-identical across input orders thanks to the lexsort at entry (without it, float
+    # non-associativity of the mean/percentile reductions leaks the caller's row order into the last
+    # ULP, breaking streaming-vs-in-memory bit-identity).
     delta_mu = float(np.mean(u12_proj) - np.mean(u2_proj))
     gap_fraction = float(gap_width / delta_mu) if delta_mu > 0 else float('-inf')
 
