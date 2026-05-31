@@ -92,9 +92,14 @@ def _parse_classification_summary(stdout: str) -> dict:
     m = re.search(r"U2-type\s*│\s*(\d+(?:,\d+)*)", stdout)
     if m:
         out["u2"] = int(m.group(1).replace(",", ""))
-    m = re.search(r"valley_depth=([\d.]+)", stdout)
+    # v3 gate-gapfrac: the score-adjustment log line now reports gap_fraction/ucl
+    # (the species prior keys on the gap_fraction bootstrap-UCL, not the KDE valley_depth).
+    m = re.search(r"gap_fraction=([\d.\-]+)", stdout)
     if m:
-        out["valley_depth"] = float(m.group(1))
+        out["gap_fraction"] = float(m.group(1))
+    m = re.search(r"ucl=([\d.\-]+)", stdout)
+    if m:
+        out["ucl"] = float(m.group(1))
     return out
 
 
@@ -167,9 +172,11 @@ class TestBaseline:
             assert s["u12_at_ac"] <= s["u12_total"]
 
     def test_valley_depth_reported(self, baseline_run):
-        # Score adjustment uses valley_depth from cluster validation
-        assert "valley_depth" in baseline_run["summary"]
-        vd = baseline_run["summary"]["valley_depth"]
+        # v3 gate-gapfrac: score adjustment now reports the gap_fraction species
+        # separation stat (+ its bootstrap UCL) instead of the KDE valley_depth.
+        assert "gap_fraction" in baseline_run["summary"], \
+            "gap_fraction not reported in score-adjustment output"
+        vd = baseline_run["summary"]["gap_fraction"]
         assert 0.0 <= vd <= 1.0
 
 
