@@ -139,12 +139,23 @@ def _good_points():
     return u12, u2
 
 
+# Mocks return the full compute_valley_depth contract used by the v3 gate (Steps 1-4):
+# the decision keys are gap_fraction (#4) and centroid_sigma (#3); median_depth is diagnostic.
 def _strong_valley(u12_pts, u2_pts):
-    return {"median_depth": 0.65}
+    return {"median_depth": 0.65, "gap_fraction": 0.45,
+            "gap_fraction_ucl": 0.47, "centroid_sigma": 4.8}
 
 
 def _weak_valley(u12_pts, u2_pts):
-    return {"median_depth": 0.10}
+    # No positive gap → fails check #4 (below_gap_fraction).
+    return {"median_depth": 0.10, "gap_fraction": -0.20,
+            "gap_fraction_ucl": -0.15, "centroid_sigma": 2.0}
+
+
+def _low_csig_valley(u12_pts, u2_pts):
+    # Positive gap but weak centroid separation → fails check #3 (low_centroid_sigma).
+    return {"median_depth": 0.50, "gap_fraction": 0.30,
+            "gap_fraction_ucl": 0.32, "centroid_sigma": 3.0}
 
 
 def test_evaluate_gate_passes_clean_species():
@@ -158,7 +169,9 @@ def test_evaluate_gate_passes_clean_species():
     )
     assert g.passes
     assert g.reason == "ok"
-    assert g.valley_depth == pytest.approx(0.65)
+    assert g.valley_depth == pytest.approx(0.65)        # diagnostic
+    assert g.gap_fraction == pytest.approx(0.45)        # check #4 (decision)
+    assert g.centroid_sigma == pytest.approx(4.8)       # check #3 replacement (decision)
 
 
 def test_evaluate_gate_below_n_floor_fails():
@@ -187,23 +200,42 @@ def test_evaluate_gate_degenerate_separation_fails():
     assert g.reason == "degenerate_separation"
 
 
-def test_evaluate_gate_location_prior_catches_mode_drift():
-    """v3-era-style failure: μ_U12 lands far from the cross-species anchor."""
+def test_evaluate_gate_mode_drift_no_longer_overkills():
+    """v3 Step 4: the absolute μ_U12 anchor check was REMOVED (it over-killed 24 snRNA-confirmed
+    real bearers whose μ_U12 is shifted low by estimator bias / motif divergence). A drifted μ_U12
+    with genuine species-internal separation now PASSES; the offset is retained as a diagnostic."""
     u12, u2 = _good_points()
-    drifted_mu_u12 = DEFAULT_UNIVERSAL_ANCHORS["five_raw"] + DEFAULT_MU_U12_TOLERANCE_5P + 2.0
+    drifted_mu_u12 = DEFAULT_UNIVERSAL_ANCHORS["five_raw"] - 9.0  # far below the old band, like Anopheles
     g = evaluate_gate(
         u12, u2,
         mu_u12_5p_raw=drifted_mu_u12,
         n_eff_candidates=60.0,
         separation_5p=55.0,
-        valley_depth_fn=_strong_valley,  # would pass on valley alone
+        valley_depth_fn=_strong_valley,  # strong species-internal separation (gap + csig)
+    )
+    assert g.passes
+    assert g.reason == "ok"
+    assert abs(g.mu_u12_offset) > DEFAULT_MU_U12_TOLERANCE_5P  # offset still computed (diagnostic)
+
+
+def test_evaluate_gate_low_centroid_sigma_fails():
+    """v3 Step 4: the centroid_sigma floor (check #3 replacement) catches a weak candidate cluster
+    that has a positive gap but insufficient U2-σ separation (z-anchor-corruption guard)."""
+    u12, u2 = _good_points()
+    g = evaluate_gate(
+        u12, u2,
+        mu_u12_5p_raw=DEFAULT_UNIVERSAL_ANCHORS["five_raw"],
+        n_eff_candidates=60.0,
+        separation_5p=55.0,
+        valley_depth_fn=_low_csig_valley,
     )
     assert not g.passes
-    assert g.reason == "u12_mode_outside_prior_range"
-    assert abs(g.mu_u12_offset) > DEFAULT_MU_U12_TOLERANCE_5P
+    assert g.reason == "low_centroid_sigma"
+    assert g.centroid_sigma == pytest.approx(3.0)
 
 
-def test_evaluate_gate_no_valley_fails():
+def test_evaluate_gate_below_gap_fraction_fails():
+    """v3 Step 2: no positive gap on the Fisher axis → below_gap_fraction (was 'no_kde_valley')."""
     u12, u2 = _good_points()
     g = evaluate_gate(
         u12, u2,
@@ -213,8 +245,8 @@ def test_evaluate_gate_no_valley_fails():
         valley_depth_fn=_weak_valley,
     )
     assert not g.passes
-    assert g.reason == "no_kde_valley"
-    assert g.valley_depth == pytest.approx(0.10)
+    assert g.reason == "below_gap_fraction"
+    assert g.valley_depth == pytest.approx(0.10)  # median_depth still surfaced as diagnostic
 
 
 # ---------------------------------------------------------------------------

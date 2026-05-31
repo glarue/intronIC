@@ -87,6 +87,7 @@ class ModeSepResult:
     # are surfaced as diagnostics.
     gap_fraction: Optional[float] = None
     gap_fraction_ucl: Optional[float] = None
+    centroid_sigma: Optional[float] = None
 
 
 def _f1_weighted_mean(probs: np.ndarray, ensemble) -> np.ndarray:
@@ -271,6 +272,7 @@ def apply_mode_separation_postprocess(
             second_pass_model_id=second_pass_id,
             gap_fraction=gate.gap_fraction,
             gap_fraction_ucl=gate.gap_fraction_ucl,
+            centroid_sigma=gate.centroid_sigma,
         )
         _maybe_write_diagnostics(result, diagnostics_path, score_info_path)
         return result
@@ -403,6 +405,7 @@ def apply_mode_separation_postprocess(
         boundary_mass=bm_val,
         gap_fraction=gate.gap_fraction,
         gap_fraction_ucl=gate.gap_fraction_ucl,
+        centroid_sigma=gate.centroid_sigma,
     )
     result = ModeSepResult(**{**asdict(result),
                               "quality_tier": _assign_quality_tier(result)})
