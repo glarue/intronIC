@@ -101,6 +101,8 @@ class GateDecision:
     valley_depth: float | None = None
     mu_u12_offset: float | None = None
     n_eff_candidates: float | None = None
+    gap_fraction: float | None = None          # gap_width/Δmean on the Fisher axis (gate decision stat)
+    gap_fraction_ucl: float | None = None       # deterministic-bootstrap UCL (π_species input)
 
 
 # -----------------------------------------------------------------------------
@@ -201,7 +203,8 @@ def evaluate_gate(
     *,
     valley_depth_fn,
     n_floor: int = DEFAULT_N_FLOOR,
-    valley_min: float = DEFAULT_VALLEY_MIN,
+    valley_min: float = DEFAULT_VALLEY_MIN,        # legacy KDE-valley floor; no longer the decision (kept for diag)
+    gap_fraction_min: float = 0.0,                 # lenient route floor: gap_fraction>0 ⇔ u12_p25 > u2_p99
     mu_u12_prior: float = DEFAULT_UNIVERSAL_ANCHORS["five_raw"],
     mu_u12_tolerance: float = DEFAULT_MU_U12_TOLERANCE_5P,
 ) -> GateDecision:
@@ -254,25 +257,40 @@ def evaluate_gate(
             n_eff_candidates=float(n_eff_candidates),
         )
 
+    # Check 4 — separation gap. gap_fraction (gap_width/Δmean on the Fisher axis) REPLACES the
+    # unstable KDE median_depth, which spuriously failed real low-N bearers (snRNA-confirmed: the
+    # whole no_kde_valley bucket was real). This route check is deliberately LENIENT — route to
+    # modesep whenever a clear gap exists (gap_fraction > gap_fraction_min). The GRADED suppression
+    # of weak/uncertain separation happens downstream in π_species (keyed on the gap_fraction
+    # bootstrap UCL). median_depth is still computed + surfaced as a diagnostic only. None
+    # gap_fraction (compute_valley_depth early-returns: insufficient/coincident/overlap) ⇒ no gap ⇒ fail.
     valley_result = valley_depth_fn(u12_candidate_points, u2_candidate_points)
+    gap_fraction = valley_result.get("gap_fraction")
+    gap_fraction_ucl = valley_result.get("gap_fraction_ucl")
     valley_depth = valley_result.get("median_depth")
-    if valley_depth is None or not np.isfinite(valley_depth) or valley_depth < valley_min:
+    _vd = float(valley_depth) if valley_depth is not None and np.isfinite(valley_depth) else None
+    _gf = float(gap_fraction) if gap_fraction is not None and np.isfinite(gap_fraction) else None
+    # Keep -inf (a valid "confident no-separation" UCL for π_species); drop only None/NaN.
+    _gfucl = float(gap_fraction_ucl) if gap_fraction_ucl is not None and not np.isnan(gap_fraction_ucl) else None
+    if _gf is None or _gf <= gap_fraction_min:
         return GateDecision(
             passes=False,
-            reason="no_kde_valley",
-            valley_depth=(float(valley_depth)
-                          if valley_depth is not None and np.isfinite(valley_depth)
-                          else None),
+            reason="below_gap_fraction",
+            valley_depth=_vd,
             mu_u12_offset=mu_offset,
             n_eff_candidates=float(n_eff_candidates),
+            gap_fraction=_gf,
+            gap_fraction_ucl=_gfucl,
         )
 
     return GateDecision(
         passes=True,
         reason="ok",
-        valley_depth=float(valley_depth),
+        valley_depth=_vd,
         mu_u12_offset=mu_offset,
         n_eff_candidates=float(n_eff_candidates),
+        gap_fraction=_gf,
+        gap_fraction_ucl=_gfucl,
     )
 
 

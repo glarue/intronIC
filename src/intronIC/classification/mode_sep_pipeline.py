@@ -82,6 +82,11 @@ class ModeSepResult:
     n_called_pre_discount: Optional[int] = None  # before continuous discount
     n_called_post_discount: Optional[int] = None  # after continuous discount
     continuous_discount_applied: bool = False
+    # v3 gate-gapfrac (Step 3): separation statistic carried from the gate. gap_fraction_ucl
+    # (the bootstrap upper-confidence-limit) drives the modesep-route π_species prior; both
+    # are surfaced as diagnostics.
+    gap_fraction: Optional[float] = None
+    gap_fraction_ucl: Optional[float] = None
 
 
 def _f1_weighted_mean(probs: np.ndarray, ensemble) -> np.ndarray:
@@ -264,6 +269,8 @@ def apply_mode_separation_postprocess(
             quality_tier="first_pass_fallback",
             first_pass_model_id=first_pass_id,
             second_pass_model_id=second_pass_id,
+            gap_fraction=gate.gap_fraction,
+            gap_fraction_ucl=gate.gap_fraction_ucl,
         )
         _maybe_write_diagnostics(result, diagnostics_path, score_info_path)
         return result
@@ -394,6 +401,8 @@ def apply_mode_separation_postprocess(
         first_pass_model_id=first_pass_id,
         second_pass_model_id=second_pass_id,
         boundary_mass=bm_val,
+        gap_fraction=gate.gap_fraction,
+        gap_fraction_ucl=gate.gap_fraction_ucl,
     )
     result = ModeSepResult(**{**asdict(result),
                               "quality_tier": _assign_quality_tier(result)})
