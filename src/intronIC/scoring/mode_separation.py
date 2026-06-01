@@ -47,7 +47,20 @@ DEFAULT_UNIVERSAL_ANCHORS = {
 }
 
 # Location-prior tolerance on inferred μ_U12 5'_raw (deviation from anchor).
+# DEPRECATED as a DECISION input (v3 gate-gapfrac Step 4): the absolute-anchor location check
+# over-killed 24 snRNA-confirmed real U12 bearers (μ_U12 weighted-median is biased low at small
+# n_eff, and divergent motifs score lower vs the reference PWM — both shift the absolute location
+# but preserve species-internal separation). Superseded by the centroid_sigma floor below. The
+# anchor (15.671) is retained only to compute the diagnostic mu_u12_offset.
 DEFAULT_MU_U12_TOLERANCE_5P = 3.6
+
+# Centroid-separation floor (U12↔U2 centroid distance in U2-σ units on the Fisher axis, i.e.
+# `centroid_sigma` from compute_valley_depth) — the PHYLOGENY-NAIVE, species-internal replacement
+# for the absolute μ_U12 anchor check. Guards against z-anchor corruption (a weak first-pass
+# candidate cluster being mapped to z=1) using only the species' own intron pool. STEP-4 provisional
+# value (gate-pass species observed ≥ 4.30; confirmed-absent cluster 3.3–4.6) — Step 6 calibrates it
+# jointly with the π_species operating point on the snRNA + conservation anchors.
+DEFAULT_CSIG_FLOOR = 4.0
 
 # Continuous per-intron discount defaults (v2.7+).
 #
@@ -101,6 +114,9 @@ class GateDecision:
     valley_depth: float | None = None
     mu_u12_offset: float | None = None
     n_eff_candidates: float | None = None
+    gap_fraction: float | None = None          # gap_width/Δmean on the Fisher axis (gate decision stat)
+    gap_fraction_ucl: float | None = None       # deterministic-bootstrap UCL (π_species input)
+    centroid_sigma: float | None = None         # U12↔U2 centroid distance in U2-σ (check #3 replacement)
 
 
 # -----------------------------------------------------------------------------
@@ -201,35 +217,35 @@ def evaluate_gate(
     *,
     valley_depth_fn,
     n_floor: int = DEFAULT_N_FLOOR,
-    valley_min: float = DEFAULT_VALLEY_MIN,
+    valley_min: float = DEFAULT_VALLEY_MIN,        # legacy KDE-valley floor; no longer the decision (kept for diag)
+    gap_fraction_min: float = 0.0,                 # lenient route floor: gap_fraction>0 ⇔ u12_p25 > u2_p99
     mu_u12_prior: float = DEFAULT_UNIVERSAL_ANCHORS["five_raw"],
-    mu_u12_tolerance: float = DEFAULT_MU_U12_TOLERANCE_5P,
+    mu_u12_tolerance: float = DEFAULT_MU_U12_TOLERANCE_5P,  # DEPRECATED: vestigial, no longer a check
+    csig_floor: float = DEFAULT_CSIG_FLOOR,
 ) -> GateDecision:
     """Decide whether to apply mode-separation for the species.
 
-    Three independent checks (cheap → expensive):
+    Checks (cheap → expensive); all PHYLOGENY-NAIVE (species-internal — no taxonomy input):
 
     1. **n_eff floor**: too few first-pass candidates → mode estimates are
        noisy. Falls back to first-pass scores.
-    2. **μ_U12 location prior**: catches the failure mode where a noisy
-       first-pass classifier confidently mis-locates μ_U12 in a U12-bearing-
-       LIKE pattern. The inferred μ_U12_5'_raw must sit within
-       ±`mu_u12_tolerance` of the cross-species universal anchor.
-       Empirically (61 species, 12 phyla): max observed offset is 2.90
-       raw PWM units; shipping tolerance 3.6 includes a 0.6-unit buffer
-       for held-out species.
-    3. **Density valley**: uses the multi-bandwidth Fisher-discriminant
-       KDE valley detection from `cluster_validation.compute_valley_depth`
-       (injected as `valley_depth_fn` so this module remains import-light
-       and testable in isolation). Median valley depth ≥ `valley_min`
-       implies a real bimodal U12/U2 separation in feature space.
+    2. **degenerate separation**: μ_U12 ≤ μ_U2 (inverted) → fall back.
+    3/4. **Separation (Fisher discriminant, via `compute_valley_depth`)** — two species-internal
+       conditions on the candidate clusters, both read from the single injected `valley_depth_fn`
+       call (= `cluster_validation.compute_valley_depth`, injected to keep this module import-light):
+         - **gap_fraction > `gap_fraction_min`** (lenient route floor): a positive gap between the
+           U12 and U2 clusters on the Fisher axis. Graded suppression of weak/uncertain separation
+           is deferred downstream to π_species (keyed on the gap_fraction bootstrap UCL).
+         - **centroid_sigma ≥ `csig_floor`**: the U12↔U2 centroid distance in U2-σ units. This
+           REPLACES the former absolute-anchor μ_U12 location check (v3 Step 4) — it guards the same
+           failure mode (a weak first-pass candidate cluster being mapped to z=1 by the mode-sep
+           z-transform → spurious 2nd-pass U12 calls) but species-internally, so it does not
+           over-kill diverged real bearers whose absolute μ_U12 is shifted by estimator bias or
+           motif divergence. `median_depth` (KDE valley) and `mu_u12_offset` (vs the universal
+           anchor) are still computed + surfaced as DIAGNOSTICS only.
 
-    Note: the valley detection operates jointly in 3D over all motif features
-    via Fisher's linear discriminant — NOT a cheap per-feature moment proxy.
-
-    `valley_depth_fn` should be `cluster_validation.compute_valley_depth`
-    (or a wrapper); we inject it instead of importing it directly to keep
-    this module pure and avoid a scipy import in test contexts.
+    Note: the separation metrics operate jointly in 3D over all motif features via Fisher's linear
+    discriminant — NOT a cheap per-feature moment proxy.
     """
     if n_eff_candidates < n_floor:
         return GateDecision(
@@ -245,34 +261,60 @@ def evaluate_gate(
             n_eff_candidates=float(n_eff_candidates),
         )
 
+    # mu_u12_offset vs the universal anchor — DIAGNOSTIC only now (v3 Step 4 removed the absolute
+    # location FAIL; it over-killed diverged real bearers — see DEFAULT_CSIG_FLOOR). mu_u12_tolerance
+    # is retained in the signature for back-compat but no longer gates anything.
     mu_offset = float(mu_u12_5p_raw - mu_u12_prior)
-    if abs(mu_offset) > mu_u12_tolerance:
-        return GateDecision(
-            passes=False,
-            reason="u12_mode_outside_prior_range",
-            mu_u12_offset=mu_offset,
-            n_eff_candidates=float(n_eff_candidates),
-        )
 
+    # Checks 3/4 — separation on the Fisher discriminant, both from ONE compute_valley_depth call:
+    #   (#4) gap_fraction > gap_fraction_min : lenient route floor (a positive U12/U2 gap); graded
+    #        suppression of weak separation is deferred to π_species (gap_fraction bootstrap UCL).
+    #   (#3) centroid_sigma ≥ csig_floor     : the species-internal replacement for the absolute
+    #        μ_U12 anchor — guards z-anchor corruption without over-killing diverged real bearers.
+    # median_depth is computed + surfaced as a diagnostic only. None gap_fraction (early-returns:
+    # insufficient/coincident/overlap) ⇒ no gap ⇒ fail.
     valley_result = valley_depth_fn(u12_candidate_points, u2_candidate_points)
+    gap_fraction = valley_result.get("gap_fraction")
+    gap_fraction_ucl = valley_result.get("gap_fraction_ucl")
+    centroid_sigma = valley_result.get("centroid_sigma")
     valley_depth = valley_result.get("median_depth")
-    if valley_depth is None or not np.isfinite(valley_depth) or valley_depth < valley_min:
+    _vd = float(valley_depth) if valley_depth is not None and np.isfinite(valley_depth) else None
+    _gf = float(gap_fraction) if gap_fraction is not None and np.isfinite(gap_fraction) else None
+    # Keep -inf (a valid "confident no-separation" UCL for π_species); drop only None/NaN.
+    _gfucl = float(gap_fraction_ucl) if gap_fraction_ucl is not None and not np.isnan(gap_fraction_ucl) else None
+    _csig = float(centroid_sigma) if centroid_sigma is not None and np.isfinite(centroid_sigma) else None
+    if _gf is None or _gf <= gap_fraction_min:
         return GateDecision(
             passes=False,
-            reason="no_kde_valley",
-            valley_depth=(float(valley_depth)
-                          if valley_depth is not None and np.isfinite(valley_depth)
-                          else None),
+            reason="below_gap_fraction",
+            valley_depth=_vd,
             mu_u12_offset=mu_offset,
             n_eff_candidates=float(n_eff_candidates),
+            gap_fraction=_gf,
+            gap_fraction_ucl=_gfucl,
+            centroid_sigma=_csig,
+        )
+    if _csig is None or _csig < csig_floor:
+        return GateDecision(
+            passes=False,
+            reason="low_centroid_sigma",
+            valley_depth=_vd,
+            mu_u12_offset=mu_offset,
+            n_eff_candidates=float(n_eff_candidates),
+            gap_fraction=_gf,
+            gap_fraction_ucl=_gfucl,
+            centroid_sigma=_csig,
         )
 
     return GateDecision(
         passes=True,
         reason="ok",
-        valley_depth=float(valley_depth),
+        valley_depth=_vd,
         mu_u12_offset=mu_offset,
         n_eff_candidates=float(n_eff_candidates),
+        gap_fraction=_gf,
+        gap_fraction_ucl=_gfucl,
+        centroid_sigma=_csig,
     )
 
 

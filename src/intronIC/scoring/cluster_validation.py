@@ -7,10 +7,20 @@ introns onto the U2→U12 discriminating axis (3D: 5'z, BPz, 3'z), estimates
 1D density along that axis at multiple KDE bandwidths, and checks for a
 valley between the clusters that persists under smoothing.
 
-Two-regime prior framework:
-  - Valley detected (median depth > 0.3): U12 cluster confirmed, trust SVM
-  - No valley (median depth ≤ 0.3): No distinct U12 cluster, discount prior
-    to suppress borderline false positives
+Separation statistic (v2.7 gate + π_species decision input)
+-----------------------------------------------------------
+The decision statistic is `gap_fraction` = gap_width / Δmean on the Fisher
+axis (dimensionless, clade-invariant), with a deterministic bootstrap SD as
+its confidence. It replaced the KDE `median_depth` ("valley depth"), which
+was seed-fragile and spuriously failed real low-N U12 bearers. `median_depth`
+is still computed and surfaced as a DIAGNOSTIC, but no longer drives routing
+or score adjustment.
+
+Prior framework (species-level π_species, confidence-shrunk):
+  - Clear separation (high gap_fraction): π_species → π_train, trust the SVM
+  - Poor separation, CONFIDENT (low gap_fraction, tight bootstrap): suppress
+  - Poor separation, UNCERTAIN (wide bootstrap, typically low-N): shrink back
+    toward no-suppression — don't over-kill a possibly-real low-N bearer
 
 Feature space and projection direction
 --------------------------------------
@@ -48,6 +58,29 @@ from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from intronIC.core.intron import Intron
+
+
+# gap_fraction → π_species mapping (the species-level prior). midpoint/width bracket the separation
+# band where real-U12 and U12-absent species' UCLs begin to interleave. The UCL quantile sets how
+# conservative the low-N guard is: π_species keys on the q-th bootstrap percentile of gap_fraction (an
+# OPTIMISTIC estimate), so higher q ⇒ more benefit-of-the-doubt ⇒ we only suppress when CONFIDENT the
+# separation is poor.
+#
+# STEP-6 CALIBRATED (2026-05-31; conservation_corpus/scripts/pi_species_refine.py) on the 14-species
+# panel + green-algae anchors, net-quality objective. Key empirical finding: real and absent species'
+# UCLs INTERLEAVE at the edges (clean chlorophyte-absents Coccomyxa/Chlorella 0.27-0.29 < all reals,
+# but TetThe-absent 0.46 sits inside the vertebrate real range 0.45-0.51, and real Klebs 0.37 < real
+# AmbTri/OrySat 0.40-0.44). So π_species CANNOT be aggressive — a high midpoint over-kills moderate-UCL
+# reals (esp. diverged plants) to chase TetThe. midpoint=0.35 is the knee: captures the safely-available
+# FP reduction (chlorophytes well below it) without reaching into the real range; below it FP is flat
+# (the per-intron discount, not π_species, is the FP lever there); 0.42 cut FP 21→12 but jumped hard-TP
+# loss 12→17 (all diverged-plant AmbTri). width=0.10 (sharper) strictly dominated 0.14 (lower FP, ≥ TP
+# retention per-species, 0 new hard loss). q: UCLs barely move over q 0.7-0.9 (bootstrap converged) → 0.8.
+# The motif-calibrated absent residual (TetThe etc.) is irreducible by any species-internal prior →
+# offline-snRNA clean-negative case. See [[tp-loss-vs-fp-tradeoff-preference]] / calibration_plan §6b.
+DEFAULT_GAP_FRACTION_MIDPOINT = 0.35
+DEFAULT_GAP_FRACTION_WIDTH = 0.10
+DEFAULT_GAP_FRACTION_UCL_QUANTILE = 0.8
 
 
 def _fishers_discriminant_direction(
@@ -99,6 +132,7 @@ def compute_valley_depth(
     n_eval: int = 300,
     max_u2_sample: int = 10000,
     random_seed: int = 42,
+    ucl_quantile: float = DEFAULT_GAP_FRACTION_UCL_QUANTILE,
 ) -> dict:
     """
     Multi-bandwidth density valley detection between U12 and U2 clusters.
@@ -119,11 +153,22 @@ def compute_valley_depth(
 
     Returns:
         Dictionary with:
-        - median_depth: Median valley depth across bandwidths [0, 1]
-        - per_bandwidth_depths: List of depths at each bandwidth
-        - has_valley: True if median_depth > 0.3
+        - gap_fraction: gap_width / Δmean on the Fisher axis — the dimensionless,
+          clade-invariant separation statistic that drives the gate and π_species.
+          Finite > 0 = measurable separation (graded); finite ≤ 0 = overlap; -inf =
+          structural no-separation (coincident/inverted centroids); NaN = cannot
+          assess (too few confident U12 calls).
+        - gap_fraction_ucl: deterministic bootstrap UPPER confidence limit (q-th
+          percentile) of gap_fraction — the OPTIMISTIC estimate π_species keys on.
+          Wide bootstrap (low-N/unstable) ⇒ UCL well above the point estimate ⇒ less
+          suppression (the over-kill guard); -inf when most resamples show no separation.
+        - median_depth: Median KDE valley depth across bandwidths [0, 1] — now a
+          DIAGNOSTIC only (no longer a decision input; superseded by gap_fraction)
+        - per_bandwidth_depths: List of depths at each bandwidth (diagnostic)
+        - has_valley: True if median_depth > 0.3 (diagnostic)
         - gap_width: Distance between U2 99th pctl and U12 25th pctl on projection axis
         - centroid_sigma: U12 centroid distance from U2 in U2 std units
+        - u2_std: Std of the U2 projection (scale of the Fisher axis)
     """
     if u12_points is None or len(u12_points) < 3:
         return {
@@ -132,8 +177,24 @@ def compute_valley_depth(
             'has_valley': None,
             'gap_width': float('nan'),
             'centroid_sigma': float('nan'),
+            # gap_fraction = NaN ⇒ "cannot assess separation" ⇒ downstream π_species
+            # leaves the score unchanged (conservative no-op), matching the historical
+            # NaN-valley_depth skip for species with too few confident U12 calls.
+            'gap_fraction': float('nan'),
+            'gap_fraction_ucl': float('nan'),
+            'u2_std': float('nan'),
             'reason': 'insufficient U12 points',
         }
+
+    # Determinism: canonically sort both point sets at entry. np.mean/np.cov/np.percentile
+    # accumulate in array order, so float non-associativity makes every downstream reduction
+    # (Fisher direction → projections → gap_fraction/centroid_sigma) depend on the caller's row
+    # order at the ULP level — which differs between the streaming path (imap_unordered over contigs)
+    # and the in-memory path. Lexsorting the rows fixes the accumulation order, so the result is
+    # bit-identical regardless of input order (the values are unchanged; only their order is
+    # canonicalized — every statistic here is mathematically permutation-invariant).
+    u12_points = u12_points[np.lexsort(u12_points.T)]
+    u2_points = u2_points[np.lexsort(u2_points.T)]
 
     # Fisher's linear discriminant: Σ⁻¹(μ_U12 − μ_U2), shrunk and normalized.
     # Down-weights features with large within-class variance (e.g., 3'z, where
@@ -149,6 +210,12 @@ def compute_valley_depth(
             'has_valley': False,
             'gap_width': 0.0,
             'centroid_sigma': 0.0,
+            # Centroids coincide ⇒ no discriminating direction ⇒ structurally no U12
+            # cluster. gap_fraction = -inf flags confident suppression in π_species
+            # (independent of bootstrap spread).
+            'gap_fraction': float('-inf'),
+            'gap_fraction_ucl': float('nan'),
+            'u2_std': 0.0,
             'reason': 'U12 and U2 centroids coincide',
         }
 
@@ -170,6 +237,45 @@ def compute_valley_depth(
 
     gap_width = u12_p25 - u2_p99
 
+    # gap_fraction = gap_width / Δmean on the Fisher axis — the dimensionless, clade-invariant
+    # separation statistic that replaces median_depth as the gate / π_species decision input.
+    # RNG-free; bit-identical across input orders thanks to the lexsort at entry (without it, float
+    # non-associativity of the mean/percentile reductions leaks the caller's row order into the last
+    # ULP, breaking streaming-vs-in-memory bit-identity).
+    delta_mu = float(np.mean(u12_proj) - np.mean(u2_proj))
+    gap_fraction = float(gap_width / delta_mu) if delta_mu > 0 else float('-inf')
+
+    # gap_fraction confidence — deterministic bootstrap UPPER confidence limit (UCL). π_species keys
+    # on THIS (not the point estimate): the q-th percentile (q = ucl_quantile) of the bootstrap
+    # gap_fraction distribution — an OPTIMISTIC estimate. When the bootstrap is tight (well-sampled)
+    # the UCL ≈ the point estimate; when it is wide (low-N / unstable) the UCL sits well above the
+    # point estimate ⇒ less suppression ⇒ we suppress only when CONFIDENT the separation is poor (the
+    # low-N over-kill guard, and it rescues a real species whose point estimate dips ≤ 0 by sampling
+    # noise). Resamples with Δmean ≤ 0 (centroids inverted ⇒ no separation) form a point mass at the
+    # BOTTOM of the distribution; if they exceed the (1−q) tail the UCL is -inf (confident
+    # no-separation). The UCL is bounded/percentile-based, so unlike σ/μ it stays well-behaved when
+    # gap_fraction crosses zero or Δmean → 0. LOCAL np.random.default_rng(random_seed) over SORTED
+    # points + B=500 ⇒ bit-identical across runs and streaming-vs-in-memory. Computed before the
+    # gap-based early returns so the overlap path carries it too.
+    gap_fraction_ucl = float('nan')
+    if len(u12_proj) >= 3:
+        _rng = np.random.default_rng(random_seed)
+        _u12s = np.sort(u12_proj)
+        _n, _B = len(_u12s), 500
+        _bs = _u12s[_rng.integers(0, _n, size=(_B, _n))]
+        _dmu = _bs.mean(axis=1) - np.mean(u2_proj)
+        _pos = _dmu > 0
+        _n_pos = int(_pos.sum())
+        _frac_bad = 1.0 - _n_pos / _B            # mass of "no separation" (Δmean ≤ 0) resamples
+        if _n_pos == 0 or _frac_bad >= ucl_quantile:
+            # the q-th percentile falls inside the no-separation point mass
+            gap_fraction_ucl = float('-inf')
+        else:
+            _ratio = (np.percentile(_bs[_pos], 25, axis=1) - u2_p99) / _dmu[_pos]
+            # remap q into the positive-Δmean sub-distribution (point mass excluded from the bottom)
+            _q_adj = (ucl_quantile - _frac_bad) / (_n_pos / _B)
+            gap_fraction_ucl = float(np.percentile(_ratio, 100.0 * _q_adj))
+
     # Check for overlap
     if u12_p25 < u2_p95:
         return {
@@ -178,6 +284,11 @@ def compute_valley_depth(
             'has_valley': False,
             'gap_width': gap_width,
             'centroid_sigma': centroid_sigma,
+            # Overlap ⇒ gap_fraction is finite-negative (u12_p25 < u2_p95 < u2_p99); the
+            # graded π_species suppresses it iff the bootstrap UCL is also low (confident).
+            'gap_fraction': gap_fraction,
+            'gap_fraction_ucl': gap_fraction_ucl,
+            'u2_std': float(u2_std),
             'reason': 'U12 cluster overlaps with U2 bulk',
         }
 
@@ -245,32 +356,92 @@ def compute_valley_depth(
         'has_valley': median_depth > 0.3,
         'gap_width': gap_width,
         'centroid_sigma': centroid_sigma,
+        'gap_fraction': gap_fraction,
+        'gap_fraction_ucl': gap_fraction_ucl,
+        'u2_std': float(u2_std),
     }
+
+
+def _confidence_shrunk_pi_species(
+    gap_fraction_ucl: Optional[float],
+    *,
+    gap_fraction_midpoint: float = DEFAULT_GAP_FRACTION_MIDPOINT,
+    gap_fraction_width: float = DEFAULT_GAP_FRACTION_WIDTH,
+    prior_floor: float = 0.001,
+    pi_train: float = 0.5,
+):
+    """Map the bootstrap-UCL of gap_fraction to a species prior π_species.
+
+    Returns ``(pi_species, applies)``. ``applies=False`` means "cannot assess the
+    separation" — the caller should leave the score unchanged (conservative no-op),
+    matching the historical NaN-valley_depth skip.
+
+    π_species keys on the OPTIMISTIC bootstrap upper-confidence-limit of gap_fraction
+    (see compute_valley_depth), so the low-N over-kill guard is already baked into the
+    input:
+      * UCL None/NaN → (pi_train, False): too few confident U12 calls to assess.
+      * UCL == -inf  → (prior_floor, True): even the optimistic estimate shows no
+        separation (most resamples inverted/coincident) ⇒ confident suppression.
+      * UCL finite   → graded:
+            w = sigmoid((4.394/width)·(UCL − midpoint))   # optimistic separation → trust
+            π_species = prior_floor + w·(π_train − prior_floor)
+        A wide bootstrap lifts the UCL above the point estimate ⇒ w→1 ⇒ no suppression,
+        so we suppress only when CONFIDENT (even optimistically) the separation is poor.
+        The UCL is percentile-based, hence well-behaved where gap_fraction crosses zero
+        / Δmean → 0 (unlike σ/μ).
+    """
+    if gap_fraction_ucl is None:
+        return pi_train, False
+    ucl = float(gap_fraction_ucl)
+    if math.isnan(ucl):
+        return pi_train, False
+    if math.isinf(ucl):
+        # UCL = -inf: even the optimistic estimate shows no separation → suppress hard.
+        return prior_floor, True
+
+    # Overflow-safe logistic: UCL can be large-negative (deep overlap), which would
+    # overflow math.exp; clamp to the saturated tails.
+    z = (4.394 / gap_fraction_width) * (ucl - gap_fraction_midpoint)
+    if z <= -700.0:
+        w = 0.0
+    elif z >= 700.0:
+        w = 1.0
+    else:
+        w = 1.0 / (1.0 + math.exp(-z))
+
+    pi_species = prior_floor + w * (pi_train - prior_floor)
+    return pi_species, True
 
 
 def compute_adjusted_score(
     svm_score: float,
-    valley_depth: float,
+    gap_fraction_ucl: Optional[float],
     ensemble_sigma: float,
-    valley_midpoint: float = 0.3,
-    transition_width: float = 0.25,
+    gap_fraction_midpoint: float = DEFAULT_GAP_FRACTION_MIDPOINT,
+    gap_fraction_width: float = DEFAULT_GAP_FRACTION_WIDTH,
     prior_floor: float = 0.001,
     k_sigma: float = 3.0,
     pi_train: float = 0.5,
 ) -> float:
-    """Compute valley+σ adjusted confidence score for a single intron.
+    """Compute the gap_fraction-prior + σ adjusted confidence score for one intron.
 
     Combines three signals in log-odds space:
-        logit(p_adj) = logit(p_svm) + log(π_species / π_train) - k_σ * σ
+        logit(p_adj) = logit(p_svm) + log(π_species / π_train) − k_σ · σ
+
+    where π_species is the species prior derived from the confidence-shrunk
+    `gap_fraction` upper-confidence-limit (see `_confidence_shrunk_pi_species`).
+    When the separation cannot be assessed (UCL None/NaN) the prior correction is
+    0 (the SVM score passes through; the caller normally skips these rows entirely).
 
     Args:
         svm_score: Raw SVM ensemble mean probability (0-100 scale)
-        valley_depth: Species-level 2D valley depth (0-1)
+        gap_fraction_ucl: Bootstrap upper-confidence-limit of the species separation
+            statistic (Fisher-axis gap/Δmean); the optimistic, low-N-shrunk estimate
         ensemble_sigma: Std of per-model probabilities (0-100 scale)
-        valley_midpoint: Center of discount→trust transition
-        transition_width: Width of transition zone
+        gap_fraction_midpoint: Separation at which suppression is half-on
+        gap_fraction_width: Width of the gap_fraction→trust transition
         prior_floor: Minimum species-level prior
-        k_sigma: Ensemble disagreement penalty coefficient
+        k_sigma: Ensemble disagreement penalty coefficient (0 disables)
         pi_train: Training prior (0.5 for balanced)
 
     Returns:
@@ -282,11 +453,14 @@ def compute_adjusted_score(
     # Term 1: instance-level evidence
     logit_svm = math.log(p / (1 - p))
 
-    # Term 2: population-level prior correction
-    steepness = 4.394 / transition_width
-    weight = 1.0 / (1.0 + math.exp(-steepness * (valley_depth - valley_midpoint)))
-    pi_species = prior_floor + weight * (pi_train - prior_floor)
-    prior_correction = math.log(pi_species / pi_train)
+    # Term 2: confidence-shrunk species-level prior correction
+    pi_species, applies = _confidence_shrunk_pi_species(
+        gap_fraction_ucl,
+        gap_fraction_midpoint=gap_fraction_midpoint,
+        gap_fraction_width=gap_fraction_width,
+        prior_floor=prior_floor, pi_train=pi_train,
+    )
+    prior_correction = math.log(pi_species / pi_train) if applies else 0.0
 
     # Term 3: epistemic uncertainty penalty (σ on 0-1 scale)
     sigma_penalty = k_sigma * (ensemble_sigma / 100.0)
@@ -297,21 +471,23 @@ def compute_adjusted_score(
 
 def compute_adjusted_scores_batch(
     svm_scores: np.ndarray,
-    valley_depth: float,
+    gap_fraction_ucl: Optional[float],
     ensemble_sigmas: np.ndarray,
-    valley_midpoint: float = 0.3,
-    transition_width: float = 0.25,
+    gap_fraction_midpoint: float = DEFAULT_GAP_FRACTION_MIDPOINT,
+    gap_fraction_width: float = DEFAULT_GAP_FRACTION_WIDTH,
     prior_floor: float = 0.001,
     k_sigma: float = 3.0,
     pi_train: float = 0.5,
 ) -> np.ndarray:
     """Vectorized score adjustment for a batch of introns.
 
-    Same formula as compute_adjusted_score but operates on arrays.
+    Same formula as compute_adjusted_score but operates on arrays. The species
+    prior correction is a single scalar (gap_fraction_ucl is per-species), so it
+    is computed once and broadcast.
 
     Args:
         svm_scores: Raw SVM probabilities (0-100 scale), shape (n,)
-        valley_depth: Species-level valley depth (scalar, same for all)
+        gap_fraction_ucl: Bootstrap UCL of the species separation statistic (scalar)
         ensemble_sigmas: Per-intron ensemble σ (0-100 scale), shape (n,)
         Other args: see compute_adjusted_score
 
@@ -323,10 +499,13 @@ def compute_adjusted_scores_batch(
 
     logit_svm = np.log(p / (1 - p))
 
-    steepness = 4.394 / transition_width
-    weight = 1.0 / (1.0 + math.exp(-steepness * (valley_depth - valley_midpoint)))
-    pi_species = prior_floor + weight * (pi_train - prior_floor)
-    prior_correction = math.log(pi_species / pi_train)
+    pi_species, applies = _confidence_shrunk_pi_species(
+        gap_fraction_ucl,
+        gap_fraction_midpoint=gap_fraction_midpoint,
+        gap_fraction_width=gap_fraction_width,
+        prior_floor=prior_floor, pi_train=pi_train,
+    )
+    prior_correction = math.log(pi_species / pi_train) if applies else 0.0
 
     sigma_penalty = k_sigma * (ensemble_sigmas / 100.0)
 
@@ -423,6 +602,9 @@ def validate_u12_cluster(
             'adjusted_prior': min(empirical_prior, 0.01),
             'regime': 'insufficient',
             'centroid_sigma': float('nan'),
+            # NaN gap_fraction ⇒ π_species cannot assess ⇒ no-op (conservative).
+            'gap_fraction': float('nan'),
+            'gap_fraction_ucl': float('nan'),
         }
 
     # Stack feature columns. 3D (5'z, BPz, 3'z) is the production default;
@@ -460,6 +642,8 @@ def validate_u12_cluster(
         'regime': regime,
         'centroid_sigma': valley_result.get('centroid_sigma', float('nan')),
         'gap_width': valley_result.get('gap_width', float('nan')),
+        'gap_fraction': valley_result.get('gap_fraction'),
+        'gap_fraction_ucl': valley_result.get('gap_fraction_ucl'),
     }
 
 
