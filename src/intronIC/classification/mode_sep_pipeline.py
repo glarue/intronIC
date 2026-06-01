@@ -88,6 +88,7 @@ class ModeSepResult:
     gap_fraction: Optional[float] = None
     gap_fraction_ucl: Optional[float] = None
     centroid_sigma: Optional[float] = None
+    core_fraction: Optional[float] = None       # frac(candidate raw_sum > bar): strong-motif U12 core
 
 
 def _f1_weighted_mean(probs: np.ndarray, ensemble) -> np.ndarray:
@@ -273,6 +274,7 @@ def apply_mode_separation_postprocess(
             gap_fraction=gate.gap_fraction,
             gap_fraction_ucl=gate.gap_fraction_ucl,
             centroid_sigma=gate.centroid_sigma,
+            core_fraction=gate.core_fraction,
         )
         _maybe_write_diagnostics(result, diagnostics_path, score_info_path)
         return result
@@ -406,6 +408,7 @@ def apply_mode_separation_postprocess(
         gap_fraction=gate.gap_fraction,
         gap_fraction_ucl=gate.gap_fraction_ucl,
         centroid_sigma=gate.centroid_sigma,
+        core_fraction=gate.core_fraction,
     )
     result = ModeSepResult(**{**asdict(result),
                               "quality_tier": _assign_quality_tier(result)})

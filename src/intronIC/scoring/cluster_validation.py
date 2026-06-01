@@ -82,6 +82,18 @@ DEFAULT_GAP_FRACTION_MIDPOINT = 0.35
 DEFAULT_GAP_FRACTION_WIDTH = 0.10
 DEFAULT_GAP_FRACTION_UCL_QUANTILE = 0.8
 
+# Core-presence → species-trust mapping (Step 7). core_fraction = frac(first-pass candidate
+# raw_sum > gold-derived motif bar) — the LABEL-FREE signal that a species has a genuine strong-motif
+# U12 core. Validated across 9 species / 6+ phyla: U12-LOSS species 0-1%, real bearers (incl. most
+# diverged: oomycete/mucoromycete) 41-82% — a 40-pt clean gap, so the midpoint is non-critical. The
+# resulting w_core ∈ [0,1] MULTIPLIES the gap_fraction trust weight: a species must have BOTH a clear
+# separation AND a real motif core to be trusted; a loss species (core≈0 ⇒ w_core≈0) gets a strong
+# species-prior down-shift the gap_fraction term alone misses (TetThe/Chlamydomonas PASS the gap+csig
+# gate). At the operating bar (DEFAULT_CORE_RAW_SUM_BAR=8.0): LOSS species core ≤9%, diverged-real
+# bearers ≥44% — so midpoint 0.25 sits in that wide gap (graded, not cliff). width 0.15 spans it.
+DEFAULT_CORE_FRACTION_MIDPOINT = 0.25
+DEFAULT_CORE_FRACTION_WIDTH = 0.15
+
 
 def _fishers_discriminant_direction(
     u12_points: np.ndarray,
@@ -362,15 +374,27 @@ def compute_valley_depth(
     }
 
 
+def _logistic_clamped(z):
+    """Overflow-safe logistic (clamp the saturated tails so large-|z| can't overflow exp)."""
+    if z <= -700.0:
+        return 0.0
+    if z >= 700.0:
+        return 1.0
+    return 1.0 / (1.0 + math.exp(-z))
+
+
 def _confidence_shrunk_pi_species(
     gap_fraction_ucl: Optional[float],
     *,
     gap_fraction_midpoint: float = DEFAULT_GAP_FRACTION_MIDPOINT,
     gap_fraction_width: float = DEFAULT_GAP_FRACTION_WIDTH,
+    core_fraction: Optional[float] = None,
+    core_fraction_midpoint: float = DEFAULT_CORE_FRACTION_MIDPOINT,
+    core_fraction_width: float = DEFAULT_CORE_FRACTION_WIDTH,
     prior_floor: float = 0.001,
     pi_train: float = 0.5,
 ):
-    """Map the bootstrap-UCL of gap_fraction to a species prior π_species.
+    """Map the bootstrap-UCL of gap_fraction (+ optional core_fraction) to a species prior π_species.
 
     Returns ``(pi_species, applies)``. ``applies=False`` means "cannot assess the
     separation" — the caller should leave the score unchanged (conservative no-op),
@@ -382,13 +406,18 @@ def _confidence_shrunk_pi_species(
       * UCL None/NaN → (pi_train, False): too few confident U12 calls to assess.
       * UCL == -inf  → (prior_floor, True): even the optimistic estimate shows no
         separation (most resamples inverted/coincident) ⇒ confident suppression.
-      * UCL finite   → graded:
-            w = sigmoid((4.394/width)·(UCL − midpoint))   # optimistic separation → trust
-            π_species = prior_floor + w·(π_train − prior_floor)
-        A wide bootstrap lifts the UCL above the point estimate ⇒ w→1 ⇒ no suppression,
-        so we suppress only when CONFIDENT (even optimistically) the separation is poor.
-        The UCL is percentile-based, hence well-behaved where gap_fraction crosses zero
-        / Δmean → 0 (unlike σ/μ).
+      * UCL finite   → graded separation-trust weight w_gap = sigmoid((4.394/width)·(UCL − midpoint)).
+
+    **core_fraction (Step 7, label-free):** when provided, the strong-motif core-presence weight
+    w_core = sigmoid((4.394/core_width)·(core_fraction − core_midpoint)) MULTIPLIES w_gap. Rationale:
+    a species must have BOTH a clear separation (w_gap) AND a genuine motif core (w_core) to be
+    trusted. gap_fraction/csig pass U12-LOSS species whose candidate cluster is geometrically real but
+    motif-empty (TetThe/Chlamydomonas: core≈0 ⇒ w_core≈0 ⇒ strong species down-shift) — the failure
+    mode the separation terms structurally cannot see (they live in z-space; core lives in raw-motif
+    space). Real bearers, however diverged, have core 0.41-0.82 ⇒ w_core≈1 ⇒ no extra penalty. None ⇒
+    the term is inert (w_core=1), so behavior is unchanged when core_fraction is unavailable.
+
+        π_species = prior_floor + (w_gap · w_core)·(π_train − prior_floor)
     """
     if gap_fraction_ucl is None:
         return pi_train, False
@@ -399,17 +428,16 @@ def _confidence_shrunk_pi_species(
         # UCL = -inf: even the optimistic estimate shows no separation → suppress hard.
         return prior_floor, True
 
-    # Overflow-safe logistic: UCL can be large-negative (deep overlap), which would
-    # overflow math.exp; clamp to the saturated tails.
-    z = (4.394 / gap_fraction_width) * (ucl - gap_fraction_midpoint)
-    if z <= -700.0:
-        w = 0.0
-    elif z >= 700.0:
-        w = 1.0
-    else:
-        w = 1.0 / (1.0 + math.exp(-z))
+    w_gap = _logistic_clamped((4.394 / gap_fraction_width) * (ucl - gap_fraction_midpoint))
 
-    pi_species = prior_floor + w * (pi_train - prior_floor)
+    # Core-presence term (label-free): inert (w_core=1) when core_fraction is unavailable.
+    if core_fraction is None or (isinstance(core_fraction, float) and math.isnan(core_fraction)):
+        w_core = 1.0
+    else:
+        w_core = _logistic_clamped(
+            (4.394 / core_fraction_width) * (float(core_fraction) - core_fraction_midpoint))
+
+    pi_species = prior_floor + (w_gap * w_core) * (pi_train - prior_floor)
     return pi_species, True
 
 
@@ -422,6 +450,7 @@ def compute_adjusted_score(
     prior_floor: float = 0.001,
     k_sigma: float = 3.0,
     pi_train: float = 0.5,
+    core_fraction: Optional[float] = None,
 ) -> float:
     """Compute the gap_fraction-prior + σ adjusted confidence score for one intron.
 
@@ -453,11 +482,12 @@ def compute_adjusted_score(
     # Term 1: instance-level evidence
     logit_svm = math.log(p / (1 - p))
 
-    # Term 2: confidence-shrunk species-level prior correction
+    # Term 2: confidence-shrunk species-level prior correction (separation × core-presence)
     pi_species, applies = _confidence_shrunk_pi_species(
         gap_fraction_ucl,
         gap_fraction_midpoint=gap_fraction_midpoint,
         gap_fraction_width=gap_fraction_width,
+        core_fraction=core_fraction,
         prior_floor=prior_floor, pi_train=pi_train,
     )
     prior_correction = math.log(pi_species / pi_train) if applies else 0.0
@@ -478,6 +508,7 @@ def compute_adjusted_scores_batch(
     prior_floor: float = 0.001,
     k_sigma: float = 3.0,
     pi_train: float = 0.5,
+    core_fraction: Optional[float] = None,
 ) -> np.ndarray:
     """Vectorized score adjustment for a batch of introns.
 
@@ -503,6 +534,7 @@ def compute_adjusted_scores_batch(
         gap_fraction_ucl,
         gap_fraction_midpoint=gap_fraction_midpoint,
         gap_fraction_width=gap_fraction_width,
+        core_fraction=core_fraction,
         prior_floor=prior_floor, pi_train=pi_train,
     )
     prior_correction = math.log(pi_species / pi_train) if applies else 0.0

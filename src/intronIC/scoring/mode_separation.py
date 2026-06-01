@@ -62,6 +62,28 @@ DEFAULT_MU_U12_TOLERANCE_5P = 3.6
 # jointly with the π_species operating point on the snRNA + conservation anchors.
 DEFAULT_CSIG_FLOOR = 4.0
 
+# Core-presence bar (Step 7): the raw_sum (5'_raw + bp_raw + 3'_raw) above which a first-pass
+# candidate counts as a genuine strong-motif U12 (a "core" intron). The species-level
+# `core_fraction` = frac(candidate raw_sum > this bar) is the LABEL-FREE signal that distinguishes
+# U12-LOSS species (core ~0-1% — their "U12 cluster" is chance weak-motif hits) from real bearers,
+# however diverged (core 41-82%). Unlike the removed μ_U12 LOCATION anchor, a motif-strength bar is
+# legitimately external: U12 identity is a UNIVERSAL biological constant (conserved U11/U12 snRNA
+# binding), so a diverged real U12 still scores high motif log-odds. DERIVED, not arbitrary: ≈ the
+# 5th percentile of the multispecies gold-U12 raw_sum distribution (conservation-labeled, IPA-
+# independent of raw_sum). VALIDATED leave-clade-out: every held-out clade keeps 86-100% core under a
+# bar derived from the OTHER clades (so it generalizes beyond its calibration lineages → not circular
+# with PWM training); loss species stay at 1%. The wide 40-pt margin makes the exact value non-
+# critical (anything in ~5-20 classifies identically). Re-derive per PWM retrain; travels w/ bundle.
+#
+# VALUE: set to 8.0 — deliberately the LOW end of the safe valley, NOT the gold-U12 p5 (≈13.9). The
+# 12-diverged-bearer pressure test (Zoopago/Glomero/oomycete/amoebozoa/Mucorales) found the WIDEST
+# loss-vs-real gap at bar≈8 (+35%): lowering 13.9→8 nearly doubles the worst diverged bearer's core
+# margin (MucorLusit 22%→44%) at trivial loss-side cost (loss max 1%→9%). Choosing the low end is the
+# explicit MITIGATION for the human-PWM anchoring of raw_sum — it maximizes diverged-real safety while
+# every value in [5, 13.9] classifies loss-vs-real identically (loss core ≤9%, real ≥44%). See
+# conservation_corpus/docs/calibration_plan.md §6i-6j.
+DEFAULT_CORE_RAW_SUM_BAR = 8.0
+
 # Continuous per-intron discount defaults (v2.7+).
 #
 # Empirically tuned against the 14-species panel + Salpingoeca:
@@ -117,6 +139,7 @@ class GateDecision:
     gap_fraction: float | None = None          # gap_width/Δmean on the Fisher axis (gate decision stat)
     gap_fraction_ucl: float | None = None       # deterministic-bootstrap UCL (π_species input)
     centroid_sigma: float | None = None         # U12↔U2 centroid distance in U2-σ (check #3 replacement)
+    core_fraction: float | None = None          # frac(candidate raw_sum > bar): strong-motif U12 core presence
 
 
 # -----------------------------------------------------------------------------
@@ -222,6 +245,7 @@ def evaluate_gate(
     mu_u12_prior: float = DEFAULT_UNIVERSAL_ANCHORS["five_raw"],
     mu_u12_tolerance: float = DEFAULT_MU_U12_TOLERANCE_5P,  # DEPRECATED: vestigial, no longer a check
     csig_floor: float = DEFAULT_CSIG_FLOOR,
+    core_raw_sum_bar: float = DEFAULT_CORE_RAW_SUM_BAR,
 ) -> GateDecision:
     """Decide whether to apply mode-separation for the species.
 
@@ -266,6 +290,17 @@ def evaluate_gate(
     # is retained in the signature for back-compat but no longer gates anything.
     mu_offset = float(mu_u12_5p_raw - mu_u12_prior)
 
+    # core_fraction (Step 7) — the LABEL-FREE species-level signal: fraction of first-pass candidates
+    # whose summed motif log-odds (raw_sum = 5'_raw+bp_raw+3'_raw, = col-sum of the raw 3D candidate
+    # points) clears the gold-derived motif bar. Loss species ≈ 0-1% (no genuine U12 core); real
+    # bearers (however diverged) 41-82%. DIAGNOSTIC here; drives the graded π_species core-presence
+    # term downstream (see cluster_validation._confidence_shrunk_pi_species). Computed once and carried
+    # on every post-floor GateDecision.
+    _core_fraction = None
+    if u12_candidate_points is not None and len(u12_candidate_points) >= 1:
+        _rs = u12_candidate_points.sum(axis=1)
+        _core_fraction = float(np.mean(_rs > core_raw_sum_bar))
+
     # Checks 3/4 — separation on the Fisher discriminant, both from ONE compute_valley_depth call:
     #   (#4) gap_fraction > gap_fraction_min : lenient route floor (a positive U12/U2 gap); graded
     #        suppression of weak separation is deferred to π_species (gap_fraction bootstrap UCL).
@@ -293,6 +328,7 @@ def evaluate_gate(
             gap_fraction=_gf,
             gap_fraction_ucl=_gfucl,
             centroid_sigma=_csig,
+            core_fraction=_core_fraction,
         )
     if _csig is None or _csig < csig_floor:
         return GateDecision(
@@ -304,6 +340,7 @@ def evaluate_gate(
             gap_fraction=_gf,
             gap_fraction_ucl=_gfucl,
             centroid_sigma=_csig,
+            core_fraction=_core_fraction,
         )
 
     return GateDecision(
@@ -315,6 +352,7 @@ def evaluate_gate(
         gap_fraction=_gf,
         gap_fraction_ucl=_gfucl,
         centroid_sigma=_csig,
+        core_fraction=_core_fraction,
     )
 
 
