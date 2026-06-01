@@ -281,7 +281,9 @@ class TestSpeciesPrior:
 
 
 class TestNormalizerMode:
-    """v3 ships normalizer=None — `auto` falls through, `human` errors."""
+    """v3 ships normalizer=None but DOES ship a fallback_normalizer — `auto` falls through to
+    adaptive, `human` uses the bundled fallback as the human scaler (main.py:4888-4891, since
+    commit 6a286a1 'Bundle multispecies fallback scaler')."""
 
     def test_auto_mode_succeeds(self, intronIC_bin):
         # Default is --normalizer-mode auto; baseline already covers this,
@@ -295,15 +297,15 @@ class TestNormalizerMode:
             out = Path(tmpdir)
             _run(intronIC_bin, out, extra_args=("--normalizer-mode", "adaptive"))
 
-    def test_human_mode_errors_cleanly(self, intronIC_bin):
-        # v3 has no saved normalizer; `--normalizer-mode human` should
-        # produce a clear ValueError, not a cryptic AttributeError.
+    def test_human_mode_uses_fallback_scaler(self, intronIC_bin):
+        # The v3 bundle has no v2.3-style saved normalizer, but it DOES ship a
+        # fallback_normalizer (the multispecies-pool scaler), which main.py treats
+        # as an acceptable human-mode scaler (main.py:4888-4891, 4922-4932). So
+        # `--normalizer-mode human` SUCCEEDS (it does NOT error) and uses that scaler.
+        # (Stale-contract fix: the old test asserted an error, predating commit
+        # 6a286a1 which bundled the fallback scaler.)
         with tempfile.TemporaryDirectory(prefix="intronIC_v3_human_") as tmpdir:
             out = Path(tmpdir)
-            r = _run(intronIC_bin, out,
-                     extra_args=("--normalizer-mode", "human"),
-                     expect_fail=True)
-        combined = (r.stdout + r.stderr).lower()
-        assert "normalizer" in combined, (
-            "error from --normalizer-mode human should mention 'normalizer'"
-        )
+            r = _run(intronIC_bin, out, extra_args=("--normalizer-mode", "human"))
+        s = _parse_classification_summary(r.stdout)
+        assert "u12_total" in s, "human mode (v3 fallback scaler) should classify cleanly"
