@@ -181,6 +181,7 @@ def test_continuous_discount_preserves_strong_TPs(runtime, valley_depth_fn):
     from intronIC.classification.mode_sep_pipeline import (
         apply_continuous_per_intron_discount,
     )
+    from intronIC.scoring.mode_separation import DEFAULT_DISCOUNT_K_OVERCALL
     import pandas as pd
     with tempfile.TemporaryDirectory() as td:
         result, score_path, _ = _run_pipeline(
@@ -206,7 +207,7 @@ def test_continuous_discount_preserves_strong_TPs(runtime, valley_depth_fn):
     # Summary dict is well-formed
     assert summary["n_called_pre_discount"] == n_pre
     assert summary["n_called_post_discount"] == n_post
-    assert summary["k_overcall"] == 1.0  # default
+    assert summary["k_overcall"] == DEFAULT_DISCOUNT_K_OVERCALL  # tracks the tuned default (2.0)
 
 
 def test_continuous_discount_preserves_svm_score(runtime, valley_depth_fn):

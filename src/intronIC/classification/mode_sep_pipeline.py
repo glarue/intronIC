@@ -493,6 +493,14 @@ def _sync_meta_from_score_info(meta_path: Path, df: "pd.DataFrame",
         raise
 
 
+# Observability thresholds for the discount-clawback monitor (pure diagnostic; do not affect scores).
+# WARN when the discount claws back a large svm-level reservoir (n_pre >> n_post) in BOTH absolute and
+# relative terms — flags species whose final U12 set leans heavily on the discount (the tail-risk case
+# under discount drift). Not an error: gate-passing bearers legitimately carry a reservoir.
+RESERVOIR_WARN_ABS = 100     # absolute clawback floor (n_pre - n_post)
+RESERVOIR_WARN_RATIO = 2.0   # and n_pre >= RATIO * n_post
+
+
 def apply_continuous_per_intron_discount(
     score_info_path: Path,
     *,
@@ -534,6 +542,10 @@ def apply_continuous_per_intron_discount(
     def _log(msg):
         if messenger is not None:
             messenger.info(msg)
+
+    def _warn(msg):
+        if messenger is not None:
+            messenger.warning(msg)
 
     df = pd.read_csv(score_info_path, sep="\t", low_memory=False)
     for c in ("svm_score", "5'_raw", "bp_raw", "3'_raw", "adjusted_score"):
@@ -610,6 +622,18 @@ def apply_continuous_per_intron_discount(
     df.to_csv(score_info_path, sep="\t", index=False, float_format="%.6f")
     _log(f"[continuous-discount] applied; n_called_pre={n_pre}, "
          f"n_called_post={n_post}, suppressed={n_pre - n_post}")
+
+    # Discount-clawback monitor (pure observability — does not alter scores). Flags species whose
+    # final U12 set leans heavily on the discount clawing back a large svm-level reservoir; the
+    # tail-risk case if the discount ever drifts (see docs/threshold_shift_refactor_proposal.md).
+    _reservoir = n_pre - n_post
+    if _reservoir >= RESERVOIR_WARN_ABS and n_pre >= RESERVOIR_WARN_RATIO * max(n_post, 1):
+        _warn(
+            f"[discount-monitor] large clawback: svm-level {n_pre} → HC {n_post} "
+            f"(reservoir {_reservoir}, {100 * _reservoir / max(n_pre, 1):.0f}% of svm-level calls); "
+            f"this species' U12 calls rely heavily on the discount — verify if unexpected "
+            f"(tail-risk under discount drift)."
+        )
 
     # v2.7.1 fix: propagate updated rel_score and unified type_id to
     # meta.iic. Without this, meta.iic shipped stale rel_score (and a

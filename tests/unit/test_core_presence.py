@@ -9,14 +9,19 @@ prior down-shift; a real bearer (however diverged) is untouched.
 Run: PYTHONPATH=<wt>/src <env>/bin/python3 tests/unit/test_core_presence.py
 """
 import math
+import os
 import numpy as np
 
 from intronIC.scoring.mode_separation import (
-    evaluate_gate, GateDecision, DEFAULT_CORE_RAW_SUM_BAR,
+    evaluate_gate, GateDecision, DEFAULT_CORE_RAW_SUM_BAR, DEFAULT_CORE_GATE_FLOOR,
 )
 from intronIC.scoring.cluster_validation import (
     compute_valley_depth, compute_adjusted_score, _confidence_shrunk_pi_species,
 )
+
+# Hygiene: the experimental INTRONIC_FORCE_FALLBACK diagnostic hook forces every gate-passer to
+# fallback; unset it so the routing assertions below reflect the real gate, not the override.
+os.environ.pop("INTRONIC_FORCE_FALLBACK", None)
 
 
 def test_core_fraction_computed_and_carried():
@@ -33,8 +38,13 @@ def test_core_fraction_computed_and_carried():
 
 
 def test_loss_species_suppressed_real_untouched():
-    """A LOSS-like cluster (passes the gate, core≈0) is suppressed by the core term; a REAL-like
-    cluster (core≈1) is untouched. Both pass the gate — the term is the only thing that separates them."""
+    """UNIFIED core-gate contract (two mechanisms):
+      PRIMARY  — a motif-empty LOSS-like cluster (core < floor) is ROUTED TO FALLBACK by the gate
+                 (reason 'low_core_fraction'), so it never enters the 2nd-pass balloon; a REAL-like
+                 cluster (core ≈ 1) PASSES to modesep ('ok'). (Legacy design let BOTH pass and relied
+                 only on the π_species term — that's what changed.)
+      SECONDARY — the π_species core term still suppresses loss / spares real on EITHER route, so a
+                 loss that slips through (or any fallback-routed loss) is down-shifted there too."""
     rng = np.random.default_rng(1)
     u2 = rng.normal([-25, -8, -4], 3, (500, 3))
     loss = rng.normal([3, -1, -1], 1.5, (80, 3))    # raw_sum ≈ 1 → no core
@@ -44,10 +54,13 @@ def test_loss_species_suppressed_real_untouched():
                            separation_5p=2.0, valley_depth_fn=compute_valley_depth)
     g_real = evaluate_gate(real, u2, mu_u12_5p_raw=9.0, n_eff_candidates=80.0,
                            separation_5p=2.0, valley_depth_fn=compute_valley_depth)
-    # Both PASS the gate (this is the point — the gate can't tell them apart)
-    assert g_loss.reason == "ok" and g_real.reason == "ok"
-    assert g_loss.core_fraction < 0.1 and g_real.core_fraction > 0.9
+    # PRIMARY: the gate now SEPARATES them — loss → fallback, real → modesep.
+    assert g_loss.core_fraction < DEFAULT_CORE_GATE_FLOOR < g_real.core_fraction, \
+        (g_loss.core_fraction, g_real.core_fraction)
+    assert (not g_loss.passes) and g_loss.reason == "low_core_fraction", g_loss.reason
+    assert g_real.passes and g_real.reason == "ok", g_real.reason
 
+    # SECONDARY: the π_species core term suppresses loss / spares real on EITHER route (route-independent).
     def adj(g, core):
         return compute_adjusted_score(99.0, g.gap_fraction_ucl, 5.0, k_sigma=0.0, core_fraction=core)
 
@@ -61,8 +74,21 @@ def test_loss_species_suppressed_real_untouched():
     assert loss_with < 50, loss_with
     assert abs(real_without - real_with) < 2, (real_without, real_with)
     assert real_with > 95, real_with
-    print(f"  LOSS svm99: {loss_without:.1f} → {loss_with:.1f} (core {g_loss.core_fraction:.2f})")
-    print(f"  REAL svm99: {real_without:.1f} → {real_with:.1f} (core {g_real.core_fraction:.2f})")
+    print(f"  gate:   LOSS→{g_loss.reason} (core {g_loss.core_fraction:.2f});  REAL→{g_real.reason} (core {g_real.core_fraction:.2f})")
+    print(f"  π-term: LOSS svm99 {loss_without:.1f}→{loss_with:.1f};  REAL svm99 {real_without:.1f}→{real_with:.1f}")
+
+
+def test_core_gate_disable_switch():
+    """Back-compat escape hatch: core_gate_floor < 0 disables the routing gate — a loss-like cluster
+    then PASSES (reason 'ok') exactly as in the legacy design (π_species term still suppresses it)."""
+    rng = np.random.default_rng(2)
+    u2 = rng.normal([-25, -8, -4], 3, (500, 3))
+    loss = rng.normal([3, -1, -1], 1.5, (80, 3))
+    g_off = evaluate_gate(loss, u2, mu_u12_5p_raw=3.0, n_eff_candidates=80.0,
+                          separation_5p=2.0, valley_depth_fn=compute_valley_depth,
+                          core_gate_floor=-1.0)
+    assert g_off.passes and g_off.reason == "ok", g_off.reason
+    assert g_off.core_fraction < DEFAULT_CORE_GATE_FLOOR, g_off.core_fraction
 
 
 def test_core_term_inert_when_none():
