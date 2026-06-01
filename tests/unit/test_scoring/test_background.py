@@ -209,3 +209,35 @@ class TestSpeciesBackground:
         a_freq = u2_five.matrix[0, 17]
         g_freq = u2_five.matrix[2, 17]
         assert a_freq > g_freq
+
+    def test_low_n_noncanonical_dnt_does_not_clobber(
+        self, human_u2_pwm_sets, default_config
+    ):
+        """Regression (U2 subtype-clobber bug): a rare non-canonical 5' dnt that
+        defaults to 'gtag' (e.g. TT) must NOT overwrite the high-n GT-derived gtag
+        background. The previous code sorted dnts and did last-writer-wins, so a
+        handful of TT introns (n=3, blend weight ~0 => ~human prior) clobbered the
+        GT background (n=2000), silently disabling the species correction on any
+        annotation carrying non-canonical dnts. Fix: highest-n dnt defines the slot."""
+        bg = SpeciesBackground(
+            human_u2_pwm_sets, default_config,
+            five_len=12, three_len=10, bp_len=12,
+        )
+        # 2000 canonical GT-AG introns, 5' window all-A => strongly species-shifted
+        # away from the uniform (0.25) human prior.
+        for i in range(2000):
+            bg.accumulate(f'gt_{i}', 'GT', 'AG', 'A' * 12, 'C' * 10, 'A' * 50)
+        # 3 non-canonical TT introns (5' dnt 'TT' -> defaults to 'gtag'), 5' all-G.
+        # 'TT' > 'GT' alphabetically, so last-writer-wins would let these win.
+        for i in range(3):
+            bg.accumulate(f'tt_{i}', 'TT', 'AG', 'G' * 12, 'C' * 10, 'A' * 50)
+
+        five = bg.build_corrected_pwm_sets()['five'].matrices[('u2', 'gtag')].matrix
+        # Scored window is cols 17-28, A is row 0. Under the fix the gtag background
+        # reflects the 2000 GT introns (A ~0.75); under the clobber bug it reverts
+        # to ~human uniform (~0.25).
+        a_scored = float(five[0, 17:29].mean())
+        assert a_scored > 0.5, (
+            f"gtag 5' A-freq={a_scored:.3f} in scored window: expected species-shifted "
+            f"(~0.75 from 2000 GT introns); ~0.25 means 3 TT introns clobbered it to human"
+        )
