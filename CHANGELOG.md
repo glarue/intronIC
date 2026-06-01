@@ -5,6 +5,21 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.4] - 2026-06-01
+
+### Fixed — species U2 background subtype-clobber
+
+The species-specific U2 background correction silently reverted to the human U2
+prior on annotations containing non-canonical splice dinucleotides. The build
+mapped all non-canonical dnts to the `gtag` subtype and assigned the corrected
+matrix with sorted-dnt last-writer-wins, so a few spurious introns (e.g. `TT`,
+which sorts after `GT`) won the slot with a near-zero blend weight, overwriting
+the real high-n background. Harmless on near-human-composition species, but it
+inflated scores on compositionally-divergent (e.g. AT-rich) genomes, producing
+high-confidence false positives. Fixed by letting the highest-n dnt define each
+subtype background (order-independent, so streaming/in-memory results stay
+deterministic). Added a regression test.
+
 ## [2.4.3] - 2026-05-29
 
 ### Fixed — `-i` (`--allow-multiple-isoforms`) and `-d` (`--include-duplicates`) flag parity
