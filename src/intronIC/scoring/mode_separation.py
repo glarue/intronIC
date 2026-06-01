@@ -84,6 +84,13 @@ DEFAULT_CSIG_FLOOR = 4.0
 # conservation_corpus/docs/calibration_plan.md §6i-6j.
 DEFAULT_CORE_RAW_SUM_BAR = 8.0
 
+# UNIFIED species-trust (experimental): if the first-pass candidate cluster has essentially no
+# strong-motif core (core_fraction < this floor), route to FALLBACK instead of modesep — so a
+# motif-empty species never enters the 2nd-pass z-anchor balloon (vs the current design, which
+# balloons then claws back via the discount). 0.20 sits in the valley between loss species (≤0.09)
+# and diverged real bearers (≥0.41) — a 30-pt margin. Set <0 to disable (= current behaviour).
+DEFAULT_CORE_GATE_FLOOR = 0.20
+
 # Continuous per-intron discount defaults (v2.7+).
 #
 # Empirically tuned against the 14-species panel + Salpingoeca:
@@ -246,6 +253,7 @@ def evaluate_gate(
     mu_u12_tolerance: float = DEFAULT_MU_U12_TOLERANCE_5P,  # DEPRECATED: vestigial, no longer a check
     csig_floor: float = DEFAULT_CSIG_FLOOR,
     core_raw_sum_bar: float = DEFAULT_CORE_RAW_SUM_BAR,
+    core_gate_floor: float = DEFAULT_CORE_GATE_FLOOR,
 ) -> GateDecision:
     """Decide whether to apply mode-separation for the species.
 
@@ -334,6 +342,40 @@ def evaluate_gate(
         return GateDecision(
             passes=False,
             reason="low_centroid_sigma",
+            valley_depth=_vd,
+            mu_u12_offset=mu_offset,
+            n_eff_candidates=float(n_eff_candidates),
+            gap_fraction=_gf,
+            gap_fraction_ucl=_gfucl,
+            centroid_sigma=_csig,
+            core_fraction=_core_fraction,
+        )
+
+    # UNIFIED species-trust (experimental): a motif-empty cluster (no strong-motif U12 core) that
+    # passes the geometric checks above is the z-anchor-corruption case (TetThe/Chlamydomonas) — it
+    # would balloon in the 2nd pass then need clawing back. Route it to FALLBACK instead, so it never
+    # balloons. Disabled when core_gate_floor < 0.
+    if core_gate_floor >= 0 and _core_fraction is not None and _core_fraction < core_gate_floor:
+        return GateDecision(
+            passes=False,
+            reason="low_core_fraction",
+            valley_depth=_vd,
+            mu_u12_offset=mu_offset,
+            n_eff_candidates=float(n_eff_candidates),
+            gap_fraction=_gf,
+            gap_fraction_ucl=_gfucl,
+            centroid_sigma=_csig,
+            core_fraction=_core_fraction,
+        )
+
+    # RECALL TEST (env-gated, experimental): force this gate-passing species to fallback so we can
+    # measure what the 2nd-pass mode-sep actually buys (modesep HC vs fallback HC = the 2nd-pass
+    # recall contribution). All stats are computed above, so the fallback π_species still gets them.
+    import os as _os
+    if _os.environ.get("INTRONIC_FORCE_FALLBACK"):
+        return GateDecision(
+            passes=False,
+            reason="forced_fallback",
             valley_depth=_vd,
             mu_u12_offset=mu_offset,
             n_eff_candidates=float(n_eff_candidates),
