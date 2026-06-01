@@ -464,20 +464,27 @@ class SpeciesBackground:
             if human_ps is None:
                 continue
 
-            # Iterate subtypes in sorted order so that when multiple
-            # subtypes map to the same pwm_subtype (e.g., non-canonical 5'
-            # dnts all default to 'gtag'), the last-writer-wins assignment
-            # to ``matrices[human_key]`` is deterministic. Without this,
-            # streaming and in-memory pipelines can produce different
-            # corrected PWMs for the same data because the underlying
-            # ``_data`` dict's insertion order differs (sequential
-            # accumulate vs parallel merge_worker_counts).
-            for subtype_dnt in sorted(acc.get_all_subtypes()):
+            # Multiple intron dnts map to the same pwm_subtype (all non-canonical
+            # 5' dnts default to 'gtag'). The HIGHEST-n dnt must define the slot.
+            # The previous code iterated sorted(dnts) and did last-writer-wins,
+            # which let a rare low-n non-canonical dnt (e.g. TT n=3) clobber the
+            # real GT background (n~96k) with a ~human matrix (w=n/(n+n0)~=0),
+            # silently disabling the species correction on any annotation that
+            # carries non-canonical dnts. Sort by (-n, dnt) [order-independent =>
+            # streaming/in-memory deterministic, the original goal] + first-writer-wins.
+            _u2_seen = set()
+            for subtype_dnt in sorted(
+                acc.get_all_subtypes(),
+                key=lambda d: (-acc._data.get(d, {}).get('n', 0), d),
+            ):
                 pwm_subtype = self.FIVE_DNT_TO_SUBTYPE.get(
                     subtype_dnt,
                     self.THREE_DNT_TO_SUBTYPE.get(subtype_dnt, 'gtag')
                 )
                 human_key = ('u2', pwm_subtype)
+                if human_key in _u2_seen:
+                    continue  # a higher-n dnt already defined this background
+                _u2_seen.add(human_key)
                 human_pwm = human_ps.matrices.get(human_key)
                 if human_pwm is None:
                     # Try fallback
@@ -558,9 +565,16 @@ class SpeciesBackground:
 
         human_bp = self.human_u2.get('bp')
         if human_bp:
-            for subtype_dnt in sorted(self._bp_acc.get_all_subtypes()):
+            _bp_u2_seen = set()
+            for subtype_dnt in sorted(
+                self._bp_acc.get_all_subtypes(),
+                key=lambda d: (-self._bp_acc._data.get(d, {}).get('n', 0), d),
+            ):
                 pwm_subtype = self.FIVE_DNT_TO_SUBTYPE.get(subtype_dnt, 'gtag')
                 human_key = ('u2', pwm_subtype)
+                if human_key in _bp_u2_seen:
+                    continue  # highest-n dnt wins (see 5'/3' loop; clobber-bug fix)
+                _bp_u2_seen.add(human_key)
                 human_pwm = human_bp.matrices.get(human_key)
                 if human_pwm is None:
                     human_pwm = human_bp.select_best('u2', pwm_subtype)
