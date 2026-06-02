@@ -2708,13 +2708,16 @@ def load_introns_from_sequences(
     Returns:
         List of introns with sequences
     """
+    import re as _re
     from intronIC.core.intron import (
         Intron,
         IntronFlags,
         IntronMetadata,
         IntronScores,
         IntronSequences,
+        OmissionReason,
     )
+    from intronIC.extraction.sequences import CANONICAL_PAIRS
     from intronIC.utils.coordinates import GenomicCoordinate
 
     messenger.info(f"Loading sequences: {config.input.sequence_file}")
@@ -2767,6 +2770,25 @@ def load_introns_from_sequences(
         if seq_line.score is not None:
             scores = IntronScores(svm_score=seq_line.score)
 
+        # Equivalence fix 1: recover NON-CANONICAL status so re-ingest masks the same
+        # terminal dinucleotides the original run did (otherwise non-canonical termini are
+        # scored against the canonical PWM → large 5'/3' raw errors). Prefer the original
+        # determination preserved in the name tag (;[n]); fall back to the dinucleotides for
+        # files written without it.
+        _flags = IntronFlags.SEQUENCE_ONLY | IntronFlags.LONGEST_ISOFORM
+        _name = seq_line.name or ""
+        if _re.search(r"\[n\]", _name) or (
+            "[n]" not in _name  # no tag present → derive from termini
+            and five_prime_dnt and three_prime_dnt
+            and (five_prime_dnt.upper(), three_prime_dnt.upper()) not in CANONICAL_PAIRS
+        ):
+            _flags |= IntronFlags.NONCANONICAL
+        # Equivalence fix 2: honor the original omission recorded in the name tag (;[o:CODE]),
+        # so re-ingest reproduces the exact scored pool that fed background correction +
+        # z-normalization (the SHORT re-filter on the stored body length diverges otherwise).
+        _om = _re.search(r"\[o:([a-z])\]", _name)
+        _omitted = OmissionReason.from_code(_om.group(1)) if _om else OmissionReason.NONE
+
         # Create minimal metadata with defaults to avoid None errors in filters
         # But leave parent/grandparent as None so generate_intron_name() falls back
         # to using intron_id directly (line 256-258 in writers.py), preserving
@@ -2781,7 +2803,8 @@ def load_introns_from_sequences(
             defined_by=None,
             # Mark as sequence-only input (no real genomic coordinates)
             # This signals to skip duplicate detection and BED output
-            flags=IntronFlags.SEQUENCE_ONLY | IntronFlags.LONGEST_ISOFORM,
+            flags=_flags,
+            omitted=_omitted,
         )
 
         # Create Intron object

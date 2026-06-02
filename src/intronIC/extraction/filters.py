@@ -9,7 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
-from intronIC.core.intron import Intron, OmissionReason
+from intronIC.core.intron import Intron, OmissionReason, IntronFlags
 from intronIC.utils.sequences import has_ambiguous_bases, is_valid_dna
 
 
@@ -213,6 +213,14 @@ class IntronFilter:
         Args:
             intron: Intron object to check
         """
+        # Re-ingest equivalence (-q / pre-extracted sequences): the omission status was
+        # recovered from the banked name tag in load_introns_from_sequences. Do NOT recompute
+        # it — intron.length here is the stored body length (no genomic coords), so the SHORT
+        # check would re-omit a different set than the original run, changing the scored pool
+        # that feeds background correction + z-normalization. Trust the banked filtering.
+        if IntronFlags.SEQUENCE_ONLY in intron.metadata.flags:
+            return
+
         # Clear omitted flag to re-evaluate (important for second pass after tagging)
         intron.metadata.omitted = OmissionReason.NONE
 
