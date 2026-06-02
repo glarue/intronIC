@@ -303,6 +303,7 @@ def _write_pi_species_adjusted_scores(
     threshold: float,
     k_sigma: float,
     prior_floor: float,
+    core_fraction: Optional[float] = None,
 ) -> int:
     """Rewrite score_info.iic `adjusted_score`/`rel_score` via the confidence-shrunk
     gap_fraction-UCL species prior (`compute_adjusted_score`), then sync meta.iic `rel_score`.
@@ -346,6 +347,7 @@ def _write_pi_species_adjusted_scores(
                         adj_val = compute_adjusted_score(
                             svm_val, gap_fraction_ucl, sigma_val,
                             prior_floor=prior_floor, k_sigma=k_sigma,
+                            core_fraction=core_fraction,
                         )
                         parts[adj_col] = str(round(adj_val, 2))
                         if rel_col is not None:
@@ -406,6 +408,7 @@ def _apply_post_classification_adjustment(
     messenger: "UnifiedMessenger",
     score_path: Optional[Path] = None,
     meta_path: Optional[Path] = None,
+    core_fraction: Optional[float] = None,
 ) -> Optional[dict]:
     """Apply cluster validation + score adjustment to output files.
 
@@ -461,6 +464,7 @@ def _apply_post_classification_adjustment(
         threshold=config.scoring.threshold,
         k_sigma=sa_config.k_sigma,
         prior_floor=sa_config.prior_floor,
+        core_fraction=core_fraction,  # UNIFIED: core-presence on the fallback route too
     )
     _gf_disp = "n/a" if gap_fraction is None else f"{gap_fraction:.3f}"
     messenger.info(
@@ -4532,6 +4536,7 @@ def classify_streaming_per_contig(
                     messenger,
                     score_path=score_path,
                     meta_path=meta_path,
+                    core_fraction=modesep_result.core_fraction,
                 )
             )
             if leg_hc_count is not None:
@@ -4555,6 +4560,7 @@ def classify_streaming_per_contig(
                     threshold=config.scoring.threshold,
                     k_sigma=0.0,
                     prior_floor=_sa.prior_floor,
+                    core_fraction=modesep_result.core_fraction,
                 )
                 _gfd = ("n/a" if modesep_result.gap_fraction is None
                         else f"{modesep_result.gap_fraction:.3f}")
@@ -6671,6 +6677,7 @@ def main_classify(config: IntronICConfig):
                                 cv_result, config, messenger,
                                 score_path=score_path,
                                 meta_path=meta_path,
+                                core_fraction=modesep_result.core_fraction,
                             )
                         )
                         if leg_hc_count is not None:
@@ -6692,6 +6699,7 @@ def main_classify(config: IntronICConfig):
                                 threshold=config.scoring.threshold,
                                 k_sigma=0.0,
                                 prior_floor=_sa.prior_floor,
+                                core_fraction=modesep_result.core_fraction,
                             )
                             _gfd = ("n/a" if modesep_result.gap_fraction is None
                                     else f"{modesep_result.gap_fraction:.3f}")
