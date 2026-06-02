@@ -1128,6 +1128,16 @@ class ScoreWriter(BaseWriter):
         """
         self._require_open()
 
+        # score_info.iic is the scored-feature matrix: omitted introns have no
+        # scores (every score column would be NA) and their full inventory +
+        # omission reason already live in .meta.iic / .introns.iic. Skip them so
+        # score_info is scored-only in EVERY run mode. The in-memory path already
+        # pre-filters (scored_only=classified_introns); the streaming path feeds
+        # the merged scored+omitted set through here, so this guard is what keeps
+        # the two modes' score_info bit-identical (drops 161 omitted for ustmay).
+        if intron.metadata is not None and intron.metadata.is_omitted():
+            return
+
         # Generate intron name using shared function
         name = generate_intron_name(intron, species_name, simple_name, no_abbreviate)
 

@@ -612,6 +612,29 @@ class TestScoreWriter:
         # Note: bp_region_seq is now bp_seq_u2 field at index 7
         assert fields[10] == "TTTAGCATGG"  # three_seq (index 10)
 
+    def test_skips_omitted_introns(self, tmp_path, full_intron, intron_with_tags):
+        """score_info.iic is scored-only: ScoreWriter must skip omitted introns
+        (omitted != NONE) regardless of caller. This is what keeps streaming and
+        in-memory score_info bit-identical — the streaming path feeds the merged
+        scored+omitted set through write_intron, so the writer itself enforces the
+        invariant. The omission inventory lives in .meta.iic / .introns.iic instead.
+        """
+        assert intron_with_tags.metadata.is_omitted()  # precondition: SHORT
+        assert not full_intron.metadata.is_omitted()
+        score_file = tmp_path / "test.score_info.iic"
+        with ScoreWriter(score_file) as writer:
+            writer.write_header()
+            writer.write_intron(full_intron)
+            writer.write_intron(intron_with_tags)  # must be skipped
+
+        text = score_file.read_text()
+        data_rows = text.strip().split("\n")[1:]  # drop header
+        assert len(data_rows) == 1, f"omitted intron leaked into score_info: {data_rows}"
+        # The surviving row is the scored intron (parent TRANS001, svm 95.5); the
+        # omitted intron (parent TRANS003) must be absent entirely.
+        assert "TRANS001" in data_rows[0] and "95.5" in data_rows[0]
+        assert "TRANS003" not in text
+
 
 # ============================================================================
 # MappingWriter Tests
