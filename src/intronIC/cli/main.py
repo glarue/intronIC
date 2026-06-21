@@ -615,12 +615,17 @@ def _run_post_classification_pipeline(
             _species_gf = cv_result.get('gap_fraction')
             _species_ucl = cv_result.get('gap_fraction_ucl')
             result.cv_result = cv_result
-        else:
+        elif modesep_result.route == "modesep":
             # v3 gate-gapfrac (Step 3d, approach A): give the modesep route the
             # species prior it lacked — apply the confidence-shrunk gap_fraction-UCL
             # prior (from the gate) to svm_score BEFORE the continuous discount, with
             # k_σ=0 so the only delta vs the second-pass score is the species term.
             # UCL None/NaN ⇒ skip (conservative no-op); well-separated ⇒ adj≈svm.
+            # NB: the "conservative_min" route (C4 — gate-fail-but-separable under a
+            # graduated-tail bundle) deliberately skips this π_species write and goes
+            # straight to the mode-sep score + graduated tail below: the gate-free
+            # offline eval that validated the tail applied no species prior, and the
+            # tail's learned FP-suppression already encodes the distrust.
             _ucl = modesep_result.gap_fraction_ucl
             _sa = config.score_adjustment
             if _sa.enabled and _ucl is not None and not np.isnan(_ucl):

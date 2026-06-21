@@ -19,7 +19,7 @@ recalibration phase.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -251,7 +251,26 @@ def apply_mode_separation_postprocess(
         mu_u12_tolerance=tolerance,
     )
 
-    if not gate.passes:
+    # C4: separable safe-fail + conservative_min routing.
+    # (a) SAFE-FAIL: the gate checks only 5' separation, but apply_mode_separation_z runs on bp and 3' too and
+    #     RAISES if their μ_U12 ≤ μ_U2 (separation ≤ 0) — a degenerate single feature on a sparse/diverged
+    #     candidate cluster. Treat ANY degenerate feature as a gate failure so we fall back instead of crashing
+    #     mid-scoring (task #50). Applies to ALL bundles (crash → graceful; strict improvement).
+    # (b) CONSERVATIVE-MIN: under a graduated-tail bundle, a gate-FAIL but SEPARABLE species is NOT reverted to
+    #     the permissive first-pass — it gets mode-sep + the graduated tail (route="conservative_min"). This
+    #     matches the gate-FREE offline eval that validated the tail (FP@full-recall 11; every eligible intron
+    #     scored by the tail regardless of gate), and protects recall on gate-failing divergent BEARERS
+    #     (e.g. closterium_sp._nies-54, charophyte TP, fails low_centroid_sigma — fallback would drop its
+    #     mode-sep recalibration). NO min(first-pass, mode-sep) is applied: the tail's negative margin coef +
+    #     hard negatives supply the FP-suppression the isotonic-era min provided, and adding a min would deviate
+    #     from the validated FP=11 (and risk the very divergent-bearer recall this recovers). Default
+    #     (non-graduated) bundles keep the original gate-fail → first-pass fallback, byte-unchanged.
+    separable = (s5.separation > 0 and sbp.separation > 0 and s3.separation > 0)
+    if gate.passes and not separable:
+        gate = replace(gate, passes=False, reason="degenerate_separation")
+    conservative_min = (not gate.passes) and separable and bool(params.get("graduated_tail"))
+
+    if not gate.passes and not conservative_min:
         _log(f"[modesep] GATE-FAIL ({gate.reason}); keeping first-pass scores")
         result = ModeSepResult(
             route="first_pass_fallback",
@@ -292,7 +311,8 @@ def apply_mode_separation_postprocess(
 
     elig = z5 >= z5p_floor
     n_elig = int(elig.sum())
-    _log(f"[modesep] GATE-PASS μ_U2={s5.mu_u2:.2f} μ_U12={s5.mu_u12:.2f} "
+    _log(f"[modesep] {'CONSERVATIVE-MIN (gate-fail, separable, graduated)' if conservative_min else 'GATE-PASS'} "
+         f"μ_U2={s5.mu_u2:.2f} μ_U12={s5.mu_u12:.2f} "
          f"valley={gate.valley_depth:.3f}; scoring {n_elig:,}/{n_total:,} "
          f"introns (z_5p ≥ {z5p_floor})")
 
@@ -381,7 +401,7 @@ def apply_mode_separation_postprocess(
     if params.get("graduated_tail"):   # C1: persist the de-saturated margin for the graduated tail
         margin_map = dict(zip(update_keys, margin_all))
         df_full["svm_margin"] = df_full["name"].map(margin_map)
-    df_full["modesep_route"] = "modesep"
+    df_full["modesep_route"] = "conservative_min" if conservative_min else "modesep"
     df_full.loc[~df_full["name"].isin(update_keys), "modesep_route"] = "untouched"
 
     # v2.7 diagnostic columns: raw_sum, svm_vs_naive, voting_frac
@@ -405,7 +425,7 @@ def apply_mode_separation_postprocess(
          f"median σ on called = {('NA' if med_sigma is None else f'{med_sigma:.3f}')})")
 
     result = ModeSepResult(
-        route="modesep",
+        route="conservative_min" if conservative_min else "modesep",
         gate_reason=gate.reason,
         n_introns=n_total,
         n_eligible=n_elig,
