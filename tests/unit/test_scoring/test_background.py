@@ -241,3 +241,57 @@ class TestSpeciesBackground:
             f"gtag 5' A-freq={a_scored:.3f} in scored window: expected species-shifted "
             f"(~0.75 from 2000 GT introns); ~0.25 means 3 TT introns clobbered it to human"
         )
+
+    @pytest.mark.parametrize(
+        "region,scored_len,default_start,off_start",
+        [
+            ("five", 12, -3, -5),
+            ("three", 10, -6, -8),
+        ],
+    )
+    def test_empirical_aligned_to_configured_window(
+        self, human_u2_pwm_sets, region, scored_len, default_start, off_start
+    ):
+        """Regression (window-hardcode bug): the species' empirical U2 frequencies are
+        aligned onto the human PWM by the CONFIGURED five_coords[0]/three_coords[0], NOT a
+        hardcoded -3/-6. A distinctive empirical signal placed at scored-window position 0
+        must land at human-PWM array index (start + reference_offset); shifting the start
+        must MOVE it and VACATE the old index. Pre-fix, background.py hardcoded the start,
+        so any non-default --five_score_coords/--three_score_coords silently desynced the
+        species correction by the offset (the v1->v2 motif-coord regression)."""
+        ref_offset = 20  # fixture human PWMs: bio_pos = array_idx - 20
+        config = BackgroundConfig(
+            enabled=True, n0=1, trim_percentile=0,  # w~=1: empirical dominates
+            pseudocount_per_base=0.0001, n_iterations=0, min_introns=10,
+        )
+        seq = 'A' + 'C' * (scored_len - 1)  # 'A' only at scored position 0
+
+        def build(start):
+            kw = dict(five_len=12, three_len=10)
+            kw['five_start' if region == 'five' else 'three_start'] = start
+            bg = SpeciesBackground(human_u2_pwm_sets, config, **kw)
+            five_seq = seq if region == 'five' else 'C' * 12
+            three_seq = seq if region == 'three' else 'C' * 10
+            for i in range(200):
+                bg.accumulate(f'i{i}', 'GT', 'AG', five_seq, three_seq, 'A' * 50)
+            return bg.build_corrected_pwm_sets()[region].matrices[('u2', 'gtag')].matrix
+
+        # Default start: the A-signal lands at its canonical array index.
+        idx_default = default_start + ref_offset
+        m_default = build(default_start)
+        assert m_default[0, idx_default] > 0.5, (
+            f"{region} start={default_start}: A-signal expected at idx {idx_default}; "
+            f"got {m_default[0, idx_default]:.3f}"
+        )
+
+        # Shifted start: the A-signal MUST move to the new index AND vacate the old one.
+        idx_off = off_start + ref_offset
+        m_off = build(off_start)
+        assert m_off[0, idx_off] > 0.5, (
+            f"{region} start={off_start}: A-signal expected at shifted idx {idx_off}; "
+            f"got {m_off[0, idx_off]:.3f} (correction did not follow the configured start)"
+        )
+        assert m_off[0, idx_default] < 0.5, (
+            f"{region} start={off_start}: idx {idx_default} still carries the A-signal — "
+            f"the pre-fix hardcode would leave it here, desyncing the correction"
+        )

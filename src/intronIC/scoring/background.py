@@ -233,6 +233,8 @@ class SpeciesBackground:
         five_len: int = 12,
         three_len: int = 10,
         bp_len: int = 12,
+        five_start: int = -3,
+        three_start: int = -6,
     ):
         """
         Args:
@@ -242,12 +244,19 @@ class SpeciesBackground:
             five_len: Number of scored positions at 5'SS (default 12).
             three_len: Number of scored positions at 3'SS (default 10).
             bp_len: Number of positions in BPS PWM (default 12).
+            five_start: First scored 5'SS position = five_coords[0] (default -3).
+                Used to align the species' empirical U2 frequencies onto the
+                human PWM in build_corrected_pwm_sets(). MUST match the scorer's
+                five_coords[0] or the species correction desyncs by the offset.
+            three_start: First scored 3'SS position = three_coords[0] (default -6).
         """
         self.human_u2 = human_u2_pwm_sets
         self.config = config
         self.five_len = five_len
         self.three_len = three_len
         self.bp_len = bp_len
+        self.five_start = five_start
+        self.three_start = three_start
 
         # Accumulators for each region
         self._five_acc = _RegionAccumulator(five_len)
@@ -523,12 +532,17 @@ class SpeciesBackground:
                         # the scored positions only. For positions outside the
                         # scored window, use human frequencies unchanged.
                         bio_pos = pos_idx + human_pwm.start_index
-                        if region == 'five':
-                            scored_start = -3  # five_coords[0]
-                            emp_idx = bio_pos - scored_start
-                        else:
-                            scored_start = -6  # three_coords[0]
-                            emp_idx = bio_pos - scored_start
+                        # Align the empirical (species) frequencies, which were
+                        # accumulated at the SCORED window starting at
+                        # five_coords[0]/three_coords[0], onto the human PWM's
+                        # biological positions. Hardcoding -3/-6 here silently
+                        # desynced the correction whenever --*_score_coords was
+                        # non-default; use the configured start instead.
+                        scored_start = (
+                            self.five_start if region == 'five'
+                            else self.three_start
+                        )
+                        emp_idx = bio_pos - scored_start
 
                         if 0 <= emp_idx < scored_len:
                             e_freq = emp_freqs[emp_idx, base_idx]
