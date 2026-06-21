@@ -309,7 +309,13 @@ def apply_mode_separation_postprocess(
 
     # C1: de-saturated 2nd-pass margin (mean base-SVC decision_function) for the graduated/Platt tail.
     # Computed ONLY when the bundle ships a graduated_tail (default bundles don't consume it -> skip the
-    # extra decision_function pass). Same base SVCs the tail's scaler/coefs were fit on.
+    # extra decision_function pass). MUST match the SVC set the tail's scaler/coefs were fit on: the
+    # training-feature builder proto_grad_features.py uses fold-[0] of each ensemble model
+    # (BASE_SVCS = [m.model.calibrated_classifiers_[0].estimator for m in spp.models], n_models SVCs) — a
+    # deliberate ~= mean-of-all-folds approximation. Averaging all CalibratedClassifierCV folds instead
+    # (n_models × n_folds) shifts the margin by up to ~0.14 and silently miscalibrates the baked logistic
+    # (V1b parity decomposition: all-folds -> adjusted_score max|Δ|≈6; fold-[0] -> max|Δ|≈5e-6). The OTHER
+    # offline script proto_margin_extract.py uses all folds, but it did NOT feed phase4_build_graduated_bundle.
     margin_all = np.full(len(fp_svm), np.nan, dtype=float)
     if params.get("graduated_tail") and n_elig > 0:
         base_svcs = [m.model.calibrated_classifiers_[0].estimator

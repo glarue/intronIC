@@ -663,6 +663,10 @@ def _run_post_classification_pipeline(
                 messenger=messenger,
                 species_gap_fraction=_species_gf,
                 species_gap_fraction_ucl=_species_ucl,
+                # C7: when the bundle ships a graduated/Platt tail, the discount
+                # function replaces the overcall discount with the smooth logistic
+                # on the margin-bearing introns (no-op for default bundles).
+                graduated_tail=params.get("graduated_tail"),
             )
             adjusted_hc_count = disc_summary["n_called_post_discount"]
             result.disc_summary = disc_summary
