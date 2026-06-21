@@ -64,6 +64,10 @@ def plot_classification_results_from_file(
 
         three_z_idx = header.index("3'_z") if "3'_z" in header else None
         rel_idx = header.index("rel_score") if "rel_score" in header else None
+        # v2.7+: prefer adjusted_score for the visual calling tier; falls
+        # back to svm_score on rows where adjusted_score is "NA" or column
+        # is absent. svm_score remains the raw classifier output.
+        adj_idx = header.index("adjusted_score") if "adjusted_score" in header else None
 
         for line in f:
             fields = line.strip().split("\t")
@@ -84,9 +88,18 @@ def plot_classification_results_from_file(
                 except ValueError:
                     continue
 
-            if svm != "NA":
+            # Pick the score used for color tiers + counts: prefer
+            # adjusted_score (v2.7+ continuous-discount output); fall back
+            # to svm_score (raw classifier output).
+            score_for_tier = svm
+            if adj_idx is not None and adj_idx < len(fields):
+                adj_val = fields[adj_idx]
+                if adj_val not in ("NA", "", "null"):
+                    score_for_tier = adj_val
+
+            if score_for_tier != "NA":
                 try:
-                    svm_scores.append(float(svm))
+                    svm_scores.append(float(score_for_tier))
                 except ValueError:
                     continue
 
@@ -221,8 +234,17 @@ def plot_classification_results(
 
     if score_vector_3d:
         score_vector_3d = np.array(score_vector_3d)
+        # v2.7+: prefer adjusted_score (continuous-discount-adjusted call
+        # score) for color tiers + counts; fall back to svm_score.
+        def _tier_score(intron):
+            if intron.scores is None:
+                return None
+            adj = getattr(intron.scores, "adjusted_score", None)
+            if adj is not None:
+                return adj
+            return intron.scores.svm_score
         svm_scores_for_3d = [
-            i.scores.svm_score
+            _tier_score(i)
             for i in introns
             if i.scores and i.scores.svm_score is not None
             and i.scores.five_z_score is not None
@@ -248,9 +270,11 @@ def plot_classification_results(
             fig_dpi=fig_dpi,
         )
 
-    # 4. Score histogram
+    # 4. Score histogram (use adjusted_score if available, else svm_score)
     svm_scores = [
-        i.scores.svm_score
+        (getattr(i.scores, "adjusted_score", None)
+         if getattr(i.scores, "adjusted_score", None) is not None
+         else i.scores.svm_score)
         for i in introns
         if i.scores and i.scores.svm_score is not None
     ]
@@ -605,8 +629,42 @@ def scatter_3d(
     views = [(25, -50), (25, 40)]
     view_labels = ["View 1", "View 2"]
 
+    # Pre-compute data extents (so origin-axis lines span the visible range)
+    if len(scores_3d) > 0:
+        xmin, ymin, zmin = scores_3d.min(axis=0)
+        xmax, ymax, zmax = scores_3d.max(axis=0)
+        # Pad slightly so axis lines extend to the edges of the bounding box
+        pad = 0.05
+        ranges = [
+            (xmin - pad * (xmax - xmin), xmax + pad * (xmax - xmin)),
+            (ymin - pad * (ymax - ymin), ymax + pad * (ymax - ymin)),
+            (zmin - pad * (zmax - zmin), zmax + pad * (zmax - zmin)),
+        ]
+    else:
+        ranges = [(-1, 1)] * 3
+
     for panel, (elev, azim) in enumerate(views):
         ax = fig.add_subplot(1, 2, panel + 1, projection="3d")
+
+        # Origin axis lines (z=0 planes): three darker lines through the
+        # 3D origin, spanning the data extent on each axis. Draw FIRST so
+        # data points overlay them.
+        origin_color = "0.30"   # dark grey
+        origin_lw = 1.5
+        origin_alpha = 0.85
+        ax.plot([ranges[0][0], ranges[0][1]], [0, 0], [0, 0],
+                color=origin_color, linewidth=origin_lw,
+                alpha=origin_alpha, zorder=0)
+        ax.plot([0, 0], [ranges[1][0], ranges[1][1]], [0, 0],
+                color=origin_color, linewidth=origin_lw,
+                alpha=origin_alpha, zorder=0)
+        ax.plot([0, 0], [0, 0], [ranges[2][0], ranges[2][1]],
+                color=origin_color, linewidth=origin_lw,
+                alpha=origin_alpha, zorder=0)
+        # Origin marker — small black dot at (0,0,0) to fix the eye
+        ax.scatter([0], [0], [0], s=30, c="black",
+                   marker="o", zorder=1, alpha=0.9, edgecolors="white",
+                   linewidth=0.5)
 
         # Plot U2 as translucent grey
         if u2_idx:
@@ -642,6 +700,10 @@ def scatter_3d(
                 markerscale=2, framealpha=0.8,
             )
 
+    # Note: color tiers + counts derive from whatever score the caller
+    # passed in `svm_scores`. Production callers (v2.7+) pass adjusted_score
+    # (continuous-discount-adjusted call score). Point positions are always
+    # 3D z-scores so the geometry is invariant across runs.
     fig.suptitle(
         f"{species_name} - U12 Classification (3D z-scores)",
         fontsize=fsize + 2, weight="bold", y=0.97,
