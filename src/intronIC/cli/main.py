@@ -13,7 +13,7 @@ import shutil
 import sys
 import tempfile
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from multiprocessing import Pool
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -170,6 +170,8 @@ def _create_background_accumulator(
         config=core_config,
         five_len=five_len,
         three_len=three_len,
+        five_start=config.scoring.scoring_regions.five_start,
+        three_start=config.scoring.scoring_regions.three_start,
     )
 
     return bg, u12_sets, u2_sets, five_len, three_len
@@ -497,6 +499,304 @@ def _apply_post_classification_adjustment(
         )
 
     return cluster_validation_result, adjusted_hc_count
+
+
+@dataclass
+class PostClassResult:
+    """Artifacts produced by the shared post-classification pipeline.
+
+    Returned by :func:`_run_post_classification_pipeline` and consumed by each
+    caller's metrics-assembly block (which writes into the differently-named
+    ``summary`` / ``metrics`` dicts).
+    """
+
+    cv_result: Optional[dict] = None
+    modesep_result: Optional[Any] = None
+    disc_summary: Optional[dict] = None
+    adjusted_hc_count: Optional[int] = None
+
+
+def _run_post_classification_pipeline(
+    *,
+    five_z: "np.ndarray",
+    bp_z: "np.ndarray",
+    three_z: "np.ndarray",
+    svm_s: "np.ndarray",
+    type_ids: "np.ndarray",
+    model_data: Any,
+    config: "IntronICConfig",
+    messenger: "UnifiedMessenger",
+) -> PostClassResult:
+    """Mode-sep (v2.6+) + continuous discount (v2.7) + unified labels (v2.7.1),
+    with legacy cluster-validation as the gate-fail / non-modesep fallback.
+
+    Shared by the streaming-classify and in-memory classify paths so the two
+    routes produce equivalent output (the previous copy-paste drifted once —
+    task #203). Callers pass already-filtered parallel score arrays; this rewrites
+    ``adjusted_score`` / ``rel_score`` (and labels) into ``score_info.iic`` and
+    ``meta.iic`` on disk, writes the ``modesep.json`` diagnostic sidecar when
+    mode-sep runs, and returns the artifacts each caller needs for metrics
+    assembly. An empty input (no classified introns cleared the caller's filter)
+    is a no-op that returns an empty result.
+    """
+    result = PostClassResult()
+    if len(five_z) == 0:
+        return result
+
+    from intronIC.scoring.cluster_validation import validate_u12_cluster
+
+    score_path = config.output.get_output_path(".score_info.iic")
+    meta_path = config.output.get_output_path(".meta.iic")
+
+    is_modesep = (
+        isinstance(model_data, dict)
+        and model_data.get("normalizer_mode") == "modesep"
+        and not getattr(config.scoring, "mode_sep_disable", False)
+    )
+
+    if is_modesep:
+        from intronIC.classification.mode_sep_pipeline import (
+            apply_mode_separation_postprocess,
+        )
+        from intronIC.scoring.cluster_validation import compute_valley_depth
+
+        # CLI overrides patch the bundle's modesep_params for this run only.
+        params = dict(model_data.get("modesep_params", {}))
+        for cli_key, bundle_key in (
+            ("mode_sep_z_floor", "z_floor_eligibility"),
+            ("mode_sep_valley_min", "valley_depth_min"),
+            ("mode_sep_n_floor", "n_floor_candidates"),
+            ("mode_sep_mu_u12_tolerance", "mu_u12_5p_tolerance"),
+        ):
+            v = getattr(config.scoring, cli_key, None)
+            if v is not None:
+                params[bundle_key] = v
+        patched_runtime = {**model_data, "modesep_params": params}
+
+        diagnostics_path = config.output.get_output_path(".modesep.json")
+        modesep_result = apply_mode_separation_postprocess(
+            score_info_path=score_path,
+            runtime=patched_runtime,
+            valley_depth_fn=compute_valley_depth,
+            threshold=config.scoring.threshold,
+            diagnostics_path=diagnostics_path,
+            messenger=messenger,
+        )
+        adjusted_hc_count = modesep_result.n_called_u12
+
+        # Per-species separation stat that drove π_species (surfaced in score_info,
+        # Step 5): gate's UCL default (modesep route); fallback overrides below.
+        _species_gf = modesep_result.gap_fraction
+        _species_ucl = modesep_result.gap_fraction_ucl
+        if modesep_result.route == "first_pass_fallback":
+            # Gate-fail defense-in-depth: the svm_score column is the unmodified
+            # first-pass score, so apply the legacy valley-based log-odds discount
+            # (matches pre-v2.6 behaviour for the no-valley regime).
+            messenger.log_only(
+                "[modesep] gate-fail: running legacy valley-based "
+                "score adjustment to discount first-pass calls"
+            )
+            cv_result = validate_u12_cluster(
+                five_z_scores=five_z,
+                bp_z_scores=bp_z,
+                three_z_scores=three_z,
+                svm_scores=svm_s,
+                type_ids=type_ids,
+                confidence_threshold=config.scoring.threshold,
+            )
+            cv_result, leg_hc_count = _apply_post_classification_adjustment(
+                cv_result, config, messenger,
+                score_path=score_path,
+                meta_path=meta_path,
+                core_fraction=modesep_result.core_fraction,
+            )
+            if leg_hc_count is not None:
+                adjusted_hc_count = leg_hc_count
+            _species_gf = cv_result.get('gap_fraction')
+            _species_ucl = cv_result.get('gap_fraction_ucl')
+            result.cv_result = cv_result
+        else:
+            # v3 gate-gapfrac (Step 3d, approach A): give the modesep route the
+            # species prior it lacked — apply the confidence-shrunk gap_fraction-UCL
+            # prior (from the gate) to svm_score BEFORE the continuous discount, with
+            # k_σ=0 so the only delta vs the second-pass score is the species term.
+            # UCL None/NaN ⇒ skip (conservative no-op); well-separated ⇒ adj≈svm.
+            _ucl = modesep_result.gap_fraction_ucl
+            _sa = config.score_adjustment
+            if _sa.enabled and _ucl is not None and not np.isnan(_ucl):
+                _disc_on = not getattr(config.scoring, "discount_disable", False)
+                _n_ps = _write_pi_species_adjusted_scores(
+                    score_path,
+                    None if _disc_on else meta_path,  # discount re-syncs meta when it runs
+                    float(_ucl),
+                    threshold=config.scoring.threshold,
+                    k_sigma=0.0,
+                    prior_floor=_sa.prior_floor,
+                    core_fraction=modesep_result.core_fraction,
+                )
+                _gfd = ("n/a" if modesep_result.gap_fraction is None
+                        else f"{modesep_result.gap_fraction:.3f}")
+                messenger.info(
+                    f"[modesep] species prior: {_n_ps:,} introns adjusted "
+                    f"(gap_fraction={_gfd}, ucl={float(_ucl):.3f}, k_σ=0)"
+                )
+
+        # v2.7+: continuous per-intron discount applied AFTER mode-sep
+        # recalibration (gate-pass) AND AFTER the legacy valley discount
+        # (gate-fail). Writes adjusted_score; preserves svm_score. Calls at
+        # threshold are evaluated against adjusted_score. Both routes chain from
+        # adjusted_score (the prior pass wrote it; if skipped it's NA and the
+        # discount fillna's it back to svm_score — safe either way).
+        if not getattr(config.scoring, "discount_disable", False):
+            from intronIC.classification.mode_sep_pipeline import (
+                apply_continuous_per_intron_discount,
+            )
+            disc_summary = apply_continuous_per_intron_discount(
+                score_info_path=score_path,
+                threshold=config.scoring.threshold,
+                k_overcall=getattr(config.scoring, "discount_k_overcall", 2.0),
+                tau_overcall=getattr(config.scoring, "discount_tau_overcall", 0.0),
+                k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.0),
+                tau_motif=getattr(config.scoring, "discount_tau_motif", 10.0),
+                input_column="adjusted_score",
+                meta_path=meta_path,
+                messenger=messenger,
+                species_gap_fraction=_species_gf,
+                species_gap_fraction_ucl=_species_ucl,
+            )
+            adjusted_hc_count = disc_summary["n_called_post_discount"]
+            result.disc_summary = disc_summary
+            # Surface the post-discount counts in modesep_result for the JSON sidecar.
+            try:
+                modesep_result = replace(
+                    modesep_result,
+                    n_called_pre_discount=disc_summary["n_called_pre_discount"],
+                    n_called_post_discount=disc_summary["n_called_post_discount"],
+                    n_called_u12=disc_summary["n_called_post_discount"],
+                    continuous_discount_applied=True,
+                )
+            except Exception:
+                pass
+
+        result.modesep_result = modesep_result
+        result.adjusted_hc_count = adjusted_hc_count
+    else:
+        # Non-modesep bundle: legacy cluster_validation + valley-prior adjustment only.
+        cv_result = validate_u12_cluster(
+            five_z_scores=five_z,
+            bp_z_scores=bp_z,
+            three_z_scores=three_z,
+            svm_scores=svm_s,
+            type_ids=type_ids,
+            confidence_threshold=config.scoring.threshold,
+        )
+        cv_result, adjusted_hc_count = _apply_post_classification_adjustment(
+            cv_result, config, messenger,
+            score_path=score_path,
+            meta_path=meta_path,
+        )
+        result.cv_result = cv_result
+        result.adjusted_hc_count = adjusted_hc_count
+
+    return result
+
+
+def _finalize_classification_metrics(
+    base_summary: dict,
+    *,
+    total_genes: int,
+    total_introns_generated: int,
+    total_scored: int,
+    model_path: str,
+    streaming_mode: str,
+    normalizer_used: Any,
+    boundaries_u12: "Counter",
+    boundaries_u2: "Counter",
+    disc_summary: Optional[dict],
+    cluster_validation_result: Optional[dict],
+    modesep_result: Optional[Any],
+    adjusted_hc_count: Optional[int],
+    score_adjustment_cfg: Any,
+) -> dict:
+    """Assemble the final per-species `metrics.iic.json` dict, shared by the
+    streaming and in-memory classify paths so both emit equivalent metrics.
+
+    The streaming path passes ``StreamingOutputWriter.get_summary()`` as
+    ``base_summary``; the in-memory path passes a computed-equivalent base built
+    from the same intron sets. The only intentional cross-mode difference is
+    ``streaming_mode`` (which reports *how* the run executed, not *what* it
+    computed). Keeping the assembly here is what guarantees the two modes agree.
+    """
+    summary = dict(base_summary)
+
+    # adjusted_score-based high-confidence count overrides the writer's raw count.
+    if adjusted_hc_count is not None:
+        summary["high_confidence_u12"] = adjusted_hc_count
+        total = summary.get("total_introns", 1)
+        summary["high_confidence_percentage"] = (
+            adjusted_hc_count / total * 100 if total > 0 else 0.0
+        )
+
+    summary.update(
+        {
+            "total_genes": total_genes,
+            "total_introns_generated": total_introns_generated,
+            "total_scored": total_scored,
+            "pretrained": True,
+            "model_path": model_path,
+            "streaming_mode": streaming_mode,
+            "normalizer_used": normalizer_used,
+            "u12_boundaries": dict(boundaries_u12.most_common(20)),
+            "u2_boundaries": dict(boundaries_u2.most_common(20)),
+        }
+    )
+
+    # v2.7.1 unified label counts override the legacy "total - high_conf" counts.
+    if disc_summary is not None:
+        for k in ("u12_count", "u12_strong_count", "u12_borderline_count",
+                  "u12_promoted_count", "u2_count", "u2_strong_count",
+                  "u2_borderline_count", "u2_demoted_count"):
+            if k in disc_summary:
+                summary[k] = disc_summary[k]
+
+    if cluster_validation_result is not None:
+        summary["cluster_validation"] = {
+            "valley_depth": cluster_validation_result['valley_depth'],
+            "has_valley": cluster_validation_result.get('has_valley'),
+            "regime": cluster_validation_result['regime'],
+            "n_confident_u12": cluster_validation_result['n_confident_u12'],
+            "empirical_prior": cluster_validation_result['empirical_prior'],
+            "centroid_sigma": cluster_validation_result.get('centroid_sigma'),
+        }
+        if score_adjustment_cfg.enabled:
+            summary["score_adjustment"] = {
+                "enabled": True,
+                "valley_midpoint": score_adjustment_cfg.valley_midpoint,
+                "transition_width": score_adjustment_cfg.transition_width,
+                "prior_floor": score_adjustment_cfg.prior_floor,
+                "k_sigma": score_adjustment_cfg.k_sigma,
+            }
+
+    if modesep_result is not None:
+        summary["mode_separation"] = {
+            "route": modesep_result.route,
+            "gate_reason": modesep_result.gate_reason,
+            "quality_tier": modesep_result.quality_tier,
+            "n_introns": modesep_result.n_introns,
+            "n_eligible": modesep_result.n_eligible,
+            "n_called_u12": modesep_result.n_called_u12,
+            "n_eff_candidates": modesep_result.n_eff_candidates,
+            "valley_depth": modesep_result.valley_depth,
+            "mu_u2_5p": modesep_result.mu_u2_5p,
+            "mu_u12_5p": modesep_result.mu_u12_5p,
+            "mu_u12_5p_offset": modesep_result.mu_u12_5p_offset,
+            "median_ensemble_sigma_called": modesep_result.median_ensemble_sigma_called,
+            "p90_ensemble_sigma_called": modesep_result.p90_ensemble_sigma_called,
+            "first_pass_model_id": modesep_result.first_pass_model_id,
+            "second_pass_model_id": modesep_result.second_pass_model_id,
+        }
+
+    return summary
 
 
 def load_pwms_with_fallback(
@@ -1766,9 +2066,12 @@ def extract_introns_from_annotation(
     config: IntronICConfig,
     messenger: "UnifiedMessenger",
     reporter: IntronICProgressReporter,
-) -> List[Intron]:
+) -> "tuple[List[Intron], int]":
     """
     Extract introns contig-by-contig with pre-filtering and deduplication.
+
+    Returns ``(all_introns, n_genes)`` where ``n_genes`` is the total number of
+    genes in the annotation hierarchy (used for metrics parity with streaming).
 
     This function implements the memory-optimized extraction pipeline:
     1. Parse annotations (coordinates only)
@@ -1895,7 +2198,10 @@ def extract_introns_from_annotation(
         extract_list, skip_list, config, messenger, reporter
     )
 
-    return all_introns
+    # Return the gene count (n_genes, all genes in the hierarchy) alongside the
+    # introns so the in-memory metrics match the streaming path's total_genes
+    # (which sums len(contig_genes) per contig — i.e. all genes, incl. intron-less).
+    return all_introns, n_genes
 
 
 def _extract_sequences_for_introns(
@@ -1921,11 +2227,20 @@ def _extract_sequences_for_introns(
         All introns (extracted + skipped)
     """
 
-    # Group introns by contig for contig-by-contig processing
+    # Group introns by contig for contig-by-contig processing.
+    #
+    # Both the scored (extract_list) AND the omitted-but-written (skip_list)
+    # introns are extracted, so omitted introns reach the output writers with
+    # sequences populated (dnts, motif, bp_context, the noncanonical [n] tag).
+    # This makes the standard in-memory path's meta.iic / introns.iic match the
+    # streaming-classify path, which likewise feeds the full per-contig intron
+    # set through extract_sequences_with_deduplication before filtering. The
+    # dedup extractor shares one sequence object across coordinate-duplicate
+    # introns, so this costs sequence extraction only once per unique locus.
     from collections import defaultdict
 
     introns_by_contig = defaultdict(list)
-    for intron in extract_list:
+    for intron in (*extract_list, *skip_list):
         introns_by_contig[intron.coordinates.chromosome].append(intron)
 
     contigs = sorted(introns_by_contig.keys())
@@ -1941,9 +2256,10 @@ def _extract_sequences_for_introns(
     # Note: actual_min_length is for logging; min_intron_len is enforced in pre-filter
     _ = max(config.extraction.min_intron_len, calculated_min)  # noqa: F841
 
-    # Accumulator for all introns
+    # Accumulator for all introns. skip_list introns are no longer appended
+    # without sequences — they are grouped into introns_by_contig above and
+    # extracted alongside extract_list, so every output intron has sequences.
     all_introns = []
-    all_introns.extend(skip_list)  # Add skipped introns (no sequences)
 
     # Step 5: Determine parallel vs sequential mode
     n_processes = config.performance.processes
@@ -2696,6 +3012,27 @@ def extract_introns_from_bed(
     return introns
 
 
+def scored_window_slices(seq, upstream, downstream, scoring_regions):
+    """Build the (five_seq, three_seq) SCORED slices from the intron + flanks,
+    mirroring extraction/sequences.py. These are the EXACT regions that feed the
+    5'/3' PWMs, so .score_info.iic reflects what was scored (not a display window).
+    Invariant (flanks long enough): len(five_seq) == five_end - five_start;
+                                    len(three_seq) == three_end - three_start.
+    """
+    up = upstream or ""
+    down = downstream or ""
+    s = seq or ""
+    scoring_seq = up + s + down
+    ul, dl = len(up), len(down)
+    fs, fe = scoring_regions.five_start + ul, scoring_regions.five_end + ul
+    ts, te = scoring_regions.three_start - dl, scoring_regions.three_end - dl
+    fs = fs if fs != 0 else None
+    fe = fe if fe != 0 else None
+    ts = ts if ts != 0 else None
+    te = te if te != 0 else None
+    return scoring_seq[fs:fe], scoring_seq[ts:te]
+
+
 def load_introns_from_sequences(
     config: IntronICConfig, messenger: "UnifiedMessenger"
 ) -> List[Intron]:
@@ -2747,18 +3084,20 @@ def load_introns_from_sequences(
         five_prime_dnt = seq[:2] if seq and len(seq) >= 4 else None
         three_prime_dnt = seq[-2:] if seq and len(seq) >= 4 else None
 
-        # Create IntronSequences with the loaded data
-        # Populate five_seq and three_seq to satisfy has_sequences() check
-        # These are approximations since we don't know exact scoring regions,
-        # but the scorer will extract the proper regions during scoring
+        # Build five_seq/three_seq as the ACTUAL scored slices so .score_info.iic
+        # reflects exactly what was scored — not a display 10mer. (Was: five_seq=seq[:10],
+        # which dropped the exonic 5' positions -3..-1; scoring was always correct via
+        # on-the-fly re-extraction, so this is an OUTPUT-only fix.)
+        _five_seq, _three_seq = scored_window_slices(
+            seq, seq_line.upstream_flank, seq_line.downstream_flank,
+            config.scoring.scoring_regions,
+        )
         sequences = IntronSequences(
             seq=seq_line.sequence,
             upstream_flank=seq_line.upstream_flank,
             downstream_flank=seq_line.downstream_flank,
-            # Populate with dummy values to pass has_sequences() check
-            # The actual values used for scoring are extracted on-the-fly
-            five_seq=seq[:10] if seq and len(seq) >= 10 else seq,
-            three_seq=seq[-10:] if seq and len(seq) >= 10 else seq,
+            five_seq=_five_seq or (seq[:10] if seq and len(seq) >= 10 else seq),
+            three_seq=_three_seq or (seq[-10:] if seq and len(seq) >= 10 else seq),
             bp_seq=None,  # Will be found during scoring
             bp_region_seq=None,  # Will be extracted during scoring
             five_prime_dnt=five_prime_dnt,
@@ -3366,13 +3705,21 @@ def _apply_prior_adjustment(
 # Parallel streaming classification worker
 # =============================================================================
 
-# Globals for streaming classification worker initialization
-_streaming_classify_worker_genome_path: str = ""
-_streaming_classify_worker_annotation_db_path: str = ""
-_streaming_classify_worker_ensemble: Any = None
-_streaming_classify_worker_scaler: Any = None
-_streaming_classify_worker_pwm_sets: Any = None
-_streaming_classify_worker_config: dict = {}
+# Streaming-classification worker state. multiprocessing.Pool requires the
+# initializer to populate a module-level name in each child interpreter; one
+# global holding a dataclass satisfies that as well as N scalars, while making
+# the worker's contract explicit and easy to trace.
+@dataclass
+class StreamingClassifyWorkerContext:
+    genome_path: str
+    annotation_db_path: str
+    ensemble: Any
+    scaler: Any
+    pwm_sets: Any
+    config: dict
+
+
+_streaming_classify_ctx: Optional[StreamingClassifyWorkerContext] = None
 
 # ── Parallel BG accumulation worker ──────────────────────────────────
 
@@ -3770,20 +4117,16 @@ def _init_streaming_classify_worker(
     # Initialize genome reader
     init_worker_genome(genome_path)
 
-    # Store classification components in globals
-    global _streaming_classify_worker_genome_path
-    global _streaming_classify_worker_annotation_db_path
-    global _streaming_classify_worker_ensemble
-    global _streaming_classify_worker_scaler
-    global _streaming_classify_worker_pwm_sets
-    global _streaming_classify_worker_config
-
-    _streaming_classify_worker_genome_path = genome_path
-    _streaming_classify_worker_annotation_db_path = annotation_db_path
-    _streaming_classify_worker_ensemble = ensemble
-    _streaming_classify_worker_scaler = scaler
-    _streaming_classify_worker_pwm_sets = pwm_sets
-    _streaming_classify_worker_config = config_dict
+    # Store classification components in the single worker-context global.
+    global _streaming_classify_ctx
+    _streaming_classify_ctx = StreamingClassifyWorkerContext(
+        genome_path=genome_path,
+        annotation_db_path=annotation_db_path,
+        ensemble=ensemble,
+        scaler=scaler,
+        pwm_sets=pwm_sets,
+        config=config_dict,
+    )
 
 
 def _process_contig_streaming_classify_worker(
@@ -3810,16 +4153,17 @@ def _process_contig_streaming_classify_worker(
     from intronIC.file_io.indexed_genome import get_worker_genome
     from intronIC.scoring.scorer import apply_scaler_to_scored_batch
 
-    # Access worker globals
-    config = _streaming_classify_worker_config
-    ensemble = _streaming_classify_worker_ensemble
-    scaler = _streaming_classify_worker_scaler
-    pwm_sets = _streaming_classify_worker_pwm_sets
+    # Access worker context
+    ctx = _streaming_classify_ctx
+    config = ctx.config
+    ensemble = ctx.ensemble
+    scaler = ctx.scaler
+    pwm_sets = ctx.pwm_sets
 
     indexed_genome = get_worker_genome()
     filtered_introns, scored_scorable, base_stats = _streaming_extract_and_score_contig(
         contig=contig,
-        annotation_db_path=_streaming_classify_worker_annotation_db_path,
+        annotation_db_path=ctx.annotation_db_path,
         pwm_sets=pwm_sets,
         config=config,
         indexed_genome=indexed_genome,
@@ -4487,251 +4831,41 @@ def classify_streaming_per_contig(
     # Mode-separation (v2.6+) replaces this branch with a two-pass
     # recalibration when the loaded bundle is in modesep mode.
     # =========================================================================
-    cluster_validation_result = None
-    modesep_result = None
-    is_modesep = (isinstance(model_data, dict)
-                  and model_data.get("normalizer_mode") == "modesep"
-                  and not getattr(config.scoring, "mode_sep_disable", False))
-
-    if is_modesep and accumulated_five_z:
-        from intronIC.classification.mode_sep_pipeline import (
-            apply_mode_separation_postprocess,
-        )
-        from intronIC.scoring.cluster_validation import (
-            compute_valley_depth, validate_u12_cluster,
-        )
-
-        # CLI overrides patch the bundle's modesep_params for this run only.
-        params = dict(model_data.get("modesep_params", {}))
-        for cli_key, bundle_key in (
-            ("mode_sep_z_floor", "z_floor_eligibility"),
-            ("mode_sep_valley_min", "valley_depth_min"),
-            ("mode_sep_n_floor", "n_floor_candidates"),
-            ("mode_sep_mu_u12_tolerance", "mu_u12_5p_tolerance"),
-        ):
-            v = getattr(config.scoring, cli_key, None)
-            if v is not None:
-                params[bundle_key] = v
-        patched_runtime = {**model_data, "modesep_params": params}
-
-        score_path = config.output.get_output_path(".score_info.iic")
-        meta_path = config.output.get_output_path(".meta.iic")
-        diagnostics_path = config.output.get_output_path(".modesep.json")
-        modesep_result = apply_mode_separation_postprocess(
-            score_info_path=score_path,
-            runtime=patched_runtime,
-            valley_depth_fn=compute_valley_depth,
-            threshold=config.scoring.threshold,
-            diagnostics_path=diagnostics_path,
-            messenger=messenger,
-        )
-        adjusted_hc_count = modesep_result.n_called_u12
-
-        # Gate-fail defense-in-depth: when mode-sep refuses to recalibrate,
-        # the existing svm_score column is the unmodified first-pass score.
-        # Apply the legacy valley-based log-odds discount (Phase 1 score
-        # adjustment) so spurious first-pass calls in noisy/non-bimodal
-        # species don't propagate. This matches pre-v2.6 behavior for the
-        # no-valley regime.
-        #
-        # Per-species separation stat that drove π_species, surfaced in score_info (Step 5):
-        # default to the gate's UCL (modesep route); the fallback branch overrides with the
-        # validate_u12_cluster UCL that actually drove its prior.
-        _species_gf = modesep_result.gap_fraction
-        _species_ucl = modesep_result.gap_fraction_ucl
-        if modesep_result.route == "first_pass_fallback":
-            messenger.log_only(
-                "[modesep] gate-fail: running legacy valley-based score "
-                "adjustment to discount first-pass calls"
-            )
-            cluster_validation_result = validate_u12_cluster(
-                five_z_scores=np.array(accumulated_five_z),
-                bp_z_scores=np.array(accumulated_bp_z),
-                three_z_scores=np.array(accumulated_three_z),
-                svm_scores=np.array(accumulated_svm_scores),
-                type_ids=np.array(accumulated_type_ids),
-                confidence_threshold=config.scoring.threshold,
-            )
-            cluster_validation_result, leg_hc_count = (
-                _apply_post_classification_adjustment(
-                    cluster_validation_result,
-                    config,
-                    messenger,
-                    score_path=score_path,
-                    meta_path=meta_path,
-                    core_fraction=modesep_result.core_fraction,
-                )
-            )
-            if leg_hc_count is not None:
-                adjusted_hc_count = leg_hc_count
-            _species_gf = cluster_validation_result.get('gap_fraction')
-            _species_ucl = cluster_validation_result.get('gap_fraction_ucl')
-        else:
-            # v3 gate-gapfrac (Step 3d, approach A): give the modesep route the species
-            # prior it lacked — apply the confidence-shrunk gap_fraction-UCL prior (from the
-            # gate) to svm_score BEFORE the continuous discount, with k_σ=0 so the only delta
-            # vs the second-pass score is the species term. UCL None/NaN ⇒ skip (conservative
-            # no-op); a well-separated species has UCL high ⇒ adjusted_score ≈ svm_score.
-            _ucl = modesep_result.gap_fraction_ucl
-            _sa = config.score_adjustment
-            if _sa.enabled and _ucl is not None and not np.isnan(_ucl):
-                _disc_on = not getattr(config.scoring, "discount_disable", False)
-                _n_ps = _write_pi_species_adjusted_scores(
-                    score_path,
-                    None if _disc_on else meta_path,  # discount re-syncs meta when it runs
-                    float(_ucl),
-                    threshold=config.scoring.threshold,
-                    k_sigma=0.0,
-                    prior_floor=_sa.prior_floor,
-                    core_fraction=modesep_result.core_fraction,
-                )
-                _gfd = ("n/a" if modesep_result.gap_fraction is None
-                        else f"{modesep_result.gap_fraction:.3f}")
-                messenger.info(
-                    f"[modesep] species prior: {_n_ps:,} introns adjusted "
-                    f"(gap_fraction={_gfd}, ucl={float(_ucl):.3f}, k_σ=0)"
-                )
-
-        # v2.7+: continuous per-intron discount applied AFTER mode-sep
-        # recalibration (gate-pass) AND AFTER legacy valley-depth discount
-        # (gate-fail). Writes adjusted_score; preserves svm_score. Calls at
-        # threshold are evaluated against adjusted_score.
-        if not getattr(config.scoring, "discount_disable", False):
-            from intronIC.classification.mode_sep_pipeline import (
-                apply_continuous_per_intron_discount,
-            )
-            # Both routes now chain from adjusted_score: the fallback (legacy valley discount)
-            # and the modesep route (the gap_fraction-UCL species prior above) each write it.
-            # When the prior pass is skipped, adjusted_score is NA and the discount fillna's it
-            # back to svm_score — so this is safe regardless of whether the prior fired.
-            discount_input = "adjusted_score"
-            disc_summary = apply_continuous_per_intron_discount(
-                score_info_path=score_path,
-                threshold=config.scoring.threshold,
-                k_overcall=getattr(config.scoring, "discount_k_overcall", 2.0),
-                tau_overcall=getattr(config.scoring, "discount_tau_overcall", 0.0),
-                k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.0),
-                tau_motif=getattr(config.scoring, "discount_tau_motif", 10.0),
-                input_column=discount_input,
-                meta_path=meta_path,
-                messenger=messenger,
-                species_gap_fraction=_species_gf,
-                species_gap_fraction_ucl=_species_ucl,
-            )
-            adjusted_hc_count = disc_summary["n_called_post_discount"]
-            # Surface in modesep_result for the diagnostic JSON
-            try:
-                from dataclasses import replace as _replace
-                modesep_result = _replace(
-                    modesep_result,
-                    n_called_pre_discount=disc_summary["n_called_pre_discount"],
-                    n_called_post_discount=disc_summary["n_called_post_discount"],
-                    n_called_u12=disc_summary["n_called_post_discount"],
-                    continuous_discount_applied=True,
-                )
-            except Exception:
-                pass
-    elif accumulated_five_z:
-        from intronIC.scoring.cluster_validation import validate_u12_cluster
-
-        cluster_validation_result = validate_u12_cluster(
-            five_z_scores=np.array(accumulated_five_z),
-            bp_z_scores=np.array(accumulated_bp_z),
-            three_z_scores=np.array(accumulated_three_z),
-            svm_scores=np.array(accumulated_svm_scores),
-            type_ids=np.array(accumulated_type_ids),
-            confidence_threshold=config.scoring.threshold,
-        )
-
-        score_path = config.output.get_output_path(".score_info.iic")
-        meta_path = config.output.get_output_path(".meta.iic")
-
-        cluster_validation_result, adjusted_hc_count = (
-            _apply_post_classification_adjustment(
-                cluster_validation_result,
-                config,
-                messenger,
-                score_path=score_path,
-                meta_path=meta_path,
-            )
-        )
-    else:
-        adjusted_hc_count = None
+    _post = _run_post_classification_pipeline(
+        five_z=np.array(accumulated_five_z),
+        bp_z=np.array(accumulated_bp_z),
+        three_z=np.array(accumulated_three_z),
+        svm_s=np.array(accumulated_svm_scores),
+        type_ids=np.array(accumulated_type_ids),
+        model_data=model_data,
+        config=config,
+        messenger=messenger,
+    )
+    cluster_validation_result = _post.cv_result
+    modesep_result = _post.modesep_result
+    disc_summary = _post.disc_summary
+    adjusted_hc_count = _post.adjusted_hc_count
 
     # Free accumulated score data
     del accumulated_five_z, accumulated_bp_z, accumulated_three_z, accumulated_svm_scores, accumulated_type_ids
 
-    # Build summary
-    summary = output_writer.get_summary()
-
-    # Replace HC count with adjusted value if score adjustment was applied
-    if adjusted_hc_count is not None:
-        summary["high_confidence_u12"] = adjusted_hc_count
-        total = summary.get("total_introns", 1)
-        summary["high_confidence_percentage"] = adjusted_hc_count / total * 100 if total > 0 else 0.0
-
-    summary.update(
-        {
-            "total_genes": total_genes,
-            "total_introns_generated": total_introns_generated,
-            "total_scored": total_scored,
-            "pretrained": True,
-            "model_path": str(config.training.pretrained_model_path),
-            "streaming_mode": "per_contig",
-            "normalizer_used": scaler_source,
-            "u12_boundaries": dict(boundaries_u12.most_common(20)),
-            "u2_boundaries": dict(boundaries_u2.most_common(20)),
-        }
+    # Build summary via the shared finalizer (same dict in-memory mode produces).
+    summary = _finalize_classification_metrics(
+        output_writer.get_summary(),
+        total_genes=total_genes,
+        total_introns_generated=total_introns_generated,
+        total_scored=total_scored,
+        model_path=str(config.training.pretrained_model_path),
+        streaming_mode="per_contig",
+        normalizer_used=scaler_source,
+        boundaries_u12=boundaries_u12,
+        boundaries_u2=boundaries_u2,
+        disc_summary=disc_summary,
+        cluster_validation_result=cluster_validation_result,
+        modesep_result=modesep_result,
+        adjusted_hc_count=adjusted_hc_count,
+        score_adjustment_cfg=config.score_adjustment,
     )
-
-    # v2.7.1: surface unified label counts (overrides any legacy u12/u2_count
-    # the output_writer may have populated using the old "total - high_conf"
-    # logic — those were misleading and are deprecated).
-    if 'disc_summary' in locals():
-        for k in ("u12_count","u12_strong_count","u12_borderline_count",
-                  "u12_promoted_count","u2_count","u2_strong_count",
-                  "u2_borderline_count","u2_demoted_count"):
-            if k in disc_summary:
-                summary[k] = disc_summary[k]
-
-    # Add cluster validation and score adjustment to summary
-    if cluster_validation_result is not None:
-        sa_cfg = config.score_adjustment
-        summary["cluster_validation"] = {
-            "valley_depth": cluster_validation_result['valley_depth'],
-            "has_valley": cluster_validation_result.get('has_valley'),
-            "regime": cluster_validation_result['regime'],
-            "n_confident_u12": cluster_validation_result['n_confident_u12'],
-            "empirical_prior": cluster_validation_result['empirical_prior'],
-            "centroid_sigma": cluster_validation_result.get('centroid_sigma'),
-        }
-        if sa_cfg.enabled:
-            summary["score_adjustment"] = {
-                "enabled": True,
-                "valley_midpoint": sa_cfg.valley_midpoint,
-                "transition_width": sa_cfg.transition_width,
-                "prior_floor": sa_cfg.prior_floor,
-                "k_sigma": sa_cfg.k_sigma,
-            }
-
-    if modesep_result is not None:
-        summary["mode_separation"] = {
-            "route": modesep_result.route,
-            "gate_reason": modesep_result.gate_reason,
-            "quality_tier": modesep_result.quality_tier,
-            "n_introns": modesep_result.n_introns,
-            "n_eligible": modesep_result.n_eligible,
-            "n_called_u12": modesep_result.n_called_u12,
-            "n_eff_candidates": modesep_result.n_eff_candidates,
-            "valley_depth": modesep_result.valley_depth,
-            "mu_u2_5p": modesep_result.mu_u2_5p,
-            "mu_u12_5p": modesep_result.mu_u12_5p,
-            "mu_u12_5p_offset": modesep_result.mu_u12_5p_offset,
-            "median_ensemble_sigma_called": modesep_result.median_ensemble_sigma_called,
-            "p90_ensemble_sigma_called": modesep_result.p90_ensemble_sigma_called,
-            "first_pass_model_id": modesep_result.first_pass_model_id,
-            "second_pass_model_id": modesep_result.second_pass_model_id,
-        }
 
     messenger.info(
         f"Streaming classification complete: {total_classified:,} introns classified"
@@ -5936,8 +6070,8 @@ def main_extract(config: IntronICConfig):
             introns, db_path = extract_introns_streaming(config, messenger, reporter)
             messenger.success(f"Extracted {len(introns):,} introns (streaming mode)")
         else:
-            # Standard extraction
-            introns = extract_introns_from_annotation(config, messenger, reporter)
+            # Standard extraction (gene count unused in extract-only mode)
+            introns, _ = extract_introns_from_annotation(config, messenger, reporter)
             messenger.success(f"Extracted {len(introns):,} introns")
     elif config.input.mode == "bed":
         # BED extraction
@@ -6174,6 +6308,7 @@ def main_classify(config: IntronICConfig):
         # Track streaming mode state for later sequence output
         streaming_db_path = None
 
+        _inmem_total_genes = 0  # set by annotation/standard extraction below
         if config.input.mode == "annotation":
             # Don't load genome here - extraction handles it internally
             # (parallel mode uses indexed access, sequential uses cache)
@@ -6241,7 +6376,9 @@ def main_classify(config: IntronICConfig):
             else:
                 _streaming_corrected_pwm_sets = None
                 # Standard processing: faster but uses more memory
-                introns = extract_introns_from_annotation(config, messenger, reporter)
+                introns, _inmem_total_genes = extract_introns_from_annotation(
+                    config, messenger, reporter
+                )
         elif config.input.mode == "bed":
             _streaming_corrected_pwm_sets = None
             genome_reader = load_genome(config, messenger)
@@ -6253,6 +6390,12 @@ def main_classify(config: IntronICConfig):
             introns = load_introns_from_sequences(config, messenger)
         else:
             raise ValueError(f"Unknown input mode: {config.input.mode}")
+
+        # Capture generation-time counts for metrics parity with the streaming
+        # path (which accumulates the same totals per contig). `introns` here is
+        # the full generated set (extract + skip), pre-filter; `_inmem_total_genes`
+        # was set by the annotation extraction above (all genes in the hierarchy).
+        _inmem_total_generated = len(introns)
 
         # Filter introns before scoring (duplicates, short introns, longest isoform)
         # This matches original intronIC behavior where filtering happens BEFORE scoring
@@ -6614,10 +6757,13 @@ def main_classify(config: IntronICConfig):
         disc_summary = None
         adjusted_hc_count = None
         if classified_introns:
-            from intronIC.scoring.cluster_validation import validate_u12_cluster
-
-            # Filter to introns with all three z-scores + svm_score present,
-            # so the parallel arrays line up for cluster validation.
+            # Filter to introns with all three z-scores + svm_score present AND
+            # a resolved u12/u2 type_id, so the parallel arrays line up for
+            # cluster validation. This guard is identical to the streaming
+            # accumulator filter (classify_streaming_per_contig) so both paths
+            # feed validate_u12_cluster the same intron set — previously the
+            # in-memory path admitted metadata-less introns as a fabricated 'u2',
+            # which could diverge from streaming on some species.
             cv_introns = [
                 i for i in classified_introns
                 if i.scores
@@ -6625,226 +6771,75 @@ def main_classify(config: IntronICConfig):
                 and i.scores.bp_z_score is not None
                 and i.scores.three_z_score is not None
                 and i.scores.svm_score is not None
+                and i.metadata
+                and i.metadata.type_id in ('u12', 'u2')
             ]
             five_z = np.array([i.scores.five_z_score for i in cv_introns])
             bp_z = np.array([i.scores.bp_z_score for i in cv_introns])
             three_z = np.array([i.scores.three_z_score for i in cv_introns])
             svm_s = np.array([i.scores.svm_score for i in cv_introns])
-            type_ids = np.array([
-                i.metadata.type_id if i.metadata else 'u2'
-                for i in cv_introns
-            ])
+            type_ids = np.array([i.metadata.type_id for i in cv_introns])
 
             if len(five_z) > 0:
-                score_path = config.output.get_output_path(".score_info.iic")
-                meta_path = config.output.get_output_path(".meta.iic")
-
-                is_modesep = (
-                    isinstance(model_data, dict)
-                    and model_data.get("normalizer_mode") == "modesep"
-                    and not getattr(config.scoring, "mode_sep_disable", False)
+                # Mode-sep + discount + unified labels, shared with the
+                # streaming-classify path (single source of truth).
+                _post = _run_post_classification_pipeline(
+                    five_z=five_z, bp_z=bp_z, three_z=three_z,
+                    svm_s=svm_s, type_ids=type_ids,
+                    model_data=model_data, config=config, messenger=messenger,
                 )
+                cv_result = _post.cv_result
+                modesep_result = _post.modesep_result
+                disc_summary = _post.disc_summary
+                adjusted_hc_count = _post.adjusted_hc_count
 
-                if is_modesep:
-                    from intronIC.classification.mode_sep_pipeline import (
-                        apply_mode_separation_postprocess,
-                    )
-                    from intronIC.scoring.cluster_validation import (
-                        compute_valley_depth,
-                    )
-
-                    # CLI overrides patch the bundle's modesep_params.
-                    params = dict(model_data.get("modesep_params", {}))
-                    for cli_key, bundle_key in (
-                        ("mode_sep_z_floor", "z_floor_eligibility"),
-                        ("mode_sep_valley_min", "valley_depth_min"),
-                        ("mode_sep_n_floor", "n_floor_candidates"),
-                        ("mode_sep_mu_u12_tolerance", "mu_u12_5p_tolerance"),
-                    ):
-                        v = getattr(config.scoring, cli_key, None)
-                        if v is not None:
-                            params[bundle_key] = v
-                    patched_runtime = {**model_data, "modesep_params": params}
-
-                    diagnostics_path = config.output.get_output_path(".modesep.json")
-                    modesep_result = apply_mode_separation_postprocess(
-                        score_info_path=score_path,
-                        runtime=patched_runtime,
-                        valley_depth_fn=compute_valley_depth,
-                        threshold=config.scoring.threshold,
-                        diagnostics_path=diagnostics_path,
-                        messenger=messenger,
-                    )
-                    adjusted_hc_count = modesep_result.n_called_u12
-
-                    # Per-species separation stat that drove π_species (surfaced in score_info,
-                    # Step 5): gate's UCL default (modesep route); fallback overrides below.
-                    _species_gf = modesep_result.gap_fraction
-                    _species_ucl = modesep_result.gap_fraction_ucl
-                    # Gate-fail: legacy valley-based adjustment for defense-in-depth.
-                    if modesep_result.route == "first_pass_fallback":
-                        messenger.log_only(
-                            "[modesep] gate-fail: running legacy valley-based "
-                            "score adjustment to discount first-pass calls"
-                        )
-                        cv_result = validate_u12_cluster(
-                            five_z_scores=five_z,
-                            bp_z_scores=bp_z,
-                            three_z_scores=three_z,
-                            svm_scores=svm_s,
-                            type_ids=type_ids,
-                            confidence_threshold=config.scoring.threshold,
-                        )
-                        cv_result, leg_hc_count = (
-                            _apply_post_classification_adjustment(
-                                cv_result, config, messenger,
-                                score_path=score_path,
-                                meta_path=meta_path,
-                                core_fraction=modesep_result.core_fraction,
-                            )
-                        )
-                        if leg_hc_count is not None:
-                            adjusted_hc_count = leg_hc_count
-                        _species_gf = cv_result.get('gap_fraction')
-                        _species_ucl = cv_result.get('gap_fraction_ucl')
-                    else:
-                        # v3 gate-gapfrac (Step 3d, approach A): modesep-route species prior.
-                        # Apply the gap_fraction-UCL prior (from the gate) to svm_score before
-                        # the discount, k_σ=0. UCL None/NaN ⇒ skip; well-separated ⇒ adj≈svm.
-                        _ucl = modesep_result.gap_fraction_ucl
-                        _sa = config.score_adjustment
-                        if _sa.enabled and _ucl is not None and not np.isnan(_ucl):
-                            _disc_on = not getattr(config.scoring, "discount_disable", False)
-                            _n_ps = _write_pi_species_adjusted_scores(
-                                score_path,
-                                None if _disc_on else meta_path,
-                                float(_ucl),
-                                threshold=config.scoring.threshold,
-                                k_sigma=0.0,
-                                prior_floor=_sa.prior_floor,
-                                core_fraction=modesep_result.core_fraction,
-                            )
-                            _gfd = ("n/a" if modesep_result.gap_fraction is None
-                                    else f"{modesep_result.gap_fraction:.3f}")
-                            messenger.info(
-                                f"[modesep] species prior: {_n_ps:,} introns adjusted "
-                                f"(gap_fraction={_gfd}, ucl={float(_ucl):.3f}, k_σ=0)"
-                            )
-
-                    # v2.7 continuous discount + unified labels.
-                    if not getattr(config.scoring, "discount_disable", False):
-                        from intronIC.classification.mode_sep_pipeline import (
-                            apply_continuous_per_intron_discount,
-                        )
-                        # Both routes chain from adjusted_score (written by the prior pass
-                        # above / legacy fallback); discount fillna's NA → svm_score if skipped.
-                        discount_input = "adjusted_score"
-                        disc_summary = apply_continuous_per_intron_discount(
-                            score_info_path=score_path,
-                            threshold=config.scoring.threshold,
-                            k_overcall=getattr(config.scoring,
-                                               "discount_k_overcall", 2.0),
-                            tau_overcall=getattr(config.scoring,
-                                                 "discount_tau_overcall", 0.0),
-                            k_weakmot=getattr(config.scoring,
-                                              "discount_k_weakmot", 0.0),
-                            tau_motif=getattr(config.scoring,
-                                              "discount_tau_motif", 10.0),
-                            input_column=discount_input,
-                            meta_path=meta_path,
-                            messenger=messenger,
-                            species_gap_fraction=_species_gf,
-                            species_gap_fraction_ucl=_species_ucl,
-                        )
-                        adjusted_hc_count = disc_summary["n_called_post_discount"]
-                        try:
-                            from dataclasses import replace as _replace
-                            modesep_result = _replace(
-                                modesep_result,
-                                n_called_pre_discount=disc_summary["n_called_pre_discount"],
-                                n_called_post_discount=disc_summary["n_called_post_discount"],
-                                n_called_u12=disc_summary["n_called_post_discount"],
-                                continuous_discount_applied=True,
-                            )
-                        except Exception:
-                            pass
-                else:
-                    # Non-modesep bundle: legacy cluster_validation only.
-                    cv_result = validate_u12_cluster(
-                        five_z_scores=five_z,
-                        bp_z_scores=bp_z,
-                        three_z_scores=three_z,
-                        svm_scores=svm_s,
-                        type_ids=type_ids,
-                        confidence_threshold=config.scoring.threshold,
-                    )
-                    cv_result, adjusted_hc_count = (
-                        _apply_post_classification_adjustment(
-                            cv_result, config, messenger,
-                            score_path=score_path,
-                            meta_path=meta_path,
-                        )
-                    )
-
-                # Update metrics with adjusted HC count.
-                if adjusted_hc_count is not None and metrics:
-                    metrics["high_confidence_u12"] = adjusted_hc_count
-                    total = metrics.get("total_introns", 1)
-                    metrics["high_confidence_percentage"] = (
-                        adjusted_hc_count / total * 100 if total > 0 else 0.0
-                    )
-
-                # Surface unified label counts (v2.7.1).
-                if disc_summary is not None and metrics is not None:
-                    for k in ("u12_count", "u12_strong_count",
-                              "u12_borderline_count", "u12_promoted_count",
-                              "u2_count", "u2_strong_count",
-                              "u2_borderline_count", "u2_demoted_count"):
-                        if k in disc_summary:
-                            metrics[k] = disc_summary[k]
-
-                # Add cluster_validation + score_adjustment blocks.
-                if cv_result is not None and metrics is not None:
-                    sa_cfg = config.score_adjustment
-                    metrics["cluster_validation"] = {
-                        "valley_depth": cv_result['valley_depth'],
-                        "has_valley": cv_result.get('has_valley'),
-                        "regime": cv_result['regime'],
-                        "n_confident_u12": cv_result['n_confident_u12'],
-                        "empirical_prior": cv_result['empirical_prior'],
-                        "centroid_sigma": cv_result.get('centroid_sigma'),
-                    }
-                    if sa_cfg.enabled:
-                        metrics["score_adjustment"] = {
-                            "enabled": True,
-                            "valley_midpoint": sa_cfg.valley_midpoint,
-                            "transition_width": sa_cfg.transition_width,
-                            "prior_floor": sa_cfg.prior_floor,
-                            "k_sigma": sa_cfg.k_sigma,
-                        }
-
-                # Add mode_separation block.
-                if modesep_result is not None and metrics is not None:
-                    metrics["mode_separation"] = {
-                        "route": modesep_result.route,
-                        "gate_reason": modesep_result.gate_reason,
-                        "quality_tier": modesep_result.quality_tier,
-                        "n_introns": modesep_result.n_introns,
-                        "n_eligible": modesep_result.n_eligible,
-                        "n_called_u12": modesep_result.n_called_u12,
-                        "n_eff_candidates": modesep_result.n_eff_candidates,
-                        "valley_depth": modesep_result.valley_depth,
-                        "mu_u2_5p": modesep_result.mu_u2_5p,
-                        "mu_u12_5p": modesep_result.mu_u12_5p,
-                        "mu_u12_5p_offset": modesep_result.mu_u12_5p_offset,
-                        "median_ensemble_sigma_called":
-                            modesep_result.median_ensemble_sigma_called,
-                        "p90_ensemble_sigma_called":
-                            modesep_result.p90_ensemble_sigma_called,
-                        "first_pass_model_id": modesep_result.first_pass_model_id,
-                        "second_pass_model_id":
-                            modesep_result.second_pass_model_id,
-                    }
+                # Rebuild metrics through the shared finalizer so this path's
+                # metrics.iic.json matches the streaming path (the only
+                # intentional difference is streaming_mode). The base summary
+                # mirrors StreamingOutputWriter.get_summary(): total_written is
+                # every written intron (scored + omitted), and the u12/HC base
+                # counts are type_id-based over the scored set (omitted introns
+                # have type_id "unknown" → counted as u2, same as the writer).
+                _total_written = len(all_introns_for_output)
+                _u12_base = sum(
+                    1 for i in classified_introns
+                    if i.metadata and i.metadata.type_id == "u12"
+                )
+                _hc_base = sum(
+                    1 for i in classified_introns
+                    if i.metadata and i.metadata.type_id == "u12"
+                    and i.scores and i.scores.svm_score is not None
+                    and i.scores.svm_score >= config.scoring.threshold
+                )
+                _base_summary = {
+                    "total_introns": _total_written,
+                    "u12_count": _u12_base,
+                    "u2_count": _total_written - _u12_base,
+                    "u12_percentage": (
+                        _u12_base / _total_written * 100 if _total_written > 0 else 0.0
+                    ),
+                    "high_confidence_u12": _hc_base,
+                    "high_confidence_percentage": (
+                        _hc_base / _total_written * 100 if _total_written > 0 else 0.0
+                    ),
+                    "threshold": config.scoring.threshold,
+                }
+                metrics = _finalize_classification_metrics(
+                    _base_summary,
+                    total_genes=_inmem_total_genes,
+                    total_introns_generated=_inmem_total_generated,
+                    total_scored=len(classified_introns),
+                    model_path=str(config.training.pretrained_model_path),
+                    streaming_mode="in_memory",
+                    normalizer_used=(metrics.get("normalizer_used") if metrics else None),
+                    boundaries_u12=boundaries_u12,
+                    boundaries_u2=boundaries_u2,
+                    disc_summary=disc_summary,
+                    cluster_validation_result=cv_result,
+                    modesep_result=modesep_result,
+                    adjusted_hc_count=adjusted_hc_count,
+                    score_adjustment_cfg=config.score_adjustment,
+                )
 
         # Save classification metrics to JSON file (after score adjustment)
         if metrics:

@@ -10,6 +10,7 @@ parallelism.
 Runs in ~3-5 minutes depending on hardware (two full pipelines per mode).
 """
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -309,6 +310,8 @@ class TestStreamingMatchesInMemory:
                 "inmem_header": ih,
                 "stream_rows": srows,
                 "inmem_rows": irows,
+                "dir_stream": dir_stream,
+                "dir_inmem": dir_inmem,
             }
 
     def test_score_info_headers_match(self, run_results):
@@ -388,3 +391,79 @@ class TestStreamingMatchesInMemory:
                 )
             )
             pytest.fail(msg)
+
+    @staticmethod
+    def _rows_sans_species(path_glob_dir, pattern, has_header):
+        """Read a .iic table's body rows with the species-name prefix stripped
+        from the name column (col 0), so streaming/in-memory rows are comparable
+        despite their different --species-name prefixes.
+
+        ``has_header`` must reflect the file: meta.iic/score_info.iic have a
+        header row, but introns.iic has NONE — skipping a non-existent header
+        would drop a real data row (and, because the two modes write introns in
+        different order, drop a *different* row in each, manufacturing a spurious
+        diff)."""
+        matches = list(Path(path_glob_dir).glob(pattern))
+        if not matches:
+            pytest.fail(f"No {pattern} file in {path_glob_dir}")
+        out = []
+        with open(matches[0]) as f:
+            if has_header:
+                f.readline()  # skip header
+            for line in f:
+                fields = line.rstrip("\n").split("\t")
+                if fields and "-" in fields[0]:
+                    fields[0] = fields[0].split("-", 1)[1]
+                out.append("\t".join(fields))
+        return sorted(out)
+
+    def test_meta_all_rows_identical(self, run_results):
+        """Every meta.iic row — scored AND omitted — must match across modes
+        (parity fix: omitted introns now carry sequences/motif/tags in both)."""
+        s = self._rows_sans_species(run_results["dir_stream"], "*.meta.iic", has_header=True)
+        i = self._rows_sans_species(run_results["dir_inmem"], "*.meta.iic", has_header=True)
+        if s != i:
+            only_s = sorted(set(s) - set(i))
+            only_i = sorted(set(i) - set(s))
+            pytest.fail(
+                f"meta.iic rows differ across modes: "
+                f"{len(only_s)} streaming-only, {len(only_i)} in-memory-only\n"
+                f"  streaming-only sample: {only_s[:2]}\n"
+                f"  in-memory-only sample: {only_i[:2]}"
+            )
+
+    def test_introns_all_rows_identical(self, run_results):
+        """Every introns.iic row — scored AND omitted — must match across modes.
+        introns.iic has no header row (unlike meta/score_info)."""
+        s = self._rows_sans_species(run_results["dir_stream"], "*.introns.iic", has_header=False)
+        i = self._rows_sans_species(run_results["dir_inmem"], "*.introns.iic", has_header=False)
+        if s != i:
+            only_s = sorted(set(s) - set(i))
+            only_i = sorted(set(i) - set(s))
+            pytest.fail(
+                f"introns.iic rows differ across modes: "
+                f"{len(only_s)} streaming-only, {len(only_i)} in-memory-only"
+            )
+
+    def test_metrics_match(self, run_results):
+        """metrics.iic.json must agree on every field except streaming_mode
+        (which truthfully reports how the run executed)."""
+        def _load(d):
+            m = list(Path(d).glob("*.metrics.iic.json"))
+            if not m:
+                pytest.fail(f"No metrics.iic.json in {d}")
+            with open(m[0]) as f:
+                return json.load(f)
+        s = _load(run_results["dir_stream"])
+        i = _load(run_results["dir_inmem"])
+        s.pop("streaming_mode", None)
+        i.pop("streaming_mode", None)
+        if s != i:
+            diffs = sorted(
+                k for k in set(s) | set(i) if s.get(k) != i.get(k)
+            )
+            detail = "\n".join(
+                f"  {k}: streaming={s.get(k)!r} vs in-memory={i.get(k)!r}"
+                for k in diffs
+            )
+            pytest.fail(f"metrics.iic.json differs across modes:\n{detail}")
