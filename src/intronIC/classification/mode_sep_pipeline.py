@@ -336,6 +336,12 @@ def apply_mode_separation_postprocess(
     # (n_models × n_folds) shifts the margin by up to ~0.14 and silently miscalibrates the baked logistic
     # (V1b parity decomposition: all-folds -> adjusted_score max|Δ|≈6; fold-[0] -> max|Δ|≈5e-6). The OTHER
     # offline script proto_margin_extract.py uses all folds, but it did NOT feed phase4_build_graduated_bundle.
+    # BACK-POCKET (needs a re-fit, not a hot-swap): averaging the FIRST K folds (K∈{2,3}) is a cost/quality dial
+    # between fold-[0] and all-folds — variance falls ~1/K and is ~flat past 3 folds, so K=2-3 buys most of the
+    # smoothing at <all-folds serve cost. Use first-K (folds are an exchangeable CV partition) for determinism;
+    # NEVER a per-run random subset (would jitter calls + break -q reproducibility). Any K≠1 requires rebuilding
+    # proto_grad_features.tsv + hard-neg margins at that K and re-baking/re-validating the bundle. See
+    # GRADUATED_PRODUCTIONIZATION_PLAN.md "back-pocket".
     margin_all = np.full(len(fp_svm), np.nan, dtype=float)
     if params.get("graduated_tail") and n_elig > 0:
         base_svcs = [m.model.calibrated_classifiers_[0].estimator
