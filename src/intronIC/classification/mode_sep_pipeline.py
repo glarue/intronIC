@@ -307,6 +307,15 @@ def apply_mode_separation_postprocess(
         std_scores = np.array([])
         probas_elig = np.zeros((0, 0))
 
+    # C1: de-saturated 2nd-pass margin (mean base-SVC decision_function) for the graduated/Platt tail.
+    # Computed ONLY when the bundle ships a graduated_tail (default bundles don't consume it -> skip the
+    # extra decision_function pass). Same base SVCs the tail's scaler/coefs were fit on.
+    margin_all = np.full(len(fp_svm), np.nan, dtype=float)
+    if params.get("graduated_tail") and n_elig > 0:
+        base_svcs = [m.model.calibrated_classifiers_[0].estimator
+                     for m in second_pass_ensemble.models]
+        margin_all[elig] = np.mean([e.decision_function(X_all[elig]) for e in base_svcs], axis=0)
+
     # Rebuild svm_score: first-pass for ineligible, second-pass for eligible.
     final_svm = fp_svm.copy().astype(float)
     final_svm[elig] = mean_scores
@@ -363,6 +372,9 @@ def apply_mode_separation_postprocess(
     df_full["ensemble_sigma"] = df_full["name"].map(sigma_map).fillna(0.0)
     fp_map = dict(zip(update_keys, fp_svm))
     df_full["first_pass_svm"] = df_full["name"].map(fp_map)
+    if params.get("graduated_tail"):   # C1: persist the de-saturated margin for the graduated tail
+        margin_map = dict(zip(update_keys, margin_all))
+        df_full["svm_margin"] = df_full["name"].map(margin_map)
     df_full["modesep_route"] = "modesep"
     df_full.loc[~df_full["name"].isin(update_keys), "modesep_route"] = "untouched"
 
@@ -514,6 +526,7 @@ def apply_continuous_per_intron_discount(
     messenger=None,
     species_gap_fraction: Optional[float] = None,
     species_gap_fraction_ucl: Optional[float] = None,
+    graduated_tail: Optional[dict] = None,
 ) -> dict:
     """Apply continuous per-intron discount to a score_info.iic file (v2.7).
 
@@ -580,6 +593,26 @@ def apply_continuous_per_intron_discount(
             k_weakmot=k_weakmot, tau_motif=tau_motif,
         )
         adj[valid_idx] = adj_valid
+
+    # C3: graduated/Platt tail. When the bundle ships a `graduated_tail`, replace the discount on the
+    # mode-sep-scored (margin-bearing) introns with the smooth logistic on [margin, raw5/bp/3, adh5z/adhbpz]:
+    #     adjusted_score = 100 * sigmoid(coef . scale([margin, raw5, rawbp, raw3, adh5z, adhbpz]) + intercept)
+    # Rows without `svm_margin` (ineligible or first_pass_fallback species) keep the discount computed above —
+    # the unchanged fallback path. No graduated_tail -> default discount everywhere (byte-identical to before).
+    if graduated_tail and "svm_margin" in df.columns:
+        from intronIC.scoring.gold_adherence import adh_features
+        gt = graduated_tail
+        mcol = pd.to_numeric(df["svm_margin"], errors="coerce").to_numpy()
+        gmask = ~np.isnan(mcol)
+        if gmask.any():
+            a5z, abpz = adh_features(df, gmask, want5=True)
+            colmap = {"margin": mcol[gmask], "raw5": df["5'_raw"].to_numpy()[gmask],
+                      "rawbp": df["bp_raw"].to_numpy()[gmask], "raw3": df["3'_raw"].to_numpy()[gmask],
+                      "adh5z": a5z, "adhbpz": abpz}
+            X = np.column_stack([colmap[f] for f in gt["feature_order"]])
+            z = (X - np.asarray(gt["scaler_mean"], float)) / np.asarray(gt["scaler_scale"], float)
+            adj[gmask] = 100.0 / (1.0 + np.exp(-(z @ np.asarray(gt["coef"], float) + float(gt["intercept"]))))
+
     n_post = int((adj >= threshold).sum())
 
     df["adjusted_score"] = adj
