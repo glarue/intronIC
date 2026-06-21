@@ -120,6 +120,49 @@ DEFAULT_BM_SUBSAMPLE_SIZE = 5000
 DEFAULT_BM_LOWER = 0.1
 DEFAULT_BM_UPPER = 0.9
 
+# -----------------------------------------------------------------------------
+# Species-level BPS penalty (frac_bp6 + logN), v6 (C6). Ported verbatim from the
+# validated unified-species-trust branch. A gated, ONE-SIDED (<=0) additive logit
+# shift applied to a species' calls AFTER the per-intron discount/graduated tail:
+# a species whose post-scoring HC set looks non-bearer-like (low frac of U12-BPS,
+# small N) gets demoted; confident bearers (p_bearer >= p_gate) are untouched.
+# DISABLED by default (enable_species_penalty=False) — the shipped default bundle
+# is byte-unchanged; the graduated bundle opts in only after the C6/V eval.
+# Constants = full-precision 185-sp recal fit (doc-rounded values in comments).
+# -----------------------------------------------------------------------------
+DEFAULT_SPECIES_PENALTY_PGATE = 0.85
+SPECIES_PENALTY_PI_TRAIN = 0.5
+SPECIES_PENALTY_FLOOR = 0.001
+SPECIES_PENALTY_INTERCEPT = -5.8433825296    # doc-rounded: -5.84338
+SPECIES_PENALTY_COEF_FRACBP6 = 1.4928134895  # doc-rounded:  1.49281
+SPECIES_PENALTY_COEF_LOGN = 1.9895442351     # doc-rounded:  1.98954
+
+
+def species_penalty_logit_shift(
+    frac_bp6: float,
+    n_hc: int,
+    *,
+    p_gate: float = DEFAULT_SPECIES_PENALTY_PGATE,
+    pi_train: float = SPECIES_PENALTY_PI_TRAIN,
+    floor: float = SPECIES_PENALTY_FLOOR,
+) -> float:
+    """Gated species penalty → additive (<=0) logit shift to apply to adjusted_score.
+
+    frac_bp6 = fraction of THIS species' HC (adjusted>=threshold) calls with bp_raw>=6 (U12-BPS present);
+    n_hc = HC count. p_bearer = sigmoid(intercept + c_fb*frac_bp6 + c_logN*log1p(n_hc)). Confident
+    bearers (p>=p_gate) → 0 shift (untouched); otherwise pi = floor + (pi_train-floor)*(p/p_gate) and the
+    shift is log(pi/pi_train) < 0 (one-sided: never promotes). Returns 0.0 when n_hc==0 (nothing to penalize).
+    Applied post-gate, so gate-catchable losses arrive with low HC, sidestepping the metric's high-N blind spot.
+    """
+    if n_hc <= 0:
+        return 0.0
+    z = (SPECIES_PENALTY_INTERCEPT
+         + SPECIES_PENALTY_COEF_FRACBP6 * float(frac_bp6)
+         + SPECIES_PENALTY_COEF_LOGN * float(np.log1p(n_hc)))
+    p = 1.0 / (1.0 + float(np.exp(-z)))
+    pi = pi_train if p >= p_gate else floor + (pi_train - floor) * (p / p_gate)
+    return float(np.log(pi / pi_train))
+
 
 # -----------------------------------------------------------------------------
 # Data classes

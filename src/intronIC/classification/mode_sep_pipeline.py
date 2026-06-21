@@ -51,6 +51,8 @@ from intronIC.scoring.mode_separation import (
     DEFAULT_BM_SUBSAMPLE_SIZE,
     DEFAULT_BM_LOWER,
     DEFAULT_BM_UPPER,
+    species_penalty_logit_shift,
+    DEFAULT_SPECIES_PENALTY_PGATE,
 )
 
 
@@ -559,6 +561,8 @@ def apply_continuous_per_intron_discount(
     species_gap_fraction: Optional[float] = None,
     species_gap_fraction_ucl: Optional[float] = None,
     graduated_tail: Optional[dict] = None,
+    enable_species_penalty: bool = False,
+    species_penalty_pgate: float = DEFAULT_SPECIES_PENALTY_PGATE,
 ) -> dict:
     """Apply continuous per-intron discount to a score_info.iic file (v2.7).
 
@@ -645,6 +649,30 @@ def apply_continuous_per_intron_discount(
             z = (X - np.asarray(gt["scaler_mean"], float)) / np.asarray(gt["scaler_scale"], float)
             adj[gmask] = 100.0 / (1.0 + np.exp(-(z @ np.asarray(gt["coef"], float) + float(gt["intercept"]))))
 
+    # C6: species-level BPS penalty (frac_bp6 + logN), gated OFF by default. Applied AFTER the per-intron
+    # discount/graduated tail, so the HC signature (frac_bp6, n_hc) is the species' POST-scoring call set —
+    # gate/tail-suppressed losses arrive with low HC, sidestepping the metric's high-N blind spot. One-sided
+    # (<=0): confident bearers (p_bearer>=p_gate) are untouched; loss-prone species get a negative logit shift
+    # on adjusted_score. Adds species-level FP-suppression the per-intron tail structurally lacks (prove-out:
+    # FP@full-recall 10→6, recall-positive, 0 TP lost on the v6.1 panel). The conservative_min min-of-discounts
+    # is deliberately NOT ported — the graduated tail subsumes it (see C4). No graduated_tail / penalty disabled
+    # -> this block is skipped (default bundle byte-unchanged). See GRADUATED_PRODUCTIONIZATION_PLAN.md.
+    species_penalty = None
+    if enable_species_penalty:
+        hc_mask = adj >= threshold
+        n_hc = int(hc_mask.sum())
+        if n_hc > 0:
+            bp_for_pen = pd.to_numeric(df.get("bp_raw"), errors="coerce").to_numpy()
+            frac_bp6 = float(np.nanmean((bp_for_pen[hc_mask] >= 6).astype(float)))
+            shift = species_penalty_logit_shift(frac_bp6, n_hc, p_gate=species_penalty_pgate)
+            if shift < 0.0:
+                p_adj = np.clip(adj / 100.0, 1e-9, 1 - 1e-9)
+                adj = 100.0 / (1.0 + np.exp(-(np.log(p_adj / (1 - p_adj)) + shift)))
+            species_penalty = {"frac_bp6": round(frac_bp6, 4), "n_hc_pre_penalty": n_hc,
+                               "logit_shift": round(shift, 4), "p_gate": species_penalty_pgate}
+            _log(f"[species-penalty] frac_bp6={frac_bp6:.3f} n_hc={n_hc} shift={shift:+.3f} "
+                 f"-> HC {n_hc}→{int((adj >= threshold).sum())} (P_GATE={species_penalty_pgate})")
+
     n_post = int((adj >= threshold).sum())
 
     df["adjusted_score"] = adj
@@ -727,6 +755,7 @@ def apply_continuous_per_intron_discount(
         "tau_overcall": tau_overcall,
         "k_weakmot": k_weakmot,
         "tau_motif": tau_motif,
+        "species_penalty": species_penalty,
         **label_counts,
     }
 

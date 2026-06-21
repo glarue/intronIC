@@ -656,6 +656,9 @@ def _run_post_classification_pipeline(
             from intronIC.classification.mode_sep_pipeline import (
                 apply_continuous_per_intron_discount,
             )
+            from intronIC.scoring.mode_separation import (
+                DEFAULT_SPECIES_PENALTY_PGATE,
+            )
             disc_summary = apply_continuous_per_intron_discount(
                 score_info_path=score_path,
                 threshold=config.scoring.threshold,
@@ -672,6 +675,12 @@ def _run_post_classification_pipeline(
                 # function replaces the overcall discount with the smooth logistic
                 # on the margin-bearing introns (no-op for default bundles).
                 graduated_tail=params.get("graduated_tail"),
+                # C6: species-level frac_bp6+logN penalty, gated on the bundle param
+                # (default off -> byte-unchanged). Opt-in only after the C6/V eval.
+                enable_species_penalty=bool(params.get("enable_species_penalty", False)),
+                species_penalty_pgate=float(
+                    params.get("species_penalty_pgate", DEFAULT_SPECIES_PENALTY_PGATE)
+                ),
             )
             adjusted_hc_count = disc_summary["n_called_post_discount"]
             result.disc_summary = disc_summary
