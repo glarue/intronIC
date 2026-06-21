@@ -100,3 +100,6 @@ archive/
 
 # Old refactored directory (purged from history)
 intronIC_refactored/
+
+# residual experimental configs / scripts / outputs (decluttered 2026-06-21)
+/_attic/
