@@ -137,6 +137,70 @@ def test_graduated_tail_skipped_without_margin_column():
 
 
 # --------------------------------------------------------------------------- #
+# C3: no-margin + spac tail (the v2_tail+pen production lock, task #71)
+# --------------------------------------------------------------------------- #
+_GT_V2 = {   # the productionized feature_order: DROP margin, ADD spac (BP->3'SS geometry)
+    "feature_order": ["raw5", "rawbp", "raw3", "adh5z", "adhbpz", "spac"],
+    "scaler_mean": [10.0, 5.0, 1.0, 0.0, 0.0, 0.5],
+    "scaler_scale": [5.0, 3.0, 1.0, 1.0, 1.0, 0.3],
+    "coef": [4.0, 1.0, 0.5, 1.0, 1.0, 0.8],
+    "intercept": -1.0,
+}
+
+
+def _spac(bo):   # mirrors mode_sep_pipeline.py: exp(-((|bp_offset| - 12)/8)^2)
+    return np.exp(-((np.abs(np.asarray(bo, float)) - 12.0) / 8.0) ** 2)
+
+
+def test_spac_geometry_value():
+    # spac peaks at |bp_offset|=12 (U12 BP->3'SS geometry) and decays for U2-like spacing
+    assert _spac(-12.0) == pytest.approx(1.0, abs=1e-12)
+    assert _spac(12.0) == pytest.approx(1.0, abs=1e-12)
+    assert _spac(-4.0) == pytest.approx(math.exp(-1.0), abs=1e-9)        # (|-4|-12)/8 = -1
+    assert _spac(-24.0) < _spac(-15.0) < _spac(-12.0)                    # U2-like (-24) decays below U12 (-12)
+
+
+def test_graduated_tail_spac_reproduces_formula():
+    from intronIC.scoring.gold_adherence import adh_features
+    df = _tiny_scoreinfo(with_margin=True)
+    df["bp_offset"] = [-12.0, -15.0, -24.0, -10.0, -33.0, -4.0]
+    out, _ = _run_discount(df.copy(), graduated_tail=_GT_V2)
+    adj = pd.to_numeric(out["adjusted_score"], errors="coerce").to_numpy()
+    m = pd.to_numeric(out["svm_margin"], errors="coerce").to_numpy()
+    bo = pd.to_numeric(out["bp_offset"], errors="coerce").to_numpy()
+    gmask = ~np.isnan(m) & ~np.isnan(bo)           # spac tail still gates on svm_margin AND bp_offset
+    a5z, abpz = adh_features(out, gmask, want5=True)
+    cm = {"raw5": out["5'_raw"].to_numpy()[gmask], "rawbp": out["bp_raw"].to_numpy()[gmask],
+          "raw3": out["3'_raw"].to_numpy()[gmask], "adh5z": a5z, "adhbpz": abpz, "spac": _spac(bo[gmask])}
+    X = np.column_stack([cm[f] for f in _GT_V2["feature_order"]])      # NOTE: no `margin` column consumed
+    z = (X - np.array(_GT_V2["scaler_mean"])) / np.array(_GT_V2["scaler_scale"])
+    expect = 100.0 / (1.0 + np.exp(-(z @ np.array(_GT_V2["coef"]) + _GT_V2["intercept"])))
+    assert np.max(np.abs(adj[gmask] - expect)) < 1e-6
+    assert np.all((adj >= 0) & (adj <= 100))
+
+
+def test_graduated_tail_spac_requires_bp_offset_per_row():
+    # a row with NaN bp_offset is excluded from the spac tail and keeps the discount fallback
+    df = _tiny_scoreinfo(with_margin=True)
+    df["bp_offset"] = [-12.0, np.nan, -24.0, -10.0, -33.0, -4.0]       # row 1 lacks bp_offset
+    out_tail, _ = _run_discount(df.copy(), graduated_tail=_GT_V2)
+    out_legacy, _ = _run_discount(df.copy())                           # no tail -> discount everywhere
+    a_tail = pd.to_numeric(out_tail["adjusted_score"], errors="coerce").to_numpy()
+    a_legacy = pd.to_numeric(out_legacy["adjusted_score"], errors="coerce").to_numpy()
+    assert a_tail[1] == pytest.approx(a_legacy[1], abs=1e-9)           # row 1 = unchanged discount fallback
+    assert np.max(np.abs(a_tail - a_legacy)) > 1.0                     # other rows: the tail fired
+
+
+def test_graduated_tail_spac_no_bp_offset_column_is_legacy():
+    # spac in feature_order but NO bp_offset column at all -> tail cannot fire -> legacy discount everywhere
+    df = _tiny_scoreinfo(with_margin=True)                             # no bp_offset column
+    out_a, _ = _run_discount(df.copy(), graduated_tail=_GT_V2)
+    out_b, _ = _run_discount(df.copy())
+    assert np.allclose(pd.to_numeric(out_a["adjusted_score"], errors="coerce"),
+                       pd.to_numeric(out_b["adjusted_score"], errors="coerce"), equal_nan=True)
+
+
+# --------------------------------------------------------------------------- #
 # C6 gating inside the discount
 # --------------------------------------------------------------------------- #
 def test_species_penalty_off_by_default():
