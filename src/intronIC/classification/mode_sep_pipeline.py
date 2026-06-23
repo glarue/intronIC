@@ -640,11 +640,17 @@ def apply_continuous_per_intron_discount(
         gt = graduated_tail
         mcol = pd.to_numeric(df["svm_margin"], errors="coerce").to_numpy()
         gmask = ~np.isnan(mcol)
+        if "spac" in gt["feature_order"]:          # spac (BP->3'SS geometry) feature needs bp_offset
+            bo = (pd.to_numeric(df["bp_offset"], errors="coerce").to_numpy()
+                  if "bp_offset" in df.columns else np.full(len(df), np.nan))
+            gmask = gmask & ~np.isnan(bo)          # no bp_offset -> can't compute spac -> keep discount fallback
         if gmask.any():
             a5z, abpz = adh_features(df, gmask, want5=True)
             colmap = {"margin": mcol[gmask], "raw5": df["5'_raw"].to_numpy()[gmask],
                       "rawbp": df["bp_raw"].to_numpy()[gmask], "raw3": df["3'_raw"].to_numpy()[gmask],
                       "adh5z": a5z, "adhbpz": abpz}
+            if "spac" in gt["feature_order"]:
+                colmap["spac"] = np.exp(-((np.abs(bo[gmask]) - 12.0) / 8.0) ** 2)
             X = np.column_stack([colmap[f] for f in gt["feature_order"]])
             z = (X - np.asarray(gt["scaler_mean"], float)) / np.asarray(gt["scaler_scale"], float)
             adj[gmask] = 100.0 / (1.0 + np.exp(-(z @ np.asarray(gt["coef"], float) + float(gt["intercept"]))))
