@@ -628,7 +628,16 @@ def _run_post_classification_pipeline(
             # tail's learned FP-suppression already encodes the distrust.
             _ucl = modesep_result.gap_fraction_ucl
             _sa = config.score_adjustment
-            if _sa.enabled and _ucl is not None and not np.isnan(_ucl):
+            # CLEANUP (2026-06-24): on a graduated-tail bundle the continuous-discount step below
+            # OVERWRITES adjusted_score for every margin-bearing (eligible) intron from raw features, so
+            # this pre-tail π_species write is inert for all CALLS (calls are necessarily eligible, z5≥floor)
+            # and merely leaks onto sub-threshold non-eligible rows via the discount `base`. Skip it on
+            # graduated bundles to remove the write-then-overwrite footgun and keep π_species cleanly absent
+            # on the graduated path (consistent with the conservative_min route, which already skips it).
+            # Non-graduated bundles (no graduated_tail) are byte-unchanged — the write still feeds the
+            # legacy discount. first_pass_fallback keeps its own π_species (it has no margin → no tail).
+            if (_sa.enabled and _ucl is not None and not np.isnan(_ucl)
+                    and not params.get("graduated_tail")):
                 _disc_on = not getattr(config.scoring, "discount_disable", False)
                 _n_ps = _write_pi_species_adjusted_scores(
                     score_path,
