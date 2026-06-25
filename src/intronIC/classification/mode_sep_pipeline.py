@@ -313,9 +313,15 @@ def apply_mode_separation_postprocess(
 
     elig = z5 >= z5p_floor
     n_elig = int(elig.sum())
+    # gate.valley_depth is Optional[float] (None on early gate returns — below_n_floor /
+    # degenerate_separation — or when median_depth is non-finite). The conservative_min route
+    # (gate-fail + separable + graduated) reaches this log line on a gate-fail, so None is
+    # reachable here; format defensively (cf. the guard at module line ~142). Logging only —
+    # no effect on scores.
+    _vd_disp = gate.valley_depth if gate.valley_depth is not None else float("nan")
     _log(f"[modesep] {'CONSERVATIVE-MIN (gate-fail, separable, graduated)' if conservative_min else 'GATE-PASS'} "
          f"μ_U2={s5.mu_u2:.2f} μ_U12={s5.mu_u12:.2f} "
-         f"valley={gate.valley_depth:.3f}; scoring {n_elig:,}/{n_total:,} "
+         f"valley={_vd_disp:.3f}; scoring {n_elig:,}/{n_total:,} "
          f"introns (z_5p ≥ {z5p_floor})")
 
     second_pass_ensemble = runtime["second_pass_ensemble"]
