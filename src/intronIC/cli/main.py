@@ -664,6 +664,7 @@ def _run_post_classification_pipeline(
         if not getattr(config.scoring, "discount_disable", False):
             from intronIC.classification.mode_sep_pipeline import (
                 apply_continuous_per_intron_discount,
+                _maybe_write_diagnostics,
             )
             from intronIC.scoring.mode_separation import (
                 DEFAULT_SPECIES_PENALTY_PGATE,
@@ -693,7 +694,11 @@ def _run_post_classification_pipeline(
             )
             adjusted_hc_count = disc_summary["n_called_post_discount"]
             result.disc_summary = disc_summary
-            # Surface the post-discount counts in modesep_result for the JSON sidecar.
+            # Surface the post-discount counts + species penalty in modesep_result, then RE-WRITE the
+            # modesep.json sidecar. It was first written inside apply_mode_separation_postprocess (PRE-discount),
+            # so without this the sidecar's discount/penalty fields stay at their defaults
+            # (continuous_discount_applied=False, n_called_*_discount=None, species_penalty=None) even when the
+            # tail/penalty ran on the species. Diagnostic only — no effect on scores.
             try:
                 modesep_result = replace(
                     modesep_result,
@@ -701,7 +706,9 @@ def _run_post_classification_pipeline(
                     n_called_post_discount=disc_summary["n_called_post_discount"],
                     n_called_u12=disc_summary["n_called_post_discount"],
                     continuous_discount_applied=True,
+                    species_penalty=disc_summary.get("species_penalty"),
                 )
+                _maybe_write_diagnostics(modesep_result, diagnostics_path, score_path)
             except Exception:
                 pass
 

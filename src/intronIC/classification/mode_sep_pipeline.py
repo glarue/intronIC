@@ -91,6 +91,10 @@ class ModeSepResult:
     gap_fraction_ucl: Optional[float] = None
     centroid_sigma: Optional[float] = None
     core_fraction: Optional[float] = None       # frac(candidate raw_sum > bar): strong-motif U12 core
+    # v6 C6 species-level BPS penalty: {frac_bp6, n_hc_pre_penalty, logit_shift, p_gate}. Populated
+    # post-discount; None when the penalty is disabled or didn't fire (n_hc==0 / shift>=0). This is the
+    # species-level FP-suppression lever — surfaced for the post-run watch-list (PRELAUNCH #7). Diagnostic only.
+    species_penalty: Optional[dict] = None
 
 
 def _f1_weighted_mean(probs: np.ndarray, ensemble) -> np.ndarray:
