@@ -21,6 +21,7 @@ Algorithm (iterative trimmed background):
 See docs/species_background_correction_plan.md for full design.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 from collections import defaultdict
@@ -43,6 +44,36 @@ class BackgroundConfig:
     pseudocount_per_base: float = 1.0
     n_iterations: int = 1
     min_introns: int = 500
+    # Weight for blending species-empirical frequencies vs the human prior:
+    #   "fixed" -> w = n/(n+n0)  (Dirichlet-multinomial posterior mean; DEFAULT,
+    #              keeps deployed scoring byte-identical)
+    #   "js"    -> Hausser-Strimmer James-Stein analytical shrinkage (deviation-aware,
+    #              no magic n0). Flip to "js" only at a RETRAIN so the corpus features
+    #              and the model stay consistent.
+    weight_method: str = "fixed"
+
+
+def _js_shrink_weight_on_empirical(emp_vec, ref_vec, n):
+    """James-Stein (Hausser-Strimmer) analytical shrinkage intensity.
+
+    Returns the weight on the EMPIRICAL estimate (= 1 - lambda), where the empirical
+    distribution is shrunk toward ref_vec and
+        lambda = (1 - sum_k emp_k^2) / ((n - 1) * sum_k (emp_k - ref_k)^2),  clamp[0,1].
+    Data-driven and non-circular: uses only the frequency estimate's own sampling
+    variance and its distance to the reference, never a downstream label. Replaces the
+    fixed w = n/(n+n0): trusts the empirical when data is plentiful OR the genome
+    genuinely deviates, and falls back to the prior only when data is sparse AND near
+    the reference (deviation looks like noise).
+    """
+    emp = np.asarray(emp_vec, dtype=np.float64)
+    ref = np.asarray(ref_vec, dtype=np.float64)
+    if n <= 1:
+        return 0.0  # too little data: trust the prior entirely
+    dist2 = float(np.sum((emp - ref) ** 2))
+    if dist2 <= 0.0:
+        return 1.0  # emp == ref: the blend is identical for any weight
+    lam = (1.0 - float(np.sum(emp ** 2))) / ((n - 1) * dist2)
+    return 1.0 - min(1.0, max(0.0, lam))
 
 
 class _RegionAccumulator:
@@ -510,6 +541,18 @@ class SpeciesBackground:
 
                 emp_freqs, n_emp = emp_result
                 w = n_emp / (n_emp + config.n0)
+                # Per-position shrinkage weight. "fixed" leaves w_by_emp == w (byte-
+                # identical to the deployed pipeline); "js" replaces it per scored
+                # position with the deviation-aware Hausser-Strimmer weight.
+                _wmethod = os.environ.get("INTRONIC_BG_WEIGHT", config.weight_method)
+                _ss = self.five_start if region == 'five' else self.three_start
+                w_by_emp = np.full(scored_len, w, dtype=np.float64)
+                if _wmethod == "js":
+                    for _ei in range(scored_len):
+                        _pi = _ei + _ss - human_pwm.start_index
+                        if 0 <= _pi < human_pwm.length:
+                            w_by_emp[_ei] = _js_shrink_weight_on_empirical(
+                                emp_freqs[_ei], human_pwm.matrix[:, _pi], n_emp)
 
                 # Extract human U2 frequencies at scored positions
                 human_matrix = human_pwm.matrix  # (4, length)
@@ -546,8 +589,9 @@ class SpeciesBackground:
 
                         if 0 <= emp_idx < scored_len:
                             e_freq = emp_freqs[emp_idx, base_idx]
+                            _wuse = w_by_emp[emp_idx]
                             blended[base_idx, pos_idx] = max(
-                                w * e_freq + (1 - w) * h_freq,
+                                _wuse * e_freq + (1 - _wuse) * h_freq,
                                 human_pwm.pseudocount,
                             )
                         else:
@@ -605,6 +649,11 @@ class SpeciesBackground:
 
                 emp_freqs, n_emp = emp_result
                 w = n_emp / (n_emp + config.n0)
+                if os.environ.get("INTRONIC_BG_WEIGHT", config.weight_method) == "js":
+                    # BPS background is one tiled composition vector; shrink it toward
+                    # the human U2-BP marginal composition (deviation-aware, no magic n0).
+                    w = _js_shrink_weight_on_empirical(
+                        emp_freqs[0], human_pwm.matrix.mean(axis=1), n_emp)
 
                 blended = np.zeros_like(human_pwm.matrix)
                 for pos_idx in range(human_pwm.length):
