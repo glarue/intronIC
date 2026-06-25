@@ -4343,8 +4343,9 @@ def classify_streaming_per_contig(
     else:
         scaler = None  # adaptive fit happens later
         messenger.log_only(
-            "Model bundle has no saved normalizer (v3 multispecies); "
-            "will fit adaptive normalizer on a per-contig pre-pass"
+            "v3 multispecies bundle: adaptive per-species normalization "
+            "(the standard path for these bundles) — fitting a RobustScaler on "
+            "this genome's intron-score distribution via a pre-pass"
         )
 
     # Load PWM matrices
@@ -5097,7 +5098,10 @@ def classify_with_pretrained_model(
             messenger.log_only("Auto mode: Using saved human scaler (recommended)")
         else:
             normalizer_mode = "adaptive"
-            messenger.log_only("Auto mode: Falling back to adaptive (no saved scaler)")
+            messenger.log_only(
+                "Auto mode: adaptive per-species normalization "
+                "(standard for v3 multispecies bundles — no frozen scaler is shipped)"
+            )
 
     # Minimum intron count for adaptive RobustScaler to produce stable
     # quartile estimates. Below this, fall through to the bundled
