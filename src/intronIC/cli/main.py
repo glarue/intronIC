@@ -2217,10 +2217,14 @@ def extract_introns_from_annotation(
     extract_list = prefilter_result.extract_list
     skip_list = prefilter_result.skip_list
 
+    # `or 1` guards 0/0 on intron-free genomes (e.g. trans-splicing kinetoplastids:
+    # angomonas/strigomonas). The in-memory path reaches this prefilter with an empty
+    # introns_list; numerators are 0 too, so the reported % is a correct 0.0. Logging only.
+    _n_il = len(introns_list) or 1
     messenger.log_only(
         f"Pre-filter results: "
-        f"extracting sequences for {len(extract_list):,} ({len(extract_list) / len(introns_list) * 100:.1f}%), "
-        f"skipping {len(skip_list):,} ({len(skip_list) / len(introns_list) * 100:.1f}%)"
+        f"extracting sequences for {len(extract_list):,} ({len(extract_list) / _n_il * 100:.1f}%), "
+        f"skipping {len(skip_list):,} ({len(skip_list) / _n_il * 100:.1f}%)"
     )
 
     # Free original list
@@ -3631,7 +3635,7 @@ def _apply_margin_alignment(
     )
     messenger.log_only(
         f"Margin alignment effect: {n_u12_before} → {n_u12_after} U12 predictions "
-        f"({100 * n_u12_after / len(updated_introns):.3f}%)"
+        f"({100 * n_u12_after / (len(updated_introns) or 1):.3f}%)"
     )
 
     return updated_introns
