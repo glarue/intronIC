@@ -15,10 +15,110 @@ Author: intronIC refactoring project
 Date: 2025-11-02
 """
 
+from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable, Optional, TextIO, Tuple, Union
 
 from intronIC.core.intron import Intron, IntronFlags, OmissionReason
+
+
+def _classify_for_summary(intron, threshold) -> Tuple[bool, bool, Optional[str]]:
+    """Per-intron summary keys, the SINGLE source of the 'what is a U12 call'
+    decision shared by both classify paths (StreamingOutputWriter, incremental,
+    and ``summarize_introns``, batch) so they can never diverge — the divergence
+    that let the dinucleotide breakdown over-count.
+
+    Returns ``(is_u12, is_high_confidence, terminal_dinucleotide_or_None)``. A call
+    is U12 iff its final ``type_id == "u12"`` (so the breakdown sums to u12_count,
+    not the pre-tail svm_score); HC additionally requires svm_score >= threshold.
+    """
+    is_u12 = bool(intron.metadata and intron.metadata.type_id == "u12")
+    is_hc = bool(
+        is_u12
+        and intron.scores
+        and intron.scores.svm_score is not None
+        and intron.scores.svm_score >= threshold
+    )
+    dnt = intron.sequences.terminal_dinucleotides if intron.sequences else None
+    return is_u12, is_hc, dnt
+
+
+def _ordered_boundaries(counter: Counter, n: int = 20) -> dict:
+    """Deterministic top-N dinucleotide breakdown: sort by descending count, then
+    by dinucleotide alphabetically, then take the first N. Order-independent, so
+    the streaming and in-memory paths emit byte-identical boundaries despite
+    tallying introns in different orders. (``Counter.most_common`` breaks
+    count-ties by insertion order, which differs between the paths and desynced
+    their ``metrics.iic.json``.) Matches the console's ``(-count, dnt)`` sort.
+    """
+    return dict(sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:n])
+
+
+def summarize_introns(introns: Iterable[Intron], threshold: float = 90.0) -> dict:
+    """Batch equivalent of ``StreamingOutputWriter.get_summary()``: base metric
+    counts from a finished, deduplicated intron list, for the in-memory path.
+
+    Counts only — the dinucleotide ``*_boundaries`` are NOT computed here. They are
+    a *post-discount* property: at the time these intron objects exist, their
+    ``type_id`` is still the first-pass call (the graduated tail / discount runs
+    afterward and rewrites the final ``type_id`` into meta.iic). Boundaries are
+    therefore derived from the finalized meta.iic by ``summarize_boundaries_from_meta``
+    in ``_finalize_classification_metrics``. The ``u12_count`` here is likewise
+    first-pass and is overridden downstream by the discount summary.
+    """
+    total = u12 = hc = 0
+    for intron in introns:
+        total += 1
+        is_u12, is_hc, _dnt = _classify_for_summary(intron, threshold)
+        if is_u12:
+            u12 += 1
+            if is_hc:
+                hc += 1
+    return {
+        "total_introns": total,
+        "u12_count": u12,
+        "u2_count": total - u12,
+        "u12_percentage": (u12 / total * 100) if total else 0.0,
+        "high_confidence_u12": hc,
+        "high_confidence_percentage": (hc / total * 100) if total else 0.0,
+        "threshold": threshold,
+    }
+
+
+def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[dict, dict]:
+    """Tally terminal-dinucleotide boundaries from a *finalized* meta.iic, keyed
+    by the final ``type_id`` column, returning ``(u12_boundaries, u2_boundaries)``
+    as deterministically-ordered top-20 dicts (``_ordered_boundaries``).
+
+    This is the authoritative boundary source: meta.iic is rewritten with the
+    post-discount ``type_id`` during post-classification, so its tally sums to the
+    reported ``u12_count`` (unlike a write-time tally off the intron objects, whose
+    ``type_id`` is still first-pass). The retroactive patcher uses the identical
+    logic, so a patched JSON matches a fresh run byte-for-byte. ``threshold`` is
+    accepted for signature symmetry; the call decision lives in the file's type_id.
+    """
+    import gzip
+
+    u12_b: Counter = Counter()
+    u2_b: Counter = Counter()
+    path = Path(meta_path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as f:
+        header = f.readline().rstrip("\n").split("\t")
+        try:
+            i_dnt = header.index("dnts")
+            i_type = header.index("type_id")
+        except ValueError:
+            return {}, {}
+        for line in f:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) <= max(i_dnt, i_type):
+                continue
+            dnt = fields[i_dnt]
+            if not dnt or dnt in ("NA", ".", "None"):
+                continue
+            (u12_b if fields[i_type] == "u12" else u2_b)[dnt] += 1
+    return _ordered_boundaries(u12_b), _ordered_boundaries(u2_b)
 
 
 # ============================================================================
@@ -1556,13 +1656,18 @@ class StreamingOutputWriter:
                 no_abbreviate=self.no_abbreviate,
             )
 
-        # Update counters
+        # Update counts via the shared classifier (keeps the streaming and
+        # in-memory count criteria identical). Dinucleotide boundaries are NOT
+        # tallied here: at write time type_id is still the first-pass call; the
+        # final boundaries come from the rewritten meta.iic post-discount (see
+        # summarize_boundaries_from_meta). These counts are first-pass and are
+        # overridden downstream by the discount summary / adjusted_hc_count.
         self.total_written += 1
-        if intron.metadata and intron.metadata.type_id == "u12":
+        is_u12, is_hc, _dnt = _classify_for_summary(intron, self.threshold)
+        if is_u12:
             self.u12_count += 1
-            if intron.scores and intron.scores.svm_score is not None:
-                if intron.scores.svm_score >= self.threshold:
-                    self.high_confidence_u12 += 1
+            if is_hc:
+                self.high_confidence_u12 += 1
         else:
             self.u2_count += 1
 
@@ -1592,6 +1697,9 @@ class StreamingOutputWriter:
             "high_confidence_u12": self.high_confidence_u12,
             "high_confidence_percentage": high_conf_pct,
             "threshold": self.threshold,
+            # No dinucleotide boundaries here — they are derived post-discount from
+            # the finalized meta.iic in _finalize_classification_metrics (the
+            # write-time type_id is still first-pass).
         }
 
 

@@ -32,7 +32,14 @@ from intronIC.extraction.intronator import IntronGenerator
 from intronIC.extraction.sequences import SequenceExtractor
 from intronIC.file_io.genome import GenomeReader
 from intronIC.file_io.parsers import BEDParser, SequenceParser
-from intronIC.file_io.writers import BEDWriter, MetaWriter, ScoreWriter, SequenceWriter
+from intronIC.file_io.writers import (
+    BEDWriter,
+    MetaWriter,
+    ScoreWriter,
+    SequenceWriter,
+    summarize_boundaries_from_meta,
+    summarize_introns,
+)
 from intronIC.scoring.normalizer import ScoreNormalizer
 from intronIC.scoring.scorer import IntronScorer
 from intronIC.utils.coordinates import GenomicCoordinate
@@ -744,22 +751,28 @@ def _finalize_classification_metrics(
     model_path: str,
     streaming_mode: str,
     normalizer_used: Any,
-    boundaries_u12: "Counter",
-    boundaries_u2: "Counter",
     disc_summary: Optional[dict],
     cluster_validation_result: Optional[dict],
     modesep_result: Optional[Any],
     adjusted_hc_count: Optional[int],
     score_adjustment_cfg: Any,
+    meta_path: Optional[Path] = None,
 ) -> dict:
     """Assemble the final per-species `metrics.iic.json` dict, shared by the
     streaming and in-memory classify paths so both emit equivalent metrics.
 
     The streaming path passes ``StreamingOutputWriter.get_summary()`` as
-    ``base_summary``; the in-memory path passes a computed-equivalent base built
-    from the same intron sets. The only intentional cross-mode difference is
-    ``streaming_mode`` (which reports *how* the run executed, not *what* it
-    computed). Keeping the assembly here is what guarantees the two modes agree.
+    ``base_summary``; the in-memory path passes ``summarize_introns(...)`` — the
+    batch twin sharing ``_classify_for_summary``. These supply the base *counts*
+    (most of which the discount summary then overrides). The dinucleotide
+    ``u12_boundaries``/``u2_boundaries`` are NOT taken from base_summary: they are
+    tallied here from the FINALIZED ``meta.iic`` (post-discount ``type_id``) via
+    ``summarize_boundaries_from_meta``, so they sum to the reported ``u12_count``
+    and are identical across both paths (which share the file + helper). The bug
+    this fixed: the writer's incremental boundary counters captured the *first-pass*
+    ``type_id`` (pre-discount), inflating ``u12_boundaries`` above ``u12_count``.
+    The only intentional cross-mode difference is ``streaming_mode``. Caller must
+    pass ``meta_path`` *after* post-classification has rewritten meta.iic.
     """
     summary = dict(base_summary)
 
@@ -780,10 +793,21 @@ def _finalize_classification_metrics(
             "model_path": model_path,
             "streaming_mode": streaming_mode,
             "normalizer_used": normalizer_used,
-            "u12_boundaries": dict(boundaries_u12.most_common(20)),
-            "u2_boundaries": dict(boundaries_u2.most_common(20)),
         }
     )
+
+    # Dinucleotide boundaries from the FINALIZED meta.iic (post-discount type_id),
+    # so they sum to the reported u12_count and are identical across the streaming
+    # and in-memory paths (both tally the same finalized file via the same helper —
+    # also what the retroactive patcher uses). Must run after post-classification
+    # has rewritten meta.iic. Empty if meta is unavailable.
+    u12_boundaries, u2_boundaries = {}, {}
+    if meta_path is not None and Path(meta_path).exists():
+        u12_boundaries, u2_boundaries = summarize_boundaries_from_meta(
+            meta_path, summary.get("threshold", 90.0)
+        )
+    summary["u12_boundaries"] = u12_boundaries
+    summary["u2_boundaries"] = u2_boundaries
 
     # v2.7.1 unified label counts override the legacy "total - high_conf" counts.
     if disc_summary is not None:
@@ -4185,8 +4209,6 @@ def _process_contig_streaming_classify_worker(
         - filtered_introns: ALL introns including omitted ones (for output files)
     """
     contig, _count = contig_input
-    from collections import Counter
-
     from intronIC.classification.predictor import classify_introns_batch
     from intronIC.file_io.indexed_genome import get_worker_genome
     from intronIC.scoring.scorer import apply_scaler_to_scored_batch
@@ -4210,8 +4232,6 @@ def _process_contig_streaming_classify_worker(
     stats = {
         **base_stats,
         "classified": 0,
-        "boundaries_u12": Counter(),
-        "boundaries_u2": Counter(),
     }
 
     if not scored_scorable:
@@ -4226,23 +4246,9 @@ def _process_contig_streaming_classify_worker(
     )
     stats["classified"] = len(classified_introns)
 
-    # Track boundary statistics
-    for intron in classified_introns:
-        if (
-            intron.metadata
-            and intron.sequences
-            and intron.sequences.terminal_dinucleotides
-        ):
-            dnts = intron.sequences.terminal_dinucleotides
-            if (
-                intron.scores
-                and intron.scores.svm_score is not None
-                and intron.scores.svm_score >= config["threshold"]
-            ):
-                stats["boundaries_u12"][dnts] += 1
-            else:
-                stats["boundaries_u2"][dnts] += 1
-
+    # Dinucleotide boundary tallies are accumulated downstream by the
+    # StreamingOutputWriter (deduplicated, type_id-keyed) — no per-contig
+    # pre-dedup counters needed here.
     return contig, classified_introns, filtered_introns, stats
 
 
@@ -4277,8 +4283,6 @@ def classify_streaming_per_contig(
         ValueError: If pretrained model not specified
         ValueError: If not in annotation mode
     """
-    from collections import Counter
-
     from intronIC.file_io.annotation_store import StreamingAnnotationStore
     from intronIC.file_io.indexed_genome import IndexedGenomeReader
     from intronIC.file_io.parsers import BioGLAnnotationParser
@@ -4640,8 +4644,6 @@ def classify_streaming_per_contig(
     total_introns_generated = 0
     total_scored = 0
     total_classified = 0
-    boundaries_u12: Counter = Counter()
-    boundaries_u2: Counter = Counter()
 
     # Lightweight score accumulation for post-hoc cluster validation
     # Only stores 3 floats per classified intron (~24 bytes each)
@@ -4792,8 +4794,6 @@ def classify_streaming_per_contig(
                 total_introns_generated += stats["introns_generated"]
                 total_scored += stats["scored"]
                 total_classified += stats["classified"]
-                boundaries_u12.update(stats["boundaries_u12"])
-                boundaries_u2.update(stats["boundaries_u2"])
 
                 # Accumulate filter statistics
                 filter_stats = stats["filter_stats"]
@@ -4897,13 +4897,12 @@ def classify_streaming_per_contig(
         model_path=str(config.training.pretrained_model_path),
         streaming_mode="per_contig",
         normalizer_used=scaler_source,
-        boundaries_u12=boundaries_u12,
-        boundaries_u2=boundaries_u2,
         disc_summary=disc_summary,
         cluster_validation_result=cluster_validation_result,
         modesep_result=modesep_result,
         adjusted_hc_count=adjusted_hc_count,
         score_adjustment_cfg=config.score_adjustment,
+        meta_path=config.output.get_output_path(".meta.iic"),
     )
 
     messenger.info(
@@ -4944,24 +4943,29 @@ def classify_streaming_per_contig(
         exclude_overlap=config.extraction.no_intron_overlap,
     )
 
-    # Display classification summary
+    # Display classification summary from the FINAL summary (post-discount), so the
+    # console counts + dinucleotide breakdowns match metrics.iic.json and the
+    # in-memory path (not the writer's stale first-pass high_confidence_u12).
+    _u12_boundaries = summary.get("u12_boundaries", {})
+    _u2_boundaries = summary.get("u2_boundaries", {})
+    _u12_total = summary.get("u12_count", 0)
     messenger.print_classification_results(
         total=total_classified,
-        u12_count=output_writer.high_confidence_u12,
-        u2_count=total_classified - output_writer.high_confidence_u12,
-        atac_count=boundaries_u12.get("AT-AC", 0),
+        u12_count=_u12_total,
+        u2_count=total_classified - _u12_total,
+        atac_count=_u12_boundaries.get("AT-AC", 0),
         threshold=config.scoring.threshold,
     )
 
     # Display boundary statistics
-    if boundaries_u12:
-        sorted_boundaries = sorted(boundaries_u12.items(), key=lambda x: (-x[1], x[0]))
+    if _u12_boundaries:
+        sorted_boundaries = sorted(_u12_boundaries.items(), key=lambda x: (-x[1], x[0]))
         messenger.print_dinucleotide_boundaries(
             intron_type="U12-type", boundaries=sorted_boundaries, top_n=20
         )
 
-    if boundaries_u2:
-        sorted_boundaries = sorted(boundaries_u2.items(), key=lambda x: (-x[1], x[0]))
+    if _u2_boundaries:
+        sorted_boundaries = sorted(_u2_boundaries.items(), key=lambda x: (-x[1], x[0]))
         messenger.print_dinucleotide_boundaries(
             intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
         )
@@ -6559,86 +6563,11 @@ def main_classify(config: IntronICConfig):
             # and the post-classification block below falls through to legacy.
             model_data = None
 
-        # Count classifications based on threshold (for reporting "high confidence" U12s)
-        # Note: type_id is based on raw classifier (>50%), but reporting uses threshold
-        threshold = config.scoring.threshold
-        u12_count = sum(
-            1
-            for i in classified_introns
-            if i.scores is not None
-            and i.scores.svm_score is not None
-            and i.scores.svm_score >= threshold
-        )
-        u2_count = len(classified_introns) - u12_count
-
-        # Count AT-AC introns among high-confidence U12s (score >= threshold)
-        atac_count = sum(
-            1
-            for i in classified_introns
-            if (
-                i.scores is not None
-                and i.scores.svm_score is not None
-                and i.scores.svm_score >= config.scoring.threshold
-                and i.sequences
-                and i.sequences.terminal_dinucleotides == "AT-AC"
-            )
-        )
-
-        # Display classification summary with unified formatting
-        total_classified = len(classified_introns)
-        messenger.print_classification_results(
-            total=total_classified,
-            u12_count=u12_count,
-            u2_count=u2_count,
-            atac_count=atac_count,
-            threshold=config.scoring.threshold,
-        )
-
-        # Collect and log splice site boundary statistics (separate by U12/U2)
-        from collections import Counter
-
-        boundaries_u12 = Counter()
-        boundaries_u2 = Counter()
-
-        for intron in classified_introns:
-            # Count all boundaries (canonical and non-canonical) by type
-            # Use threshold to match the main counts, not raw classifier type_id
-            if (
-                intron.metadata
-                and intron.sequences
-                and intron.sequences.terminal_dinucleotides
-            ):
-                dnts = intron.sequences.terminal_dinucleotides
-                if (
-                    intron.scores is not None
-                    and intron.scores.svm_score is not None
-                    and intron.scores.svm_score >= config.scoring.threshold
-                ):
-                    boundaries_u12[dnts] += 1
-                else:
-                    boundaries_u2[dnts] += 1
-
-        # Display U12 boundary statistics with unified formatting
-        if boundaries_u12:
-            # Sort by count (descending), then alphabetically by dinucleotide
-            sorted_boundaries = sorted(
-                boundaries_u12.items(), key=lambda x: (-x[1], x[0])
-            )
-            messenger.print_dinucleotide_boundaries(
-                intron_type="U12-type", boundaries=sorted_boundaries, top_n=20
-            )
-
-        # Display U2 boundary statistics with unified formatting
-        if boundaries_u2:
-            # Sort by count (descending), then alphabetically by dinucleotide
-            sorted_boundaries = sorted(
-                boundaries_u2.items(), key=lambda x: (-x[1], x[0])
-            )
-            messenger.print_dinucleotide_boundaries(
-                intron_type="U2-type", boundaries=sorted_boundaries, top_n=20
-            )
-
-        # Metrics JSON is written after score adjustment (see below)
+        # The classification summary + dinucleotide boundary tables are printed
+        # later, after post-classification finalizes type_id in meta.iic (see
+        # below). Reporting them here would show the first-pass (pre-discount)
+        # call and disagree with metrics.iic.json; the streaming path reports
+        # after its finalizer for the same reason.
 
         # Generate visualization plots
         messenger.log_only("Generating visualization plots")
@@ -6837,35 +6766,14 @@ def main_classify(config: IntronICConfig):
 
                 # Rebuild metrics through the shared finalizer so this path's
                 # metrics.iic.json matches the streaming path (the only
-                # intentional difference is streaming_mode). The base summary
-                # mirrors StreamingOutputWriter.get_summary(): total_written is
-                # every written intron (scored + omitted), and the u12/HC base
-                # counts are type_id-based over the scored set (omitted introns
-                # have type_id "unknown" → counted as u2, same as the writer).
-                _total_written = len(all_introns_for_output)
-                _u12_base = sum(
-                    1 for i in classified_introns
-                    if i.metadata and i.metadata.type_id == "u12"
+                # intentional difference is streaming_mode). summarize_introns is
+                # the batch twin of StreamingOutputWriter.get_summary(): same
+                # _classify_for_summary criterion, same type_id-keyed,
+                # deduplicated boundary breakdowns (so they sum to u12/u2_count),
+                # over every written intron (scored + omitted; omitted → u2).
+                _base_summary = summarize_introns(
+                    all_introns_for_output, config.scoring.threshold
                 )
-                _hc_base = sum(
-                    1 for i in classified_introns
-                    if i.metadata and i.metadata.type_id == "u12"
-                    and i.scores and i.scores.svm_score is not None
-                    and i.scores.svm_score >= config.scoring.threshold
-                )
-                _base_summary = {
-                    "total_introns": _total_written,
-                    "u12_count": _u12_base,
-                    "u2_count": _total_written - _u12_base,
-                    "u12_percentage": (
-                        _u12_base / _total_written * 100 if _total_written > 0 else 0.0
-                    ),
-                    "high_confidence_u12": _hc_base,
-                    "high_confidence_percentage": (
-                        _hc_base / _total_written * 100 if _total_written > 0 else 0.0
-                    ),
-                    "threshold": config.scoring.threshold,
-                }
                 metrics = _finalize_classification_metrics(
                     _base_summary,
                     total_genes=_inmem_total_genes,
@@ -6874,13 +6782,12 @@ def main_classify(config: IntronICConfig):
                     model_path=str(config.training.pretrained_model_path),
                     streaming_mode="in_memory",
                     normalizer_used=(metrics.get("normalizer_used") if metrics else None),
-                    boundaries_u12=boundaries_u12,
-                    boundaries_u2=boundaries_u2,
                     disc_summary=disc_summary,
                     cluster_validation_result=cv_result,
                     modesep_result=modesep_result,
                     adjusted_hc_count=adjusted_hc_count,
                     score_adjustment_cfg=config.score_adjustment,
+                    meta_path=config.output.get_output_path(".meta.iic"),
                 )
 
         # Save classification metrics to JSON file (after score adjustment)
@@ -6889,6 +6796,29 @@ def main_classify(config: IntronICConfig):
             messenger.log_only(f"Saving classification metrics to {metrics_path}")
             with open(metrics_path, "w") as f:
                 json.dump(metrics, f, indent=2)
+
+            # Display the FINAL (post-discount) classification summary + boundary
+            # tables from the finalized metrics, so the console matches
+            # metrics.iic.json and the streaming path (vs the first-pass call that
+            # the objects still carry at this point).
+            _u12_total = metrics.get("u12_count", 0)
+            _total_scored = metrics.get("total_scored", _u12_total + metrics.get("u2_count", 0))
+            messenger.print_classification_results(
+                total=_total_scored,
+                u12_count=_u12_total,
+                u2_count=_total_scored - _u12_total,
+                atac_count=metrics.get("u12_boundaries", {}).get("AT-AC", 0),
+                threshold=config.scoring.threshold,
+            )
+            for label, key in (("U12-type", "u12_boundaries"),
+                               ("U2-type", "u2_boundaries")):
+                bnd = metrics.get(key) or {}
+                if bnd:
+                    messenger.print_dinucleotide_boundaries(
+                        intron_type=label,
+                        boundaries=sorted(bnd.items(), key=lambda x: (-x[1], x[0])),
+                        top_n=20,
+                    )
 
         # Calculate and log total runtime
         elapsed_seconds = time.time() - start_time

@@ -29,6 +29,8 @@ from intronIC.file_io.writers import (
     MetaWriter,
     ScoreWriter,
     SequenceWriter,
+    _ordered_boundaries,
+    summarize_boundaries_from_meta,
 )
 from intronIC.utils.coordinates import GenomicCoordinate
 
@@ -769,3 +771,81 @@ class TestWriterIntegration:
         # Should contain parent info
         assert "TRANS001" in bed_name
         assert "GENE001" in bed_name
+
+
+# ============================================================================
+# Metrics boundary breakdown (u12_boundaries / u2_boundaries)
+# ============================================================================
+
+
+class TestOrderedBoundaries:
+    """_ordered_boundaries must be deterministic and order-independent so the
+    streaming and in-memory metrics.iic.json agree byte-for-byte."""
+
+    def test_sorted_by_count_then_dnt(self):
+        from collections import Counter
+        c = Counter({"AT-AC": 10, "GT-AG": 10, "CC-TA": 3})
+        # count tie (10) breaks alphabetically: AT-AC before GT-AG
+        assert list(_ordered_boundaries(c).items()) == [
+            ("AT-AC", 10), ("GT-AG", 10), ("CC-TA", 3)
+        ]
+
+    def test_order_independent(self):
+        from collections import Counter
+        a = Counter()
+        for k, v in [("GT-AG", 5), ("AA-AA", 5), ("T-T", 5), ("GT-AC", 5)]:
+            a[k] += v
+        b = Counter()
+        for k, v in [("GT-AC", 5), ("T-T", 5), ("AA-AA", 5), ("GT-AG", 5)]:
+            b[k] += v
+        assert _ordered_boundaries(a) == _ordered_boundaries(b)
+
+    def test_truncates_to_n(self):
+        from collections import Counter
+        c = Counter({f"X{i}-Y{i}": i for i in range(30)})
+        assert len(_ordered_boundaries(c, n=20)) == 20
+
+
+class TestSummarizeBoundariesFromMeta:
+    """summarize_boundaries_from_meta tallies the FINAL type_id from meta.iic so
+    the breakdown sums to u12_count (regression: the writer's incremental counters
+    captured the pre-discount first-pass type_id, inflating u12_boundaries)."""
+
+    @staticmethod
+    def _write_meta(path, rows):
+        # Minimal meta.iic: header + (dnts, type_id) columns are what's read.
+        header = ["name", "dnts", "type_id"]
+        with open(path, "w") as f:
+            f.write("\t".join(header) + "\n")
+            for i, (dnt, tid) in enumerate(rows):
+                f.write(f"intron{i}\t{dnt}\t{tid}\n")
+
+    def test_sums_to_type_id_counts(self, tmp_path):
+        meta = tmp_path / "x.meta.iic"
+        rows = (
+            [("AT-AC", "u12")] * 10
+            + [("GT-AG", "u12")] * 31
+            + [("GT-AG", "u2")] * 40   # demoted-to-u2 (would inflate a first-pass tally)
+            + [("GT-AG", "u2")] * 500
+            + [("NA", "u2")] * 5       # missing dnt -> skipped
+        )
+        self._write_meta(meta, rows)
+        u12, u2 = summarize_boundaries_from_meta(meta, threshold=90.0)
+        assert sum(u12.values()) == 41           # == type_id-u12 count
+        assert u12 == {"GT-AG": 31, "AT-AC": 10}  # deterministic order, GT-AG first
+        assert u2 == {"GT-AG": 540}               # NA rows skipped
+
+    def test_missing_columns_returns_empty(self, tmp_path):
+        meta = tmp_path / "bad.meta.iic"
+        meta.write_text("name\tfoo\tbar\nintron0\tx\ty\n")
+        assert summarize_boundaries_from_meta(meta) == ({}, {})
+
+    def test_gzip_supported(self, tmp_path):
+        import gzip
+        meta = tmp_path / "x.meta.iic.gz"
+        with gzip.open(meta, "wt") as f:
+            f.write("name\tdnts\ttype_id\n")
+            f.write("i0\tAT-AC\tu12\n")
+            f.write("i1\tGT-AG\tu2\n")
+        u12, u2 = summarize_boundaries_from_meta(meta)
+        assert u12 == {"AT-AC": 1} and u2 == {"GT-AG": 1}
