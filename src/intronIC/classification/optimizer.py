@@ -221,8 +221,13 @@ class SVMParameters:
     dual: bool = False  # Always False (primal formulation for LinearSVC)
     intercept_scaling: float = 1.0  # Fixed to 1.0 (sklearn default; consider 10.0 if L1 intercept issues)
 
-    # Extra features (beyond z-scores) for classifier input
+    # Extra features (beyond the base motif scores) for classifier input
     extra_features: tuple = ()  # e.g., ('ppt_score', 'bp_offset')
+
+    # Base motif features (the three core splice scores). Default = z-scores (modesep/z mode);
+    # the raw_gated scoring mode uses the raw log-odds triple ('five_raw_score', ...). Threaded
+    # to _extract_feature_vector so a bundle declares its own feature space.
+    base_features: tuple = ("five_z_score", "bp_z_score", "three_z_score")
 
     cv_score: float = 0.0  # Cross-validation balanced_accuracy score
     round_found: int = 0  # Which optimization round found these params (-1 = averaged)

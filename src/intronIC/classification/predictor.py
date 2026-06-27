@@ -55,13 +55,15 @@ def _predict_chunk_worker(
     if not introns:
         return []
 
-    # Extract extra feature names from model parameters (backward compatible)
+    # Extract feature names from model parameters (backward compatible: base = z by default)
     extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
+    base_names = tuple(getattr(ensemble.models[0].parameters, 'base_features',
+                               ("five_z_score", "bp_z_score", "three_z_score")))
 
-    # Extract z-scores + extra features from introns (already scaled by ScoreNormalizer)
+    # Extract base motif (raw or z, per the bundle's base_features) + extra features
     features = []
     for intron in introns:
-        features.append(_extract_feature_vector(intron, extra_names))
+        features.append(_extract_feature_vector(intron, extra_names, base_names=base_names))
 
     X_z = np.array(features)
 
@@ -299,13 +301,15 @@ class SVMPredictor:
         if not introns:
             return []
 
-        # Extract extra feature names from model parameters (backward compatible)
+        # Extract feature names from model parameters (backward compatible: base = z by default)
         extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
+        base_names = tuple(getattr(ensemble.models[0].parameters, 'base_features',
+                                   ("five_z_score", "bp_z_score", "three_z_score")))
 
-        # Extract z-scores + extra features from introns (already scaled by ScoreNormalizer)
+        # Extract base motif (raw or z, per the bundle's base_features) + extra features
         features = []
         for intron in introns:
-            features.append(_extract_feature_vector(intron, extra_names))
+            features.append(_extract_feature_vector(intron, extra_names, base_names=base_names))
 
         X_z = np.array(features)
 
@@ -540,12 +544,14 @@ def classify_introns_streaming(
     except AttributeError:
         weights = np.ones(len(ensemble.models)) / len(ensemble.models)
 
-    # Extract extra feature names from model parameters (backward compatible)
+    # Extract feature names from model parameters (backward compatible: base = z by default)
     extra_names = list(getattr(ensemble.models[0].parameters, 'extra_features', ()))
+    base_names = tuple(getattr(ensemble.models[0].parameters, 'base_features',
+                               ("five_z_score", "bp_z_score", "three_z_score")))
 
     for intron in introns:
-        # Build feature vector (validates z-scores internally)
-        X_z = np.array([_extract_feature_vector(intron, extra_names)])
+        # Build feature vector (base = raw or z per the bundle's base_features)
+        X_z = np.array([_extract_feature_vector(intron, extra_names, base_names=base_names)])
 
         # Get predictions from each model (apply per-model feature mask if dropout)
         probas = []

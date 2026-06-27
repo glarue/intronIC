@@ -245,6 +245,29 @@ class IntronScores:
         )
         return clipped[1]
 
+    @property
+    def support2_raw(self) -> Optional[float]:
+        """Second-largest of the clipped-at-zero RAW log-odds scores (5', BP, 3').
+
+        Raw-feature analog of :pyattr:`support2` for the ``raw_gated`` scoring mode:
+        encodes "at least two of the three sites are strong U12 signals" using the
+        background-corrected log-odds (``*_raw_score``, whose zero is the per-position
+        U12/U2 PWM decision boundary) directly, instead of the per-species z-scores.
+        Returns None if any raw score is missing.
+
+        Definition: sorted([max(0, r) for r in (5'_raw, bp_raw, 3'_raw)])[1].
+        """
+        if (self.five_raw_score is None
+                or self.bp_raw_score is None
+                or self.three_raw_score is None):
+            return None
+        clipped = sorted(
+            (max(0.0, self.five_raw_score),
+             max(0.0, self.bp_raw_score),
+             max(0.0, self.three_raw_score))
+        )
+        return clipped[1]
+
     def is_high_confidence(self, threshold: float = 90.0) -> bool:
         """
         Check if this intron has high-confidence U12 classification.

@@ -226,7 +226,7 @@ class TestSVMOptimizer:
         bad_scores = replace(mock_u12_introns[0].scores, five_z_score=None)
         bad_intron = replace(mock_u12_introns[0], scores=bad_scores)
 
-        with pytest.raises(ValueError, match="missing z-scores"):
+        with pytest.raises(ValueError, match="missing base feature"):
             optimizer._prepare_training_data([bad_intron], mock_u12_introns[1:])
 
     def test_refine_grid_middle_value(self):

@@ -15,7 +15,7 @@ Evaluation metrics are computed separately via nested CV or split evaluation mod
 Port from: intronIC.py:5345-5430 (train_svm)
 """
 
-from dataclasses import dataclass, fields, MISSING
+from dataclasses import dataclass, fields, MISSING, replace
 from typing import Sequence, Tuple, Optional, Any
 import warnings
 import contextlib
@@ -112,34 +112,40 @@ class SVMEnsemble:
         return len(self.models)
 
 
-def _extract_feature_vector(intron: Intron, extra_names: list) -> list:
+#: Default base motif features (z-normalized) for the modesep/z scoring mode.
+Z_BASE_FEATURES = ("five_z_score", "bp_z_score", "three_z_score")
+#: Base motif features for the raw_gated scoring mode (background-corrected log-odds).
+RAW_BASE_FEATURES = ("five_raw_score", "bp_raw_score", "three_raw_score")
+
+
+def _extract_feature_vector(intron: Intron, extra_names: list,
+                            base_names: tuple = Z_BASE_FEATURES) -> list:
     """Extract feature vector from an intron for training or prediction.
 
-    Base features: [five_z_score, bp_z_score, three_z_score]
-    Extra features: additional IntronScores fields by name.
+    Base features: the three motif scores named in ``base_names`` (the z triple by
+    default; the raw log-odds triple for the ``raw_gated`` scoring mode).
+    Extra features: additional IntronScores fields by name (``extra_names``).
 
     Args:
         intron: Intron with scores populated
         extra_names: List of IntronScores attribute names to append
+        base_names: The three base motif attribute names (default: z-scores). The
+            raw_gated mode passes :data:`RAW_BASE_FEATURES`.
 
     Returns:
-        List of floats [z1, z2, z3, ...extra]
+        List of floats [base1, base2, base3, ...extra]
 
     Raises:
-        ValueError: If intron lacks z-scores
+        ValueError: If intron lacks scores or any base feature is missing.
     """
     if intron.scores is None:
         raise ValueError(f"Intron {intron.intron_id} has no scores")
-    if (intron.scores.five_z_score is None or
-        intron.scores.bp_z_score is None or
-        intron.scores.three_z_score is None):
-        raise ValueError(f"Intron {intron.intron_id} missing z-scores")
-
-    base = [
-        intron.scores.five_z_score,
-        intron.scores.bp_z_score,
-        intron.scores.three_z_score,
-    ]
+    base = []
+    for name in base_names:
+        val = getattr(intron.scores, name, None)
+        if val is None:
+            raise ValueError(f"Intron {intron.intron_id} missing base feature {name}")
+        base.append(float(val))
     for name in extra_names:
         val = getattr(intron.scores, name, None)
         base.append(float(val) if val is not None else 0.0)
@@ -171,6 +177,7 @@ class SVMTrainer:
         extra_feature_names: Optional[list] = None,
         feature_dropout: int = 0,
         feature_dropout_fraction: float = 1.0,
+        base_features: tuple = Z_BASE_FEATURES,
     ):
         """
         Initialize trainer.
@@ -204,6 +211,7 @@ class SVMTrainer:
         self.extra_feature_names = extra_feature_names or []
         self.feature_dropout = feature_dropout
         self.feature_dropout_fraction = feature_dropout_fraction
+        self.base_features = tuple(base_features)
 
     def train_ensemble(
         self,
@@ -493,7 +501,8 @@ class SVMTrainer:
             train_size=len(X),
             u12_count=int(np.sum(y == 1)),
             u2_count=int(np.sum(y == 0)),
-            parameters=parameters,
+            # Record the model's feature space so the predictor reconstructs it (raw vs z).
+            parameters=replace(parameters, base_features=tuple(self.base_features)),
             dropped_feature=drop_feature,
             feature_median=feature_median,
         )
@@ -642,12 +651,14 @@ class SVMTrainer:
         # Extract U12 features
         u12_features = []
         for intron in u12_introns:
-            u12_features.append(_extract_feature_vector(intron, self.extra_feature_names))
+            u12_features.append(_extract_feature_vector(intron, self.extra_feature_names,
+                                                        base_names=self.base_features))
 
         # Extract U2 features
         u2_features = []
         for intron in u2_introns:
-            u2_features.append(_extract_feature_vector(intron, self.extra_feature_names))
+            u2_features.append(_extract_feature_vector(intron, self.extra_feature_names,
+                                                       base_names=self.base_features))
 
         # Combine features and create labels
         # Port from: intronIC.py:5380, 5397
