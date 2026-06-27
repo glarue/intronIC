@@ -14,6 +14,259 @@ validated, the honest verdict, and the remaining path to supplant.
   of the complexity. Not yet supplant-ready (small panel, post-hoc τ, build-script bundle, output not fully
   synced).
 
+## 0. MAJOR UPDATE (2026-06-27): `P_motif`-as-default supersedes the per-species layer
+
+A broad-panel investigation (chasing an interpretable per-intron probability) found that **the per-species
+adjustment — gate, discount, AND the empirical-Bayes prior shift — is largely unnecessary and, for
+bearers, actively harmful.** The raw-motif SVM score *alone*, calibrated to a probability `P_motif`, is the
+robust default for essentially every real genome.
+
+- **`P_motif` = σ(a·margin + b)**, the Platt-calibrated **ensemble decision_function margin** of the
+  raw-feature SVM (use the *margin*, not the isotonic prob, which saturates at 0/1). Species-agnostic.
+- **Why the per-species shift is wrong (the z-norm mistake, redux):** every real genome has U12 prevalence
+  **< 1%** (only *Physarum* exceeds it; human ~0.33% is merely top-decile), so a posterior referenced to the
+  balanced-training prior (π=0.243) deflates *every* genome — there is no neutral genome. Worse, the
+  training U2 set carries hard high-margin negatives, so the training likelihood **understates** how clean a
+  real bearer's U2 background is; empirically the motif is *more* specific in the wild than in training.
+  `P_motif` alone recalls **623/630 human conserved U12s with ~741 total calls** (≈ the true U12 count); the
+  prior shift dropped that to 565. The prior shift's "interpretable probability" goal is real, but it is
+  delivered by `P_motif` itself + the **two-number split** (`P_motif` species-agnostic; an optional
+  per-species posterior only where a genome is *confirmed* depleted).
+- **Broad-panel validation (the decision-grade evidence):**
+  - **FP-inflation, 19 snRNA-confirmed true losses** (every U12-absent clade: green algae, ciliates,
+    Apicomplexa, Dikarya fungi, nematode, kinetoplastid, microsporidian, diplomonad):
+    `P_motif≥0.9` gives **median 3, max 15, mean 4.6 FPs/genome — no inflation anywhere** (the irreducible
+    motif-strong floor). Script `eval_corpus/loss_fp_one.py`, table `lossfp2.tbl`.
+  - **Bearer precision** (`eval_corpus/bearer_precision.py`): the called set is **85–100% canonical-U12-5′SS
+    -concordant down to the bottom**; non-conserved calls are real U12s the conservation set missed, not
+    junk (human 89%, drosophila/aphanomyces 100%, oryza/amborella 92–94%, gut fungi 85–96%).
+  - **ascaris** (`role=loss`, was `SNRNA_NOT_SEARCHED`): fresh cmsearch → **all 4 minor snRNAs absent**
+    (definitive loss); `P_motif` = **7 calls** (loss-like). Manifest updated to LOSS/AGREE_loss.
+  - **symbiodinium** (the conflict case: ambiguous snRNA + 840k introns, historically FP-prone): intronIC
+    re-run in flight to get its `P_motif` count vs v6 (sister strain Smic_CassKB8 has u11+u4atac @4.4e-5 →
+    divergent bearer). [pending]
+- **Implied architecture:** **`P_motif` is the call everywhere; a *gated loss-detector* flips on suppression
+  only for confirmed-depleted genomes** (signal: high-`P_motif` rate ≲2e-4 AND one-end-strong shape vs
+  bearers' all-ends-strong/U12-5′SS, + snRNA-absence backstop). This retires the uniform prior shift and
+  collapses the z/mode-sep/discount/gate stack to one motif score + a thin, evidence-gated loss layer.
+- **Open:** build + validate the gated loss-detector (fire on all 19 losses, none of the bearers — the
+  loss-vs-very-poor-bearer boundary at count ~15 vs aph 22 needs the shape signal); fill 2 old-schema gaps
+  (symbiodinium [running], ustilago); the margin/Platt base calibration should be made leave-clade-out (v1
+  used in-sample templates). Artifacts: `eval_corpus/{prior_shift_v2_margin.py, threshold_tradeoff.py,
+  loss_fp_one.py, bearer_precision.py, pmotif_validation.png, panel_recall_cost.png}`.
+
+### 0a. The species-level adjudicator — robust depth-beyond-U2-tail (2026-06-27)
+
+Converged architecture (with the user): **per-intron `P_motif` (granular call) + a per-species
+separation statistic that adjudicates the *motif-strong FPs that don't form a coherent cluster*** (loss /
+recent-loss). The species signal is a confidence layer that *complements*, never overrides, per-intron
+`P_motif`.
+
+- **The existing `cluster_validation.compute_valley_depth` (median_depth / gap_fraction) is size-blind**:
+  it requires the U12 mode to have density *mass*, so it FALSE-NEGATIVES on U12-poor bearers —
+  **aphanomyces (8 IPA U12s) gives median_depth 0.00**, identical to losses, even though the scatter
+  plainly shows a separated U12 cloud at 5′≈13 (`eval_corpus/separation_scatters.png`). 22 U12 points
+  among 56k U2 don't dent the density. A formal mass-based clustering (GMM/silhouette) would re-break the
+  same way — so it offers no advantage here.
+- **The fix (size-robust, principled, NOT special-cased):** `depth_tail` = (robust median call-core −
+  U2's own 99.9th pct) / MAD_U2 — center/tail-based not density-based, and the *median* call-core peels the
+  U2-edge fringe of mis-calls (the user's point). Bearer call-clouds sit **deep** beyond their U2 tail,
+  ancient-loss FP-clouds sit **shallow/tail-adjacent**. Boundary set (`eval_corpus/robust_sep_one.py`):
+  all 4 losses `depth_tail` **≤2.10**, all 5 bearers **≥3.39** (incl. divergent neocal/amborella and
+  U12-poor aphanomyces 4.69 / drosophila 6.09) — clean gap ~2.7, **and aphanomyces flips to clearly
+  separated** where the density-valley failed.
+- **Symbio resolves to LOSS at the single-genome level — no snRNA needed:** `depth_tail` **1.30** (lowest of
+  all, below the ancient losses). Its 151 motif-strong `P_motif` calls hug its *own* (long, U12-like) U2
+  tail rather than forming a deep coherent cluster — exactly the **recent-loss "long U12-like U2 tail"**
+  signature (user's hypothesis). v6 also gave symbio 0 calls; symbio has no IPA-conserved U12 and (this
+  assembly) no snRNA, so loss/recent-loss is the right read; the only bearer hint is a sister strain's
+  snRNA. (Note: a recent-loss genome divergent enough is single-genome-irreducible vs a divergent bearer —
+  that residual is functional, not motif.)
+- **Principled rule (replacing the empirical ~2.7 cut):** an **excess-over-U2-tail outlier test** — fit the
+  U2 margin tail, extrapolate to the call region, ask whether there are significantly *more* high-margin
+  introns than U2's own tail predicts (`log_excess` / Poisson `z_excess`). Loss: calls ARE the U2 tail
+  (excess≈0). Bearer: a separate population U2 can't explain (large excess). Threshold-free (significance).
+- **Validation IN PROGRESS:** `depth_tail` + the principled excess across the full 37-genome panel (all 19
+  losses + ascaris + symbio + 14 bearers) to confirm the gap holds and pick the rule. Artifacts:
+  `eval_corpus/{robust_sep_one.py, valley_detect_one.py, separation_scatters.py, separation_scatters.png}`.
+- **Principled outlier rule (the threshold replacement):** the separation cut is an **EVT test on the MAD
+  distance** — is the `P_motif` call-core beyond the genome's OWN U2 *expected maximum* (Gumbel, adaptive to
+  N)? Loss: call-core ≈ U2 expected-max (it IS the tail) → `p_gumbel ≈ 0.5–1.0`. Bearer: beyond it → a
+  separate population → `p_gumbel ≪ α`. Sanity (5 cases): bearers p≈3e-4–9e-3, losses/symbio p≈0.5–1.0.
+  Decision = `p_gumbel < α` (~0.01), not an empirical depth cut. (`robust_sep_one.py`: `excess_z`/`p_gumbel`.)
+- **Training-confound check (resolved-in-principle):** the panel is *not* meaningfully confounded by
+  training membership — raw-motif features are fixed-PWM + genome-intrinsic U2 background (not learned), the
+  SVM sees only the 6 universal features (never genome identity → no per-genome memorization), and the
+  separation statistic references each genome's *own* U2 tail. The only residual is ordinary classifier
+  generalization, already bounded by leave-clade-out AUC 0.916. **PLANNED before finalization (deferred,
+  user 2026-06-27):** re-score the separation panel with **leave-clade-out (Stage-1 OOF) margins** so every
+  genome's `P_motif` is strictly out-of-sample — bulletproof confirmation that `depth_tail`/`p_gumbel`
+  separation isn't inflated by in-sample optimism. Low-risk but required for the final write-up.
+- **FULL PANEL RESULT (37 genomes, 2026-06-27):** BOTH statistics separate ALL 13 bearers from ALL 17
+  computable losses with a clean gap — `excess_z` bearers +0.55..+3.88 vs losses −2.25..+0.30; `depth_tail`
+  bearers ≥3.39 vs losses ≤2.91. Hard cases all correct: aphanomyces (density-valley FN) → bearer +2.35;
+  symbio → lowest (−2.25) → loss. 8 intron-poor losses → "too few" (no U12 population) → trivially loss.
+  Figure `eval_corpus/panel_separation.png`, data `/tmp/fullpanel_results.txt`.
+- **AIRTIGHT PASS (deferred; both items together):** (1) leave-clade-out OOF margins [above]; (2) replace the
+  exponential (ξ=0, MoM, fixed-90th-pct) U2-tail with a **proper POT-GPD** (shape ξ via MLE/PWM,
+  stability-selected threshold) → honest `p_gumbel`, decision = `p < α`. The 3 borderline losses (chlamy/
+  aspergillus/schizo at excess_z +0.19/+0.20/+0.30) are the exponential-tail underestimate; the GPD either
+  re-centers them toward 0 or exposes a real motif-strong-FP floor. **User (2026-06-27): worth doing but
+  won't change the verdict — the margin is large.**
+
+### 0b. CLOSED scoring design — two per-intron numbers + a hierarchical uncertainty (2026-06-27)
+
+The scoring is now design-complete (validation/refinements deferred per §0a). **Two per-intron outputs:**
+
+- **`P_motif`** = σ(Platt(ensemble margin)) — pure sequence-level motif congruence, **species-agnostic**.
+  A textbook-`GTATCC` U12 scores ~0.99 regardless of how many siblings its genome has. The granular call.
+- **`P_adj` = `q` · `P_motif`** — per-intron posterior that the intron is a *functional* U12, where
+  `q = P(this genome is a real U12 bearer)` from the species adjudicator. Clean because
+  `P(U12 | motif, not-a-bearer) ≈ 0` (no spliceosome → no functional U12s). The **low-numbers uncertainty
+  flows through `q`'s bootstrap CI** into `P_adj`.
+
+**`q` calibration + bootstrap** (`eval_corpus/q_bootstrap.py`): `q = σ(2.20·excess_z − 1.31)` (logistic on
+the panel labels, regularised → smooth; q=0.5 at excess_z=+0.59, in the loss/bearer gap). Per-genome CI by
+**bootstrapping the call-core** (resample the `P_motif≥0.9` calls → distribution of excess_z → of `q`).
+Results: bearers `q` 0.77–1.00 (drosophila 18 calls→1.00, aphanomyces 22→0.98, saprolegnia 34→0.77,
+human→0.87); losses `q` 0.04–0.29 (tetrahymena→0.04, chlamydomonas 3 calls→0.29) — so a loss's motif-strong
+FP gets `P_adj≈0.04` despite `P_motif≈1.0`, while bearer U12s keep high `P_adj`.
+
+**Key (refines "low-N ⇒ uncertain"):** uncertainty is driven by **depth (distance past the genome's U2
+expected-max), not raw N**. Down-sampling human's deep U12 core to **k=2** still gives `q≈0.99` confident —
+two *genuinely deep* U12s are individually too far beyond what `N_u2` draws can produce by chance to be FPs
+(the EVT test already prices this in). Low-numbers uncertainty surfaces **near the boundary** (moderate-depth
+/ divergent low-N bearers → wide CI → *undetermined*), never as "loss". So an arbitrarily-low-N bearer is
+captured as **confident** (deep motifs) or **undetermined-wide-CI** (borderline) — **count is never a
+threshold**; it only modulates `q`'s CI. Matches the user's intent exactly.
+
+### 0c. IMPLEMENTATION PLAN (wire the closed design into the real pipeline)
+
+Replaces the §5 supplant steps (those targeted the older species_gate). Ordered:
+
+1. **Margin-capable bundle.** The raw ensemble must expose the **decision_function margin** (currently the
+   bundle's `P` is isotonic-saturated). Store, in the bundle: the raw SVC ensemble (margin), the **Platt**
+   (margin→`P_motif`) params `(a,c)`, the **`q`-calibration** `(qa,qb)`, and the **EVT/adjudicator settings**
+   (U2 def = `P_motif<0.5`, tail-fit recipe, bootstrap B). Stamp `scoring_mode:"pmotif_adjudicated"`.
+2. **Adjudicator module** (`scoring/species_adjudicator.py`, extends/replaces `species_gate.py`): pure fns
+   — `evt_params(margins,P_motif)` → (med,MAD,tail) ; `excess_z(call_core, params)` ; `q_and_ci(calls)`
+   (calibrated `q` + bootstrap CI). Plus a file-side `apply_pmotif_adjudication(score_info)` post-process.
+3. **Calibration in `main_train`** (or the build script first): fit Platt (margin→`P_motif`, **OOF**), fit
+   `q` (excess_z→`P(bearer)`) on the labelled adjudicator panel, freeze EVT settings → bundle. The `q`-fit is
+   a *new* labelled calibration input (the snRNA/IPA panel) — document its provenance.
+4. **Inference wiring** (`cli/main.py`, the existing `scoring_mode` dispatch): per-run, compute `P_motif`
+   from margins, run the adjudicator → `q`+CI, write `P_adj=q·P_motif` + CI. Must run identically on the
+   **streaming and in-memory** paths (the v2.7.1 parity hazard — add the parity test).
+5. **Output schema** (`file_io/writers.py`): `score_info` + `meta` gain `P_motif, P_adj, q, P_adj_lo,
+   P_adj_hi`; `type_id` from a `P_adj` threshold (≥0.5 called / ≥0.9 high-conf — decide), with the CI
+   surfaced; `metrics.iic.json` gains the species `q`+CI. Update `docs/scoring_pipeline.md` schema.
+6. **Gates:** chr19 smoke + streaming==in-memory parity; then the §0a airtight pass (POT-GPD tail +
+   leave-clade-out OOF margins) before finalising.
+7. **Supplant PR:** flip the bundled default to the `pmotif_adjudicated` model, DELETE the z stack
+   (`normalizer.py` adaptive-z, `mode_separation.py`+`mode_sep_pipeline.py`, `prior_adjustment.py`).
+
+**Implementation status (2026-06-27, post-committee — see §0d):** `scoring/species_adjudicator.py` is built and
+unit-tested (`tests/unit/test_scoring/test_species_adjudicator.py`, 22 tests). Done:
+- **Ship-blocker #1 (depth_tail swap):** `depth_tail = (call-core − q99.9_U2)/MAD_U2` is the PRIMARY,
+  size-invariant q-driver; `q = σ(2.16·depth_tail − 6.52)` (q=0.5 at depth_tail=3.02, inside the panel gap
+  [2.91, 3.39]). The old size-aware `excess_z`/`p_gumbel` are retained as a labelled **secondary** diagnostic
+  (`secondary_available` flips false when the exponential tail can't be fit — `depth_tail` does not depend on
+  it). New constants supersede the excess_z fit (2.20/−1.31).
+- **Ship-blocker #3 (operational guards):** `AdjStatus` codes
+  (`ADJUDICATED`/`UNDETERMINED`/`LOW_N`/`DEGENERATE_TAIL`/`SCHEMA_FAIL`), the degenerate-branch contract (MAD≈0
+  and non-finite paths return a status, never a silent NaN), shape/NaN input guards, and a version pin
+  (`ADJUDICATOR_PARAMS_VERSION = "depth_tail_v1_2026-06-27"`, `AdjudicatorParams.params_version`).
+- **Ship-blocker #2 (partial):** Symbiodinium recoded as a **CONFLICT** case and excluded from the loss class
+  in the q-fit (no longer anchors the boundary); the **undetermined band** is implemented as "bootstrap q-CI
+  straddles 0.5 → `UNDETERMINED`". **Remaining for #2:** swap the plain regularized logistic for a
+  separation-safe **Firth / log-F(1,1)** (or weakly-informative Bayesian) fit, add **leave-clade-out
+  (clade-weighted)** validation of `(q_a, q_b)`, and re-derive the constants under that fit. The depth_tail v1
+  constants above are the prototype and are version-pinned so the refit is a clean bundle bump.
+
+Deferred (airtight pass, §0a): leave-clade-out OOF margins; POT-GPD as a one-time tail diagnostic. Plan
+steps 1/3–7 (margin-capable bundle, inference wiring on BOTH paths, output schema, gates, supplant PR) are
+unchanged and still ahead.
+
+### 0d. Committee review + meta-review record (2026-06-27) — auditability
+
+The §0a–§0c statistical core (technical write-up: `eval_corpus/STATISTICAL_METHODS.md`) was put through an
+**8-agent review**: a 5-agent expert committee, then a 3-agent meta-review (statistical adjudicator,
+deployment steelman, citation fact-checker) to separate legitimate findings from incongruous ones and to
+confirm method claims by direct literature research (user's instruction). Full transcripts saved at
+`eval_corpus/reviews/{01_EVT_methodology, 02_calibration_bayes, 03_standard_methods_comparison,
+04_genomics_domain, 05_adversarial_redteam}.md`.
+
+**Consolidated verdict: the method is sound and materially better than the z-norm stack it replaces.** No
+finding overturns the architecture. Three *cheap* ship-blockers; everything heavier was judged non-blocking
+or rejected.
+
+**Three ship-blockers (committee-endorsed, all low-cost):**
+1. **Swap the `q`-driver `excess_z` → `depth_tail`.** `excess_z`'s expected-max carries a `ln(N_u2)` term
+   (the Gumbel location grows with U2 count), making it a *size-aware significance* test (`Q_sig`: "beyond
+   THIS genome's U2 chance, look-elsewhere-corrected"). The authors actually want `Q_pop` ("a real U12
+   *population* regardless of genome size"): **`depth_tail` = (median_call_core − q99.9_U2)/MAD_u2**, which is
+   **size-invariant** (no `ln N`). It already exists in `eval_corpus/robust_sep_one.py` (three lines above
+   `excess_z`) and separates the panel *better* (bearer/loss gap +0.48 vs excess_z +0.25). Keep `p_gumbel`/
+   `excess_z` as a **labelled secondary** (the significance view), not the q-driver. **This is the fix for the
+   "#2 N-dependence" objection below.**
+2. **Separation-safe `q` calibration.** The 37-genome panel is cleanly separated → plain logistic
+   coefficients diverge. Use **Firth / log-F(1,1) penalized** (or weakly-informative Bayesian) logistic;
+   add **leave-clade-out (clade-weighted)** validation and an explicit **undetermined band** (wide-CI →
+   "undetermined", never silently "loss"). Re-code *Symbiodinium*'s label: it is a **CONFLICT** case (this
+   assembly snRNA-absent, sister strain positive), currently entered as a hard loss in the q-fit — exclude or
+   down-weight it rather than letting it anchor the loss class.
+3. **Operational guards.** Status codes (`ADJUDICATED` / `LOW_N` / `SCHEMA_FAIL` / `DEGENERATE_TAIL` / …), a
+   **degenerate-branch contract** (the `len(exc) ≤ 20` NaN path in `_u2_expected_max` / its `depth_tail`
+   analog must return a status, not a silent NaN), NaN guards throughout, and a **version pin** on the
+   calibration constants in the bundle.
+
+**Rejected / deferred as over-engineering (do NOT block on these):** a full POT-GPD shape-ξ pipeline
+(diagnostic-only — margin is large; §0a airtight pass); hierarchical Bayesian `P(bearer)`; a 3-component
+Olthof "hybrid-class" mixture (see citation check); a Markov/HMM tail rebuild. The exponential (ξ=0) tail is
+an acceptable approximation given the gap; GPD stays a one-time diagnostic.
+
+**Citation fact-check (direct-research mandate). Toolbox confirmed solid; two corrections, one vindication:**
+- **CORRECTION — Cheng-Hall mis-attribution.** The `n^−3/5` modality/mode-detectability rate was cited to
+  "Cheng-Hall"; direct check re-attributes the relevant detectability result to **Hall / Hall & York** (the
+  calibration-of-the-dip-test and bandwidth-detectability line). Re-cite accordingly; the *claim* (KDE/dip
+  modality tests are size-blind at tiny π₁) stands and is in fact the reason valley-depth false-negatives
+  aphanomyces.
+- **CORRECTION — MoM-vs-ξ=0 framing.** The real statistical objection to the current tail is **the
+  exponential *shape* assumption (ξ=0)**, not the method-of-moments *estimator* of λ. PBdH (Pickands–
+  Balkema–de Haan) gives GPD(σ,ξ) for exceedances; ξ=0 is the special exponential case. Frame the
+  approximation as "we assume ξ=0," and `depth_tail` (which is non-parametric in the tail shape — it only
+  uses q99.9 + MAD) sidesteps the shape question entirely, another reason it is the better q-driver.
+- **VINDICATED — user's Olthof skepticism.** Direct check of Olthof et al. (the "third hybrid intron class"):
+  the paper proposes a **continuum**, not concrete discrete clusters; the hybrid class is **hypothesized**,
+  from **one unreplicated paper**. The committee's suggestion to model a 3-component mixture is therefore
+  **rejected** — we do not bake a contested taxonomy into the adjudicator.
+- **CONFIRMED — the no-gains biology (backs objection #2's resolution).** Verified verbatim: U12 introns are
+  ancient/single-origin and essentially never gained de-novo (**Physarum** the lone exception = expansion +
+  transformed motifs, not de-novo minor-spliceosome gain); loss runs via **deletion ≫ conversion**
+  (Lin/Roy ratios ~2:1, 9:1, 5:1). So the "false bearer" failure corner (a small cluster of motif-strong
+  introns in a true non-bearer) is biologically near-empty: small-N, motif-strong, *not* a population ⇒
+  ancient-loss relics, which are *degrading* (the panel's 6 small-N losses all had `n_call=0`). This
+  **de-escalates** the worry that drove objection #2.
+
+**Objection #2 in plain terms (the ELI5, recorded):** the old `excess_z` cutoff is "is this genome's
+high-scoring cluster beyond what *this genome's own U2 pile* could throw up by chance?" Bigger genome ⇒ more
+U2 draws ⇒ a higher bar (`ln N_u2`) ⇒ a *small* real bearer with few deep U12s can be pushed under the bar
+purely because its genome is large — an artifact of asking a size-aware significance question. The fix is to
+ask the **size-free** question instead ("is there a real U12 *population* sitting in territory the U2 bulk
+doesn't reach?") = `depth_tail`. The biology backstops it: because U12s are never gained, the only way to get
+a small motif-strong non-population is ancient-loss relics, which sit *shallow* (tail-adjacent), exactly where
+`depth_tail` puts them.
+
+**FINAL NOTE (user, 2026-06-27) — WGD / gene-family duplication weighs on #2.** There IS a mechanism that
+*increases* a genome's U12 count without de-novo gains: **whole-genome or gene-family duplication** (e.g.
+**salmonids** carry many U12s following a recent WGD). This *strengthens*, not weakens, the #2 resolution:
+duplication raises the U12 count by copying *existing, conserved-motif* U12s, so it inflates the **deep,
+coherent population** (high `depth_tail`) — never the shallow motif-strong-FP floor. And because WGD scales
+the whole intron complement, it tends to raise `N_u2` and the U12 count *together*, so the size-free
+`depth_tail` reads it correctly while a size-aware `excess_z` would partly cancel the U12 gain against the
+larger U2 denominator. Net: the small-N false-bearer corner stays empty and the genuine-bearer corner
+(including duplication-expanded bearers) is exactly what `depth_tail` is built to catch.
+
 ## 1. The case (why)
 - **raw motif features > z** for discrimination, leave-clade-out, with the entire gain on the z-inflated
   loss-species FP class (real-classifier AUC 0.916 vs 0.786; `FINDINGS §6c`).
