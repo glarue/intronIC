@@ -555,6 +555,21 @@ def _run_post_classification_pipeline(
     score_path = config.output.get_output_path(".score_info.iic")
     meta_path = config.output.get_output_path(".meta.iic")
 
+    # raw_gated scoring mode (transitional): replace mode-separation + the continuous discount with the
+    # continuous species gate on the raw-feature classifier output. See scoring/species_gate.py and
+    # eval_corpus/PROPOSED_ARCHITECTURE.md. Detected from the bundle's scoring_mode field.
+    if isinstance(model_data, dict) and model_data.get("scoring_mode") == "raw_gated":
+        from intronIC.scoring.species_gate import (
+            apply_raw_gated_postprocess, SpeciesGateParams,
+        )
+        gate_params = SpeciesGateParams.from_dict(model_data.get("raw_gate_params"))
+        gate_res = apply_raw_gated_postprocess(
+            score_path, params=gate_params,
+            threshold=config.scoring.threshold, messenger=messenger,
+        )
+        result.adjusted_hc_count = gate_res.n_called
+        return result
+
     is_modesep = (
         isinstance(model_data, dict)
         and model_data.get("normalizer_mode") == "modesep"
