@@ -168,24 +168,26 @@ Replaces the §5 supplant steps (those targeted the older species_gate). Ordered
 **Implementation status (2026-06-27, post-committee — see §0d):** `scoring/species_adjudicator.py` is built and
 unit-tested (`tests/unit/test_scoring/test_species_adjudicator.py`, 22 tests). Done:
 - **Ship-blocker #1 (depth_tail swap):** `depth_tail = (call-core − q99.9_U2)/MAD_U2` is the PRIMARY,
-  size-invariant q-driver; `q = σ(2.16·depth_tail − 6.52)` (q=0.5 at depth_tail=3.02, inside the panel gap
-  [2.91, 3.39]). The old size-aware `excess_z`/`p_gumbel` are retained as a labelled **secondary** diagnostic
-  (`secondary_available` flips false when the exponential tail can't be fit — `depth_tail` does not depend on
-  it). New constants supersede the excess_z fit (2.20/−1.31).
+  size-invariant q-driver. The old size-aware `excess_z`/`p_gumbel` are retained as a labelled **secondary**
+  diagnostic (`secondary_available` flips false when the exponential tail can't be fit — `depth_tail` does not
+  depend on it). The new fit supersedes the excess_z fit (2.20/−1.31).
+- **Ship-blocker #2 (DONE):** the q-fit is now a **separation-safe Firth-penalized** logistic (the panel is
+  cleanly separated so a plain MLE diverges; Firth = Jeffreys-prior penalty): **`q = σ(3.64·depth_tail −
+  10.86)`** (q=0.5 at depth_tail=2.98, inside the gap [2.91, 3.39]). **Leave-clade-out validated**
+  (`eval_corpus/q_firth_leaveclade.py`, 13 clades): **26/27 genomes classify correctly out-of-sample**; the
+  lone OOF miss is **chlamydomonas** (deepest loss, 3 calls) tipping to q≈0.60 *only* when its whole
+  Chlorophyta clade is held out — and with 3 calls its bootstrap CI is wide → it surfaces as `UNDETERMINED`,
+  not a confident bearer FP (exactly the undetermined band's job). Symbiodinium recoded **CONFLICT** and
+  excluded from the loss class. The **undetermined band** = "bootstrap q-CI straddles 0.5 → `UNDETERMINED`".
 - **Ship-blocker #3 (operational guards):** `AdjStatus` codes
   (`ADJUDICATED`/`UNDETERMINED`/`LOW_N`/`DEGENERATE_TAIL`/`SCHEMA_FAIL`), the degenerate-branch contract (MAD≈0
   and non-finite paths return a status, never a silent NaN), shape/NaN input guards, and a version pin
-  (`ADJUDICATOR_PARAMS_VERSION = "depth_tail_v1_2026-06-27"`, `AdjudicatorParams.params_version`).
-- **Ship-blocker #2 (partial):** Symbiodinium recoded as a **CONFLICT** case and excluded from the loss class
-  in the q-fit (no longer anchors the boundary); the **undetermined band** is implemented as "bootstrap q-CI
-  straddles 0.5 → `UNDETERMINED`". **Remaining for #2:** swap the plain regularized logistic for a
-  separation-safe **Firth / log-F(1,1)** (or weakly-informative Bayesian) fit, add **leave-clade-out
-  (clade-weighted)** validation of `(q_a, q_b)`, and re-derive the constants under that fit. The depth_tail v1
-  constants above are the prototype and are version-pinned so the refit is a clean bundle bump.
+  (`ADJUDICATOR_PARAMS_VERSION = "depth_tail_firth_2026-06-27"`, `AdjudicatorParams.params_version`).
 
-Deferred (airtight pass, §0a): leave-clade-out OOF margins; POT-GPD as a one-time tail diagnostic. Plan
-steps 1/3–7 (margin-capable bundle, inference wiring on BOTH paths, output schema, gates, supplant PR) are
-unchanged and still ahead.
+All three ship-blockers are now closed in `scoring/species_adjudicator.py`. Deferred (airtight pass, §0a):
+leave-clade-out OOF *margins* (distinct from the q leave-clade-out above — this re-scores `P_motif` itself
+out-of-sample); POT-GPD as a one-time tail diagnostic. Plan steps 1/3–7 (margin-capable bundle, inference
+wiring on BOTH paths, output schema, gates, supplant PR) are unchanged and still ahead.
 
 ### 0d. Committee review + meta-review record (2026-06-27) — auditability
 

@@ -41,21 +41,24 @@ def test_q_boundary_is_in_the_panel_gap():
 
 
 @pytest.mark.parametrize("depth_tail,expect", [
-    (1.30, "low"),    # Symbiodinium CONFLICT — must read loss-side
-    (1.01, "low"),    # paramecium loss
-    (2.91, "mid"),    # chlamydomonas — the deepest loss, just below the boundary
-    (3.39, "mid"),    # neocallimastix — the shallowest bearer
-    (4.53, "high"),   # human
-    (6.09, "high"),   # drosophila
+    (1.30, "deep_loss"),    # Symbiodinium CONFLICT — must read clearly loss-side
+    (1.01, "deep_loss"),    # paramecium loss
+    (2.91, "loss"),         # chlamydomonas — the deepest loss, just below the boundary
+    (3.39, "bearer"),       # neocallimastix — the shallowest bearer
+    (4.53, "deep_bearer"),  # human
+    (6.09, "deep_bearer"),  # drosophila
 ])
 def test_q_from_depth_tail_panel_points(depth_tail, expect):
+    """Every panel genome must land on the correct side of the q=0.5 boundary (robust to the exact fit)."""
     q = float(q_from_depth_tail(depth_tail, P))
-    if expect == "low":
+    if expect == "deep_loss":
         assert q < 0.10
-    elif expect == "high":
-        assert q > 0.60
-    else:
-        assert 0.35 < q < 0.75
+    elif expect == "loss":
+        assert q < 0.50
+    elif expect == "bearer":
+        assert q > 0.50
+    else:  # deep_bearer
+        assert q > 0.90
 
 
 def test_q_is_monotonic_increasing_in_depth_tail():

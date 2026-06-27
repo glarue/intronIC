@@ -18,12 +18,15 @@ Method (size-INVARIANT depth-beyond-U2-tail test on the margin):
     SECONDARY** diagnostic, NOT the q-driver. See the 2026-06-27 committee/meta-review record in
     ``docs/raw_gated_scoring.md`` §0d for why the swap (the "#2 N-dependence" fix).
 
-Calibration provenance: ``q``'s ``(q_a, q_b)`` are a regularized logistic fit of ``depth_tail`` against
-bearer/loss truth on the 37-genome panel (``eval_corpus`` snRNA + IPA labels; Symbiodinium recoded as a
-CONFLICT case and excluded from the loss class, not anchored as a hard loss). ship-blocker #2 (separation-
-safe Firth/log-F fit + leave-clade-out validation + a formal undetermined band) is the next refinement of
-these constants; the constants below are the depth_tail v1 prototype values, version-pinned by
-``ADJUDICATOR_PARAMS_VERSION``.
+Calibration provenance: ``q``'s ``(q_a, q_b)`` are a **separation-safe Firth-penalized** logistic fit of
+``depth_tail`` against bearer/loss truth on the 37-genome panel (``eval_corpus`` snRNA + IPA labels;
+Symbiodinium recoded as a CONFLICT case and excluded from the loss class, not anchored as a hard loss). The
+panel is cleanly separated so a plain MLE diverges; Firth (Jeffreys-prior penalty) is the standard fix.
+**Leave-clade-out validated** (``eval_corpus/q_firth_leaveclade.py``): 26/27 genomes classify correctly
+out-of-sample; the lone OOF miss is chlamydomonas (the deepest loss, 3 calls) tipping to q≈0.60 only when its
+whole Chlorophyta clade is held out — and with 3 calls its bootstrap CI is wide, so it surfaces as
+``UNDETERMINED`` (the undetermined band), not a confident bearer. The constants are version-pinned by
+``ADJUDICATOR_PARAMS_VERSION``. (ship-blocker #2 of the 2026-06-27 committee verdict, §0d.)
 """
 from __future__ import annotations
 
@@ -35,14 +38,14 @@ import numpy as np
 
 #: Version pin for the calibration constants (bundle-stamped in production). Bump when (q_a, q_b) or the
 #: depth_tail/EVT recipe changes so a stale bundle can be detected.
-ADJUDICATOR_PARAMS_VERSION = "depth_tail_v1_2026-06-27"
+ADJUDICATOR_PARAMS_VERSION = "depth_tail_firth_2026-06-27"
 
-# Calibration constants frozen from the 37-genome panel (eval_corpus/{robust_sep_one,q_bootstrap}.py).
+# Calibration constants frozen from the 37-genome panel (eval_corpus/{robust_sep_one,q_firth_leaveclade}.py).
 # These are bundle-stamped in production; the defaults document the prototype values.
 DEFAULT_PLATT_A = 2.796       #: P_motif = sigma(PLATT_A * margin + PLATT_C)
 DEFAULT_PLATT_C = -1.178
-DEFAULT_Q_A = 2.16            #: q = sigma(Q_A * depth_tail + Q_B)   (q=0.5 at depth_tail = -Q_B/Q_A = +3.02)
-DEFAULT_Q_B = -6.52
+DEFAULT_Q_A = 3.64            #: q = sigma(Q_A * depth_tail + Q_B)   (Firth fit; q=0.5 at -Q_B/Q_A = +2.98, in the gap)
+DEFAULT_Q_B = -10.86
 
 
 def _sigmoid(z):
