@@ -766,6 +766,17 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
               Species with fewer effective first-pass U12 candidates than this gate-fail.""",
         )
         parser.add_argument(
+            "--adjudicator-min-u2",
+            "--adjudicator_min_u2",
+            dest="adjudicator_min_u2",
+            type=int,
+            default=None,
+            help="""(pmotif_adjudicated bundles) Override the species adjudicator's minimum species-U2 count
+              (default from bundle: 200). Below it a genome is LOW_N and gets q_eff=1 (no low-N suppression,
+              the safe default). LOWER it to let a small genome self-adjudicate against its own (noisier) U2
+              tail — opt-in low-N suppression for tiny genomes / -q sets.""",
+        )
+        parser.add_argument(
             "--mode-sep-mu-u12-tolerance",
             dest="mode_sep_mu_u12_tolerance",
             type=float,

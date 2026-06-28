@@ -120,6 +120,10 @@ class ScoringConfig:
     mode_sep_valley_min: Optional[float] = None  # override KDE valley threshold
     mode_sep_n_floor: Optional[int] = None  # override n_eff floor
     mode_sep_mu_u12_tolerance: Optional[float] = None  # override location-prior tolerance
+    # pmotif_adjudicated: override the species adjudicator's min species-U2 count. Default (bundle's value,
+    # 200) -> a sub-threshold genome is LOW_N -> q_eff=1 (no low-N suppression; option A). Lowering it lets a
+    # small genome self-adjudicate against its own (noisier) U2 tail (option B, opt-in low-N suppression).
+    adjudicator_min_u2: Optional[int] = None
     # Continuous per-intron discount (v2.7+): non-positive log-odds adjustment
     # for cases where SVM overcalls relative to motif log-LR sum, OR where
     # motif evidence is weak. Writes adjusted_score; preserves svm_score.
@@ -716,6 +720,7 @@ class IntronICConfig:
             mode_sep_valley_min=getattr(args, "mode_sep_valley_min", None),
             mode_sep_n_floor=getattr(args, "mode_sep_n_floor", None),
             mode_sep_mu_u12_tolerance=getattr(args, "mode_sep_mu_u12_tolerance", None),
+            adjudicator_min_u2=getattr(args, "adjudicator_min_u2", None),
             discount_disable=getattr(args, "discount_disable", False),
             discount_k_overcall=getattr(args, "discount_k_overcall", 2.0),
             discount_tau_overcall=getattr(args, "discount_tau_overcall", 0.0),

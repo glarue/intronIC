@@ -125,11 +125,22 @@ def test_few_deep_calls_buried_in_fps_are_not_silently_confident():
 # operational guards / status codes
 # --------------------------------------------------------------------------------------------------
 def test_low_n_u2_is_not_assessable():
+    """Too few species U2 (below min_u2) -> LOW_N; the file side then defaults to q_eff=1 (no suppression)."""
     margin, p_motif = _synth_genome(-2.0, 5.0, n_u2=100)
     r = adjudicate(margin, p_motif, P)
     assert r.status is AdjStatus.LOW_N
     assert not r.assessable
     assert r.q == 0.0
+
+
+def test_lowering_min_u2_lets_a_small_genome_self_adjudicate():
+    """Option B opt-in: lowering min_u2 lets a small genome assess against its OWN U2 tail (not LOW_N)."""
+    margin, p_motif = _synth_genome(-2.0, 5.0, n_u2=100)
+    r_default = adjudicate(margin, p_motif, P)
+    r_optin = adjudicate(margin, p_motif, AdjudicatorParams(min_u2=50))
+    assert r_default.status is AdjStatus.LOW_N            # 100 U2 < default min_u2=200
+    assert r_optin.status in (AdjStatus.ADJUDICATED, AdjStatus.UNDETERMINED)   # 100 U2 >= 50 -> own tail
+    assert np.isfinite(r_optin.depth_tail)
 
 
 def test_degenerate_tail_when_u2_scale_collapses():
@@ -262,7 +273,8 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
 
 
 def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
-    """Below min_u2 the species layer is inconclusive -> q_eff=1 (P_adj==P_motif), never silent suppression."""
+    """Below min_u2 the species layer is inconclusive -> LOW_N -> q_eff=1 (P_adj==P_motif), never silent
+    suppression (option A, the safe low-N default)."""
     from intronIC.scoring.species_adjudicator import apply_pmotif_adjudication
     import pandas as pd
     p = tmp_path / "small.score_info.iic"

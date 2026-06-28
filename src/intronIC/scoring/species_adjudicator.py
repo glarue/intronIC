@@ -56,7 +56,7 @@ class AdjStatus(str, Enum):
     """Operational status of one genome's adjudication (every result carries exactly one)."""
     ADJUDICATED = "ADJUDICATED"          #: full assessment succeeded (q + CI valid)
     UNDETERMINED = "UNDETERMINED"        #: q's 95% CI straddles the decision boundary -> bearer/loss unresolved
-    LOW_N = "LOW_N"                      #: too few calls or U2 introns to assess -> defaults to the loss side
+    LOW_N = "LOW_N"                      #: too few calls or species U2 to assess -> file side falls to q_eff=1
     DEGENERATE_TAIL = "DEGENERATE_TAIL"  #: U2 scale (MAD) ~0 / non-finite -> cannot standardize -> unassessable
     SCHEMA_FAIL = "SCHEMA_FAIL"          #: required inputs missing / non-finite / shape mismatch
 
@@ -77,7 +77,9 @@ class AdjudicatorParams:
     bootstrap_n: int = 3000             #: bootstrap resamples for q's CI
     ci: tuple = (2.5, 97.5)             #: q CI percentiles
     min_calls: int = 1                  #: below this -> LOW_N (no population to assess)
-    min_u2: int = 200                   #: below this U2 count -> LOW_N (cannot reference the tail)
+    min_u2: int = 200                   #: below this species U2 count -> LOW_N (cannot reference the tail).
+                                        #: Lower it (config/CLI) to let smaller genomes self-adjudicate with
+                                        #: their OWN (noisier) U2 tail — the opt-in low-N suppression path.
     random_seed: int = 0
     params_version: str = ADJUDICATOR_PARAMS_VERSION
 
@@ -211,6 +213,37 @@ def _fail(n_call, n_u2, status, params) -> AdjudicatorResult:
                              secondary_available=False, params=params)
 
 
+def _assess(calls: np.ndarray, n_u2: int, ref: _U2Reference,
+            params: AdjudicatorParams) -> AdjudicatorResult:
+    """Score a call set against the species U2 reference: depth_tail -> q + bootstrap CI + status
+    (ADJUDICATED if the bootstrap q-CI clears the 0.5 boundary, else UNDETERMINED). The secondary EVT
+    diagnostic (excess_z/p_gumbel) is attached when the U2 tail could be fit."""
+    call_core = float(np.median(calls))
+    depth_tail = compute_depth_tail(call_core, ref)
+    if not np.isfinite(depth_tail):
+        return _fail(len(calls), n_u2, AdjStatus.DEGENERATE_TAIL, params)
+    q_point = float(q_from_depth_tail(depth_tail, params))
+
+    excess_z = compute_excess_z(call_core, ref)
+    p_gumbel = compute_p_gumbel(call_core, ref)
+    secondary_available = bool(np.isfinite(excess_z))
+
+    rng = np.random.RandomState(params.random_seed)
+    k = len(calls)
+    qs = np.empty(params.bootstrap_n)
+    for b in range(params.bootstrap_n):
+        core_b = float(np.median(calls[rng.randint(0, k, k)]))
+        qs[b] = q_from_depth_tail(compute_depth_tail(core_b, ref), params)
+    q_lo, q_hi = (float(x) for x in np.percentile(qs, params.ci))
+
+    status = AdjStatus.ADJUDICATED if (q_lo > 0.5 or q_hi < 0.5) else AdjStatus.UNDETERMINED
+    return AdjudicatorResult(
+        n_call=int(len(calls)), n_u2=int(n_u2), depth_tail=float(depth_tail),
+        q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
+        excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
+        secondary_available=secondary_available, params=params)
+
+
 def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
                params: Optional[AdjudicatorParams] = None) -> AdjudicatorResult:
     """Run the species adjudicator on one genome's per-intron (margin, P_motif).
@@ -220,6 +253,12 @@ def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
     arbitrarily-low-N bearers WITHOUT a count threshold (count enters only as CI width). The status field
     distinguishes a confident call (ADJUDICATED) from a CI that straddles the boundary (UNDETERMINED) and
     from the degenerate/low-data branches (LOW_N / DEGENERATE_TAIL / SCHEMA_FAIL) — never a silent NaN.
+
+    When a species has fewer than ``min_u2`` U2 introns it cannot reference its own tail -> LOW_N (the
+    file-side layer then defaults to ``q_eff = 1``, no suppression: option A, the safe default). Lowering
+    ``min_u2`` (config/CLI) lets smaller genomes self-adjudicate against their OWN (noisier) U2 tail — the
+    opt-in low-N suppression path (option B); a pooled GLOBAL U2 reference was evaluated and rejected (it
+    over-suppresses clean-background genomes — see docs/raw_gated_scoring.md §0c).
     """
     params = params or AdjudicatorParams()
 
@@ -237,49 +276,18 @@ def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
     u2 = margin[p_motif < params.u2_threshold]
     n_total = len(p_motif)
 
-    # ---- LOW_N: too few calls or U2 to assess a population ----
+    # ---- LOW_N: too few calls or species U2 to assess a population ----
     if len(calls) < params.min_calls or len(u2) < params.min_u2:
         return _fail(len(calls), len(u2), AdjStatus.LOW_N, params)
 
     n_u2 = len(u2) / n_total * n_total   # full-population U2 count (== len(u2) unless subsampled upstream)
     ref = _u2_reference(u2, n_u2, params)
 
-    # ---- DEGENERATE_TAIL: U2 scale collapsed -> cannot standardize ----
+    # ---- DEGENERATE_TAIL: species U2 scale collapsed -> cannot standardize ----
     if not ref.finite:
         return _fail(len(calls), len(u2), AdjStatus.DEGENERATE_TAIL, params)
 
-    call_core = float(np.median(calls))
-    depth_tail = compute_depth_tail(call_core, ref)
-    if not np.isfinite(depth_tail):
-        return _fail(len(calls), len(u2), AdjStatus.DEGENERATE_TAIL, params)
-
-    q_point = float(q_from_depth_tail(depth_tail, params))
-
-    # ---- SECONDARY (diagnostic) EVT significance; may be unavailable without affecting q ----
-    excess_z = compute_excess_z(call_core, ref)
-    p_gumbel = compute_p_gumbel(call_core, ref)
-    secondary_available = bool(np.isfinite(excess_z))
-
-    # ---- bootstrap the call-core -> q CI (depth_tail recomputed each resample; U2 ref fixed) ----
-    rng = np.random.RandomState(params.random_seed)
-    k = len(calls)
-    qs = np.empty(params.bootstrap_n)
-    for b in range(params.bootstrap_n):
-        core_b = float(np.median(calls[rng.randint(0, k, k)]))
-        qs[b] = q_from_depth_tail(compute_depth_tail(core_b, ref), params)
-    q_lo, q_hi = (float(x) for x in np.percentile(qs, params.ci))
-
-    # ---- status: confident vs undetermined (CI straddles the 0.5 decision boundary) ----
-    if q_lo > 0.5 or q_hi < 0.5:
-        status = AdjStatus.ADJUDICATED
-    else:
-        status = AdjStatus.UNDETERMINED
-
-    return AdjudicatorResult(
-        n_call=int(len(calls)), n_u2=int(len(u2)), depth_tail=float(depth_tail),
-        q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
-        excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
-        secondary_available=secondary_available, params=params)
+    return _assess(calls, len(u2), ref, params)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -294,11 +302,12 @@ def _effective_q(result: "AdjudicatorResult"):
     """Map an adjudication outcome to the per-intron multiplier ``q_eff`` (+ CI) applied to ``P_motif``.
 
     - ADJUDICATED / UNDETERMINED -> use the assessed ``q`` and its bootstrap CI.
-    - LOW_N / DEGENERATE_TAIL / SCHEMA_FAIL -> the species layer is *inconclusive*, so it must NOT suppress:
-      default to ``q_eff = 1`` (P_adj = P_motif, the species-agnostic motif call). A confirmed loss needs a
-      successful adjudication to suppress; absent that, ``P_motif`` is the call (matches the design's
-      "P_motif everywhere; suppress only confirmed-depleted genomes"). The proper low-N / discrete-input
-      fallback (a bundled global-q or snRNA backstop) is a documented follow-up.
+    - LOW_N / DEGENERATE_TAIL / SCHEMA_FAIL -> the species layer is *inconclusive* (too few species U2, a
+      malformed input, or no motif calls), so it must NOT suppress: default to ``q_eff = 1`` (P_adj =
+      P_motif, the species-agnostic motif call — option A, the safe low-N default). A confirmed loss needs a
+      successful adjudication to suppress; absent that ``P_motif`` is the call (matches the design's "P_motif
+      everywhere; suppress only confirmed-depleted"). Users who want low-N suppression lower ``min_u2`` so a
+      small genome reaches the ADJUDICATED path on its own U2 tail (option B).
     """
     if result.status in (AdjStatus.ADJUDICATED, AdjStatus.UNDETERMINED):
         return result.q, result.q_lo, result.q_hi

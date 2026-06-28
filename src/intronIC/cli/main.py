@@ -710,7 +710,10 @@ def _run_post_classification_pipeline(
         from intronIC.scoring.species_adjudicator import (
             apply_pmotif_adjudication, AdjudicatorParams,
         )
-        adj_params = AdjudicatorParams.from_dict(model_data.get("adjudicator_params"))
+        adj_dict = dict(model_data.get("adjudicator_params") or {})
+        if getattr(config.scoring, "adjudicator_min_u2", None) is not None:
+            adj_dict["min_u2"] = config.scoring.adjudicator_min_u2   # opt-in low-N self-adjudication (option B)
+        adj_params = AdjudicatorParams.from_dict(adj_dict)
         adj_res = apply_pmotif_adjudication(
             score_path, model_data["ensemble"].models, params=adj_params, messenger=messenger,
         )

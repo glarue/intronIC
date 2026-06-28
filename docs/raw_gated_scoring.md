@@ -126,9 +126,31 @@ recent-loss). The species signal is a confidence layer that *complements*, never
   42-model bundle) and noisier loss-FP suppression, so its leave-clade-out Firth-q gives **22/24 correct**
   with 2 *proxy-scale* boundary cases (aphanomyces q=0.39, caenorhabditis q=0.58) whose **`delta`≈0 (NOT an
   OOF effect)** — both separate cleanly in the canonical 42-model bundle (caeno dt=2.17 loss, aphan dt=4.69
-  bearer). **Verdict: Part A confirms the separation is real, not in-sample-inflated.** Part B (POT-GPD on the
-  secondary `excess_z`) remains optional and won't change the verdict (depth_tail is non-parametric in the
-  tail shape). Corpus: 41,261 introns (10,044 U12 / 31,213 U2, 13 clades).
+  bearer). **Verdict: Part A confirms the separation is real, not in-sample-inflated.** Corpus: 41,261
+  introns (10,044 U12 / 31,213 U2, 13 clades).
+- **AIRTIGHT PASS PART B — DONE (2026-06-27, `eval_corpus/gpd_tail_analysis.py`): keep the exponential
+  secondary; the borderline residual is a real motif-strong-FP floor.** Fit a proper POT-GPD to the U2-margin
+  tails. The motivating premise (heavier-than-exponential tail) is **wrong in sign**: shape ξ is robustly
+  **NEGATIVE** (~−0.10..−0.16; bootstrap CIs exclude 0 at high exceedance counts — aspergillus ξ=−0.160,
+  schizo ξ=−0.126) — the U2 tail is *lighter*-than-exponential / bounded, so the exponential is already mildly
+  conservative. The GPD does NOT re-center the 3 borderline losses toward 0: it shifts the *whole* panel up by
+  a near-constant ~+1.5 via genpareto MLE's small-sample negative-ξ bias (reproduced ~+1.0 on **genuinely
+  exponential** data), an estimator artifact, not signal. The +0.2/+0.3 borderline residual (chlamy/asperg/
+  schizo) survives both models and is **independently corroborated by the non-parametric `depth_tail`**
+  (chlamydomonas ranks *above* the clear losses on depth) → a genuine **motif-strong-FP floor**, not a
+  tail-model deficiency; no tail model should absorb it. Bearer/loss ordering unchanged. → no code change to
+  the (labelled, diagnostic-only) secondary.
+- **Low-N fallback — SETTLED (2026-06-27).** When a species has fewer than `min_u2` (200) U2 introns it
+  cannot reference its own tail. **Default = option A:** `LOW_N → q_eff=1` (P_adj=P_motif, no suppression —
+  matches "P_motif everywhere; suppress only confirmed-depleted"; correct for the dominant `-q`
+  curated-candidate case, and production genome runs never hit it). **Option B (opt-in):**
+  `--adjudicator-min-u2 <N>` (config `scoring.adjudicator_min_u2`) lowers the threshold so a small genome
+  **self-adjudicates against its OWN (noisier) U2 tail** — recovering tiny-loss-genome FP suppression.
+  Verified end-to-end (147-intron `-q`: default → LOW_N q=1.0; `--adjudicator-min-u2 50` → self-adjudicates,
+  depth_tail=3.31 q=0.76). A **pooled GLOBAL U2 reference was built and REJECTED**: a single global tail
+  can't span the per-genome q99.9 spread (−5.35..−1.69), so it is dominated by long-U2-tail genomes and
+  **over-suppresses clean-background ones** (suppressed 37 real human U12s → q=0.07, even with correct
+  features). Option B avoids this because each genome references its OWN U2.
 
 ### 0b. CLOSED scoring design — two per-intron numbers + a hierarchical uncertainty (2026-06-27)
 
@@ -246,12 +268,12 @@ artifact** — train ensemble → **fit Platt OOF on the reference** → **fit q
 ensemble** → assemble. `main_train` provides the ensemble-training + z-bypass plumbing; the q-fit
 specifically needs the dev snRNA/IPA panel and cannot be done from `intronIC train` alone.
 
-Deferred (airtight pass, §0a): leave-clade-out OOF *margins* (distinct from the q leave-clade-out — this
-re-scores `P_motif` itself out-of-sample); POT-GPD as a one-time tail diagnostic. **Still ahead:** the
-eval_corpus calibration pipeline (Platt-OOF + q-panel for the bundled ensemble — the real prerequisite for a
-shippable default), a committed pmotif integration/parity test (needs a lightweight bundled fixture), the §5
-formal gates, and the step-7 supplant PR (flip default + delete the z stack). The low-N/discrete-input
-fallback refinement (a bundled global-`q` or snRNA backstop instead of `q_eff=1`) is the other open item.
+**Airtight pass §0a — both parts DONE** (Part A leave-clade-out OOF margins; Part B POT-GPD diagnostic; see
+§0a). **Low-N fallback — SETTLED** (option A default + `--adjudicator-min-u2` opt-in; pooled global-q
+rejected; see §0a "Low-N fallback — SETTLED"). Committed pmotif parity test DONE.
+**Still ahead:** the eval_corpus calibration pipeline (Platt-OOF + q-panel for the bundled ensemble — the real
+prerequisite for a shippable default), the §5 formal gates, and the step-7 supplant PR (flip default + delete
+the z stack).
 
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
