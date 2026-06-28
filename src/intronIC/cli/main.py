@@ -3850,13 +3850,11 @@ def _process_contig_streaming_classify_worker(
     contig, _count = contig_input
     from intronIC.classification.predictor import classify_introns_batch
     from intronIC.file_io.indexed_genome import get_worker_genome
-    from intronIC.scoring.scorer import apply_scaler_to_scored_batch
 
     # Access worker context
     ctx = _streaming_classify_ctx
     config = ctx.config
     ensemble = ctx.ensemble
-    scaler = ctx.scaler
     pwm_sets = ctx.pwm_sets
 
     indexed_genome = get_worker_genome()
@@ -3876,10 +3874,10 @@ def _process_contig_streaming_classify_worker(
     if not scored_scorable:
         return contig, [], filtered_introns, stats
 
-    # Apply frozen scaler → z-scores, then classify
-    normalized_introns = apply_scaler_to_scored_batch(scored_scorable, scaler)
+    # Raw-feature bundles classify directly from the background-corrected raw motif scores
+    # (z-normalization removed — supplant 2b).
     classified_introns = classify_introns_batch(
-        normalized_introns,
+        scored_scorable,
         ensemble,
         threshold=config["threshold"],
     )
@@ -4450,20 +4448,20 @@ def classify_streaming_per_contig(
                 accumulated_duplicate_map.update(stats["duplicate_map"])
                 accumulated_overlap_map.update(stats["overlap_map"])
 
-                # Accumulate scores for cluster validation
+                # Accumulate the scored intron set for the post-classification pipeline. The
+                # raw-feature post-process keys off this set's COUNT (it reads scores from
+                # score_info.iic on disk); the parallel arrays carry raw motif scores so the
+                # in-memory and streaming paths feed the pipeline an identical intron set.
                 for intron in classified_introns:
                     if (
                         intron.scores
-                        and intron.scores.five_z_score is not None
-                        and intron.scores.bp_z_score is not None
-                        and intron.scores.three_z_score is not None
                         and intron.scores.svm_score is not None
                         and intron.metadata
                         and intron.metadata.type_id in ('u12', 'u2')
                     ):
-                        accumulated_five_z.append(intron.scores.five_z_score)
-                        accumulated_bp_z.append(intron.scores.bp_z_score)
-                        accumulated_three_z.append(intron.scores.three_z_score)
+                        accumulated_five_z.append(intron.scores.five_raw_score)
+                        accumulated_bp_z.append(intron.scores.bp_raw_score)
+                        accumulated_three_z.append(intron.scores.three_raw_score)
                         accumulated_svm_scores.append(intron.scores.svm_score)
                         accumulated_type_ids.append(intron.metadata.type_id)
 
@@ -4730,95 +4728,9 @@ def classify_with_pretrained_model(
     messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
     messenger.log_only(f"Using threshold: {config.scoring.threshold}")
 
-    # Determine normalizer mode
-    normalizer_mode = config.scoring.normalizer_mode
-    # The v3 bundle ships a fallback_normalizer for the small-input case.
-    # Treat that as an acceptable saved-scaler under 'human' mode.
-    fallback_normalizer = model_data.get("fallback_normalizer") if isinstance(model_data, dict) else None
-    bundled_saved = saved_normalizer if saved_normalizer is not None else fallback_normalizer
-
-    if normalizer_mode == "auto":
-        # v2.3 bundles ship a true `normalizer`: use it (saved_normalizer
-        # path). v3 bundles ship only a fallback_normalizer: prefer
-        # adaptive, fall through to fallback only if the input is too
-        # small for stable median/IQR estimation.
-        if saved_normalizer is not None:
-            normalizer_mode = "human"
-            messenger.log_only("Auto mode: Using saved human scaler (recommended)")
-        else:
-            normalizer_mode = "adaptive"
-            messenger.log_only(
-                "Auto mode: adaptive per-species normalization "
-                "(standard for v3 multispecies bundles — no frozen scaler is shipped)"
-            )
-
-    # Minimum intron count for adaptive RobustScaler to produce stable
-    # quartile estimates. Below this, fall through to the bundled
-    # fallback scaler. See classify_streaming_per_contig() for rationale —
-    # 200 keeps IQR standard error at ~7% of σ.
-    MIN_ADAPTIVE_INTRONS = 200
-
-    # --load-normalizer takes precedence over --normalizer-mode in both
-    # in-memory and streaming paths: when the user supplies a saved
-    # scaler explicitly, use it regardless of any other mode setting.
-    normalizer_source = None
-    if config.scoring.load_normalizer is not None:
-        messenger.info(
-            f"Loading saved normalizer from {config.scoring.load_normalizer}"
-        )
-        normalizer = load_model(config.scoring.load_normalizer)
-        normalizer_source = "user_supplied"
-        messenger.log_only("Using saved normalizer for reproducible normalization")
-    elif normalizer_mode == "human":
-        if bundled_saved is None:
-            raise ValueError(
-                "Normalizer mode 'human' requested but model has no saved scaler "
-                "(neither v2.3-style normalizer nor v3 fallback_normalizer is "
-                "available). Retrain model or use '--normalizer_mode adaptive'."
-            )
-        messenger.info("Using human-trained normalizer (scaler from training species)")
-        messenger.log_only("This preserves composition bias correction across species")
-        normalizer = bundled_saved
-        normalizer_source = "bundled_human"
-    else:  # adaptive
-        if len(introns) < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
-            # Too few introns to fit adaptive reliably; fall through to bundled fallback.
-            messenger.warning(
-                f"Only {len(introns)} introns available — below the "
-                f"{MIN_ADAPTIVE_INTRONS}-intron floor required for stable "
-                f"adaptive RobustScaler fitting. Falling through to the "
-                f"bundled fallback scaler. Adaptive normalization is "
-                f"preferable when feasible; this mode is for small inputs "
-                f"(single-intron queries, tiny annotation subsets) only."
-            )
-            normalizer = fallback_normalizer
-            normalizer_source = "frozen_fallback_min_introns"
-        else:
-            # Fit normalizer on experimental data (feature re-scaling)
-            messenger.info(
-                "Fitting normalizer on experimental data (domain adaptation)"
-            )
-            messenger.log_only("Re-normalizing features to target species distribution")
-            messenger.log_only(
-                f"Fitting normalizer on {len(introns)} experimental introns"
-            )
-            normalizer = ScoreNormalizer()
-            normalizer.fit(introns, dataset_type="unlabeled")
-            normalizer_source = "adaptive_fit"
-
-            # Save normalizer if requested
-            if config.scoring.save_normalizer:
-                normalizer_path = config.output.get_output_path(".normalizer.pkl")
-                messenger.info(f"Saving fitted normalizer to {normalizer_path}")
-                joblib.dump(normalizer, normalizer_path, compress=3)
-                messenger.log_only(
-                    "Future runs can reuse this normalizer with --load-normalizer"
-                )
-
-    normalized_introns = list(
-        normalizer.transform(introns, dataset_type="experimental")
-    )
-    messenger.log_only(f"Normalized {len(normalized_introns)} experimental introns")
+    # PROBE (2b-2): skip z-normalization — raw-feature bundles predict directly from raw scores.
+    normalizer_source = "none (raw features)"
+    normalized_introns = introns
 
     # Classify using loaded ensemble
     messenger.info("Classifying with pretrained model")
@@ -6356,16 +6268,13 @@ def main_classify(config: IntronICConfig):
             cv_introns = [
                 i for i in classified_introns
                 if i.scores
-                and i.scores.five_z_score is not None
-                and i.scores.bp_z_score is not None
-                and i.scores.three_z_score is not None
                 and i.scores.svm_score is not None
                 and i.metadata
                 and i.metadata.type_id in ('u12', 'u2')
             ]
-            five_z = np.array([i.scores.five_z_score for i in cv_introns])
-            bp_z = np.array([i.scores.bp_z_score for i in cv_introns])
-            three_z = np.array([i.scores.three_z_score for i in cv_introns])
+            five_z = np.array([i.scores.five_raw_score for i in cv_introns])
+            bp_z = np.array([i.scores.bp_raw_score for i in cv_introns])
+            three_z = np.array([i.scores.three_raw_score for i in cv_introns])
             svm_s = np.array([i.scores.svm_score for i in cv_introns])
             type_ids = np.array([i.metadata.type_id for i in cv_introns])
 

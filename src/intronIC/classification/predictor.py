@@ -130,27 +130,18 @@ def _predict_chunk_worker(
         # decision_distance > 0 is equivalent to probability > 50% (the raw classifier decision)
         type_id = "u12" if decision_distance > 0 else "u2"
 
-        # Compute BothEndsStrong augmented features for output
-        # These are computed from z-scores (what the model sees after scaling)
+        # BothEndsStrong augmented features (min/max of the z-scored ends), output only.
+        # Raw-feature bundles carry no z-scores (z-normalization removed); leave these None.
         five_z = intron.scores.five_z_score
         bp_z = intron.scores.bp_z_score
         three_z = intron.scores.three_z_score
-
-        # min(a, b) = 0.5 * ((a + b) - |a - b|)
-        # max(a, b) = 0.5 * ((a + b) + |a - b|)
-        sum_5_bp = five_z + bp_z
-        absdiff_5_bp = abs(five_z - bp_z)
-        min_5_bp = 0.5 * (sum_5_bp - absdiff_5_bp)
-
-        sum_5_3 = five_z + three_z
-        absdiff_5_3 = abs(five_z - three_z)
-        min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
-
-        max_5_bp = None
-        max_5_3 = None
-        if include_max:
-            max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
-            max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
+        min_5_bp = min_5_3 = max_5_bp = max_5_3 = None
+        if five_z is not None and bp_z is not None and three_z is not None:
+            min_5_bp = min(five_z, bp_z)
+            min_5_3 = min(five_z, three_z)
+            if include_max:
+                max_5_bp = max(five_z, bp_z)
+                max_5_3 = max(five_z, three_z)
 
         # Update scores
         new_scores = replace(
@@ -371,27 +362,18 @@ class SVMPredictor:
             # decision_distance > 0 is equivalent to probability > 50% (the raw classifier decision)
             type_id = "u12" if decision_distance > 0 else "u2"
 
-            # Compute BothEndsStrong augmented features for output
-            # These are computed from z-scores (what the model sees after scaling)
+            # BothEndsStrong augmented features (min/max of the z-scored ends), output only.
+            # Raw-feature bundles carry no z-scores (z-normalization removed); leave these None.
             five_z = intron.scores.five_z_score
             bp_z = intron.scores.bp_z_score
             three_z = intron.scores.three_z_score
-
-            # min(a, b) = 0.5 * ((a + b) - |a - b|)
-            # max(a, b) = 0.5 * ((a + b) + |a - b|)
-            sum_5_bp = five_z + bp_z
-            absdiff_5_bp = abs(five_z - bp_z)
-            min_5_bp = 0.5 * (sum_5_bp - absdiff_5_bp)
-
-            sum_5_3 = five_z + three_z
-            absdiff_5_3 = abs(five_z - three_z)
-            min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
-
-            max_5_bp = None
-            max_5_3 = None
-            if include_max:
-                max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
-                max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
+            min_5_bp = min_5_3 = max_5_bp = max_5_3 = None
+            if five_z is not None and bp_z is not None and three_z is not None:
+                min_5_bp = min(five_z, bp_z)
+                min_5_3 = min(five_z, three_z)
+                if include_max:
+                    max_5_bp = max(five_z, bp_z)
+                    max_5_3 = max(five_z, three_z)
 
             # Update scores (create new IntronScores with added fields)
             new_scores = replace(
@@ -586,24 +568,18 @@ def classify_introns_streaming(
         # Type assignment based on decision_distance
         type_id = "u12" if decision_distance > 0 else "u2"
 
-        # Compute augmented features
+        # BothEndsStrong augmented features (min/max of the z-scored ends), output only.
+        # Raw-feature bundles carry no z-scores (z-normalization removed); leave these None.
         five_z = intron.scores.five_z_score
         bp_z = intron.scores.bp_z_score
         three_z = intron.scores.three_z_score
-
-        sum_5_bp = five_z + bp_z
-        absdiff_5_bp = abs(five_z - bp_z)
-        min_5_bp = 0.5 * (sum_5_bp - absdiff_5_bp)
-
-        sum_5_3 = five_z + three_z
-        absdiff_5_3 = abs(five_z - three_z)
-        min_5_3 = 0.5 * (sum_5_3 - absdiff_5_3)
-
-        max_5_bp = None
-        max_5_3 = None
-        if include_max:
-            max_5_bp = 0.5 * (sum_5_bp + absdiff_5_bp)
-            max_5_3 = 0.5 * (sum_5_3 + absdiff_5_3)
+        min_5_bp = min_5_3 = max_5_bp = max_5_3 = None
+        if five_z is not None and bp_z is not None and three_z is not None:
+            min_5_bp = min(five_z, bp_z)
+            min_5_3 = min(five_z, three_z)
+            if include_max:
+                max_5_bp = max(five_z, bp_z)
+                max_5_3 = max(five_z, three_z)
 
         # Update scores
         new_scores = replace(
