@@ -1177,18 +1177,11 @@ class ScoreWriter(BaseWriter):
             "svm_score",
             "5'_seq",
             "5'_raw",
-            "5'_z",
             "bp_seq",
             "bp_seq_u2",
             "bp_raw",
-            "bp_z",
             "3'_seq",
             "3'_raw",
-            "3'_z",
-            "min(5,bp)",
-            "min(5,3)",
-            "max(5,bp)",
-            "max(5,3)",
             "decision_dist",
             "bp_offset",
             "bp_scan_confidence",
@@ -1205,9 +1198,6 @@ class ScoreWriter(BaseWriter):
             "ppt_t_weighted",
             "adjusted_score",
             "ensemble_sigma",
-            "svm_score_adaptive",
-            "svm_score_frozen",
-            "scaler_used",
         ]
         self.file.write("\t".join(header_fields) + "\n")
 
@@ -1250,18 +1240,11 @@ class ScoreWriter(BaseWriter):
         decision_dist = null
         five_seq = null
         five_raw = null
-        five_z = null
         bp_seq = null
         bp_seq_u2 = null
         bp_raw = null
-        bp_z = null
         three_seq = null
         three_raw = null
-        three_z = null
-        min_5_bp = null
-        min_5_3 = null
-        max_5_bp = null
-        max_5_3 = null
         bp_offset = null
         bp_scan_confidence = null
         ppt_ct = null
@@ -1277,9 +1260,6 @@ class ScoreWriter(BaseWriter):
         ppt_t_weighted = null
         adjusted_score = null
         ensemble_sigma = null
-        svm_score_adaptive = null
-        svm_score_frozen = null
-        scaler_used = null
 
         # Fill in scores if available
         if intron.scores:
@@ -1293,30 +1273,16 @@ class ScoreWriter(BaseWriter):
             # Five prime scores
             if intron.scores.five_raw_score is not None:
                 five_raw = str(round(intron.scores.five_raw_score, 6))
-            if intron.scores.five_z_score is not None:
-                five_z = str(round(intron.scores.five_z_score, 4))
 
             # Branch point scores
             if intron.scores.bp_raw_score is not None:
                 bp_raw = str(round(intron.scores.bp_raw_score, 6))
-            if intron.scores.bp_z_score is not None:
-                bp_z = str(round(intron.scores.bp_z_score, 4))
 
             # Three prime scores
             if intron.scores.three_raw_score is not None:
                 three_raw = str(round(intron.scores.three_raw_score, 6))
-            if intron.scores.three_z_score is not None:
-                three_z = str(round(intron.scores.three_z_score, 4))
 
             # BothEndsStrong augmented features
-            if intron.scores.min_5_bp is not None:
-                min_5_bp = str(round(intron.scores.min_5_bp, 4))
-            if intron.scores.min_5_3 is not None:
-                min_5_3 = str(round(intron.scores.min_5_3, 4))
-            if intron.scores.max_5_bp is not None:
-                max_5_bp = str(round(intron.scores.max_5_bp, 4))
-            if intron.scores.max_5_3 is not None:
-                max_5_3 = str(round(intron.scores.max_5_3, 4))
 
             # PPT decomposition, BP offset, absolute fit
             if intron.scores.bp_offset is not None:
@@ -1349,12 +1315,6 @@ class ScoreWriter(BaseWriter):
                 adjusted_score = str(round(intron.scores.adjusted_score, 2))
             if intron.scores.ensemble_sigma is not None:
                 ensemble_sigma = str(round(intron.scores.ensemble_sigma, 4))
-            if getattr(intron.scores, "svm_score_adaptive", None) is not None:
-                svm_score_adaptive = str(round(intron.scores.svm_score_adaptive, 2))
-            if getattr(intron.scores, "svm_score_frozen", None) is not None:
-                svm_score_frozen = str(round(intron.scores.svm_score_frozen, 2))
-            if getattr(intron.scores, "scaler_used", None) is not None:
-                scaler_used = str(intron.scores.scaler_used)
 
         # Fill in sequences if available
         if intron.sequences:
@@ -1373,18 +1333,11 @@ class ScoreWriter(BaseWriter):
             svm_score,
             five_seq,
             five_raw,
-            five_z,
             bp_seq,
             bp_seq_u2,
             bp_raw,
-            bp_z,
             three_seq,
             three_raw,
-            three_z,
-            min_5_bp,
-            min_5_3,
-            max_5_bp,
-            max_5_3,
             decision_dist,
             bp_offset,
             bp_scan_confidence,
@@ -1401,9 +1354,6 @@ class ScoreWriter(BaseWriter):
             ppt_t_weighted,
             adjusted_score,
             ensemble_sigma,
-            svm_score_adaptive,
-            svm_score_frozen,
-            scaler_used,
         ]
 
         self.file.write("\t".join(fields) + "\n")

@@ -44,10 +44,11 @@ def plot_classification_results_from_file(
         threshold: U12 classification threshold
         fig_dpi: Figure DPI for output images
     """
-    # Read scores from file
-    five_z_scores = []
-    bp_z_scores = []
-    three_z_scores = []
+    # Read scores from file. Post z-stack removal the classifier feature space is the
+    # background-corrected RAW motif log-odds (5'/BP/3'_raw), so we plot in that space.
+    five_raw_scores = []
+    bp_raw_scores = []
+    three_raw_scores = []
     svm_scores = []
     type_id_list = []
 
@@ -56,13 +57,13 @@ def plot_classification_results_from_file(
 
         # Find column indices
         try:
-            five_z_idx = header.index("5'_z")
-            bp_z_idx = header.index("bp_z")
+            five_raw_idx = header.index("5'_raw")
+            bp_raw_idx = header.index("bp_raw")
             svm_idx = header.index("svm_score")
         except ValueError as e:
             raise ValueError(f"Missing required column in score file: {e}")
 
-        three_z_idx = header.index("3'_z") if "3'_z" in header else None
+        three_raw_idx = header.index("3'_raw") if "3'_raw" in header else None
         rel_idx = header.index("rel_score") if "rel_score" in header else None
         # v2.7+: prefer adjusted_score for the visual calling tier; falls
         # back to svm_score on rows where adjusted_score is "NA" or column
@@ -71,20 +72,20 @@ def plot_classification_results_from_file(
 
         for line in f:
             fields = line.strip().split("\t")
-            if len(fields) <= max(five_z_idx, bp_z_idx, svm_idx):
+            if len(fields) <= max(five_raw_idx, bp_raw_idx, svm_idx):
                 continue
 
-            # Parse z-scores (may be "NA")
-            five_z = fields[five_z_idx]
-            bp_z = fields[bp_z_idx]
+            # Parse raw motif scores (may be "NA")
+            five_raw = fields[five_raw_idx]
+            bp_raw = fields[bp_raw_idx]
             svm = fields[svm_idx]
-            three_z = fields[three_z_idx] if three_z_idx is not None else "NA"
+            three_raw = fields[three_raw_idx] if three_raw_idx is not None else "NA"
 
-            if five_z != "NA" and bp_z != "NA":
+            if five_raw != "NA" and bp_raw != "NA":
                 try:
-                    five_z_scores.append(float(five_z))
-                    bp_z_scores.append(float(bp_z))
-                    three_z_scores.append(float(three_z) if three_z != "NA" else 0.0)
+                    five_raw_scores.append(float(five_raw))
+                    bp_raw_scores.append(float(bp_raw))
+                    three_raw_scores.append(float(three_raw) if three_raw != "NA" else 0.0)
                 except ValueError:
                     continue
 
@@ -103,12 +104,12 @@ def plot_classification_results_from_file(
                 except ValueError:
                     continue
 
-    if not five_z_scores:
+    if not five_raw_scores:
         # No valid scores to plot
         return
 
-    score_vector = np.array(list(zip(five_z_scores, bp_z_scores)))
-    score_vector_3d = np.array(list(zip(five_z_scores, bp_z_scores, three_z_scores)))
+    score_vector = np.array(list(zip(five_raw_scores, bp_raw_scores)))
+    score_vector_3d = np.array(list(zip(five_raw_scores, bp_raw_scores, three_raw_scores)))
 
     # 1. Density hexplot
     hexplot_path = output_dir / f"{species_name}.plot.hex.iic.png"
@@ -116,8 +117,8 @@ def plot_classification_results_from_file(
         score_vector,
         species_name=species_name,
         output_path=hexplot_path,
-        xlab="5' z-score",
-        ylab="BPS z-score",
+        xlab="5'SS raw score",
+        ylab="BPS raw score",
         fig_dpi=fig_dpi,
     )
 
@@ -129,14 +130,14 @@ def plot_classification_results_from_file(
         svm_scores=svm_scores,
         species_name=species_name,
         output_path=scatter_path,
-        xlab="5' z-score",
-        ylab="BPS z-score",
+        xlab="5'SS raw score",
+        ylab="BPS raw score",
         threshold=threshold,
         fig_dpi=fig_dpi,
     )
 
     # 3. 3D scatter plot (5'z, BPz, 3'z)
-    if three_z_idx is not None:
+    if three_raw_idx is not None:
         scatter_3d_path = output_dir / f"{species_name}.plot.scatter3d.iic.png"
         scatter_3d(
             score_vector_3d=score_vector_3d,
@@ -186,10 +187,10 @@ def plot_classification_results(
     for intron in introns:
         if (
             intron.scores
-            and intron.scores.five_z_score is not None
-            and intron.scores.bp_z_score is not None
+            and intron.scores.five_raw_score is not None
+            and intron.scores.bp_raw_score is not None
         ):
-            score_vector.append([intron.scores.five_z_score, intron.scores.bp_z_score])
+            score_vector.append([intron.scores.five_raw_score, intron.scores.bp_raw_score])
 
     score_vector = np.array(score_vector)
 
@@ -199,8 +200,8 @@ def plot_classification_results(
         score_vector,
         species_name=species_name,
         output_path=hexplot_path,
-        xlab="5' z-score",
-        ylab="BPS z-score",
+        xlab="5'SS raw score",
+        ylab="BPS raw score",
         fig_dpi=fig_dpi,
     )
 
@@ -211,8 +212,8 @@ def plot_classification_results(
         score_vector,
         species_name=species_name,
         output_path=scatter_path,
-        xlab="5' z-score",
-        ylab="BPS z-score",
+        xlab="5'SS raw score",
+        ylab="BPS raw score",
         threshold=threshold,
         fig_dpi=fig_dpi,
     )
@@ -222,14 +223,14 @@ def plot_classification_results(
     for intron in introns:
         if (
             intron.scores
-            and intron.scores.five_z_score is not None
-            and intron.scores.bp_z_score is not None
-            and intron.scores.three_z_score is not None
+            and intron.scores.five_raw_score is not None
+            and intron.scores.bp_raw_score is not None
+            and intron.scores.three_raw_score is not None
         ):
             score_vector_3d.append([
-                intron.scores.five_z_score,
-                intron.scores.bp_z_score,
-                intron.scores.three_z_score,
+                intron.scores.five_raw_score,
+                intron.scores.bp_raw_score,
+                intron.scores.three_raw_score,
             ])
 
     if score_vector_3d:
@@ -247,17 +248,17 @@ def plot_classification_results(
             _tier_score(i)
             for i in introns
             if i.scores and i.scores.svm_score is not None
-            and i.scores.five_z_score is not None
-            and i.scores.bp_z_score is not None
-            and i.scores.three_z_score is not None
+            and i.scores.five_raw_score is not None
+            and i.scores.bp_raw_score is not None
+            and i.scores.three_raw_score is not None
         ]
         type_ids_for_3d = [
             i.metadata.type_id if i.metadata else None
             for i in introns
             if i.scores and i.scores.svm_score is not None
-            and i.scores.five_z_score is not None
-            and i.scores.bp_z_score is not None
-            and i.scores.three_z_score is not None
+            and i.scores.five_raw_score is not None
+            and i.scores.bp_raw_score is not None
+            and i.scores.three_raw_score is not None
         ]
         scatter_3d_path = output_dir / f"{species_name}.plot.scatter3d.iic.png"
         scatter_3d(
@@ -688,9 +689,9 @@ def scatter_3d(
                     label=f"{label} ({len(idx_list)})",
                 )
 
-        ax.set_xlabel("5' z-score", fontsize=fsize, labelpad=8)
-        ax.set_ylabel("BPS z-score", fontsize=fsize, labelpad=8)
-        ax.set_zlabel("3' z-score", fontsize=fsize, labelpad=8)
+        ax.set_xlabel("5'SS raw score", fontsize=fsize, labelpad=8)
+        ax.set_ylabel("BPS raw score", fontsize=fsize, labelpad=8)
+        ax.set_zlabel("3'SS raw score", fontsize=fsize, labelpad=8)
         ax.tick_params(labelsize=fsize - 2)
         ax.view_init(elev=elev, azim=azim)
 
@@ -705,7 +706,7 @@ def scatter_3d(
     # (continuous-discount-adjusted call score). Point positions are always
     # 3D z-scores so the geometry is invariant across runs.
     fig.suptitle(
-        f"{species_name} - U12 Classification (3D z-scores)",
+        f"{species_name} - U12 Classification (3D raw scores)",
         fontsize=fsize + 2, weight="bold", y=0.97,
     )
 
@@ -815,8 +816,8 @@ def plot_training_results(
         combined_scores,
         species_name=species_name,
         output_path=ref_hex_path,
-        xlab="5' z-score",
-        ylab="BPS z-score",
+        xlab="5'SS raw score",
+        ylab="BPS raw score",
         fig_dpi=fig_dpi,
     )
 
@@ -936,8 +937,8 @@ def ref_scatter(
         rasterized=True,
     )
 
-    plt.xlabel("5' z-score", fontsize=fsize)
-    plt.ylabel("BPS z-score", fontsize=fsize)
+    plt.xlabel("5'SS raw score", fontsize=fsize)
+    plt.ylabel("BPS raw score", fontsize=fsize)
     plt.title(f"{species_name} - Training Reference Data", fontsize=fsize)
 
     # Set equal aspect ratio to match original intronIC

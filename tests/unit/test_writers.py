@@ -533,8 +533,11 @@ class TestScoreWriter:
         assert "name" in header
         assert "svm_score" in header
         assert "5'_raw" in header
-        assert "bp_z" in header
+        assert "bp_raw" in header
         assert "3'_seq" in header
+        # z-stack removed (supplant 2b): no z / scaler-gate columns
+        assert "bp_z" not in header
+        assert "svm_score_adaptive" not in header
 
     def test_write_full_scores(self, tmp_path, full_intron):
         """Test writing intron with all scores."""
@@ -547,13 +550,13 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[1].split("\t")
 
-        # 33 v2.4 + 3 scaler-gate fields (svm_score_adaptive, svm_score_frozen, scaler_used) in v2.5
-        assert len(fields) == 36
+        # 26 fields after the z-stack removal (5'_z/bp_z/3'_z, min/max(5,bp)/(5,3),
+        # svm_score_adaptive/svm_score_frozen/scaler_used dropped — supplant 2b)
+        assert len(fields) == 26
         # Check scores are rounded correctly
         assert fields[1] == "5.5"  # rel_score
         assert fields[2] == "95.5"  # svm_score
         assert fields[4] == "12.345678"  # five_raw (index 4, after 5'_seq)
-        assert fields[5] == "2.456"  # five_z (index 5)
 
     def test_write_partial_scores(self, tmp_path):
         """Test writing intron with minimal scores."""
@@ -573,15 +576,13 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[0].split("\t")
 
-        # All score-info fields present (NA-padded for unset scores)
-        # 33 v2.4 + 3 scaler-gate fields in v2.5
-        assert len(fields) == 36
+        # All score-info fields present (NA-padded for unset scores); 26 after z-stack removal
+        assert len(fields) == 26
         # Relative and SVM scores should be available
         assert fields[1] == "2.3"  # rel_score available
         assert fields[2] == "12.3"  # svm_score available
         # PWM scores should be null
-        assert fields[5] == "NA"  # five_raw not available
-        assert fields[6] == "NA"  # five_z not available
+        assert fields[4] == "NA"  # five_raw not available (index 4)
 
     def test_null_values_for_no_scores(self, tmp_path, basic_intron):
         """Test that all score fields are null when no scores."""
@@ -607,12 +608,12 @@ class TestScoreWriter:
         lines = score_file.read_text().strip().split("\n")
         fields = lines[0].split("\t")
 
-        # Header: name, rel_score, svm_score, 5'_seq, 5'_raw, 5'_z,
-        #         bp_seq, bp_seq_u2, bp_raw, bp_z, 3'_seq, 3'_raw, 3'_z, ...
+        # Header (z-free, supplant 2b): name, rel_score, svm_score, 5'_seq, 5'_raw,
+        #         bp_seq, bp_seq_u2, bp_raw, 3'_seq, 3'_raw, ...
         assert fields[3] == "AGGCTGTAAGT"  # five_seq (index 3)
-        assert fields[6] == "TACTAAC"  # bp_seq (index 6)
-        # Note: bp_region_seq is now bp_seq_u2 field at index 7
-        assert fields[10] == "TTTAGCATGG"  # three_seq (index 10)
+        assert fields[5] == "TACTAAC"  # bp_seq (index 5)
+        # bp_seq_u2 at index 6
+        assert fields[8] == "TTTAGCATGG"  # three_seq (index 8)
 
     def test_skips_omitted_introns(self, tmp_path, full_intron, intron_with_tags):
         """score_info.iic is scored-only: ScoreWriter must skip omitted introns
