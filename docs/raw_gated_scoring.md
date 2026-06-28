@@ -237,6 +237,19 @@ shippable default), a committed pmotif integration/parity test (needs a lightwei
 formal gates, and the step-7 supplant PR (flip default + delete the z stack). The low-N/discrete-input
 fallback refinement (a bundled global-`q` or snRNA backstop instead of `q_eff=1`) is the other open item.
 
+**Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
+1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
+committed binary, no dev-panel dependency — parity is independent of calibration) and asserts streaming vs
+in-memory `score_info` + `meta` are byte-identical and the `P_motif/q/P_adj/P_adj_lo/P_adj_hi` columns are
+present. ~100s, skips gracefully without the dev env / chr19 data.
+
+**Clarified supplant path (2026-06-27):** a shippable default does NOT require the from-scratch calibration
+pipeline — the canonical eval ensemble (`raw_gated_42.model.pkl`) + the version-pinned DEFAULT constants is
+*already* a calibrated, validated pmotif bundle (re-stamp via `scripts/build_pmotif_adjudicated_bundle.py` →
+chr19 q=0.993, clean 37-genome panel). The step-7 supplant PR is therefore: place the re-stamped canonical
+bundle at the bundled-default path, flip the default scoring_mode, delete the z stack — gated only on the
+§0a airtight pass (leave-clade-out OOF margins), which the user has said "won't change the verdict."
+
 ### 0d. Committee review + meta-review record (2026-06-27) — auditability
 
 The §0a–§0c statistical core (technical write-up: `eval_corpus/STATISTICAL_METHODS.md`) was put through an
