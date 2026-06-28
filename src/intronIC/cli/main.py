@@ -48,7 +48,12 @@ from intronIC.utils.metadata import (
     generate_training_metadata,
     write_metadata,
 )
-from intronIC.utils.model_io import load_model, normalize_model_bundle
+from intronIC.utils.model_io import (
+    load_model,
+    normalize_model_bundle,
+    assert_scoreable_bundle,
+    UnsupportedBundleError,
+)
 from intronIC.visualization.plots import plot_classification_results
 
 from .args import IntronICArgumentParser
@@ -304,113 +309,6 @@ def apply_species_background(
     return corrected if corrected is not None else pwm_sets
 
 
-def _write_pi_species_adjusted_scores(
-    score_path: Optional[Path],
-    meta_path: Optional[Path],
-    gap_fraction_ucl: float,
-    *,
-    threshold: float,
-    k_sigma: float,
-    prior_floor: float,
-    core_fraction: Optional[float] = None,
-) -> int:
-    """Rewrite score_info.iic `adjusted_score`/`rel_score` via the confidence-shrunk
-    gap_fraction-UCL species prior (`compute_adjusted_score`), then sync meta.iic `rel_score`.
-
-    Shared by both routes (approach A):
-      * fallback / non-modesep — via `_apply_post_classification_adjustment`, k_sigma =
-        sa_config.k_sigma, UCL from `validate_u12_cluster`;
-      * modesep gate-pass — k_sigma = 0 (the only delta vs the second-pass score is the
-        species prior), UCL from the gate.
-    Reads `svm_score` as the per-intron base. Pass `meta_path=None` to skip the meta sync
-    (e.g. when the continuous discount runs next and will re-sync). Returns rows (re)written.
-    """
-    from intronIC.scoring.cluster_validation import compute_adjusted_score
-    n_adjusted = 0
-    if not (score_path and score_path.exists()):
-        return n_adjusted
-
-    tmp = tempfile.NamedTemporaryFile(
-        mode='w', suffix='.iic', dir=score_path.parent, delete=False)
-    try:
-        with open(score_path) as f_in:
-            header_line = f_in.readline()
-            tmp.write(header_line)
-            hdr = header_line.strip().split('\t')
-            col = {name: i for i, name in enumerate(hdr)}
-            svm_col = col.get('svm_score')
-            rel_col = col.get('rel_score')
-            adj_col = col.get('adjusted_score')
-            sigma_col = col.get('ensemble_sigma')
-
-            for line in f_in:
-                parts = line.rstrip('\n').split('\t')
-                if (svm_col is not None and adj_col is not None
-                        and sigma_col is not None
-                        and svm_col < len(parts)
-                        and parts[svm_col] not in ('NA', '')):
-                    try:
-                        svm_val = float(parts[svm_col])
-                        sigma_val = (float(parts[sigma_col])
-                                     if parts[sigma_col] not in ('NA', '') else 0.0)
-                        adj_val = compute_adjusted_score(
-                            svm_val, gap_fraction_ucl, sigma_val,
-                            prior_floor=prior_floor, k_sigma=k_sigma,
-                            core_fraction=core_fraction,
-                        )
-                        parts[adj_col] = str(round(adj_val, 2))
-                        if rel_col is not None:
-                            parts[rel_col] = str(round(adj_val - threshold, 4))
-                        n_adjusted += 1
-                    except (ValueError, IndexError):
-                        pass
-                tmp.write('\t'.join(parts) + '\n')
-        tmp.close()
-        shutil.move(tmp.name, score_path)
-    except Exception:
-        tmp.close()
-        Path(tmp.name).unlink(missing_ok=True)
-        raise
-
-    # Sync meta.iic rel_score from the rewritten score_info (unless caller defers it).
-    if meta_path and meta_path.exists():
-        adj_rel_scores: Dict[str, str] = {}
-        with open(score_path) as f:
-            hdr = f.readline().strip().split('\t')
-            col = {name: i for i, name in enumerate(hdr)}
-            name_col = col.get('name', 0)
-            rel_col = col.get('rel_score')
-            if rel_col is not None:
-                for line in f:
-                    parts = line.rstrip('\n').split('\t')
-                    if parts[rel_col] not in ('NA', ''):
-                        adj_rel_scores[parts[name_col]] = parts[rel_col]
-        if adj_rel_scores:
-            tmp = tempfile.NamedTemporaryFile(
-                mode='w', suffix='.iic', dir=meta_path.parent, delete=False)
-            try:
-                with open(meta_path) as f_in:
-                    meta_hdr = f_in.readline()
-                    tmp.write(meta_hdr)
-                    mh = meta_hdr.strip().split('\t')
-                    mcol = {name: i for i, name in enumerate(mh)}
-                    m_name_col = mcol.get('name', 0)
-                    m_rel_col = mcol.get('rel_score')
-                    for line in f_in:
-                        parts = line.rstrip('\n').split('\t')
-                        name = parts[m_name_col]
-                        if m_rel_col is not None and name in adj_rel_scores:
-                            parts[m_rel_col] = adj_rel_scores[name]
-                        tmp.write('\t'.join(parts) + '\n')
-                tmp.close()
-                shutil.move(tmp.name, meta_path)
-            except Exception:
-                tmp.close()
-                Path(tmp.name).unlink(missing_ok=True)
-                raise
-    return n_adjusted
-
-
 def _sync_calls_to_meta_and_bed(score_path: Path, meta_path: Optional[Path],
                                 bed_path: Optional[Path], messenger=None) -> None:
     """Propagate the final calls from a rewritten ``score_info.iic`` to ``meta.iic`` and ``bed.iic``.
@@ -541,103 +439,6 @@ def _train_and_save_raw_bundle(u12_scored, u2_scored, config, messenger):
     return model_path
 
 
-def _apply_post_classification_adjustment(
-    cluster_validation_result: dict,
-    config: "IntronICConfig",
-    messenger: "UnifiedMessenger",
-    score_path: Optional[Path] = None,
-    meta_path: Optional[Path] = None,
-    core_fraction: Optional[float] = None,
-) -> Optional[dict]:
-    """Apply cluster validation + score adjustment to output files.
-
-    Shared by both streaming and non-streaming classification paths.
-    Computes valley-based prior correction and ensemble σ penalty,
-    rewrites score_info and meta files with adjusted scores.
-
-    Args:
-        cluster_validation_result: Output from validate_u12_cluster()
-        config: Pipeline configuration
-        messenger: For logging
-        score_path: Path to .score_info.iic file
-        meta_path: Path to .meta.iic file
-
-    Returns:
-        cluster_validation_result (passthrough for summary)
-    """
-    valley_depth = cluster_validation_result['valley_depth']
-    regime = cluster_validation_result['regime']
-    gap_fraction = cluster_validation_result.get('gap_fraction')
-    gap_fraction_ucl = cluster_validation_result.get('gap_fraction_ucl')
-
-    # The species prior now keys on the gap_fraction bootstrap UCL (valley_depth is
-    # diagnostic only). UCL None/NaN ⇒ too few confident U12 calls to assess separation
-    # ⇒ leave scores unchanged (conservative no-op; matches the historical skip).
-    if gap_fraction_ucl is None or (
-            isinstance(gap_fraction_ucl, float) and np.isnan(gap_fraction_ucl)):
-        messenger.info(
-            f"Cluster validation: insufficient confident U12-type intron calls "
-            f"(n={cluster_validation_result['n_confident_u12']}) to assess separation"
-        )
-        return cluster_validation_result, None
-
-    messenger.info(
-        f"Cluster validation: valley_depth={valley_depth:.3f} ({regime}), "
-        f"n_confident_u12={cluster_validation_result['n_confident_u12']}, "
-        f"centroid_σ={cluster_validation_result['centroid_sigma']:.1f}"
-    )
-    if not cluster_validation_result.get('has_valley', False):
-        messenger.warning(
-            f"No density valley detected (depth={valley_depth:.3f}): "
-            f"U12-type intron calls may not form a distinct cluster. "
-            f"Consider reviewing calls with caution."
-        )
-
-    # Apply score adjustment if enabled
-    sa_config = config.score_adjustment
-    if not sa_config.enabled:
-        return cluster_validation_result, None
-
-    n_adjusted = _write_pi_species_adjusted_scores(
-        score_path, meta_path, float(gap_fraction_ucl),
-        threshold=config.scoring.threshold,
-        k_sigma=sa_config.k_sigma,
-        prior_floor=sa_config.prior_floor,
-        core_fraction=core_fraction,  # UNIFIED: core-presence on the fallback route too
-    )
-    _gf_disp = "n/a" if gap_fraction is None else f"{gap_fraction:.3f}"
-    messenger.info(
-        f"Score adjustment: {n_adjusted:,} introns adjusted "
-        f"(gap_fraction={_gf_disp}, ucl={gap_fraction_ucl:.3f}, "
-        f"k_σ={sa_config.k_sigma})"
-    )
-
-    # Compute adjusted HC count from the rewritten score_info
-    adjusted_hc_count = None
-    if score_path and score_path.exists():
-        n_hc = 0
-        with open(score_path) as f:
-            hdr = f.readline().strip().split('\t')
-            col = {name: i for i, name in enumerate(hdr)}
-            adj_col = col.get('adjusted_score')
-            if adj_col is not None:
-                for line in f:
-                    parts = line.rstrip('\n').split('\t')
-                    try:
-                        adj = float(parts[adj_col])
-                        if adj >= config.scoring.threshold:
-                            n_hc += 1
-                    except (ValueError, IndexError):
-                        pass
-        adjusted_hc_count = n_hc
-        messenger.log_only(
-            f"Adjusted high-confidence U12 count: {n_hc} "
-            f"(adjusted_score >= {config.scoring.threshold}%)"
-        )
-
-    return cluster_validation_result, adjusted_hc_count
-
-
 @dataclass
 class PostClassResult:
     """Artifacts produced by the shared post-classification pipeline.
@@ -680,8 +481,6 @@ def _run_post_classification_pipeline(
     if len(five_z) == 0:
         return result
 
-    from intronIC.scoring.cluster_validation import validate_u12_cluster
-
     score_path = config.output.get_output_path(".score_info.iic")
     meta_path = config.output.get_output_path(".meta.iic")
 
@@ -722,191 +521,16 @@ def _run_post_classification_pipeline(
         result.adjusted_hc_count = adj_res.n_adj_called
         return result
 
-    is_modesep = (
-        isinstance(model_data, dict)
-        and model_data.get("normalizer_mode") == "modesep"
-        and not getattr(config.scoring, "mode_sep_disable", False)
+    # Legacy z-normalization + mode-separation + continuous-discount scoring was removed
+    # (supplant step 2). Only raw-feature bundles score (scoring_mode raw_gated /
+    # pmotif_adjudicated), both handled above and returned. Reaching here means a legacy
+    # zscore/modesep bundle slipped past the load-time guard (assert_scoreable_bundle).
+    mode = model_data.get("scoring_mode") if isinstance(model_data, dict) else None
+    raise UnsupportedBundleError(
+        f"Unscoreable bundle reached post-classification (scoring_mode={mode!r}); the legacy "
+        f"z-stack was removed (supplant step 2). Retrain with `--scoring-mode pmotif_adjudicated` "
+        f"or use the `pre-zstack-removal` git tag for legacy bundles."
     )
-
-    if is_modesep:
-        from intronIC.classification.mode_sep_pipeline import (
-            apply_mode_separation_postprocess,
-        )
-        from intronIC.scoring.cluster_validation import compute_valley_depth
-
-        # CLI overrides patch the bundle's modesep_params for this run only.
-        params = dict(model_data.get("modesep_params", {}))
-        for cli_key, bundle_key in (
-            ("mode_sep_z_floor", "z_floor_eligibility"),
-            ("mode_sep_valley_min", "valley_depth_min"),
-            ("mode_sep_n_floor", "n_floor_candidates"),
-            ("mode_sep_mu_u12_tolerance", "mu_u12_5p_tolerance"),
-        ):
-            v = getattr(config.scoring, cli_key, None)
-            if v is not None:
-                params[bundle_key] = v
-        patched_runtime = {**model_data, "modesep_params": params}
-
-        diagnostics_path = config.output.get_output_path(".modesep.json")
-        modesep_result = apply_mode_separation_postprocess(
-            score_info_path=score_path,
-            runtime=patched_runtime,
-            valley_depth_fn=compute_valley_depth,
-            threshold=config.scoring.threshold,
-            diagnostics_path=diagnostics_path,
-            messenger=messenger,
-        )
-        adjusted_hc_count = modesep_result.n_called_u12
-
-        # Per-species separation stat that drove π_species (surfaced in score_info,
-        # Step 5): gate's UCL default (modesep route); fallback overrides below.
-        _species_gf = modesep_result.gap_fraction
-        _species_ucl = modesep_result.gap_fraction_ucl
-        if modesep_result.route == "first_pass_fallback":
-            # Gate-fail defense-in-depth: the svm_score column is the unmodified
-            # first-pass score, so apply the legacy valley-based log-odds discount
-            # (matches pre-v2.6 behaviour for the no-valley regime).
-            messenger.log_only(
-                "[modesep] gate-fail: running legacy valley-based "
-                "score adjustment to discount first-pass calls"
-            )
-            cv_result = validate_u12_cluster(
-                five_z_scores=five_z,
-                bp_z_scores=bp_z,
-                three_z_scores=three_z,
-                svm_scores=svm_s,
-                type_ids=type_ids,
-                confidence_threshold=config.scoring.threshold,
-            )
-            cv_result, leg_hc_count = _apply_post_classification_adjustment(
-                cv_result, config, messenger,
-                score_path=score_path,
-                meta_path=meta_path,
-                core_fraction=modesep_result.core_fraction,
-            )
-            if leg_hc_count is not None:
-                adjusted_hc_count = leg_hc_count
-            _species_gf = cv_result.get('gap_fraction')
-            _species_ucl = cv_result.get('gap_fraction_ucl')
-            result.cv_result = cv_result
-        elif modesep_result.route == "modesep":
-            # v3 gate-gapfrac (Step 3d, approach A): give the modesep route the
-            # species prior it lacked — apply the confidence-shrunk gap_fraction-UCL
-            # prior (from the gate) to svm_score BEFORE the continuous discount, with
-            # k_σ=0 so the only delta vs the second-pass score is the species term.
-            # UCL None/NaN ⇒ skip (conservative no-op); well-separated ⇒ adj≈svm.
-            # NB: the "conservative_min" route (C4 — gate-fail-but-separable under a
-            # graduated-tail bundle) deliberately skips this π_species write and goes
-            # straight to the mode-sep score + graduated tail below: the gate-free
-            # offline eval that validated the tail applied no species prior, and the
-            # tail's learned FP-suppression already encodes the distrust.
-            _ucl = modesep_result.gap_fraction_ucl
-            _sa = config.score_adjustment
-            # CLEANUP (2026-06-24): on a graduated-tail bundle the continuous-discount step below
-            # OVERWRITES adjusted_score for every margin-bearing (eligible) intron from raw features, so
-            # this pre-tail π_species write is inert for all CALLS (calls are necessarily eligible, z5≥floor)
-            # and merely leaks onto sub-threshold non-eligible rows via the discount `base`. Skip it on
-            # graduated bundles to remove the write-then-overwrite footgun and keep π_species cleanly absent
-            # on the graduated path (consistent with the conservative_min route, which already skips it).
-            # Non-graduated bundles (no graduated_tail) are byte-unchanged — the write still feeds the
-            # legacy discount. first_pass_fallback keeps its own π_species (it has no margin → no tail).
-            if (_sa.enabled and _ucl is not None and not np.isnan(_ucl)
-                    and not params.get("graduated_tail")):
-                _disc_on = not getattr(config.scoring, "discount_disable", False)
-                _n_ps = _write_pi_species_adjusted_scores(
-                    score_path,
-                    None if _disc_on else meta_path,  # discount re-syncs meta when it runs
-                    float(_ucl),
-                    threshold=config.scoring.threshold,
-                    k_sigma=0.0,
-                    prior_floor=_sa.prior_floor,
-                    core_fraction=modesep_result.core_fraction,
-                )
-                _gfd = ("n/a" if modesep_result.gap_fraction is None
-                        else f"{modesep_result.gap_fraction:.3f}")
-                messenger.info(
-                    f"[modesep] species prior: {_n_ps:,} introns adjusted "
-                    f"(gap_fraction={_gfd}, ucl={float(_ucl):.3f}, k_σ=0)"
-                )
-
-        # v2.7+: continuous per-intron discount applied AFTER mode-sep
-        # recalibration (gate-pass) AND AFTER the legacy valley discount
-        # (gate-fail). Writes adjusted_score; preserves svm_score. Calls at
-        # threshold are evaluated against adjusted_score. Both routes chain from
-        # adjusted_score (the prior pass wrote it; if skipped it's NA and the
-        # discount fillna's it back to svm_score — safe either way).
-        if not getattr(config.scoring, "discount_disable", False):
-            from intronIC.classification.mode_sep_pipeline import (
-                apply_continuous_per_intron_discount,
-                _maybe_write_diagnostics,
-            )
-            from intronIC.scoring.mode_separation import (
-                DEFAULT_SPECIES_PENALTY_PGATE,
-            )
-            disc_summary = apply_continuous_per_intron_discount(
-                score_info_path=score_path,
-                threshold=config.scoring.threshold,
-                k_overcall=getattr(config.scoring, "discount_k_overcall", 2.0),
-                tau_overcall=getattr(config.scoring, "discount_tau_overcall", 0.0),
-                k_weakmot=getattr(config.scoring, "discount_k_weakmot", 0.0),
-                tau_motif=getattr(config.scoring, "discount_tau_motif", 10.0),
-                input_column="adjusted_score",
-                meta_path=meta_path,
-                messenger=messenger,
-                species_gap_fraction=_species_gf,
-                species_gap_fraction_ucl=_species_ucl,
-                # C7: when the bundle ships a graduated/Platt tail, the discount
-                # function replaces the overcall discount with the smooth logistic
-                # on the margin-bearing introns (no-op for default bundles).
-                graduated_tail=params.get("graduated_tail"),
-                # C6: species-level frac_bp6+logN penalty, gated on the bundle param
-                # (default off -> byte-unchanged). Opt-in only after the C6/V eval.
-                enable_species_penalty=bool(params.get("enable_species_penalty", False)),
-                species_penalty_pgate=float(
-                    params.get("species_penalty_pgate", DEFAULT_SPECIES_PENALTY_PGATE)
-                ),
-            )
-            adjusted_hc_count = disc_summary["n_called_post_discount"]
-            result.disc_summary = disc_summary
-            # Surface the post-discount counts + species penalty in modesep_result, then RE-WRITE the
-            # modesep.json sidecar. It was first written inside apply_mode_separation_postprocess (PRE-discount),
-            # so without this the sidecar's discount/penalty fields stay at their defaults
-            # (continuous_discount_applied=False, n_called_*_discount=None, species_penalty=None) even when the
-            # tail/penalty ran on the species. Diagnostic only — no effect on scores.
-            try:
-                modesep_result = replace(
-                    modesep_result,
-                    n_called_pre_discount=disc_summary["n_called_pre_discount"],
-                    n_called_post_discount=disc_summary["n_called_post_discount"],
-                    n_called_u12=disc_summary["n_called_post_discount"],
-                    continuous_discount_applied=True,
-                    species_penalty=disc_summary.get("species_penalty"),
-                )
-                _maybe_write_diagnostics(modesep_result, diagnostics_path, score_path)
-            except Exception:
-                pass
-
-        result.modesep_result = modesep_result
-        result.adjusted_hc_count = adjusted_hc_count
-    else:
-        # Non-modesep bundle: legacy cluster_validation + valley-prior adjustment only.
-        cv_result = validate_u12_cluster(
-            five_z_scores=five_z,
-            bp_z_scores=bp_z,
-            three_z_scores=three_z,
-            svm_scores=svm_s,
-            type_ids=type_ids,
-            confidence_threshold=config.scoring.threshold,
-        )
-        cv_result, adjusted_hc_count = _apply_post_classification_adjustment(
-            cv_result, config, messenger,
-            score_path=score_path,
-            meta_path=meta_path,
-        )
-        result.cv_result = cv_result
-        result.adjusted_hc_count = adjusted_hc_count
-
-    return result
 
 
 def _finalize_classification_metrics(
@@ -4477,6 +4101,7 @@ def classify_streaming_per_contig(
     model_data = normalize_model_bundle(
         load_model(config.training.pretrained_model_path)
     )
+    assert_scoreable_bundle(model_data)  # fail fast on legacy z-stack bundles (supplant step 2)
 
     # Handle both old and new model format
     if isinstance(model_data, dict):
@@ -5231,6 +4856,7 @@ def classify_with_pretrained_model(
         raise FileNotFoundError(f"Pretrained model not found: {model_path}")
 
     model_data = normalize_model_bundle(load_model(model_path))
+    assert_scoreable_bundle(model_data)  # fail fast on legacy z-stack bundles (supplant step 2)
 
     # Handle both old format (SVMEnsemble directly) and new format (dict bundle)
     if isinstance(model_data, dict):
@@ -6908,10 +6534,10 @@ def main_classify(config: IntronICConfig):
         adjusted_hc_count = None
         if classified_introns:
             # Filter to introns with all three z-scores + svm_score present AND
-            # a resolved u12/u2 type_id, so the parallel arrays line up for
-            # cluster validation. This guard is identical to the streaming
-            # accumulator filter (classify_streaming_per_contig) so both paths
-            # feed validate_u12_cluster the same intron set — previously the
+            # a resolved u12/u2 type_id, so the parallel arrays line up. This guard
+            # is identical to the streaming accumulator filter
+            # (classify_streaming_per_contig) so both paths feed the
+            # post-classification pipeline the same intron set — previously the
             # in-memory path admitted metadata-less introns as a fabricated 'u2',
             # which could diverge from streaming on some species.
             cv_introns = [
@@ -6931,7 +6557,7 @@ def main_classify(config: IntronICConfig):
             type_ids = np.array([i.metadata.type_id for i in cv_introns])
 
             if len(five_z) > 0:
-                # Mode-sep + discount + unified labels, shared with the
+                # Raw_gated / pmotif_adjudicated post-classification, shared with the
                 # streaming-classify path (single source of truth).
                 _post = _run_post_classification_pipeline(
                     five_z=five_z, bp_z=bp_z, three_z=three_z,

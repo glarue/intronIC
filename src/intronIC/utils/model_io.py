@@ -208,6 +208,37 @@ def normalize_model_bundle(model_data: Any) -> Any:
     return model_data
 
 
+#: Bundle scoring modes this build can classify with. The legacy z-normalization +
+#: mode-separation + continuous-discount stack was removed (supplant step 2); only
+#: raw-feature bundles score.
+SCOREABLE_SCORING_MODES = ("raw_gated", "pmotif_adjudicated")
+
+
+class UnsupportedBundleError(RuntimeError):
+    """A loaded bundle cannot be scored by this build (a legacy z-stack bundle)."""
+
+
+def assert_scoreable_bundle(model_data: Any) -> None:
+    """Fail fast (at load) on a legacy zscore / mode-separation bundle.
+
+    The z-normalization + mode-separation + continuous-discount stack was removed
+    (supplant step 2), so only raw-feature bundles (``scoring_mode`` in
+    :data:`SCOREABLE_SCORING_MODES`) are scoreable. Old zscore/modesep + v3/v6
+    production bundles remain reproducible from the ``pre-zstack-removal`` git tag.
+    """
+    mode = model_data.get("scoring_mode") if isinstance(model_data, dict) else None
+    if mode in SCOREABLE_SCORING_MODES:
+        return
+    raise UnsupportedBundleError(
+        f"This intronIC build scores only raw-feature bundles "
+        f"(scoring_mode in {SCOREABLE_SCORING_MODES}); got scoring_mode={mode!r}. "
+        f"The legacy z-normalization + mode-separation + continuous-discount stack "
+        f"was removed (supplant step 2). Retrain with `intronIC train --scoring-mode "
+        f"pmotif_adjudicated`, or check out the `pre-zstack-removal` git tag to score "
+        f"legacy zscore/modesep (incl. v3/v6 production) bundles."
+    )
+
+
 def save_model(
     model: Any,
     output_dir: Path,
