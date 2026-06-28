@@ -12,7 +12,6 @@ from intronIC.scoring.normalizer import ScoreNormalizer, DatasetType
 from intronIC.scoring.pwm import PWM, PWMSet, PWMLoader
 from intronIC.scoring.branch_point import BranchPointMatch, BranchPointScorer
 from intronIC.scoring.scorer import IntronScorer
-from intronIC.scoring import mode_separation
 
 __all__ = [
     'ScoreNormalizer',
@@ -23,5 +22,4 @@ __all__ = [
     'BranchPointMatch',
     'BranchPointScorer',
     'IntronScorer',
-    'mode_separation',
 ]
