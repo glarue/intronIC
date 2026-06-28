@@ -199,6 +199,13 @@ All three ship-blockers are now closed in `scoring/species_adjudicator.py`.
   silent suppression).
 - **Step 4 (output schema):** `score_info.iic` gains `P_motif, q, P_adj, P_adj_lo, P_adj_hi`; `type_id` from
   `P_adj≥0.5`; `adjusted_score=100·P_adj`, `rel_score=100·P_adj−90` (existing conventions preserved).
+- **meta.iic/bed.iic sync (DONE):** the file-side post-process modes write their calls *after* meta/bed are
+  already on disk, so the shared dispatch now calls `_sync_calls_to_meta_and_bed` (reuses
+  `_sync_meta_from_score_info` for meta `type_id`+`rel_score`; rewrites bed col 4 ← `adjusted_score`). This
+  fixes a real correctness bug — stale meta `type_id` silently corrupted the `metrics.iic.json` boundary
+  tables whenever a call flipped. Applied to **both** `pmotif_adjudicated` and `raw_gated`. Verified on
+  chr19: meta/bed full-row **identical** streaming vs in-memory; meta `type_id`/`rel_score` and bed col 4
+  match `score_info` 1.0000.
 - **End-to-end verified on all three input modes:** genome+annotation (`--in-memory` and `--streaming`,
   bit-identical, chr19 → q=0.993 bearer, 39 U12 calls); `-q` pre-extracted sequences full (bit-identical to
   the genome path); `-q` low-N subset (120 introns → `LOW_N` → `q_eff=1` fallback, `P_adj=P_motif`, no crash).
@@ -206,11 +213,10 @@ All three ship-blockers are now closed in `scoring/species_adjudicator.py`.
 
 Deferred (airtight pass, §0a): leave-clade-out OOF *margins* (distinct from the q leave-clade-out — this
 re-scores `P_motif` itself out-of-sample); POT-GPD as a one-time tail diagnostic. **Still ahead:** step 2
-(`main_train` emits the bundle reproducibly, replacing the re-stamp script), `meta.iic`/`bed.iic` call sync
-(currently only `score_info` is rewritten, as with `raw_gated`), a committed pmotif integration/parity test
-(needs a lightweight bundled fixture), the §5 formal gates, and the step-7 supplant PR (flip default + delete
-the z stack). A bundled `pmotif_adjudicated` model + the low-N/discrete-input fallback refinement (a bundled
-global-`q` or snRNA backstop instead of `q_eff=1`) are the other open items.
+(`main_train` emits the bundle reproducibly, replacing the re-stamp script), a committed pmotif
+integration/parity test (needs a lightweight bundled fixture), the §5 formal gates, and the step-7 supplant
+PR (flip default + delete the z stack). A bundled `pmotif_adjudicated` model + the low-N/discrete-input
+fallback refinement (a bundled global-`q` or snRNA backstop instead of `q_eff=1`) are the other open items.
 
 ### 0d. Committee review + meta-review record (2026-06-27) — auditability
 

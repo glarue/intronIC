@@ -411,6 +411,54 @@ def _write_pi_species_adjusted_scores(
     return n_adjusted
 
 
+def _sync_calls_to_meta_and_bed(score_path: Path, meta_path: Optional[Path],
+                                bed_path: Optional[Path], messenger=None) -> None:
+    """Propagate the final calls from a rewritten ``score_info.iic`` to ``meta.iic`` and ``bed.iic``.
+
+    The file-side post-process scoring modes (``raw_gated``, ``pmotif_adjudicated``) compute their calls
+    AFTER meta.iic/bed.iic are already on disk (both the streaming and in-memory paths write all output
+    files from the in-memory introns' first-pass values, then run the shared post-classification pipeline).
+    Without this sync those files keep first-pass ``type_id`` / ``rel_score`` (meta) and ``svm_score`` (bed
+    col 4) — which silently corrupts the ``metrics.iic.json`` boundary tables (read from meta ``type_id``)
+    whenever the post-process flips a call. Mirrors what the modesep/discount path already does.
+
+    Updates: meta ``rel_score`` + ``type_id`` (via the shared ``_sync_meta_from_score_info``); bed col 4
+    (score) <- ``adjusted_score``, keyed by intron name. Omitted introns (absent from score_info) pass
+    through unchanged.
+    """
+    import os
+    import pandas as pd
+    from intronIC.classification.mode_sep_pipeline import _sync_meta_from_score_info
+
+    df = pd.read_csv(score_path, sep="\t", dtype=str, keep_default_na=False)
+    if "name" not in df.columns:
+        return
+    if meta_path is not None and meta_path.exists() and {"rel_score", "type_id"} <= set(df.columns):
+        _sync_meta_from_score_info(meta_path, df, messenger=messenger)
+    if bed_path is not None and bed_path.exists() and "adjusted_score" in df.columns:
+        name_to_score = dict(zip(df["name"].astype(str), df["adjusted_score"].astype(str)))
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".iic", dir=bed_path.parent, delete=False)
+        n_synced = 0
+        try:
+            with open(bed_path) as f_in:
+                for line in f_in:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) > 4 and parts[3] in name_to_score:   # col 3 = name, col 4 = score
+                        parts[4] = name_to_score[parts[3]]
+                        n_synced += 1
+                    tmp.write("\t".join(parts) + "\n")
+            tmp.close()
+            orig_mode = bed_path.stat().st_mode if bed_path.exists() else 0o644
+            shutil.move(tmp.name, bed_path)
+            os.chmod(bed_path, orig_mode & 0o777)
+            if messenger is not None:
+                messenger.info(f"[bed-sync] rewrote score (col 4) for {n_synced} rows in {bed_path.name}")
+        except Exception:
+            tmp.close()
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
+
+
 def _apply_post_classification_adjustment(
     cluster_validation_result: dict,
     config: "IntronICConfig",
@@ -567,6 +615,8 @@ def _run_post_classification_pipeline(
             score_path, params=gate_params,
             threshold=config.scoring.threshold, messenger=messenger,
         )
+        _sync_calls_to_meta_and_bed(
+            score_path, meta_path, config.output.get_output_path(".bed.iic"), messenger=messenger)
         result.adjusted_hc_count = gate_res.n_called
         return result
 
@@ -582,6 +632,8 @@ def _run_post_classification_pipeline(
         adj_res = apply_pmotif_adjudication(
             score_path, model_data["ensemble"].models, params=adj_params, messenger=messenger,
         )
+        _sync_calls_to_meta_and_bed(
+            score_path, meta_path, config.output.get_output_path(".bed.iic"), messenger=messenger)
         result.adjusted_hc_count = adj_res.n_adj_called
         return result
 
