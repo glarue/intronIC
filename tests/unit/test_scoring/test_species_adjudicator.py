@@ -219,6 +219,24 @@ def test_tied_calls_do_not_give_degenerate_ci():
     assert (r0.q_hi - r0.q_lo) < 1e-6     # the degeneracy the fix removes
 
 
+def test_adjudication_is_order_invariant():
+    """The whole adjudication — including the bootstrap q-CI — must be invariant to the input row order.
+    The CI bootstrap resamples calls by index, so without sorting the calls the streaming (per-contig) and
+    in-memory paths (same call values, different order) produced different P_adj_lo/P_adj_hi. Regression for
+    the streaming==in-memory parity break under the raw-feature default."""
+    rng = np.random.RandomState(7)
+    u2 = rng.normal(-4.8, 1.0, 3000)
+    calls = rng.normal(1.6, 0.4, 30)
+    margin = np.concatenate([u2, calls])
+    p_motif = 1.0 / (1.0 + np.exp(-(P.platt_a * margin + P.platt_c)))
+    r1 = adjudicate(margin, p_motif, P)
+    perm = rng.permutation(len(margin))
+    r2 = adjudicate(margin[perm], p_motif[perm], P)
+    assert r1.q == r2.q
+    assert r1.q_lo == r2.q_lo and r1.q_hi == r2.q_hi    # the bootstrap CI must match exactly across orderings
+    assert r1.depth_tail == r2.depth_tail
+
+
 def test_bootstrap_is_reproducible():
     margin, p_motif = _synth_genome(-2.0, 5.0)
     r1 = adjudicate(margin, p_motif, P)

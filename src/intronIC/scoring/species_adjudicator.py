@@ -284,7 +284,12 @@ def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
     if len(margin) == 0:
         return _fail(0, 0, AdjStatus.SCHEMA_FAIL, params)
 
-    calls = margin[p_motif >= params.call_threshold]
+    # SORT the call set into a canonical order so the bootstrap CI is INDEPENDENT of the input row order.
+    # The bootstrap resamples calls by index (rng.randint); without sorting, the streaming (per-contig) and
+    # in-memory paths emit the same call *values* in different *order*, so a fixed-seed bootstrap draws
+    # different elements -> different q CI (the point q is an order-independent median, so it matched, but
+    # P_adj_lo/P_adj_hi diverged across the two paths). Sorting makes the whole adjudication order-invariant.
+    calls = np.sort(margin[p_motif >= params.call_threshold])
     u2 = margin[p_motif < params.u2_threshold]
     n_total = len(p_motif)
 

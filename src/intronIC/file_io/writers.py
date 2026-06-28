@@ -1039,9 +1039,12 @@ class SequenceWriter(BaseWriter):
 
         fields = [name]
 
-        # Optionally include score
+        # Optionally include score. Round to 2 dp to match score_info.iic's svm_score formatting and to be
+        # deterministic: a full-precision str() of svm_score can differ in the last ULP between the streaming
+        # (per-contig) and in-memory paths (a tiny float-accumulation difference in the raw-feature
+        # background), which broke the bit-identical introns.iic parity under the raw-feature default.
         if include_score:
-            score = str(intron.svm_score) if intron.svm_score is not None else "NA"
+            score = str(round(intron.svm_score, 2)) if intron.svm_score is not None else "NA"
             fields.append(score)
 
         fields.extend([upstream, sequence, downstream])
