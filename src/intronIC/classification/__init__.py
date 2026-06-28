@@ -8,7 +8,6 @@ Components:
     - SVMOptimizer: Hyperparameter optimization via geometric grid search
     - SVMTrainer: Ensemble training with U2 subsampling
     - SVMPredictor: Apply trained models to classify introns
-    - IntronClassifier: High-level orchestrator for complete pipeline
 """
 
 from intronIC.classification.optimizer import (
@@ -24,10 +23,6 @@ from intronIC.classification.trainer import (
 from intronIC.classification.predictor import (
     SVMPredictor,
 )
-from intronIC.classification.classifier import (
-    IntronClassifier,
-    ClassificationResult,
-)
 
 __all__ = [
     "SVMOptimizer",
@@ -37,6 +32,4 @@ __all__ = [
     "SVMModel",
     "SVMEnsemble",
     "SVMPredictor",
-    "IntronClassifier",
-    "ClassificationResult",
 ]
