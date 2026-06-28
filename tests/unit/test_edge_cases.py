@@ -16,7 +16,6 @@ from intronIC.core.intron import (
     OmissionReason,
 )
 from intronIC.extraction.filters import IntronFilter
-from intronIC.scoring.normalizer import ScoreNormalizer
 from intronIC.scoring.pwm import PWM, PWMSet
 from intronIC.scoring.scorer import IntronScorer
 
@@ -239,76 +238,6 @@ def test_scoring_with_uniform_pwm():
     # Should all be equal (within floating point precision)
     assert abs(score1 - score2) < 1e-10
     assert abs(score2 - score3) < 1e-10
-
-
-def test_z_score_normalization_with_zero_variance():
-    """Test normalization when all reference scores are identical.
-
-    ZeroAnchoredRobustScaler should handle zero variance gracefully by
-    using a minimum scale value to prevent division by zero.
-    """
-    # Create introns with all identical scores
-    introns = []
-    for i in range(5):
-        intron = Intron(
-            intron_id=f"zero_var_intron_{i}",
-            coordinates=GenomicCoordinate(
-                "chr1", 1000 + i * 100, 2000 + i * 100, "+", "1-based"
-            ),
-            sequences=IntronSequences(seq="GTAAGT" + "N" * 50 + "AG"),
-            scores=IntronScores(
-                five_raw_score=5.0,  # All identical
-                bp_raw_score=5.0,  # All identical
-                three_raw_score=5.0,  # All identical
-            ),
-        )
-        introns.append(intron)
-
-    normalizer = ScoreNormalizer()
-
-    # Fit should handle zero variance gracefully
-    normalizer.fit(introns, dataset_type="reference")
-
-    # Transform should work without division by zero
-    normalized = list(normalizer.transform(introns, dataset_type="reference"))
-
-    # All z-scores should be equal (all inputs were equal)
-    z_scores = [i.scores.five_z_score for i in normalized]
-    assert all(z is not None for z in z_scores), "All z-scores should be computed"
-    # With zero variance, all scores should produce identical z-scores
-    assert len(set(z_scores)) == 1, (
-        "All z-scores should be identical for identical inputs"
-    )
-
-
-def test_z_score_with_single_reference():
-    """Test normalization with only one reference intron.
-
-    Edge case: fitting on a single intron should still work, though
-    the statistics may not be meaningful.
-    """
-    intron = Intron(
-        intron_id="single_intron",
-        coordinates=GenomicCoordinate("chr1", 1000, 2000, "+", "1-based"),
-        sequences=IntronSequences(seq="GTAAGT" + "N" * 50 + "AG"),
-        scores=IntronScores(
-            five_raw_score=5.0,
-            bp_raw_score=3.0,
-            three_raw_score=4.0,
-        ),
-    )
-
-    normalizer = ScoreNormalizer()
-
-    # Should handle single reference gracefully
-    normalizer.fit([intron], dataset_type="reference")
-
-    # Transform should work
-    normalized = list(normalizer.transform([intron], dataset_type="reference"))
-    assert len(normalized) == 1
-
-    # Z-score should be computed (value may vary depending on implementation)
-    assert normalized[0].scores.five_z_score is not None
 
 
 # ============================================================================

@@ -1,21 +1,20 @@
 """
-Scoring module for intron PWM scoring and normalization.
+Scoring module for intron PWM scoring.
 
 This module provides the scoring pipeline for intronIC, including:
 - PWM (Position Weight Matrix) scoring
 - Branch point detection
-- Z-score normalization (with ML integrity guarantees)
 - Score orchestration
+
+(Per-species z-normalization was removed in the supplant 2b refactor; scoring now
+operates directly on the background-corrected raw motif log-odds.)
 """
 
-from intronIC.scoring.normalizer import ScoreNormalizer, DatasetType
 from intronIC.scoring.pwm import PWM, PWMSet, PWMLoader
 from intronIC.scoring.branch_point import BranchPointMatch, BranchPointScorer
 from intronIC.scoring.scorer import IntronScorer
 
 __all__ = [
-    'ScoreNormalizer',
-    'DatasetType',
     'PWM',
     'PWMSet',
     'PWMLoader',

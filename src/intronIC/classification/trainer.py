@@ -112,14 +112,13 @@ class SVMEnsemble:
         return len(self.models)
 
 
-#: Default base motif features (z-normalized) for the modesep/z scoring mode.
-Z_BASE_FEATURES = ("five_z_score", "bp_z_score", "three_z_score")
-#: Base motif features for the raw_gated scoring mode (background-corrected log-odds).
+#: Base motif features (background-corrected log-odds). The z-normalized variant was
+#: removed in the supplant 2b refactor; scoring operates on raw motif scores only.
 RAW_BASE_FEATURES = ("five_raw_score", "bp_raw_score", "three_raw_score")
 
 
 def _extract_feature_vector(intron: Intron, extra_names: list,
-                            base_names: tuple = Z_BASE_FEATURES) -> list:
+                            base_names: tuple = RAW_BASE_FEATURES) -> list:
     """Extract feature vector from an intron for training or prediction.
 
     Base features: the three motif scores named in ``base_names`` (the z triple by
@@ -177,7 +176,7 @@ class SVMTrainer:
         extra_feature_names: Optional[list] = None,
         feature_dropout: int = 0,
         feature_dropout_fraction: float = 1.0,
-        base_features: tuple = Z_BASE_FEATURES,
+        base_features: tuple = RAW_BASE_FEATURES,
     ):
         """
         Initialize trainer.

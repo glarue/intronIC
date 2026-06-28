@@ -51,9 +51,6 @@ def sample_u12_introns():
                 five_raw_score=2.0 + np.random.randn() * 0.5,
                 bp_raw_score=2.5 + np.random.randn() * 0.5,
                 three_raw_score=2.0 + np.random.randn() * 0.5,
-                five_z_score=2.0 + np.random.randn() * 0.5,
-                bp_z_score=2.5 + np.random.randn() * 0.5,
-                three_z_score=2.0 + np.random.randn() * 0.5,
             ),
         )
         introns.append(intron)
@@ -84,9 +81,6 @@ def sample_u2_introns():
                 five_raw_score=-1.0 + np.random.randn() * 0.5,
                 bp_raw_score=-1.5 + np.random.randn() * 0.5,
                 three_raw_score=-1.0 + np.random.randn() * 0.5,
-                five_z_score=-1.0 + np.random.randn() * 0.5,
-                bp_z_score=-1.5 + np.random.randn() * 0.5,
-                three_z_score=-1.0 + np.random.randn() * 0.5,
             ),
         )
         introns.append(intron)
@@ -99,13 +93,13 @@ def trained_ensemble(sample_u12_introns, sample_u2_introns):
     # Prepare training data
     u12_features = np.array(
         [
-            [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+            [i.scores.five_raw_score, i.scores.bp_raw_score, i.scores.three_raw_score]
             for i in sample_u12_introns
         ]
     )
     u2_features = np.array(
         [
-            [i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score]
+            [i.scores.five_raw_score, i.scores.bp_raw_score, i.scores.three_raw_score]
             for i in sample_u2_introns
         ]
     )
@@ -203,7 +197,7 @@ def test_prepare_features_no_scores():
         predictor._prepare_features([intron])
 
 
-def test_prepare_features_missing_z_scores():
+def test_prepare_features_missing_raw_scores():
     """Test feature extraction fails with incomplete raw scores."""
     intron = Intron(
         intron_id="test",
@@ -381,7 +375,7 @@ def test_predict_empty_ensemble():
             chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-        scores=IntronScores(five_z_score=1.0, bp_z_score=1.0, three_z_score=1.0),
+        scores=IntronScores(five_raw_score=1.0, bp_raw_score=1.0, three_raw_score=1.0),
     )
 
     with pytest.raises(ValueError, match="Ensemble has no models"):
@@ -441,9 +435,9 @@ def test_predict_preserves_intron_data(trained_ensemble, sample_u12_introns):
     assert result.sequences == original.sequences
 
     # Check that original z-scores are preserved
-    assert result.scores.five_z_score == original.scores.five_z_score
-    assert result.scores.bp_z_score == original.scores.bp_z_score
-    assert result.scores.three_z_score == original.scores.three_z_score
+    assert result.scores.five_raw_score == original.scores.five_raw_score
+    assert result.scores.bp_raw_score == original.scores.bp_raw_score
+    assert result.scores.three_raw_score == original.scores.three_raw_score
 
 
 def test_predict_does_not_renormalize(trained_ensemble, sample_u12_introns):
@@ -451,21 +445,21 @@ def test_predict_does_not_renormalize(trained_ensemble, sample_u12_introns):
     CRITICAL TEST: Verify z-scores are NOT re-normalized after classification.
     This is Issue #1 fix - prevents data leakage.
     """
-    original_z_scores = [
-        (i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score)
+    original_raw_scores = [
+        (i.scores.five_raw_score, i.scores.bp_raw_score, i.scores.three_raw_score)
         for i in sample_u12_introns
     ]
 
     predictor = SVMPredictor()
     classified = predictor.predict(trained_ensemble, sample_u12_introns)
 
-    classified_z_scores = [
-        (i.scores.five_z_score, i.scores.bp_z_score, i.scores.three_z_score)
+    classified_raw_scores = [
+        (i.scores.five_raw_score, i.scores.bp_raw_score, i.scores.three_raw_score)
         for i in classified
     ]
 
     # Z-scores should be EXACTLY the same (no re-normalization)
-    for orig, classif in zip(original_z_scores, classified_z_scores):
+    for orig, classif in zip(original_raw_scores, classified_raw_scores):
         assert orig == classif, "Z-scores were modified during classification!"
 
 
@@ -498,9 +492,9 @@ def test_predict_boundary_scores(trained_ensemble):
             bp_seq="CTAAC",
         ),
         scores=IntronScores(
-            five_z_score=0.5,  # Medium score
-            bp_z_score=0.5,
-            three_z_score=0.5,
+            five_raw_score=0.5,  # Medium score
+            bp_raw_score=0.5,
+            three_raw_score=0.5,
         ),
     )
 
@@ -512,7 +506,7 @@ def test_predict_boundary_scores(trained_ensemble):
     assert 0 <= classified[0].scores.svm_score <= 100
 
 
-def test_predict_extreme_z_scores(trained_ensemble):
+def test_predict_extreme_raw_scores(trained_ensemble):
     """Test introns with very high/low z-scores."""
     # Very high z-scores (strong U12)
     high_intron = Intron(
@@ -521,7 +515,7 @@ def test_predict_extreme_z_scores(trained_ensemble):
             chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-        scores=IntronScores(five_z_score=10.0, bp_z_score=10.0, three_z_score=10.0),
+        scores=IntronScores(five_raw_score=10.0, bp_raw_score=10.0, three_raw_score=10.0),
     )
 
     # Very low z-scores (strong U2)
@@ -531,7 +525,7 @@ def test_predict_extreme_z_scores(trained_ensemble):
             chromosome="chr1", start=2000, stop=2100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-        scores=IntronScores(five_z_score=-10.0, bp_z_score=-10.0, three_z_score=-10.0),
+        scores=IntronScores(five_raw_score=-10.0, bp_raw_score=-10.0, three_raw_score=-10.0),
     )
 
     predictor = SVMPredictor(threshold=50.0)
@@ -565,7 +559,7 @@ def test_classify_introns_streaming_basic(trained_ensemble):
                 chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
             ),
             sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-            scores=IntronScores(five_z_score=2.0, bp_z_score=2.5, three_z_score=2.0),
+            scores=IntronScores(five_raw_score=2.0, bp_raw_score=2.5, three_raw_score=2.0),
         ),
         Intron(
             intron_id="low",
@@ -573,7 +567,7 @@ def test_classify_introns_streaming_basic(trained_ensemble):
                 chromosome="chr1", start=2000, stop=2100, strand="+", system="1-based"
             ),
             sequences=IntronSequences(seq="ATCG", five_seq="AT", three_seq="CG"),
-            scores=IntronScores(five_z_score=-2.0, bp_z_score=-2.5, three_z_score=-2.0),
+            scores=IntronScores(five_raw_score=-2.0, bp_raw_score=-2.5, three_raw_score=-2.0),
         ),
     ]
 
@@ -603,7 +597,7 @@ def test_classify_introns_streaming_is_generator(trained_ensemble):
                 chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
             ),
             sequences=IntronSequences(seq="ATCG"),
-            scores=IntronScores(five_z_score=1.0, bp_z_score=1.0, three_z_score=1.0),
+            scores=IntronScores(five_raw_score=1.0, bp_raw_score=1.0, three_raw_score=1.0),
         ),
     ]
 
@@ -625,7 +619,7 @@ def test_classify_introns_streaming_preserves_metadata(trained_ensemble):
             chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
         ),
         sequences=IntronSequences(seq="ATCG"),
-        scores=IntronScores(five_z_score=1.0, bp_z_score=1.0, three_z_score=1.0),
+        scores=IntronScores(five_raw_score=1.0, bp_raw_score=1.0, three_raw_score=1.0),
         metadata=IntronMetadata(parent="transcript_1", grandparent="gene_1"),
     )
 
@@ -650,7 +644,7 @@ def test_classify_introns_batch_basic(trained_ensemble):
                 chromosome="chr1", start=1000, stop=1100, strand="+", system="1-based"
             ),
             sequences=IntronSequences(seq="ATCG"),
-            scores=IntronScores(five_z_score=2.0, bp_z_score=2.5, three_z_score=2.0),
+            scores=IntronScores(five_raw_score=2.0, bp_raw_score=2.5, three_raw_score=2.0),
         ),
         Intron(
             intron_id="batch_2",
@@ -658,7 +652,7 @@ def test_classify_introns_batch_basic(trained_ensemble):
                 chromosome="chr1", start=2000, stop=2100, strand="+", system="1-based"
             ),
             sequences=IntronSequences(seq="ATCG"),
-            scores=IntronScores(five_z_score=-2.0, bp_z_score=-2.5, three_z_score=-2.0),
+            scores=IntronScores(five_raw_score=-2.0, bp_raw_score=-2.5, three_raw_score=-2.0),
         ),
     ]
 
@@ -699,9 +693,9 @@ def test_streaming_matches_batch(trained_ensemble):
             ),
             sequences=IntronSequences(seq="ATCG"),
             scores=IntronScores(
-                five_z_score=float(i - 2),
-                bp_z_score=float(i - 1),
-                three_z_score=float(i - 2),
+                five_raw_score=float(i - 2),
+                bp_raw_score=float(i - 1),
+                three_raw_score=float(i - 2),
             ),
         )
         for i in range(5)

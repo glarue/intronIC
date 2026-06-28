@@ -29,8 +29,8 @@ class SymmetricClipper(BaseEstimator, TransformerMixin):
     scaling. Clips extreme z-scores to prevent cross-species composition
     artifacts from overwhelming balance features.
 
-    Pipeline position:
-        ZeroAnchoredRobustScaler → SymmetricClipper → SaturatingTransform → ...
+    Pipeline position (legacy z-scaling pipeline; the scaler was removed in supplant 2b):
+        [scaler] → SymmetricClipper → SaturatingTransform → ...
 
     Expert guidance: "Aggressive clipping (and optionally a saturating
     transform) so a single insane PWM score can't swamp balance features."
@@ -118,9 +118,9 @@ class SymmetricClipper(BaseEstimator, TransformerMixin):
         z-scores (z=0 means "U12≈U2").
 
         Args:
-            X: Training z-scores of shape (n_samples, n_features)
-               For intronIC: (n_introns, 3) for [z5, zBP, z3]
-               Typically from ZeroAnchoredRobustScaler output
+            X: Training scores of shape (n_samples, n_features)
+               For intronIC: (n_introns, 3) for the 3 motif scores
+               (legacy z-scaler output; z-normalization removed in supplant 2b)
             y: Target values (ignored, for sklearn compatibility)
 
         Returns:

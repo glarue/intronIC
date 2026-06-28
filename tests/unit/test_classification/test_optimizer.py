@@ -51,9 +51,9 @@ def mock_u12_introns():
                 bp_seq="TCCTTAAC",
             ),
             scores=IntronScores(
-                five_z_score=2.0 + np.random.randn() * 0.5,
-                bp_z_score=2.5 + np.random.randn() * 0.5,
-                three_z_score=2.0 + np.random.randn() * 0.5,
+                five_raw_score=2.0 + np.random.randn() * 0.5,
+                bp_raw_score=2.5 + np.random.randn() * 0.5,
+                three_raw_score=2.0 + np.random.randn() * 0.5,
             ),
         )
         introns.append(intron)
@@ -82,9 +82,9 @@ def mock_u2_introns():
                 bp_seq="TTTCAG",
             ),
             scores=IntronScores(
-                five_z_score=-1.0 + np.random.randn() * 0.5,
-                bp_z_score=-1.5 + np.random.randn() * 0.5,
-                three_z_score=-1.0 + np.random.randn() * 0.5,
+                five_raw_score=-1.0 + np.random.randn() * 0.5,
+                bp_raw_score=-1.5 + np.random.randn() * 0.5,
+                three_raw_score=-1.0 + np.random.randn() * 0.5,
             ),
         )
         introns.append(intron)
@@ -192,9 +192,9 @@ class TestSVMOptimizer:
         # Check first U2 intron features
         u2_features = X[0]
         expected_u2 = [
-            mock_u2_introns[0].scores.five_z_score,
-            mock_u2_introns[0].scores.bp_z_score,
-            mock_u2_introns[0].scores.three_z_score,
+            mock_u2_introns[0].scores.five_raw_score,
+            mock_u2_introns[0].scores.bp_raw_score,
+            mock_u2_introns[0].scores.three_raw_score,
         ]
         assert np.allclose(u2_features, expected_u2)
 
@@ -202,9 +202,9 @@ class TestSVMOptimizer:
         n_u2 = len(mock_u2_introns)
         u12_features = X[n_u2]
         expected_u12 = [
-            mock_u12_introns[0].scores.five_z_score,
-            mock_u12_introns[0].scores.bp_z_score,
-            mock_u12_introns[0].scores.three_z_score,
+            mock_u12_introns[0].scores.five_raw_score,
+            mock_u12_introns[0].scores.bp_raw_score,
+            mock_u12_introns[0].scores.three_raw_score,
         ]
         assert np.allclose(u12_features, expected_u12)
 
@@ -218,12 +218,12 @@ class TestSVMOptimizer:
         with pytest.raises(ValueError, match="has no scores"):
             optimizer._prepare_training_data([bad_intron], mock_u12_introns[1:])
 
-    def test_prepare_training_data_missing_z_scores(self, mock_u12_introns):
+    def test_prepare_training_data_missing_raw_scores(self, mock_u12_introns):
         """Test error when intron has incomplete z-scores."""
         optimizer = SVMOptimizer()
 
         # Create intron with missing z-scores
-        bad_scores = replace(mock_u12_introns[0].scores, five_z_score=None)
+        bad_scores = replace(mock_u12_introns[0].scores, five_raw_score=None)
         bad_intron = replace(mock_u12_introns[0], scores=bad_scores)
 
         with pytest.raises(ValueError, match="missing base feature"):
@@ -413,9 +413,6 @@ class TestSVMOptimizerIntegration:
                 five_raw_score=3.0 + np.random.randn() * 0.3,
                 bp_raw_score=4.0 + np.random.randn() * 0.3,
                 three_raw_score=3.5 + np.random.randn() * 0.3,
-                five_z_score=3.0 + np.random.randn() * 0.3,
-                bp_z_score=4.0 + np.random.randn() * 0.3,
-                three_z_score=3.5 + np.random.randn() * 0.3,
             )
             realistic_u12s.append(replace(intron, scores=new_scores))
 
@@ -426,9 +423,6 @@ class TestSVMOptimizerIntegration:
                 five_raw_score=-1.5 + np.random.randn() * 0.3,
                 bp_raw_score=-2.0 + np.random.randn() * 0.3,
                 three_raw_score=-1.5 + np.random.randn() * 0.3,
-                five_z_score=-1.5 + np.random.randn() * 0.3,
-                bp_z_score=-2.0 + np.random.randn() * 0.3,
-                three_z_score=-1.5 + np.random.randn() * 0.3,
             )
             realistic_u2s.append(replace(intron, scores=new_scores))
 
@@ -482,9 +476,9 @@ class TestSVMOptimizerEdgeCases:
                     bp_seq="TCCTTAAC",
                 ),
                 scores=IntronScores(
-                    five_z_score=2.0,
-                    bp_z_score=2.5,
-                    three_z_score=2.0,
+                    five_raw_score=2.0,
+                    bp_raw_score=2.5,
+                    three_raw_score=2.0,
                 ),
             )
             u12_introns.append(intron)
@@ -507,9 +501,9 @@ class TestSVMOptimizerEdgeCases:
                     bp_seq="TTTCAG",
                 ),
                 scores=IntronScores(
-                    five_z_score=-1.0,
-                    bp_z_score=-1.5,
-                    three_z_score=-1.0,
+                    five_raw_score=-1.0,
+                    bp_raw_score=-1.5,
+                    three_raw_score=-1.0,
                 ),
             )
             u2_introns.append(intron)

@@ -227,7 +227,7 @@ class SVMParameters:
     # Base motif features (the three core splice scores). Default = z-scores (modesep/z mode);
     # the raw_gated scoring mode uses the raw log-odds triple ('five_raw_score', ...). Threaded
     # to _extract_feature_vector so a bundle declares its own feature space.
-    base_features: tuple = ("five_z_score", "bp_z_score", "three_z_score")
+    base_features: tuple = ("five_raw_score", "bp_raw_score", "three_raw_score")
 
     cv_score: float = 0.0  # Cross-validation balanced_accuracy score
     round_found: int = 0  # Which optimization round found these params (-1 = averaged)
