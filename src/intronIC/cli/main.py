@@ -441,14 +441,11 @@ def _train_and_save_raw_bundle(u12_scored, u2_scored, config, messenger):
 class PostClassResult:
     """Artifacts produced by the shared post-classification pipeline.
 
-    Returned by :func:`_run_post_classification_pipeline` and consumed by each
-    caller's metrics-assembly block (which writes into the differently-named
-    ``summary`` / ``metrics`` dicts).
+    Returned by :func:`_run_post_classification_pipeline`. The raw-feature scoring
+    modes (``raw_gated`` / ``pmotif_adjudicated``) compute their calls in-place on
+    ``score_info.iic`` and only surface the called-U12 count here.
     """
 
-    cv_result: Optional[dict] = None
-    modesep_result: Optional[Any] = None
-    disc_summary: Optional[dict] = None
     adjusted_hc_count: Optional[int] = None
 
 
@@ -540,11 +537,7 @@ def _finalize_classification_metrics(
     model_path: str,
     streaming_mode: str,
     normalizer_used: Any,
-    disc_summary: Optional[dict],
-    cluster_validation_result: Optional[dict],
-    modesep_result: Optional[Any],
     adjusted_hc_count: Optional[int],
-    score_adjustment_cfg: Any,
     meta_path: Optional[Path] = None,
 ) -> dict:
     """Assemble the final per-species `metrics.iic.json` dict, shared by the
@@ -597,51 +590,6 @@ def _finalize_classification_metrics(
         )
     summary["u12_boundaries"] = u12_boundaries
     summary["u2_boundaries"] = u2_boundaries
-
-    # v2.7.1 unified label counts override the legacy "total - high_conf" counts.
-    if disc_summary is not None:
-        for k in ("u12_count", "u12_strong_count", "u12_borderline_count",
-                  "u12_promoted_count", "u2_count", "u2_strong_count",
-                  "u2_borderline_count", "u2_demoted_count"):
-            if k in disc_summary:
-                summary[k] = disc_summary[k]
-
-    if cluster_validation_result is not None:
-        summary["cluster_validation"] = {
-            "valley_depth": cluster_validation_result['valley_depth'],
-            "has_valley": cluster_validation_result.get('has_valley'),
-            "regime": cluster_validation_result['regime'],
-            "n_confident_u12": cluster_validation_result['n_confident_u12'],
-            "empirical_prior": cluster_validation_result['empirical_prior'],
-            "centroid_sigma": cluster_validation_result.get('centroid_sigma'),
-        }
-        if score_adjustment_cfg.enabled:
-            summary["score_adjustment"] = {
-                "enabled": True,
-                "valley_midpoint": score_adjustment_cfg.valley_midpoint,
-                "transition_width": score_adjustment_cfg.transition_width,
-                "prior_floor": score_adjustment_cfg.prior_floor,
-                "k_sigma": score_adjustment_cfg.k_sigma,
-            }
-
-    if modesep_result is not None:
-        summary["mode_separation"] = {
-            "route": modesep_result.route,
-            "gate_reason": modesep_result.gate_reason,
-            "quality_tier": modesep_result.quality_tier,
-            "n_introns": modesep_result.n_introns,
-            "n_eligible": modesep_result.n_eligible,
-            "n_called_u12": modesep_result.n_called_u12,
-            "n_eff_candidates": modesep_result.n_eff_candidates,
-            "valley_depth": modesep_result.valley_depth,
-            "mu_u2_5p": modesep_result.mu_u2_5p,
-            "mu_u12_5p": modesep_result.mu_u12_5p,
-            "mu_u12_5p_offset": modesep_result.mu_u12_5p_offset,
-            "median_ensemble_sigma_called": modesep_result.median_ensemble_sigma_called,
-            "p90_ensemble_sigma_called": modesep_result.p90_ensemble_sigma_called,
-            "first_pass_model_id": modesep_result.first_pass_model_id,
-            "second_pass_model_id": modesep_result.second_pass_model_id,
-        }
 
     return summary
 
@@ -4184,9 +4132,6 @@ def classify_streaming_per_contig(
         config=config,
         messenger=messenger,
     )
-    cluster_validation_result = _post.cv_result
-    modesep_result = _post.modesep_result
-    disc_summary = _post.disc_summary
     adjusted_hc_count = _post.adjusted_hc_count
 
     # Free accumulated score data
@@ -4201,11 +4146,7 @@ def classify_streaming_per_contig(
         model_path=str(config.training.pretrained_model_path),
         streaming_mode="per_contig",
         normalizer_used=scaler_source,
-        disc_summary=disc_summary,
-        cluster_validation_result=cluster_validation_result,
-        modesep_result=modesep_result,
         adjusted_hc_count=adjusted_hc_count,
-        score_adjustment_cfg=config.score_adjustment,
         meta_path=config.output.get_output_path(".meta.iic"),
     )
 
@@ -5510,9 +5451,6 @@ def main_classify(config: IntronICConfig):
         # the gate-fail fallback. Mirrors the streaming-classify path so the
         # two routes produce equivalent output (task #203 — May 27 2026,
         # in-memory previously fell through to the v2.3 legacy-only path).
-        cv_result = None
-        modesep_result = None
-        disc_summary = None
         adjusted_hc_count = None
         if classified_introns:
             # Filter to introns with all three z-scores + svm_score present AND
@@ -5543,9 +5481,6 @@ def main_classify(config: IntronICConfig):
                     svm_s=svm_s, type_ids=type_ids,
                     model_data=model_data, config=config, messenger=messenger,
                 )
-                cv_result = _post.cv_result
-                modesep_result = _post.modesep_result
-                disc_summary = _post.disc_summary
                 adjusted_hc_count = _post.adjusted_hc_count
 
                 # Rebuild metrics through the shared finalizer so this path's
@@ -5566,11 +5501,7 @@ def main_classify(config: IntronICConfig):
                     model_path=str(config.training.pretrained_model_path),
                     streaming_mode="in_memory",
                     normalizer_used=(metrics.get("normalizer_used") if metrics else None),
-                    disc_summary=disc_summary,
-                    cluster_validation_result=cv_result,
-                    modesep_result=modesep_result,
                     adjusted_hc_count=adjusted_hc_count,
-                    score_adjustment_cfg=config.score_adjustment,
                     meta_path=config.output.get_output_path(".meta.iic"),
                 )
 
