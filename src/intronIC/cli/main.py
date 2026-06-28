@@ -5634,34 +5634,12 @@ def main_train(config: IntronICConfig):
             _train_and_save_raw_bundle(u12_scored, u2_scored, config, messenger)
             messenger.success("Model trained and saved")
         else:
-            # Normalize scores
-            messenger.log_only("Normalizing scores with z-score transformation")
-            from intronIC.scoring.normalizer import ScoreNormalizer
-
-            normalizer = ScoreNormalizer()
-            normalizer.fit(scored_reference, dataset_type="reference")
-
-            u12_ref_norm = list(normalizer.transform(u12_scored, dataset_type="reference"))
-            u2_ref_norm = list(normalizer.transform(u2_scored, dataset_type="reference"))
-
-            messenger.success(
-                f"Loaded, scored, and normalized {len(u12_ref_norm)} U12 and {len(u2_ref_norm)} U2 reference introns"
+            raise ValueError(
+                f"scoring_mode={config.training.scoring_mode!r} is not trainable: the z-normalization "
+                f"training path (ScoreNormalizer + IntronClassifier) was removed (supplant 2b). Train "
+                f"with --scoring-mode pmotif_adjudicated (default) or raw_gated; check out the "
+                f"pre-zstack-removal git tag to train a legacy zscore bundle."
             )
-
-            # Step 4: Train classifier (model is saved internally by classify_introns)
-            messenger.step(4, "Train Classifier", pipeline_steps)
-            # Pass empty list for experimental introns - we're only training on references
-            # classify_introns() will train the model and save it to disk
-            classified_introns, metrics = classify_introns(
-                introns=[],  # No experimental introns in train mode
-                u12_reference=u12_ref_norm,
-                u2_reference=u2_ref_norm,
-                normalizer=normalizer,
-                config=config,
-                messenger=messenger,
-                reporter=reporter,
-            )
-            messenger.success("Model trained and saved")
 
         # Print final summary
         elapsed = time.time() - start_time
@@ -6192,29 +6170,16 @@ def main_classify(config: IntronICConfig):
                 reporter,
             )
         else:
-            # Normal flow: normalize + train + classify
-            # Step 3: Normalize scores
-            messenger.step(3, "Normalize Scores", pipeline_steps)
-            normalized_introns, u12_reference, u2_reference, normalizer = (
-                normalize_scores(scored_introns, config, messenger, reporter)
+            # The no-pretrained-model "normalize + train + classify in one pass" flow used
+            # ScoreNormalizer + IntronClassifier (z-only), removed in supplant 2b. Classify now
+            # requires a raw-feature bundle (the bundled pmotif default is used when --model is
+            # omitted, so this branch is only reached if --model is explicitly cleared).
+            raise ValueError(
+                "intronIC classify requires a pretrained raw-feature bundle. The no-model "
+                "train-and-classify flow used z-normalization + IntronClassifier, which were "
+                "removed (supplant 2b). Omit --model to use the bundled pmotif default, or pass "
+                "--model with a pmotif_adjudicated / raw_gated bundle."
             )
-            messenger.success("Scores normalized")
-
-            # Step 4: Train and apply classifier
-            messenger.step(4, "Train and Apply Classifier", pipeline_steps)
-            classified_introns, metrics = classify_introns(
-                normalized_introns,
-                u12_reference,
-                u2_reference,
-                normalizer,
-                config,
-                messenger,
-                reporter,
-            )
-            # Non-pretrained branch can never be in modesep mode (modesep is
-            # a property of the v3 multispecies bundle), so model_data is None
-            # and the post-classification block below falls through to legacy.
-            model_data = None
 
         # The classification summary + dinucleotide boundary tables are printed
         # later, after post-classification finalizes type_id in meta.iic (see

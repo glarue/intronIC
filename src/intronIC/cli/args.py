@@ -501,13 +501,12 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
         training.add_argument(
             "--scoring-mode",
             "--scoring_mode",
-            choices=["pmotif_adjudicated", "raw_gated", "zscore"],
+            choices=["pmotif_adjudicated", "raw_gated"],
             default="pmotif_adjudicated",
-            help="Bundle scoring mode (default: pmotif_adjudicated). pmotif_adjudicated and raw_gated "
-            "train a raw-feature ensemble (no z-normalization) and stamp the bundle so inference runs "
-            "the pmotif adjudicator / raw species-gate. 'zscore' (legacy z-norm + modesep/discount) is "
-            "DEPRECATED: the z stack was removed, so a zscore bundle is NOT scoreable by this build "
-            "(check out the pre-zstack-removal git tag to train/score one).",
+            help="Bundle scoring mode (default: pmotif_adjudicated). Both train a raw-feature ensemble "
+            "(no z-normalization) and stamp the bundle so inference runs the pmotif adjudicator / raw "
+            "species-gate. The legacy 'zscore' mode (z-norm + modesep/discount) was removed with the z "
+            "stack; check out the pre-zstack-removal git tag to train/score a zscore bundle.",
         )
         training.add_argument(
             "--n-cv-folds",
