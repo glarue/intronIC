@@ -382,6 +382,43 @@ the whole intron complement, it tends to raise `N_u2` and the U12 count *togethe
 larger U2 denominator. Net: the small-N false-bearer corner stays empty and the genuine-bearer corner
 (including duplication-expanded bearers) is exactly what `depth_tail` is built to catch.
 
+### 0e. Independent statistical audit of the SETTLED design + response (2026-06-27)
+
+A fresh independent audit (web-research-backed) of the *settled* design — given the now-known data shape
+(clean separation, tight gap, chlamydomonas the irreducible borderline, ensemble-specific calibration).
+**Overall: SOUND, ship-able; the architecture and the classification (LCO 24–26/27) are robust because clean
+separation pins them. Every real gap is in the *uncertainty* layer (the `P_adj ± CI`), not the point calls.**
+
+- **#1 — degenerate q-CI (CONFIRMED bug → FIXED, commit f4829cb).** The audit verified, and I reproduced, that
+  the plain bootstrap-of-median gives a width-0 CI on tied/few calls, silently defeating the UNDETERMINED band
+  in the low-N regime it exists for (3 tied borderline calls → q=0.81, CI width 0.00). Fixed with a
+  **count-aware smoothed bootstrap** (`ci_smooth_floor_frac`): borderline 3-call CI width 0.00→0.44, count-aware
+  (3→0.44, 15→0.20, 60→0.10), chr19 unchanged, deterministic (parity preserved). Honest limit: 3 *deep* tied
+  calls stay confident-bearer — that's the biologically-irreducible case (3 deep relics in a loss vs 3 deep
+  low-N-bearer U12s are single-genome-indistinguishable; needs conservation/snRNA, not a CI fix).
+- **#2 — Firth biases q toward 0.5 → use FLIC (CHECKED → no-op here; NO change).** Empirically the Firth fit's
+  mean predicted q (0.467) already equals the panel event rate (0.464); FLIC's intercept correction shifts the
+  boundary only +0.016 (2.988→3.003, inside the boundary bootstrap SD 0.14) and barely moves any q. The audit's
+  bias result is a *rare-event/imbalance* phenomenon; the balanced ~50/50 panel with the boundary in the gap
+  has no meaningful bias. The "loss q up to 0.43" is chlamydomonas, which *should* be ~0.43 (borderline);
+  clearly-loss genomes sit at q 0.001–0.1. So the shipped Firth constants stand. **Contingency:** if border-
+  genome sourcing skews the panel toward imbalance, apply FLIC in the calibration step.
+- **HIERARCHICAL Bayesian two-groups model (the named "cleanest" alternative) — DEFERRED (real downsides).**
+  It propagates call-core + boundary + U2-reference uncertainty coherently and gives the EIG stopping rule for
+  free, but: a new heavyweight production dependency (PyMC/Stan/numpyro), MCMC/VI determinism vs the
+  streaming==in-memory bit-identical requirement, bundling a posterior vs 4 version-pinned constants, and a full
+  re-validation. And the audit's own finding: it **does not change the classification**, and the cheap fixes
+  capture ~80% of the uncertainty-honesty benefit. Deferred for discussion; worth it only if `P_adj ± CI`
+  becomes a load-bearing quantitative downstream output.
+- **Lower-priority/noted (not blocking):** `Q99.9(U2)` is the 0.2th-order statistic at the min_u2 floor
+  (high-variance, unpropagated reference) — a GPD-based or shrunk high-quantile would stabilize it; the rejected
+  pooled-global skipped **partial pooling / empirical-Bayes shrinkage** of each genome's tail toward a global
+  hyper-distribution (the established middle that would fix both the floor instability *and* avoid the
+  over-suppression) — worth prototyping; the `LOW_N→q_eff=1` default is already a safe operating point. Marginal
+  algebra of `P_adj=q·P_motif` is clean; the call double-use (calls define `depth_tail` and receive `P_adj`) is
+  real but median-bounded and second-order (disclose, don't re-engineer). Full audit transcript context in the
+  session record; reviewed `species_adjudicator.py` + the eval fit scripts.
+
 ## 1. The case (why)
 - **raw motif features > z** for discrimination, leave-clade-out, with the entire gain on the z-inflated
   loss-species FP class (real-classifier AUC 0.916 vs 0.786; `FINDINGS §6c`).
