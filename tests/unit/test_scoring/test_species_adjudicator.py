@@ -192,3 +192,86 @@ def test_params_from_dict_ignores_unknown_keys():
     params = AdjudicatorParams.from_dict({"q_a": 3.0, "not_a_field": 99})
     assert params.q_a == 3.0
     assert not hasattr(params, "not_a_field")
+
+
+# --------------------------------------------------------------------------------------------------
+# file-side post-process (apply_pmotif_adjudication) — the inference hook
+# --------------------------------------------------------------------------------------------------
+def _tiny_ensemble():
+    """A minimal real ensemble matching the bundle structure (m.model.calibrated_classifiers_[i].estimator).
+
+    Trained on a toy 6-feature U12/U2 split so decision_function separates strong motifs from weak ones.
+    """
+    from types import SimpleNamespace
+    from sklearn.svm import SVC
+    from sklearn.calibration import CalibratedClassifierCV
+    rng = np.random.RandomState(0)
+    u2 = np.column_stack([rng.normal(-3, 2, 80), rng.normal(-3, 2, 80), rng.normal(-2, 1.5, 80),
+                          rng.normal(-5, 3, 80), rng.normal(2, 2, 80), rng.normal(0, 1, 80)])
+    u12 = np.column_stack([rng.normal(14, 1.5, 80), rng.normal(8, 1.5, 80), rng.normal(1.5, 1, 80),
+                           rng.normal(-12, 3, 80), rng.normal(7, 1, 80), rng.normal(8, 1, 80)])
+    X = np.vstack([u2, u12]); y = np.r_[np.zeros(80), np.ones(80)]
+    clf = CalibratedClassifierCV(SVC(C=50, gamma=0.01), cv=3).fit(X, y)
+    return [SimpleNamespace(model=clf)]
+
+
+def _write_score_info(path, n_u2=400, n_u12=20, inject_nan=True):
+    import pandas as pd
+    rng = np.random.RandomState(1)
+    u2 = np.column_stack([rng.normal(-3, 2, n_u2), rng.normal(-3, 2, n_u2), rng.normal(-2, 1.5, n_u2),
+                          rng.normal(-5, 3, n_u2), rng.normal(2, 2, n_u2)])
+    u12 = np.column_stack([rng.normal(14, 1.5, n_u12), rng.normal(8, 1.5, n_u12), rng.normal(1.5, 1, n_u12),
+                           rng.normal(-12, 3, n_u12), rng.normal(7, 1, n_u12)])
+    A = np.vstack([u2, u12])
+    df = pd.DataFrame({
+        "name": [f"i{i}" for i in range(len(A))],
+        "5'_raw": A[:, 0], "bp_raw": A[:, 1], "3'_raw": A[:, 2],
+        "bp_offset": A[:, 3], "bp_scan_confidence": A[:, 4],
+        "type_id": ["u2"] * len(A),
+    })
+    if inject_nan:
+        df.loc[2, "5'_raw"] = np.nan
+    df.to_csv(path, sep="\t", index=False)
+    return len(A), n_u2
+
+
+def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
+    from intronIC.scoring.species_adjudicator import apply_pmotif_adjudication
+    import pandas as pd
+    p = tmp_path / "x.score_info.iic"
+    n, n_u2 = _write_score_info(p)
+    res = apply_pmotif_adjudication(str(p), _tiny_ensemble(), params=P)
+    out = pd.read_csv(p, sep="\t", keep_default_na=False)
+
+    # new interpretable columns present + row alignment preserved
+    for c in ("P_motif", "q", "P_adj", "P_adj_lo", "P_adj_hi"):
+        assert c in out.columns
+    assert len(out) == n
+    assert res.status is AdjStatus.ADJUDICATED          # 400 U2 + a deep U12 cluster -> assessable bearer
+    assert res.n_adj_called == int((out["type_id"] == "u12").sum())
+
+    pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
+    padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
+    fin = np.isfinite(pm) & np.isfinite(padj)
+    # P_adj == q * P_motif within the assessed run
+    assert np.allclose(padj[fin], res.q * pm[fin], atol=1e-6)
+    # the deep U12 block (last n=20) should be the called set; U2 bulk mostly not called
+    assert (out["type_id"].to_numpy()[-20:] == "u12").sum() >= 18
+    # injected NaN row stays unscored / uncalled
+    assert out["P_motif"][2] == "nan" and out["type_id"][2] == "u2"
+
+
+def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
+    """Below min_u2 the species layer is inconclusive -> q_eff=1 (P_adj==P_motif), never silent suppression."""
+    from intronIC.scoring.species_adjudicator import apply_pmotif_adjudication
+    import pandas as pd
+    p = tmp_path / "small.score_info.iic"
+    _write_score_info(p, n_u2=80, n_u12=3, inject_nan=False)   # < min_u2=200 -> LOW_N
+    res = apply_pmotif_adjudication(str(p), _tiny_ensemble(), params=P)
+    out = pd.read_csv(p, sep="\t", keep_default_na=False)
+    assert res.status is AdjStatus.LOW_N
+    assert float(out["q"].iloc[0]) == 1.0
+    pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
+    padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
+    fin = np.isfinite(pm) & np.isfinite(padj)
+    assert np.allclose(padj[fin], pm[fin], atol=1e-9)

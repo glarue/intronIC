@@ -103,6 +103,7 @@ class AdjudicatorResult:
     p_gumbel: float = float("nan")       #: SECONDARY: Gumbel tail-prob that U2's own max reaches the call-core
     z_expmax: float = float("nan")       #: SECONDARY: U2 expected-max in robust-z units (the size-aware cutoff)
     secondary_available: bool = False    #: True when the EVT secondary (excess_z/p_gumbel) could be computed
+    n_adj_called: Optional[int] = None   #: final P_adj>=0.5 U12 calls (set by the file-side application; None otherwise)
     params: AdjudicatorParams = field(repr=False, default_factory=AdjudicatorParams)
 
     @property
@@ -279,3 +280,103 @@ def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
         q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
         excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
         secondary_available=secondary_available, params=params)
+
+
+# --------------------------------------------------------------------------------------------------
+# File-side post-process (the inference hook; mirrors species_gate.apply_raw_gated_postprocess)
+# --------------------------------------------------------------------------------------------------
+#: Raw-feature column order the ensemble was trained on (see eval_corpus/robust_sep_one.py). The 6th
+#: feature, support2_raw, is the 2nd-largest of the clipped motif log-odds and is derived here.
+_RAW_FEATURE_COLS = ("5'_raw", "bp_raw", "3'_raw", "bp_offset", "bp_scan_confidence")
+
+
+def _effective_q(result: "AdjudicatorResult"):
+    """Map an adjudication outcome to the per-intron multiplier ``q_eff`` (+ CI) applied to ``P_motif``.
+
+    - ADJUDICATED / UNDETERMINED -> use the assessed ``q`` and its bootstrap CI.
+    - LOW_N / DEGENERATE_TAIL / SCHEMA_FAIL -> the species layer is *inconclusive*, so it must NOT suppress:
+      default to ``q_eff = 1`` (P_adj = P_motif, the species-agnostic motif call). A confirmed loss needs a
+      successful adjudication to suppress; absent that, ``P_motif`` is the call (matches the design's
+      "P_motif everywhere; suppress only confirmed-depleted genomes"). The proper low-N / discrete-input
+      fallback (a bundled global-q or snRNA backstop) is a documented follow-up.
+    """
+    if result.status in (AdjStatus.ADJUDICATED, AdjStatus.UNDETERMINED):
+        return result.q, result.q_lo, result.q_hi
+    return 1.0, 1.0, 1.0
+
+
+def apply_pmotif_adjudication(score_info_path, ensemble_models,
+                              params: Optional[AdjudicatorParams] = None,
+                              messenger=None) -> "AdjudicatorResult":
+    """``pmotif_adjudicated`` post-classification: read score_info.iic, compute the per-intron motif
+    probability ``P_motif`` from the ensemble MARGIN, run the per-species adjudicator, and write the two
+    interpretable per-intron numbers + the call.
+
+    Adds/overwrites columns in ``score_info.iic``:
+      - ``P_motif``  : sigmoid(Platt(margin)) — species-agnostic sequence-motif probability;
+      - ``q``        : P(genome is a U12 bearer) (constant within a run / species);
+      - ``P_adj``    : ``q_eff * P_motif`` — functional-U12 posterior, with ``P_adj_lo``/``P_adj_hi`` (CI);
+      - ``adjusted_score`` = ``100*P_adj`` and ``rel_score`` = ``100*P_adj - 90`` (existing conventions:
+        ``type_id == u12`` iff ``adjusted_score >= 50``; ``rel_score > 0`` iff high-confidence ``P_adj>=0.9``);
+      - ``type_id``  : ``u12`` iff ``P_adj >= 0.5`` else ``u2``.
+
+    Unscorable introns (NaN motif log-odds) keep NaN ``P_motif``/``P_adj`` and are not called. Per-run =
+    per-species (one genome). Returns the :class:`AdjudicatorResult` (q + CI + status diagnostics).
+    """
+    import pandas as pd
+    params = params or AdjudicatorParams()
+    df = pd.read_csv(score_info_path, sep="\t", dtype=str, keep_default_na=False)
+
+    def col(name):
+        if name not in df.columns:
+            return None
+        return df[name].replace("", "nan").astype(float).to_numpy()
+
+    feats = {c: col(c) for c in _RAW_FEATURE_COLS}
+    if any(feats[c] is None for c in ("5'_raw", "bp_raw", "3'_raw")):
+        raise ValueError("pmotif_adjudicated post-process: score_info missing 5'_raw/bp_raw/3'_raw")
+    n = len(df)
+    r5, rbp, r3 = feats["5'_raw"], feats["bp_raw"], feats["3'_raw"]
+    boff = feats["bp_offset"] if feats["bp_offset"] is not None else np.zeros(n)
+    bconf = feats["bp_scan_confidence"] if feats["bp_scan_confidence"] is not None else np.zeros(n)
+
+    # support2_raw = 2nd-largest of the clipped [5', bp, 3'] motif log-odds (the trained 6th feature).
+    s2 = np.sort(np.clip(np.column_stack([r5, rbp, r3]), 0.0, None), axis=1)[:, 1]
+    X = np.column_stack([r5, rbp, r3, np.nan_to_num(boff), np.nan_to_num(bconf), s2])
+
+    # margin + P_motif only on rows with finite motif log-odds (unscorable rows stay NaN, keep alignment).
+    finite = np.isfinite(r5) & np.isfinite(rbp) & np.isfinite(r3)
+    margin = np.full(n, np.nan)
+    if finite.any():
+        margin[finite] = ensemble_margin(ensemble_models, X[finite])
+    p_motif = p_motif_from_margin(margin, params)   # NaN where margin NaN
+
+    result = adjudicate(margin[finite], p_motif[finite], params)
+    q_eff, q_lo, q_hi = _effective_q(result)
+
+    p_adj = q_eff * p_motif
+    p_adj_lo = q_lo * p_motif
+    p_adj_hi = q_hi * p_motif
+    adjusted = 100.0 * p_adj
+
+    def fmt(arr):
+        return [("nan" if not np.isfinite(v) else f"{v:.6g}") for v in arr]
+
+    df["P_motif"] = fmt(p_motif)
+    df["q"] = f"{q_eff:.6g}"
+    df["P_adj"] = fmt(p_adj)
+    df["P_adj_lo"] = fmt(p_adj_lo)
+    df["P_adj_hi"] = fmt(p_adj_hi)
+    df["adjusted_score"] = fmt(adjusted)
+    df["rel_score"] = fmt(adjusted - 90.0)
+    called = np.isfinite(p_adj) & (p_adj >= 0.5)
+    df["type_id"] = np.where(called, "u12", "u2")
+    df.to_csv(score_info_path, sep="\t", index=False)
+
+    result.n_adj_called = int(called.sum())
+    if messenger is not None:
+        messenger.info(
+            f"pmotif_adjudicated: status={result.status.value} n_call={result.n_call} "
+            f"depth_tail={result.depth_tail:.2f} q={q_eff:.3f} CI=[{q_lo:.2f},{q_hi:.2f}] "
+            f"-> {int(called.sum())} U12 calls / {int(finite.sum())} scorable introns")
+    return result

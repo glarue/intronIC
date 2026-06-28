@@ -570,6 +570,21 @@ def _run_post_classification_pipeline(
         result.adjusted_hc_count = gate_res.n_called
         return result
 
+    # pmotif_adjudicated scoring mode: per-intron P_motif (Platt-calibrated ensemble MARGIN) + the
+    # per-species depth_tail adjudicator -> P_adj = q * P_motif. Replaces z-norm/mode-sep/discount. See
+    # scoring/species_adjudicator.py and docs/raw_gated_scoring.md §0b/§0c. Runs in this shared helper so
+    # streaming and in-memory are identical by construction.
+    if isinstance(model_data, dict) and model_data.get("scoring_mode") == "pmotif_adjudicated":
+        from intronIC.scoring.species_adjudicator import (
+            apply_pmotif_adjudication, AdjudicatorParams,
+        )
+        adj_params = AdjudicatorParams.from_dict(model_data.get("adjudicator_params"))
+        adj_res = apply_pmotif_adjudication(
+            score_path, model_data["ensemble"].models, params=adj_params, messenger=messenger,
+        )
+        result.adjusted_hc_count = adj_res.n_adj_called
+        return result
+
     is_modesep = (
         isinstance(model_data, dict)
         and model_data.get("normalizer_mode") == "modesep"

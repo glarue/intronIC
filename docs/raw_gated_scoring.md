@@ -184,10 +184,33 @@ unit-tested (`tests/unit/test_scoring/test_species_adjudicator.py`, 22 tests). D
   and non-finite paths return a status, never a silent NaN), shape/NaN input guards, and a version pin
   (`ADJUDICATOR_PARAMS_VERSION = "depth_tail_firth_2026-06-27"`, `AdjudicatorParams.params_version`).
 
-All three ship-blockers are now closed in `scoring/species_adjudicator.py`. Deferred (airtight pass, §0a):
-leave-clade-out OOF *margins* (distinct from the q leave-clade-out above — this re-scores `P_motif` itself
-out-of-sample); POT-GPD as a one-time tail diagnostic. Plan steps 1/3–7 (margin-capable bundle, inference
-wiring on BOTH paths, output schema, gates, supplant PR) are unchanged and still ahead.
+All three ship-blockers are now closed in `scoring/species_adjudicator.py`.
+
+**Pipeline integration — steps 1, 3, 4 DONE (2026-06-27):**
+- **Step 1 (margin-capable bundle):** `scripts/build_pmotif_adjudicated_bundle.py` re-stamps a raw-feature
+  ensemble into a `scoring_mode:"pmotif_adjudicated"` bundle carrying `adjudicator_params`
+  (Platt + q + EVT settings, version-pinned) + the raw SVC ensemble (margin via `decision_function`).
+- **Step 3 (inference wiring):** `apply_pmotif_adjudication(score_info, ensemble_models, params)` (file-side,
+  mirrors `apply_raw_gated_postprocess` but uses the **margin**, not the saturated `svm_score`) computes
+  `P_motif` → adjudicate → `P_adj = q_eff·P_motif`. Dispatched from the **shared**
+  `_run_post_classification_pipeline` (`cli/main.py`), so streaming and in-memory are identical *by
+  construction* — verified bit-identical on chr19 (`type_id`/`P_motif`/`P_adj`/`adjusted_score`/`rel_score`).
+  Inconclusive species (`LOW_N`/`DEGENERATE_TAIL`/`SCHEMA_FAIL`) fall back to `q_eff=1` (`P_adj=P_motif`, no
+  silent suppression).
+- **Step 4 (output schema):** `score_info.iic` gains `P_motif, q, P_adj, P_adj_lo, P_adj_hi`; `type_id` from
+  `P_adj≥0.5`; `adjusted_score=100·P_adj`, `rel_score=100·P_adj−90` (existing conventions preserved).
+- **End-to-end verified on all three input modes:** genome+annotation (`--in-memory` and `--streaming`,
+  bit-identical, chr19 → q=0.993 bearer, 39 U12 calls); `-q` pre-extracted sequences full (bit-identical to
+  the genome path); `-q` low-N subset (120 introns → `LOW_N` → `q_eff=1` fallback, `P_adj=P_motif`, no crash).
+  Unit-tested in `test_species_adjudicator.py` (file-side glue + low-N fallback) — 24 tests green.
+
+Deferred (airtight pass, §0a): leave-clade-out OOF *margins* (distinct from the q leave-clade-out — this
+re-scores `P_motif` itself out-of-sample); POT-GPD as a one-time tail diagnostic. **Still ahead:** step 2
+(`main_train` emits the bundle reproducibly, replacing the re-stamp script), `meta.iic`/`bed.iic` call sync
+(currently only `score_info` is rewritten, as with `raw_gated`), a committed pmotif integration/parity test
+(needs a lightweight bundled fixture), the §5 formal gates, and the step-7 supplant PR (flip default + delete
+the z stack). A bundled `pmotif_adjudicated` model + the low-N/discrete-input fallback refinement (a bundled
+global-`q` or snRNA backstop instead of `q_eff=1`) are the other open items.
 
 ### 0d. Committee review + meta-review record (2026-06-27) — auditability
 
