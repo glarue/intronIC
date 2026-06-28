@@ -211,12 +211,31 @@ All three ship-blockers are now closed in `scoring/species_adjudicator.py`.
   the genome path); `-q` low-N subset (120 introns → `LOW_N` → `q_eff=1` fallback, `P_adj=P_motif`, no crash).
   Unit-tested in `test_species_adjudicator.py` (file-side glue + low-N fallback) — 24 tests green.
 
+**Step 2 (`main_train` emission) — PARTIAL + a key calibration finding (2026-06-27):** a `--scoring-mode
+{zscore,raw_gated,pmotif_adjudicated}` train flag (`cli/args.py`, `cli/config.py`) now routes `main_train`
+through `_train_and_save_raw_bundle` (`cli/main.py`): for the raw modes it **skips z-normalization +
+`IntronClassifier`** (both z-only) and trains the raw-feature ensemble directly (mirrors
+`build_raw_gated_bundle.py`), stamping `scoring_mode` + the mode's post-process params. Verified: emits a
+valid, loadable, runnable bundle (e.g. `intronIC train --scoring-mode pmotif_adjudicated --n-models 42`).
+
+**BUT — the calibration (Platt + q) is ensemble-specific and does NOT transfer to a re-trained ensemble.**
+Empirically, a `main_train` 42-model ensemble on the *same* built-in v23 reference (10003 U12 / 31330 U2)
+gives chr19 `depth_tail≈2.7` / `q≈0.30` (UNDETERMINED) vs the canonical eval ensemble's `depth_tail≈4.4` /
+`q≈0.993` — the frozen `DEFAULT_PLATT_*` / `DEFAULT_Q_*` constants are tied to one specific trained
+ensemble's margin/`depth_tail` scale and don't survive re-training (different feature provenance + SVM
+non-determinism shift the scale). So `main_train` emits the **ensemble + a hard `messenger.warning` + a
+`calibration_provenance` stamp**, but a freshly-trained pmotif bundle is **NOT production-calibrated**.
+Consequence for the supplant plan: a shippable `pmotif_adjudicated` default is fundamentally an **eval_corpus
+artifact** — train ensemble → **fit Platt OOF on the reference** → **fit q on the species panel for THAT
+ensemble** → assemble. `main_train` provides the ensemble-training + z-bypass plumbing; the q-fit
+specifically needs the dev snRNA/IPA panel and cannot be done from `intronIC train` alone.
+
 Deferred (airtight pass, §0a): leave-clade-out OOF *margins* (distinct from the q leave-clade-out — this
-re-scores `P_motif` itself out-of-sample); POT-GPD as a one-time tail diagnostic. **Still ahead:** step 2
-(`main_train` emits the bundle reproducibly, replacing the re-stamp script), a committed pmotif
-integration/parity test (needs a lightweight bundled fixture), the §5 formal gates, and the step-7 supplant
-PR (flip default + delete the z stack). A bundled `pmotif_adjudicated` model + the low-N/discrete-input
-fallback refinement (a bundled global-`q` or snRNA backstop instead of `q_eff=1`) are the other open items.
+re-scores `P_motif` itself out-of-sample); POT-GPD as a one-time tail diagnostic. **Still ahead:** the
+eval_corpus calibration pipeline (Platt-OOF + q-panel for the bundled ensemble — the real prerequisite for a
+shippable default), a committed pmotif integration/parity test (needs a lightweight bundled fixture), the §5
+formal gates, and the step-7 supplant PR (flip default + delete the z stack). The low-N/discrete-input
+fallback refinement (a bundled global-`q` or snRNA backstop instead of `q_eff=1`) is the other open item.
 
 ### 0d. Committee review + meta-review record (2026-06-27) — auditability
 

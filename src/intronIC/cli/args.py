@@ -499,6 +499,15 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             help="Evaluation mode: nested_cv (default), split, or none",
         )
         training.add_argument(
+            "--scoring-mode",
+            "--scoring_mode",
+            choices=["zscore", "raw_gated", "pmotif_adjudicated"],
+            default="zscore",
+            help="Bundle scoring mode (default: zscore = legacy z-norm + modesep/discount). "
+            "raw_gated and pmotif_adjudicated train a raw-feature ensemble (no z-normalization) and "
+            "stamp the bundle so inference runs the raw species-gate / pmotif adjudicator instead.",
+        )
+        training.add_argument(
             "--n-cv-folds",
             "--n_cv_folds",
             type=int,

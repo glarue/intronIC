@@ -459,6 +459,88 @@ def _sync_calls_to_meta_and_bed(score_path: Path, meta_path: Optional[Path],
             raise
 
 
+def _train_and_save_raw_bundle(u12_scored, u2_scored, config, messenger):
+    """Train a raw-feature SVM ensemble and save a ``scoring_mode``-stamped bundle (``raw_gated`` /
+    ``pmotif_adjudicated``) — the reproducible ``main_train`` analog of ``scripts/build_raw_gated_bundle.py``.
+
+    Drives off the already-scored reference introns (which carry ``five_raw_score``/``bp_raw_score``/
+    ``three_raw_score``/``bp_offset``/``bp_scan_confidence``; ``support2_raw`` is a derived property) and
+    deliberately bypasses ``ScoreNormalizer`` + ``IntronClassifier`` (both z-only). The bundle dict matches
+    what the inference dispatch in ``_run_post_classification_pipeline`` expects (ensemble + scoring_mode +
+    the mode's post-process params). Returns the saved model path.
+    """
+    import joblib
+    from dataclasses import asdict
+    from intronIC.classification.trainer import SVMTrainer, RAW_BASE_FEATURES
+    from intronIC.classification.optimizer import SVMParameters
+
+    mode = config.training.scoring_mode
+    EXTRA = ("bp_offset", "bp_scan_confidence", "support2_raw")   # must match the inference feature order
+    C = config.training.fixed_C or 200.0
+    params = SVMParameters(
+        C=C, calibration_method="isotonic", saturate_enabled=False, include_max=False,
+        include_pairwise_mins=False, penalty="l2", class_weight_multiplier=1.0, loss="squared_hinge",
+        kernel="rbf", gamma=0.001, extra_features=EXTRA, base_features=RAW_BASE_FEATURES,
+    )
+    trainer = SVMTrainer(
+        n_models=config.training.n_models, random_state=config.training.seed, kernel="rbf",
+        max_iter=config.training.max_iter, extra_feature_names=list(EXTRA),
+        base_features=RAW_BASE_FEATURES,
+    )
+    messenger.info(
+        f"Training {config.training.n_models}-model raw ensemble for scoring_mode={mode} "
+        f"(C={C}, gamma=0.001, rbf, isotonic)"
+    )
+    ensemble = trainer.train_ensemble(
+        list(u12_scored), list(u2_scored), params, subsample_u2=True, subsample_ratio=0.8,
+    )
+
+    bundle = {
+        "version": f"{mode}_v1",
+        "model_id": f"{mode}_{config.training.n_models}model_C{int(C)}_g0.001",
+        "ensemble": ensemble,
+        "scoring_mode": mode,
+        "input_features": list(RAW_BASE_FEATURES) + list(EXTRA),
+        "threshold": config.scoring.threshold,
+        "provenance": {
+            "n_u12": len(u12_scored), "n_u2": len(u2_scored),
+            "n_models": config.training.n_models, "C": C,
+            "note": "raw-feature bundle from main_train --scoring-mode; see docs/raw_gated_scoring.md §0c",
+        },
+    }
+    if mode == "pmotif_adjudicated":
+        from intronIC.scoring.species_adjudicator import AdjudicatorParams, ADJUDICATOR_PARAMS_VERSION
+        bundle["adjudicator_params"] = asdict(AdjudicatorParams())
+        bundle["provenance"]["adjudicator_params_version"] = ADJUDICATOR_PARAMS_VERSION
+        bundle["provenance"]["calibration_provenance"] = (
+            "DEFAULT (stamped from AdjudicatorParams; calibrated against the canonical eval_corpus raw "
+            "ensemble). The Platt (margin->P_motif) and q (depth_tail->P(bearer)) constants are tied to a "
+            "SPECIFIC trained ensemble's margin/depth_tail scale and do NOT transfer to a freshly-trained "
+            "ensemble (verified: even same-corpus/same-n_models re-training shifts the scale). This bundle "
+            "is NOT calibrated; it must be re-calibrated in eval_corpus (Platt OOF on the reference + q on "
+            "the species panel) before production use."
+        )
+        # The frozen Platt/q constants are bound to a specific ensemble's scale (NOT reproduced by
+        # re-training on the same corpus), so any main_train pmotif ensemble is uncalibrated by default.
+        messenger.warning(
+            "pmotif_adjudicated: this ensemble uses the DEFAULT Platt + q calibration constants, which are "
+            "tied to the canonical eval_corpus ensemble and do NOT transfer to a freshly-trained ensemble. "
+            "P_motif/q will be miscalibrated. Re-fit the calibration in eval_corpus (Platt OOF on the "
+            "reference + q on the species panel) before using this bundle. See docs/raw_gated_scoring.md §0c."
+        )
+    else:  # raw_gated
+        from intronIC.scoring.species_gate import SpeciesGateParams
+        bundle["raw_gate_params"] = asdict(SpeciesGateParams())
+
+    model_path = config.output.get_output_path(".model.pkl")
+    joblib.dump(bundle, model_path, compress=3)
+    messenger.success(
+        f"Saved {mode} bundle to {model_path} "
+        f"({len(ensemble.models)} models, {len(u12_scored)} U12 / {len(u2_scored)} U2)"
+    )
+    return model_path
+
+
 def _apply_post_classification_adjustment(
     cluster_validation_result: dict,
     config: "IntronICConfig",
@@ -6063,34 +6145,46 @@ def main_train(config: IntronICConfig):
         u12_scored = scored_reference[: len(u12_reference)]
         u2_scored = scored_reference[len(u12_reference) :]
 
-        # Normalize scores
-        messenger.log_only("Normalizing scores with z-score transformation")
-        from intronIC.scoring.normalizer import ScoreNormalizer
+        # Raw-feature scoring modes (raw_gated / pmotif_adjudicated): skip z-normalization and the
+        # z-only IntronClassifier path; train the raw ensemble directly and stamp the bundle so inference
+        # runs the species-gate / pmotif adjudicator. See docs/raw_gated_scoring.md §0c.
+        if config.training.scoring_mode in ("raw_gated", "pmotif_adjudicated"):
+            messenger.success(
+                f"Loaded and scored {len(u12_scored)} U12 and {len(u2_scored)} U2 reference introns "
+                f"(raw features; z-normalization skipped for scoring_mode={config.training.scoring_mode})"
+            )
+            messenger.step(4, "Train Classifier", pipeline_steps)
+            _train_and_save_raw_bundle(u12_scored, u2_scored, config, messenger)
+            messenger.success("Model trained and saved")
+        else:
+            # Normalize scores
+            messenger.log_only("Normalizing scores with z-score transformation")
+            from intronIC.scoring.normalizer import ScoreNormalizer
 
-        normalizer = ScoreNormalizer()
-        normalizer.fit(scored_reference, dataset_type="reference")
+            normalizer = ScoreNormalizer()
+            normalizer.fit(scored_reference, dataset_type="reference")
 
-        u12_ref_norm = list(normalizer.transform(u12_scored, dataset_type="reference"))
-        u2_ref_norm = list(normalizer.transform(u2_scored, dataset_type="reference"))
+            u12_ref_norm = list(normalizer.transform(u12_scored, dataset_type="reference"))
+            u2_ref_norm = list(normalizer.transform(u2_scored, dataset_type="reference"))
 
-        messenger.success(
-            f"Loaded, scored, and normalized {len(u12_ref_norm)} U12 and {len(u2_ref_norm)} U2 reference introns"
-        )
+            messenger.success(
+                f"Loaded, scored, and normalized {len(u12_ref_norm)} U12 and {len(u2_ref_norm)} U2 reference introns"
+            )
 
-        # Step 4: Train classifier (model is saved internally by classify_introns)
-        messenger.step(4, "Train Classifier", pipeline_steps)
-        # Pass empty list for experimental introns - we're only training on references
-        # classify_introns() will train the model and save it to disk
-        classified_introns, metrics = classify_introns(
-            introns=[],  # No experimental introns in train mode
-            u12_reference=u12_ref_norm,
-            u2_reference=u2_ref_norm,
-            normalizer=normalizer,
-            config=config,
-            messenger=messenger,
-            reporter=reporter,
-        )
-        messenger.success("Model trained and saved")
+            # Step 4: Train classifier (model is saved internally by classify_introns)
+            messenger.step(4, "Train Classifier", pipeline_steps)
+            # Pass empty list for experimental introns - we're only training on references
+            # classify_introns() will train the model and save it to disk
+            classified_introns, metrics = classify_introns(
+                introns=[],  # No experimental introns in train mode
+                u12_reference=u12_ref_norm,
+                u2_reference=u2_ref_norm,
+                normalizer=normalizer,
+                config=config,
+                messenger=messenger,
+                reporter=reporter,
+            )
+            messenger.success("Model trained and saved")
 
         # Print final summary
         elapsed = time.time() - start_time

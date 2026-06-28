@@ -141,6 +141,7 @@ class TrainingConfig:
     seed: int = 42
     max_iter: int = 50000
     eval_mode: str = "nested_cv"
+    scoring_mode: str = "zscore"   # zscore (legacy z-norm+modesep) | raw_gated | pmotif_adjudicated
     n_cv_folds: int = 7
     test_fraction: float = 0.2
     n_optimization_rounds: int = 5
@@ -771,6 +772,7 @@ class IntronICConfig:
             seed=args.seed,
             max_iter=getattr(args, "max_iter", 50000),
             eval_mode=getattr(args, "eval_mode", "nested_cv"),
+            scoring_mode=getattr(args, "scoring_mode", "zscore"),
             n_cv_folds=getattr(args, "n_cv_folds", 5),
             test_fraction=getattr(args, "test_fraction", 0.2),
             n_optimization_rounds=getattr(args, "n_optimization_rounds", 5),
