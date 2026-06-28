@@ -319,12 +319,43 @@ streaming==in-memory parity gate green. KEPT (NOT part of the gate): `scoring/pr
 backs the live `--species-prior` Bayesian adjustment; `scoring/normalizer.py` (adaptive-z) — runs
 harmlessly under raw bundles and the in-memory cv-array filter still keys on `*_z` presence.
 
-**STEP 2b (REMAINING — the deeper normalizer/z-feature rip-out):** delete `normalizer.py` + the zscore
-TRAINING path (`main_train`'s `else` branch) + the z-feature plumbing (`trainer.Z_BASE_FEATURES`, the
-adaptive/frozen scaler pre-pass, worker scaler args), removing z-normalization from the scoring/streaming
-hot path entirely. Higher-risk (touches the hot path + writers + workers); its own focused pass. Stale
-guarded `cluster_validation_result`/`mode_separation` metrics plumbing in `main.py` (always-None, harmless)
-is cosmetic cleanup folded into 2b.
+**SUPPLANT STEP 2b — the deeper normalizer/z-feature rip-out (multi-pass; IN PROGRESS).** 2b removes
+z-normalization from the scoring/streaming hot path entirely and deletes `normalizer.py` + its closure.
+Recon (the `ScoreNormalizer` closure spans 9 src files) split it into four verifiable sub-passes:
+
+- **2b-1 — DONE (commit 3cedf7a).** Remove the dead zscore *training* + bundle loader (inference output
+  unchanged, chr19 byte-identical). `utils/model_io.py`: deleted the v3/modesep translator
+  (`_build_v3_ensemble` / `_v3_to_runtime` / `_load_fallback_normalizer`); `normalize_model_bundle` is now a
+  pass-through (a v3/zscore bundle passes through and is rejected at `assert_scoreable_bundle`). `main_train`'s
+  zscore `else`-branch and `main_classify`'s no-pretrained "normalize + train + classify" `else`-branch now
+  `raise` (both used `ScoreNormalizer` + `IntronClassifier`). `--scoring-mode` drops the `zscore` choice.
+  `test_model_io` rewritten for the pass-through loader. `classify_introns` / `IntronClassifier` /
+  `normalize_scores` are now DEAD (deleted in 2b-4 with `normalizer.py`, which they import).
+
+- **2b-2 — DONE (commit 7befa5d), the risky core, PROVEN.** Ripped z-normalization out of both classify hot
+  paths. **Controlled probe:** with the adaptive `RobustScaler` fully skipped, EVERY scoring column
+  (`svm_score`/`P_motif`/`P_adj`/`q`/`type_id`/`adjusted_score`/`rel_score`/raw/CIs) is byte-identical to the
+  pre-change golden ⇒ z-norm is irrelevant to the calls (it only produced unused diagnostic columns).
+  `predictor.py`: guard the three BothEndsStrong `min_5_bp`/`min_5_3` blocks (computed unconditionally from
+  z-scores → `None+None` crash on raw bundles → `None` when z absent). In-memory predicts on the raw-scored
+  introns (no `ScoreNormalizer.fit/transform`); the streaming worker drops `apply_scaler_to_scored_batch` and
+  classifies the raw batch directly; both the cv-filter and the streaming accumulator key on `svm_score` and
+  carry raw motif scores. chr19 both modes: scoring columns identical to golden **and** streaming==in-memory
+  parity perfect (0 mismatches, all columns). The `5'_z`/`bp_z`/`3'_z`/`min_5_bp`/`min_5_3`/
+  `svm_score_adaptive`/`svm_score_frozen` columns are now `NA` in both paths.
+
+- **2b-3 — REMAINING.** Drop the now-`NA` z/min/adaptive columns from `ScoreWriter` (header + data) and
+  CONVERT the 2D/3D scatter plots in `visualization/plots.py` (4 functions read `5'_z`/`bp_z`/`3'_z`) to
+  **raw-feature space** `[5'_raw, bp_raw, 3'_raw]` (the actual classifier space; user decision). Re-anchor the
+  chr19 golden (z columns gone), re-verify parity.
+
+- **2b-4 — REMAINING.** Delete `scoring/normalizer.py` (`ScoreNormalizer` / `ZeroAnchoredRobustScaler` /
+  `DatasetType`), the now-dead streaming adaptive-scaler pre-pass + in-memory scaler resolution, the dead
+  `classify_introns` / `IntronClassifier` / `normalize_scores`, `trainer.Z_BASE_FEATURES` + the optimizer
+  z-default, the `scoring/__init__` `ScoreNormalizer`/`DatasetType` exports, `clipping.py` docstrings, and the
+  remaining z-stack tests (`test_normalizer`, `test_new_scaling_architecture`, the z bits of `test_scorer` /
+  `test_classifier` / `test_edge_cases`). Also clear the stale always-None `cluster_validation_result` /
+  `mode_separation` metrics plumbing in `main.py`, and update `CLAUDE.md` + `DEV_PATHS_MANIFEST.md` layout.
 
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
