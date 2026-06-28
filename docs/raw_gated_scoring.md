@@ -271,9 +271,23 @@ specifically needs the dev snRNA/IPA panel and cannot be done from `intronIC tra
 **Airtight pass §0a — both parts DONE** (Part A leave-clade-out OOF margins; Part B POT-GPD diagnostic; see
 §0a). **Low-N fallback — SETTLED** (option A default + `--adjudicator-min-u2` opt-in; pooled global-q
 rejected; see §0a "Low-N fallback — SETTLED"). Committed pmotif parity test DONE.
-**Still ahead:** the eval_corpus calibration pipeline (Platt-OOF + q-panel for the bundled ensemble — the real
-prerequisite for a shippable default), the §5 formal gates, and the step-7 supplant PR (flip default + delete
-the z stack).
+
+**Calibration pipeline — DONE (2026-06-27, `eval_corpus/calibrate_pmotif_bundle.py`): the shipped constants
+are confirmed self-consistent for the canonical raw_gated_42 ensemble, and the derivation is reproducible for
+any ensemble.** The pipeline (1) re-derives **Platt** from the ensemble's margins over the v23 corpus →
+`σ(2.7958·margin − 1.1778)`, **reproducing the shipped `DEFAULT_PLATT_*` (2.796/−1.178) exactly** (|Δ|=0.000,
+in-sample ECE 4e-4); (2) re-computes per-genome `depth_tail` (this ensemble) and Firth-fits **q**,
+leave-clade-out **24/25** (the lone miss is chlamydomonas — the known §0a borderline loss); (3) assembles the
+bundle with the re-derived Platt + the **shipped full-resolution q** (`DEFAULT_Q_*` 3.64/−10.86). Important:
+the CAP-subsampled q re-fit (4.31/−11.9, boundary 2.76) is a **method cross-check only** — *inference computes
+`depth_tail` at full resolution*, so the bundled q must be the full-res fit; bundling the subsampled re-fit
+would be a scale mismatch. The **shippable bundle** = re-stamp of raw_gated_42 + these verified constants
+(`scripts/build_pmotif_adjudicated_bundle.py`; version `depth_tail_firth_2026-06-27`); end-to-end chr19
+q=0.993, 39 calls.
+
+**Still ahead:** the §5 formal gates and the step-7 supplant PR — place the verified pmotif bundle at the
+bundled-default path, flip the default `scoring_mode`, delete the z stack (`normalizer.py` adaptive-z,
+`mode_separation.py`+`mode_sep_pipeline.py`, `prior_adjustment.py`).
 
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
