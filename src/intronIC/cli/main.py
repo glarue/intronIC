@@ -39,7 +39,6 @@ from intronIC.file_io.writers import (
     summarize_boundaries_from_meta,
     summarize_introns,
 )
-from intronIC.scoring.normalizer import ScoreNormalizer
 from intronIC.scoring.scorer import IntronScorer
 from intronIC.utils.coordinates import GenomicCoordinate
 from intronIC.utils.metadata import (
@@ -3619,90 +3618,6 @@ def _streaming_extract_and_score_contig(
 
     return filtered_introns, scored_scorable, stats
 
-
-# =============================================================================
-# Adaptive-fit worker for streaming v3 path
-# =============================================================================
-# Used when streaming-classify is requested but the model bundle has no
-# saved frozen scaler (v3 multispecies default). Calls the same
-# extract+filter+score helper as the classify worker so the normalizer is
-# fit on the same intron set the classify pass will see.
-
-_streaming_fit_worker_genome_path: str = ""
-_streaming_fit_worker_annotation_db_path: str = ""
-_streaming_fit_worker_pwm_sets: Any = None
-_streaming_fit_worker_config: dict = {}
-
-
-def _init_streaming_fit_worker(
-    genome_path: str,
-    annotation_db_path: str,
-    pwm_sets: Any,
-    config_dict: dict,
-) -> None:
-    """Initialize the per-contig adaptive-fit worker process."""
-    from intronIC.file_io.indexed_genome import init_worker_genome
-
-    init_worker_genome(genome_path)
-
-    global _streaming_fit_worker_genome_path
-    global _streaming_fit_worker_annotation_db_path
-    global _streaming_fit_worker_pwm_sets
-    global _streaming_fit_worker_config
-
-    _streaming_fit_worker_genome_path = genome_path
-    _streaming_fit_worker_annotation_db_path = annotation_db_path
-    _streaming_fit_worker_pwm_sets = pwm_sets
-    _streaming_fit_worker_config = config_dict
-
-
-def _process_contig_streaming_fit_worker(
-    contig_input: tuple[str, int],
-) -> tuple[str, "np.ndarray"]:
-    """Extract+score one contig and return only raw 5'/BP/3' scores.
-
-    Returns:
-        (contig_name, raw_score_array) where raw_score_array has shape
-        (n_scorable, 3) with columns [five_raw, bp_raw, three_raw]. Empty
-        or skipped contigs return a (0, 3) array.
-    """
-    import numpy as np
-
-    from intronIC.file_io.indexed_genome import get_worker_genome
-
-    contig, _count = contig_input
-    empty = np.empty((0, 3), dtype=np.float64)
-
-    indexed_genome = get_worker_genome()
-    _, scored_scorable, _ = _streaming_extract_and_score_contig(
-        contig=contig,
-        annotation_db_path=_streaming_fit_worker_annotation_db_path,
-        pwm_sets=_streaming_fit_worker_pwm_sets,
-        config=_streaming_fit_worker_config,
-        indexed_genome=indexed_genome,
-    )
-
-    if not scored_scorable:
-        return contig, empty
-
-    rows: list[tuple[float, float, float]] = []
-    for intron in scored_scorable:
-        s = intron.scores
-        if (
-            s is None
-            or s.five_raw_score is None
-            or s.bp_raw_score is None
-            or s.three_raw_score is None
-        ):
-            continue
-        rows.append((s.five_raw_score, s.bp_raw_score, s.three_raw_score))
-
-    if not rows:
-        return contig, empty
-
-    return contig, np.asarray(rows, dtype=np.float64)
-
-
 def _init_streaming_classify_worker(
     genome_path: str,
     annotation_db_path: str,
@@ -3863,40 +3778,17 @@ def classify_streaming_per_contig(
 
     messenger.log_only(f"Loaded ensemble with {len(ensemble.models)} models")
 
-    # Resolve the frozen scaler used by the per-contig classify workers.
-    # v2.3-format bundles ship a saved normalizer; we extract the frozen
-    # scaler from it here. v3 multispecies bundles ship without a saved
-    # normalizer (training features were already z-scored per-species);
-    # for those we defer scaler resolution and fit an adaptive RobustScaler
-    # in a lightweight pass after BG correction (see below).
-    #
-    # --load-normalizer is honored at this point in either bundle format:
-    # the user-supplied scaler overrides whatever the bundle ships.
-    # scaler_source records which path produced the final scaler, surfaced
-    # to the user in the run summary so single-intron / sparse-input runs
-    # don't silently default to frozen-fallback behavior.
-    scaler_source = None
-    if config.scoring.load_normalizer is not None:
-        messenger.info(
-            f"Loading saved normalizer from {config.scoring.load_normalizer}"
+    # Raw-feature bundles (the only scoreable kind after the z-stack removal) classify
+    # directly from the background-corrected raw motif scores — no per-species
+    # z-normalization, so the per-contig workers need no scaler. The z-only
+    # --load-normalizer / --save-normalizer options no longer apply.
+    if config.scoring.load_normalizer is not None or config.scoring.save_normalizer:
+        messenger.warning(
+            "--load-normalizer / --save-normalizer are ignored: z-normalization was removed "
+            "(supplant 2b); raw-feature bundles score directly from raw motif scores."
         )
-        saved_normalizer = load_model(config.scoring.load_normalizer)
-        scaler = saved_normalizer.get_frozen_scaler()
-        scaler_source = "user_supplied"
-        messenger.log_only(
-            "Using --load-normalizer scaler; skipping adaptive pre-pass"
-        )
-    elif saved_normalizer is not None:
-        scaler = saved_normalizer.get_frozen_scaler()
-        scaler_source = "bundled_saved"
-        messenger.log_only("Extracted frozen scaler from model normalizer")
-    else:
-        scaler = None  # adaptive fit happens later
-        messenger.log_only(
-            "v3 multispecies bundle: adaptive per-species normalization "
-            "(the standard path for these bundles) — fitting a RobustScaler on "
-            "this genome's intron-score distribution via a pre-pass"
-        )
+    scaler = None
+    scaler_source = "none (raw features)"
 
     # Load PWM matrices
     messenger.info("Loading PWM matrices")
@@ -4036,136 +3928,6 @@ def classify_streaming_per_contig(
         )
         if corrected is not None:
             pwm_sets = corrected
-
-    # =========================================================================
-    # ADAPTIVE NORMALIZER FITTING PASS (v3 streaming only)
-    # When saved_normalizer is None, run a lightweight per-contig pre-pass
-    # that extracts+filters+scores introns with the (possibly BG-corrected)
-    # PWMs and returns only their raw 5'/BP/3' scores. We fit a RobustScaler
-    # on the pooled raw-score distribution and use it as the frozen scaler
-    # for the classify pass. This mirrors the cross-species adaptive
-    # normalization used by the in-memory pretrained classify path.
-    # =========================================================================
-    if scaler is None:
-        # Build the same worker config the classify pass will use, so the
-        # fitting pass sees an identical intron set.
-        fit_worker_config = {
-            "clean_names": config.output.clean_names,
-            "debug": config.output.debug,
-            "feature_type": config.extraction.feature_type,
-            "flank_len": config.extraction.flank_len,
-            "u12_boundary_correction": config.extraction.u12_boundary_correction,
-            "u12_correction_require_canonical": (
-                config.extraction.u12_correction_require_canonical
-            ),
-            "min_intron_len": config.extraction.min_intron_len,
-            "exclude_noncanonical": config.scoring.exclude_noncanonical,
-            "no_intron_overlap": config.extraction.no_intron_overlap,
-            "include_duplicates": config.extraction.include_duplicates,
-            "ignore_nc_dnts": config.scoring.ignore_nc_dnts,
-            "five_start": config.scoring.scoring_regions.five_start,
-            "five_end": config.scoring.scoring_regions.five_end,
-            "bp_start": config.scoring.scoring_regions.bp_start,
-            "bp_end": config.scoring.scoring_regions.bp_end,
-            "three_start": config.scoring.scoring_regions.three_start,
-            "three_end": config.scoring.scoring_regions.three_end,
-        }
-
-        n_fit_workers = config.performance.processes
-        fit_init_args = (
-            str(config.input.genome),
-            str(annotation_store.db_path),
-            pwm_sets,
-            fit_worker_config,
-        )
-        fit_inputs = [(c, n) for c, n in contigs_with_counts]
-
-        if n_fit_workers > 1:
-            messenger.info(
-                f"Adaptive normalizer fit: scoring introns "
-                f"(parallel, {n_fit_workers} workers)..."
-            )
-            with Pool(
-                processes=n_fit_workers,
-                initializer=_init_streaming_fit_worker,
-                initargs=fit_init_args,
-            ) as pool:
-                contig_score_arrays = [
-                    arr for _, arr in pool.imap_unordered(
-                        _process_contig_streaming_fit_worker, fit_inputs
-                    )
-                    if arr.shape[0] > 0
-                ]
-        else:
-            messenger.info("Adaptive normalizer fit: scoring introns sequentially...")
-            _init_streaming_fit_worker(*fit_init_args)
-            contig_score_arrays = []
-            for ci in fit_inputs:
-                _, arr = _process_contig_streaming_fit_worker(ci)
-                if arr.shape[0] > 0:
-                    contig_score_arrays.append(arr)
-
-        import numpy as np
-
-        # Minimum intron count for adaptive RobustScaler to give stable
-        # quartile estimates. Below this we fall through to the bundled
-        # fallback scaler. 200 keeps IQR standard error at ~7% of σ; at
-        # 30 (just-stable-median territory) IQR noise was ~20%, large
-        # enough to drift z-scores meaningfully on small annotation
-        # subsets. Realistic inputs are either single-intron/handful
-        # (well below 200) or full-genome (well above), so the boundary
-        # rarely matters in practice.
-        MIN_ADAPTIVE_INTRONS = 200
-
-        fallback_normalizer = model_data.get("fallback_normalizer")
-
-        if not contig_score_arrays:
-            if fallback_normalizer is not None:
-                scaler = fallback_normalizer.get_frozen_scaler()
-                scaler_source = "frozen_fallback_no_introns"
-                messenger.warning(
-                    "Adaptive normalizer fit produced no scored introns. "
-                    "Falling through to bundled fallback scaler "
-                    "(suitable for very small inputs but adaptive normalization "
-                    "is preferable when feasible)."
-                )
-            else:
-                raise ValueError(
-                    "Adaptive normalizer fitting produced no scored introns "
-                    "and no fallback normalizer is available. Check that "
-                    "the genome and annotation contain canonical introns "
-                    "scoreable by the loaded PWMs."
-                )
-        else:
-            pooled_raw = np.vstack(contig_score_arrays)
-            del contig_score_arrays
-
-            if pooled_raw.shape[0] < MIN_ADAPTIVE_INTRONS and fallback_normalizer is not None:
-                scaler = fallback_normalizer.get_frozen_scaler()
-                scaler_source = "frozen_fallback_min_introns"
-                messenger.warning(
-                    f"Adaptive normalizer fit pool has only "
-                    f"{pooled_raw.shape[0]:,} introns (< {MIN_ADAPTIVE_INTRONS} "
-                    f"required for stable median/IQR estimation). Falling "
-                    f"through to bundled fallback scaler. Results on inputs "
-                    f"this small are approximate; cross-species adaptive "
-                    f"normalization is recommended for normal genome-scale "
-                    f"runs."
-                )
-            else:
-                from intronIC.scoring.normalizer import ScoreNormalizer
-
-                normalizer = ScoreNormalizer().fit_from_array(
-                    pooled_raw, dataset_type="unlabeled"
-                )
-                scaler = normalizer.get_frozen_scaler()
-                scaler_source = "adaptive_fit"
-                messenger.log_only(
-                    f"Fitted adaptive scaler on {pooled_raw.shape[0]:,} introns "
-                    f"(median={[float(c) for c in scaler.center_]}, "
-                    f"IQR={[float(s) for s in scaler.scale_]})"
-                )
-            del pooled_raw
 
     # Initialize output writer
     output_writer = StreamingOutputWriter(
