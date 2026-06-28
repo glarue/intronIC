@@ -853,24 +853,35 @@ class TestSummarizeBoundariesFromMeta:
 
 
 class TestCountCallsFromMeta:
-    """count_calls_from_meta tallies final (n_u12, n_hc, n_total) from meta.iic, with
-    HC (rel_score > 0) a strict subset of the U12 call count — the fix for the metrics
-    bug where high_confidence_u12 (the total called count via adjusted_hc_count) could
-    exceed the first-pass u12_count."""
+    """count_calls_from_meta tallies SCORED final counts (n_u12, n_hc, n_u2) from meta.iic.
+    HC (rel_score > 0) is a strict subset of the U12 call count, and omitted introns
+    (type_id==NA) are excluded from both classes — they were never scored."""
 
-    def test_called_and_hc_subset(self, tmp_path):
+    def test_scored_counts_and_hc_subset(self, tmp_path):
         from intronIC.file_io.writers import count_calls_from_meta
         meta = tmp_path / "m.meta.iic"
         with open(meta, "w") as f:
             f.write("name\trel_score\ttype_id\n")
-            # 5 U12 calls, 3 strong (rel>0) + 2 weak (rel<=0); 4 U2
+            # 5 U12 calls, 3 strong (rel>0) + 2 weak (rel<=0); 4 scored U2
             for i, rel in enumerate([5.0, 2.0, 0.5, -1.0, -10.0]):
                 f.write(f"u{i}\t{rel}\tu12\n")
             for i, rel in enumerate([-30.0, -50.0, -5.0, -90.0]):
                 f.write(f"v{i}\t{rel}\tu2\n")
-        n_u12, n_hc, n_total = count_calls_from_meta(meta)
-        assert (n_u12, n_hc, n_total) == (5, 3, 9)
+        n_u12, n_hc, n_u2 = count_calls_from_meta(meta)
+        assert (n_u12, n_hc, n_u2) == (5, 3, 4)
         assert n_hc <= n_u12  # HC can never exceed the call count
+
+    def test_omitted_NA_rows_excluded_from_both(self, tmp_path):
+        from intronIC.file_io.writers import count_calls_from_meta
+        meta = tmp_path / "m.meta.iic"
+        with open(meta, "w") as f:
+            f.write("name\trel_score\ttype_id\n")
+            f.write("u0\t5.0\tu12\n")          # scored U12
+            f.write("v0\t-3.0\tu2\n")           # scored U2
+            f.write("o0\tNA\tNA\n")             # omitted (not_longest_isoform / short)
+            f.write("o1\tNA\tNA\n")
+        # omitted NA rows count toward neither u12 nor u2
+        assert count_calls_from_meta(meta) == (1, 1, 1)
 
     def test_missing_type_id_returns_zeros(self, tmp_path):
         from intronIC.file_io.writers import count_calls_from_meta
@@ -882,4 +893,4 @@ class TestCountCallsFromMeta:
         from intronIC.file_io.writers import count_calls_from_meta
         meta = tmp_path / "m.meta.iic"
         meta.write_text("name\trel_score\ttype_id\nu0\tNA\tu12\nu1\t3.0\tu12\n")
-        assert count_calls_from_meta(meta) == (2, 1, 2)  # NA rel_score -> not HC
+        assert count_calls_from_meta(meta) == (2, 1, 0)  # NA rel_score -> not HC; no U2

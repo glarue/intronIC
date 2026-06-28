@@ -582,19 +582,20 @@ def _finalize_classification_metrics(
             meta_path, summary.get("threshold", 90.0)
         )
 
-        # Final call counts from the SAME finalized meta.iic, superseding the writer's
-        # first-pass tally: u12_count = called (final type_id==u12); high_confidence_u12 =
-        # its strong subset (rel_score > 0). Sharing one finalized source guarantees
-        # HC <= u12_count and that u12_count matches the per-intron output (fixes the
-        # metrics-only bug where high_confidence_u12 was the total called count via
-        # adjusted_hc_count while u12_count stayed first-pass, so HC could exceed calls).
-        n_u12, n_hc, n_total = count_calls_from_meta(meta_path)
-        if n_total > 0:
+        # Final SCORED call counts from the SAME finalized meta.iic, superseding the
+        # writer's first-pass tally. u12_count + u2_count are the scored U12/U2 calls
+        # (type_id), so omitted introns (type_id==NA: not_longest_isoform / short) are
+        # excluded from both — they were never scored. high_confidence_u12 is the strong
+        # subset (rel_score > 0), guaranteeing HC <= u12_count. Percentages are over the
+        # scored set (u12 + u2), not all written introns.
+        n_u12, n_hc, n_u2 = count_calls_from_meta(meta_path)
+        n_scored = n_u12 + n_u2
+        if n_scored > 0:
             summary["u12_count"] = n_u12
-            summary["u2_count"] = n_total - n_u12
+            summary["u2_count"] = n_u2
             summary["high_confidence_u12"] = n_hc
-            summary["u12_percentage"] = n_u12 / n_total * 100
-            summary["high_confidence_percentage"] = n_hc / n_total * 100
+            summary["u12_percentage"] = n_u12 / n_scored * 100
+            summary["high_confidence_percentage"] = n_hc / n_scored * 100
 
     summary["u12_boundaries"] = u12_boundaries
     summary["u2_boundaries"] = u2_boundaries

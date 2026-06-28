@@ -122,19 +122,25 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
 
 
 def count_calls_from_meta(meta_path) -> Tuple[int, int, int]:
-    """Tally final call counts from a *finalized* meta.iic: ``(n_u12, n_hc, n_total)``.
+    """Tally final SCORED call counts from a *finalized* meta.iic: ``(n_u12, n_hc, n_u2)``.
 
-    ``n_u12`` = rows whose final ``type_id == "u12"`` (the U12 *call* count);
-    ``n_hc``  = those additionally strong (``rel_score > 0`` == adjusted_score >= 90,
-    intronIC's high-confidence U12); ``n_total`` = all rows. Authoritative because
-    meta.iic carries the post-classification ``type_id``/``rel_score`` — unlike the
-    streaming writer's write-time counters, which are first-pass. Returns zeros if the
-    required columns are absent. (Both counts share this single finalized source so the
-    HC subset can never exceed the call count.)
+    Counted strictly off the final ``type_id`` column, so only *scored* introns are
+    counted — omitted introns (``type_id == "NA"``, tagged ``omitted_not_longest_isoform``
+    / ``omitted_short`` in ``attributes``) are excluded from both classes, since they were
+    never scored:
+
+    - ``n_u12`` = ``type_id == "u12"`` (the U12 call count);
+    - ``n_hc``  = those additionally strong (``rel_score > 0`` == adjusted_score >= 90,
+      intronIC's high-confidence U12 — so ``n_hc <= n_u12``);
+    - ``n_u2``  = ``type_id == "u2"`` (scored U2 only; NOT all-rows-minus-u12).
+
+    Authoritative because meta.iic carries the post-classification ``type_id``/``rel_score``
+    (the streaming writer's write-time counters are first-pass). The scored total is
+    ``n_u12 + n_u2``. Returns zeros if ``type_id`` is absent.
     """
     import gzip
 
-    n_u12 = n_hc = n_total = 0
+    n_u12 = n_hc = n_u2 = 0
     path = Path(meta_path)
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt") as f:
@@ -148,8 +154,8 @@ def count_calls_from_meta(meta_path) -> Tuple[int, int, int]:
             fields = line.rstrip("\n").split("\t")
             if len(fields) <= i_type:
                 continue
-            n_total += 1
-            if fields[i_type] == "u12":
+            tid = fields[i_type]
+            if tid == "u12":
                 n_u12 += 1
                 if i_rel is not None and i_rel < len(fields):
                     try:
@@ -157,7 +163,9 @@ def count_calls_from_meta(meta_path) -> Tuple[int, int, int]:
                             n_hc += 1
                     except ValueError:
                         pass
-    return n_u12, n_hc, n_total
+            elif tid == "u2":
+                n_u2 += 1
+    return n_u12, n_hc, n_u2
 
 
 # ============================================================================
