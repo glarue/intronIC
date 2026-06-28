@@ -538,24 +538,20 @@ def _finalize_classification_metrics(
     model_path: str,
     streaming_mode: str,
     normalizer_used: Any,
-    adjusted_hc_count: Optional[int],
     meta_path: Optional[Path] = None,
 ) -> dict:
-    """Assemble the final per-species `metrics.iic.json` dict, shared by the
+    """Assemble the final per-species ``metrics.iic.json`` dict, shared by the
     streaming and in-memory classify paths so both emit equivalent metrics.
 
-    The streaming path passes ``StreamingOutputWriter.get_summary()`` as
-    ``base_summary``; the in-memory path passes ``summarize_introns(...)`` — the
-    batch twin sharing ``_classify_for_summary``. These supply the base *counts*
-    (most of which the discount summary then overrides). The dinucleotide
-    ``u12_boundaries``/``u2_boundaries`` are NOT taken from base_summary: they are
-    tallied here from the FINALIZED ``meta.iic`` (post-discount ``type_id``) via
-    ``summarize_boundaries_from_meta``, so they sum to the reported ``u12_count``
-    and are identical across both paths (which share the file + helper). The bug
-    this fixed: the writer's incremental boundary counters captured the *first-pass*
-    ``type_id`` (pre-discount), inflating ``u12_boundaries`` above ``u12_count``.
-    The only intentional cross-mode difference is ``streaming_mode``. Caller must
-    pass ``meta_path`` *after* post-classification has rewritten meta.iic.
+    SINGLE SOURCE OF TRUTH for all classification counts: every U12 / U2 /
+    high-confidence count, percentage, and dinucleotide boundary is tallied here
+    from the FINALIZED ``meta.iic`` (post-classification ``type_id`` / ``rel_score``)
+    via ``count_calls_from_meta`` + ``summarize_boundaries_from_meta`` — so they
+    cannot drift from the per-intron output and ``high_confidence_u12 <= u12_count``
+    holds by construction. ``base_summary`` (from ``get_summary`` / ``summarize_introns``)
+    supplies only the structural ``total_introns`` + ``threshold``; it carries no
+    counts. The only intentional cross-mode difference is ``streaming_mode``. Caller
+    must pass ``meta_path`` *after* post-classification has rewritten meta.iic.
     """
     summary = dict(base_summary)
 
@@ -571,34 +567,35 @@ def _finalize_classification_metrics(
         }
     )
 
-    # Dinucleotide boundaries from the FINALIZED meta.iic (post-discount type_id),
-    # so they sum to the reported u12_count and are identical across the streaming
-    # and in-memory paths (both tally the same finalized file via the same helper —
-    # also what the retroactive patcher uses). Must run after post-classification
-    # has rewritten meta.iic. Empty if meta is unavailable.
+    # ALL classification counts come from the finalized meta.iic (the authoritative
+    # post-classification type_id/rel_score), via the two shared helpers — never the
+    # write-time first-pass tally. u12_count + u2_count are the SCORED calls (type_id),
+    # so omitted introns (type_id==NA: not_longest_isoform / short) are excluded from
+    # both. high_confidence_u12 is the strong subset (rel_score > 0). Percentages are
+    # over the scored set. Empty/zero if meta is unavailable.
     u12_boundaries, u2_boundaries = {}, {}
+    n_u12 = n_hc = n_u2 = 0
     if meta_path is not None and Path(meta_path).exists():
         u12_boundaries, u2_boundaries = summarize_boundaries_from_meta(
             meta_path, summary.get("threshold", 90.0)
         )
-
-        # Final SCORED call counts from the SAME finalized meta.iic, superseding the
-        # writer's first-pass tally. u12_count + u2_count are the scored U12/U2 calls
-        # (type_id), so omitted introns (type_id==NA: not_longest_isoform / short) are
-        # excluded from both — they were never scored. high_confidence_u12 is the strong
-        # subset (rel_score > 0), guaranteeing HC <= u12_count. Percentages are over the
-        # scored set (u12 + u2), not all written introns.
         n_u12, n_hc, n_u2 = count_calls_from_meta(meta_path)
-        n_scored = n_u12 + n_u2
-        if n_scored > 0:
-            summary["u12_count"] = n_u12
-            summary["u2_count"] = n_u2
-            summary["high_confidence_u12"] = n_hc
-            summary["u12_percentage"] = n_u12 / n_scored * 100
-            summary["high_confidence_percentage"] = n_hc / n_scored * 100
-
+    n_scored = n_u12 + n_u2
+    summary["u12_count"] = n_u12
+    summary["u2_count"] = n_u2
+    summary["high_confidence_u12"] = n_hc
+    summary["u12_percentage"] = (n_u12 / n_scored * 100) if n_scored else 0.0
+    summary["high_confidence_percentage"] = (n_hc / n_scored * 100) if n_scored else 0.0
     summary["u12_boundaries"] = u12_boundaries
     summary["u2_boundaries"] = u2_boundaries
+
+    # Consistency guarantees (true by construction from the single finalized tally):
+    # HC can never exceed the call count, and each dinucleotide breakdown is a subset of
+    # its call count. These assert that no future change reintroduces a divergent path.
+    assert n_hc <= n_u12, f"high_confidence_u12 ({n_hc}) > u12_count ({n_u12})"
+    assert sum(u12_boundaries.values()) <= n_u12 and sum(u2_boundaries.values()) <= n_u2, (
+        "dinucleotide boundaries exceed their call count"
+    )
 
     return summary
 
@@ -4141,7 +4138,6 @@ def classify_streaming_per_contig(
         config=config,
         messenger=messenger,
     )
-    adjusted_hc_count = _post.adjusted_hc_count
 
     # Free accumulated score data
     del accumulated_five_z, accumulated_bp_z, accumulated_three_z, accumulated_svm_scores, accumulated_type_ids
@@ -4155,7 +4151,6 @@ def classify_streaming_per_contig(
         model_path=str(config.training.pretrained_model_path),
         streaming_mode="per_contig",
         normalizer_used=scaler_source,
-        adjusted_hc_count=adjusted_hc_count,
         meta_path=config.output.get_output_path(".meta.iic"),
     )
 
@@ -5460,7 +5455,6 @@ def main_classify(config: IntronICConfig):
         # the gate-fail fallback. Mirrors the streaming-classify path so the
         # two routes produce equivalent output (task #203 — May 27 2026,
         # in-memory previously fell through to the v2.3 legacy-only path).
-        adjusted_hc_count = None
         if classified_introns:
             # Filter to introns with all three z-scores + svm_score present AND
             # a resolved u12/u2 type_id, so the parallel arrays line up. This guard
@@ -5490,15 +5484,11 @@ def main_classify(config: IntronICConfig):
                     svm_s=svm_s, type_ids=type_ids,
                     model_data=model_data, config=config, messenger=messenger,
                 )
-                adjusted_hc_count = _post.adjusted_hc_count
-
                 # Rebuild metrics through the shared finalizer so this path's
-                # metrics.iic.json matches the streaming path (the only
-                # intentional difference is streaming_mode). summarize_introns is
-                # the batch twin of StreamingOutputWriter.get_summary(): same
-                # _classify_for_summary criterion, same type_id-keyed,
-                # deduplicated boundary breakdowns (so they sum to u12/u2_count),
-                # over every written intron (scored + omitted; omitted → u2).
+                # metrics.iic.json matches the streaming path (the only intentional
+                # difference is streaming_mode). base_summary supplies only
+                # total_introns; all U12/U2/HC counts + boundaries are tallied from the
+                # finalized meta.iic inside the finalizer (the single source of truth).
                 _base_summary = summarize_introns(
                     all_introns_for_output, config.scoring.threshold
                 )
@@ -5510,7 +5500,6 @@ def main_classify(config: IntronICConfig):
                     model_path=str(config.training.pretrained_model_path),
                     streaming_mode="in_memory",
                     normalizer_used=(metrics.get("normalizer_used") if metrics else None),
-                    adjusted_hc_count=adjusted_hc_count,
                     meta_path=config.output.get_output_path(".meta.iic"),
                 )
 

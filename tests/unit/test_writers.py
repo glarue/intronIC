@@ -836,6 +836,21 @@ class TestSummarizeBoundariesFromMeta:
         assert u12 == {"GT-AG": 31, "AT-AC": 10}  # deterministic order, GT-AG first
         assert u2 == {"GT-AG": 540}               # NA rows skipped
 
+    def test_omitted_NA_excluded_from_u2_boundaries(self, tmp_path):
+        # Omitted introns (type_id==NA) must NOT land in u2_boundaries (regression:
+        # the else-branch used to bucket everything-not-u12, incl. omitted, into u2 —
+        # making sum(u2_boundaries) exceed u2_count).
+        meta = tmp_path / "x.meta.iic"
+        self._write_meta(meta, (
+            [("GT-AG", "u12")] * 3
+            + [("GT-AG", "u2")] * 10
+            + [("GT-AG", "NA")] * 99   # omitted — must be ignored
+            + [("AT-AC", "NA")] * 50   # omitted — must be ignored
+        ))
+        u12, u2 = summarize_boundaries_from_meta(meta)
+        assert u12 == {"GT-AG": 3}
+        assert u2 == {"GT-AG": 10}     # NA rows excluded (not 159)
+
     def test_missing_columns_returns_empty(self, tmp_path):
         meta = tmp_path / "bad.meta.iic"
         meta.write_text("name\tfoo\tbar\nintron0\tx\ty\n")
