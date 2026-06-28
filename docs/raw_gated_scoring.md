@@ -356,19 +356,27 @@ Recon (the `ScoreNormalizer` closure spans 9 src files) split it into four verif
     `score_and_normalize_introns`/`apply_scaler_to_scored_batch`/`score_and_normalize_batch`; main
     `classify_introns` + `normalize_scores`; `classification/classifier.py` (`IntronClassifier` +
     `ClassificationResult`) + its `__init__`/import.
-  - **2b-4b — REMAINING.** Remove the streaming adaptive-scaler PRE-PASS + scaler resolution
-    (`classify_streaming_per_contig`): the last live `ScoreNormalizer().fit_from_array` call, the wasted
-    full-genome pre-scan, the `WorkerContext.scaler` field + adaptive-fit worker, the `MIN_ADAPTIVE_INTRONS`
-    / fallback logic; set `scaler_source` to a constant for the run summary. (This is also a streaming
-    SPEEDUP — the pre-scan currently runs but its scaler is unused.) Verify chr19 byte-identical.
-  - **2b-4c — REMAINING.** Delete `scoring/normalizer.py` (`ScoreNormalizer`/`ZeroAnchoredRobustScaler`/
-    `DatasetType`) + the `scoring/__init__` exports + the top-of-`main.py` import; flip
-    `trainer.Z_BASE_FEATURES` + the optimizer z-default to raw; tidy `clipping.py`/predictor/trainer
-    docstrings.
-  - **2b-4d — REMAINING.** Delete the remaining z-stack tests (`test_normalizer`,
-    `test_new_scaling_architecture`, the z bits of `test_scorer`/`test_edge_cases`); clear the stale
-    always-None `cluster_validation_result`/`mode_separation` metrics plumbing in `main.py`; update
-    `CLAUDE.md` + `DEV_PATHS_MANIFEST.md` layout to reflect the removed modules.
+  - **2b-4b — DONE (commit 8d49d2d).** Removed the streaming adaptive-scaler PRE-PASS + scaler resolution
+    in `classify_streaming_per_contig` — the last live `ScoreNormalizer().fit_from_array`, the wasted
+    full-genome pre-scan, the adaptive-fit workers, the `MIN_ADAPTIVE_INTRONS`/fallback logic. Dropped the
+    last `ScoreNormalizer` import from `main.py`. Streaming SPEEDUP (no wasted pre-scan): chr19 1m13s→57s;
+    both modes byte-identical to the z-free golden.
+  - **2b-4c/d — DONE (commits 5e211c9, 44b711f).** Deleted `scoring/normalizer.py`
+    (`ScoreNormalizer`/`ZeroAnchoredRobustScaler`/`DatasetType`) + the `scoring/__init__` exports; flipped
+    `trainer`/`optimizer` `base_features` defaults to the raw triple; tidied clipping/predictor docstrings.
+    Deleted the z-stack tests (`test_normalizer`, `test_new_scaling_architecture`, `test_classifier`,
+    integration `test_classification_pipeline`); stripped the z bits from `test_edge_cases`/`test_scorer`;
+    renamed synthetic z→raw introns in `test_trainer`/`test_predictor`/`test_optimizer`. Cleared the dead
+    always-None `cluster_validation_result`/`mode_separation`/`disc_summary` metrics plumbing in `main.py`
+    (`PostClassResult` fields, `_finalize_classification_metrics` params + the 3 guarded blocks, both call
+    sites). Updated `CLAUDE.md` + `DEV_PATHS_MANIFEST.md` (z-stack modules marked REMOVED;
+    `raw_gated_scoring.md` is authoritative). Full unit suite 608 passed; chr19 byte-identical.
+
+**SUPPLANT 2b COMPLETE.** z-normalization is gone from every layer — the scoring/streaming hot path, the
+`score_info.iic` schema (36→26 base columns), the plots (now raw-feature space), training, and the module
+tree (`normalizer.py` + the whole closure deleted). Per-species adaptation lives entirely in the
+output-level adjudicator (`species_adjudicator.py`: `depth_tail → q → P_adj`). Legacy zscore/modesep + v3/v6
+bundles remain reproducible from the `pre-zstack-removal` git tag.
 
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
