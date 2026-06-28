@@ -36,6 +36,7 @@ from intronIC.file_io.writers import (
     MetaWriter,
     ScoreWriter,
     SequenceWriter,
+    count_calls_from_meta,
     summarize_boundaries_from_meta,
     summarize_introns,
 )
@@ -558,14 +559,6 @@ def _finalize_classification_metrics(
     """
     summary = dict(base_summary)
 
-    # adjusted_score-based high-confidence count overrides the writer's raw count.
-    if adjusted_hc_count is not None:
-        summary["high_confidence_u12"] = adjusted_hc_count
-        total = summary.get("total_introns", 1)
-        summary["high_confidence_percentage"] = (
-            adjusted_hc_count / total * 100 if total > 0 else 0.0
-        )
-
     summary.update(
         {
             "total_genes": total_genes,
@@ -588,6 +581,21 @@ def _finalize_classification_metrics(
         u12_boundaries, u2_boundaries = summarize_boundaries_from_meta(
             meta_path, summary.get("threshold", 90.0)
         )
+
+        # Final call counts from the SAME finalized meta.iic, superseding the writer's
+        # first-pass tally: u12_count = called (final type_id==u12); high_confidence_u12 =
+        # its strong subset (rel_score > 0). Sharing one finalized source guarantees
+        # HC <= u12_count and that u12_count matches the per-intron output (fixes the
+        # metrics-only bug where high_confidence_u12 was the total called count via
+        # adjusted_hc_count while u12_count stayed first-pass, so HC could exceed calls).
+        n_u12, n_hc, n_total = count_calls_from_meta(meta_path)
+        if n_total > 0:
+            summary["u12_count"] = n_u12
+            summary["u2_count"] = n_total - n_u12
+            summary["high_confidence_u12"] = n_hc
+            summary["u12_percentage"] = n_u12 / n_total * 100
+            summary["high_confidence_percentage"] = n_hc / n_total * 100
+
     summary["u12_boundaries"] = u12_boundaries
     summary["u2_boundaries"] = u2_boundaries
 

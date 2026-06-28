@@ -121,6 +121,45 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
     return _ordered_boundaries(u12_b), _ordered_boundaries(u2_b)
 
 
+def count_calls_from_meta(meta_path) -> Tuple[int, int, int]:
+    """Tally final call counts from a *finalized* meta.iic: ``(n_u12, n_hc, n_total)``.
+
+    ``n_u12`` = rows whose final ``type_id == "u12"`` (the U12 *call* count);
+    ``n_hc``  = those additionally strong (``rel_score > 0`` == adjusted_score >= 90,
+    intronIC's high-confidence U12); ``n_total`` = all rows. Authoritative because
+    meta.iic carries the post-classification ``type_id``/``rel_score`` — unlike the
+    streaming writer's write-time counters, which are first-pass. Returns zeros if the
+    required columns are absent. (Both counts share this single finalized source so the
+    HC subset can never exceed the call count.)
+    """
+    import gzip
+
+    n_u12 = n_hc = n_total = 0
+    path = Path(meta_path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as f:
+        header = f.readline().rstrip("\n").split("\t")
+        try:
+            i_type = header.index("type_id")
+        except ValueError:
+            return 0, 0, 0
+        i_rel = header.index("rel_score") if "rel_score" in header else None
+        for line in f:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) <= i_type:
+                continue
+            n_total += 1
+            if fields[i_type] == "u12":
+                n_u12 += 1
+                if i_rel is not None and i_rel < len(fields):
+                    try:
+                        if float(fields[i_rel]) > 0:
+                            n_hc += 1
+                    except ValueError:
+                        pass
+    return n_u12, n_hc, n_total
+
+
 # ============================================================================
 # Base Writer Class
 # ============================================================================

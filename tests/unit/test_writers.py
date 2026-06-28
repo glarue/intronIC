@@ -850,3 +850,36 @@ class TestSummarizeBoundariesFromMeta:
             f.write("i1\tGT-AG\tu2\n")
         u12, u2 = summarize_boundaries_from_meta(meta)
         assert u12 == {"AT-AC": 1} and u2 == {"GT-AG": 1}
+
+
+class TestCountCallsFromMeta:
+    """count_calls_from_meta tallies final (n_u12, n_hc, n_total) from meta.iic, with
+    HC (rel_score > 0) a strict subset of the U12 call count — the fix for the metrics
+    bug where high_confidence_u12 (the total called count via adjusted_hc_count) could
+    exceed the first-pass u12_count."""
+
+    def test_called_and_hc_subset(self, tmp_path):
+        from intronIC.file_io.writers import count_calls_from_meta
+        meta = tmp_path / "m.meta.iic"
+        with open(meta, "w") as f:
+            f.write("name\trel_score\ttype_id\n")
+            # 5 U12 calls, 3 strong (rel>0) + 2 weak (rel<=0); 4 U2
+            for i, rel in enumerate([5.0, 2.0, 0.5, -1.0, -10.0]):
+                f.write(f"u{i}\t{rel}\tu12\n")
+            for i, rel in enumerate([-30.0, -50.0, -5.0, -90.0]):
+                f.write(f"v{i}\t{rel}\tu2\n")
+        n_u12, n_hc, n_total = count_calls_from_meta(meta)
+        assert (n_u12, n_hc, n_total) == (5, 3, 9)
+        assert n_hc <= n_u12  # HC can never exceed the call count
+
+    def test_missing_type_id_returns_zeros(self, tmp_path):
+        from intronIC.file_io.writers import count_calls_from_meta
+        meta = tmp_path / "bad.meta.iic"
+        meta.write_text("name\tfoo\nx\ty\n")
+        assert count_calls_from_meta(meta) == (0, 0, 0)
+
+    def test_na_rel_score_not_counted_as_hc(self, tmp_path):
+        from intronIC.file_io.writers import count_calls_from_meta
+        meta = tmp_path / "m.meta.iic"
+        meta.write_text("name\trel_score\ttype_id\nu0\tNA\tu12\nu1\t3.0\tu12\n")
+        assert count_calls_from_meta(meta) == (2, 1, 2)  # NA rel_score -> not HC
