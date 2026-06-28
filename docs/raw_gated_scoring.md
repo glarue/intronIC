@@ -344,18 +344,31 @@ Recon (the `ScoreNormalizer` closure spans 9 src files) split it into four verif
   parity perfect (0 mismatches, all columns). The `5'_z`/`bp_z`/`3'_z`/`min_5_bp`/`min_5_3`/
   `svm_score_adaptive`/`svm_score_frozen` columns are now `NA` in both paths.
 
-- **2b-3 — REMAINING.** Drop the now-`NA` z/min/adaptive columns from `ScoreWriter` (header + data) and
-  CONVERT the 2D/3D scatter plots in `visualization/plots.py` (4 functions read `5'_z`/`bp_z`/`3'_z`) to
-  **raw-feature space** `[5'_raw, bp_raw, 3'_raw]` (the actual classifier space; user decision). Re-anchor the
-  chr19 golden (z columns gone), re-verify parity.
+- **2b-3 — DONE (commit 7bcb117).** Dropped the 10 now-meaningless z/scaler columns from `ScoreWriter`
+  (`5'_z`/`bp_z`/`3'_z`, `min/max(5,bp)/(5,3)`, `svm_score_adaptive`/`svm_score_frozen`/`scaler_used`):
+  `score_info.iic` goes 36→26 base columns. Converted the classify plots (file-based streaming +
+  in-memory) from z-space to **raw-feature space** `[5'_raw, bp_raw, 3'_raw]` (user decision).
+  `test_writers` updated for the 26-col schema. chr19 both modes: scoring columns still byte-identical to
+  golden, streaming==in-memory parity perfect (all files), 4 plots generated in raw-space; writer tests pass.
 
-- **2b-4 — REMAINING.** Delete `scoring/normalizer.py` (`ScoreNormalizer` / `ZeroAnchoredRobustScaler` /
-  `DatasetType`), the now-dead streaming adaptive-scaler pre-pass + in-memory scaler resolution, the dead
-  `classify_introns` / `IntronClassifier` / `normalize_scores`, `trainer.Z_BASE_FEATURES` + the optimizer
-  z-default, the `scoring/__init__` `ScoreNormalizer`/`DatasetType` exports, `clipping.py` docstrings, and the
-  remaining z-stack tests (`test_normalizer`, `test_new_scaling_architecture`, the z bits of `test_scorer` /
-  `test_classifier` / `test_edge_cases`). Also clear the stale always-None `cluster_validation_result` /
-  `mode_separation` metrics plumbing in `main.py`, and update `CLAUDE.md` + `DEV_PATHS_MANIFEST.md` layout.
+- **2b-4 — IN PROGRESS.** Delete `normalizer.py` + the remaining closure:
+  - **2b-4a — DONE (commit 2d71581).** Pure dead-code deletion (chr19 byte-identical): scorer
+    `score_and_normalize_introns`/`apply_scaler_to_scored_batch`/`score_and_normalize_batch`; main
+    `classify_introns` + `normalize_scores`; `classification/classifier.py` (`IntronClassifier` +
+    `ClassificationResult`) + its `__init__`/import.
+  - **2b-4b — REMAINING.** Remove the streaming adaptive-scaler PRE-PASS + scaler resolution
+    (`classify_streaming_per_contig`): the last live `ScoreNormalizer().fit_from_array` call, the wasted
+    full-genome pre-scan, the `WorkerContext.scaler` field + adaptive-fit worker, the `MIN_ADAPTIVE_INTRONS`
+    / fallback logic; set `scaler_source` to a constant for the run summary. (This is also a streaming
+    SPEEDUP — the pre-scan currently runs but its scaler is unused.) Verify chr19 byte-identical.
+  - **2b-4c — REMAINING.** Delete `scoring/normalizer.py` (`ScoreNormalizer`/`ZeroAnchoredRobustScaler`/
+    `DatasetType`) + the `scoring/__init__` exports + the top-of-`main.py` import; flip
+    `trainer.Z_BASE_FEATURES` + the optimizer z-default to raw; tidy `clipping.py`/predictor/trainer
+    docstrings.
+  - **2b-4d — REMAINING.** Delete the remaining z-stack tests (`test_normalizer`,
+    `test_new_scaling_architecture`, the z bits of `test_scorer`/`test_edge_cases`); clear the stale
+    always-None `cluster_validation_result`/`mode_separation` metrics plumbing in `main.py`; update
+    `CLAUDE.md` + `DEV_PATHS_MANIFEST.md` layout to reflect the removed modules.
 
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
