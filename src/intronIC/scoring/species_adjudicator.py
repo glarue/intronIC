@@ -76,6 +76,8 @@ class AdjudicatorParams:
     min_evt_excesses: int = 20          #: below this many U2 exceedances -> secondary EVT unavailable (not a failure)
     bootstrap_n: int = 3000             #: bootstrap resamples for q's CI
     ci: tuple = (2.5, 97.5)             #: q CI percentiles
+    ci_smooth_floor_frac: float = 0.3   #: smoothed-bootstrap kernel bandwidth floor, as a fraction of MAD_U2
+                                        #: (prevents a degenerate width-0 CI on tied/few calls; count-aware)
     min_calls: int = 1                  #: below this -> LOW_N (no population to assess)
     min_u2: int = 200                   #: below this species U2 count -> LOW_N (cannot reference the tail).
                                         #: Lower it (config/CLI) to let smaller genomes self-adjudicate with
@@ -228,11 +230,21 @@ def _assess(calls: np.ndarray, n_u2: int, ref: _U2Reference,
     p_gumbel = compute_p_gumbel(call_core, ref)
     secondary_available = bool(np.isfinite(excess_z))
 
+    # COUNT-AWARE SMOOTHED bootstrap of the call-core -> q CI. A plain bootstrap-of-the-median is degenerate
+    # for tied/clustered calls (the resampled median takes few distinct values -> a width-0 CI that silently
+    # defeats the UNDETERMINED band in exactly the low-call-count regime it exists for). Smoothing each
+    # resampled call by a kernel (bandwidth = the robust call spread, floored to a fraction of the U2 scale)
+    # (a) breaks the tie degeneracy and (b) makes the CI widen as the call count shrinks (the median's
+    # sampling SD ~ bandwidth/sqrt(k)), so few/borderline calls correctly read UNDETERMINED. The point q
+    # still uses the un-smoothed call-core, so this only affects the CI (and stays deterministic).
     rng = np.random.RandomState(params.random_seed)
     k = len(calls)
+    mad_calls = 1.4826 * float(np.median(np.abs(calls - call_core)))
+    bw = max(mad_calls, params.ci_smooth_floor_frac * ref.mad)
     qs = np.empty(params.bootstrap_n)
     for b in range(params.bootstrap_n):
-        core_b = float(np.median(calls[rng.randint(0, k, k)]))
+        samp = calls[rng.randint(0, k, k)] + rng.normal(0.0, bw, k)
+        core_b = float(np.median(samp))
         qs[b] = q_from_depth_tail(compute_depth_tail(core_b, ref), params)
     q_lo, q_hi = (float(x) for x in np.percentile(qs, params.ci))
 

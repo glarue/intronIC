@@ -192,6 +192,33 @@ def test_params_version_is_pinned():
     assert "depth_tail" in ADJUDICATOR_PARAMS_VERSION
 
 
+def test_tied_calls_do_not_give_degenerate_ci():
+    """Regression: a plain bootstrap-of-median gives a width-0 CI on tied/few calls, silently defeating the
+    UNDETERMINED band. The count-aware smoothed bootstrap must give a NON-degenerate CI, widening as the
+    call count shrinks (few calls -> wide)."""
+    rng = np.random.RandomState(0)
+    u2 = rng.normal(-4.8, 1.0, 5000)   # clean U2 (no tail-calls); borderline calls land near the boundary
+
+    def ci_width(call_value, k):
+        calls = np.full(k, call_value)
+        margin = np.concatenate([u2, calls])
+        p_motif = 1.0 / (1.0 + np.exp(-(P.platt_a * margin + P.platt_c)))
+        r = adjudicate(margin, p_motif, P)
+        return r.q_hi - r.q_lo
+
+    # borderline (depth_tail ~3.4), tied calls -> CI must NOT be degenerate, and must widen for fewer calls
+    w3 = ci_width(1.5, 3)
+    w60 = ci_width(1.5, 60)
+    assert w3 > 0.05                      # not the old width-0 degeneracy
+    assert w3 > w60                       # count-aware: fewer calls -> wider CI
+
+    # with the smoothing DISABLED (floor=0), tied calls reproduce the degenerate width-0 CI (documents the bug)
+    calls = np.full(3, 1.5); margin = np.concatenate([u2, calls])
+    p_motif = 1.0 / (1.0 + np.exp(-(P.platt_a * margin + P.platt_c)))
+    r0 = adjudicate(margin, p_motif, AdjudicatorParams(ci_smooth_floor_frac=0.0))
+    assert (r0.q_hi - r0.q_lo) < 1e-6     # the degeneracy the fix removes
+
+
 def test_bootstrap_is_reproducible():
     margin, p_motif = _synth_genome(-2.0, 5.0)
     r1 = adjudicate(margin, p_motif, P)
