@@ -285,9 +285,18 @@ would be a scale mismatch. The **shippable bundle** = re-stamp of raw_gated_42 +
 (`scripts/build_pmotif_adjudicated_bundle.py`; version `depth_tail_firth_2026-06-27`); end-to-end chr19
 q=0.993, 39 calls.
 
-**Still ahead:** the §5 formal gates and the step-7 supplant PR — place the verified pmotif bundle at the
-bundled-default path, flip the default `scoring_mode`, delete the z stack (`normalizer.py` adaptive-z,
-`mode_separation.py`+`mode_sep_pipeline.py`, `prior_adjustment.py`).
+**SUPPLANT STEP 1 — DONE (2026-06-28, the reversible default flip; z stack KEPT).** The verified pmotif
+bundle (re-stamp of `raw_gated_42` + the version-pinned calibrated constants, 2.0 MB) is now placed at the
+bundled-default path `src/intronIC/data/default_pretrained.model.pkl` (replacing the 27 MB v3 modesep bundle,
+preserved in git history + backed up out-of-repo). It stamps `scoring_mode:"pmotif_adjudicated"`, so the
+shared dispatch's pmotif branch fires by default and returns before the modesep check — **default runs now
+score via pmotif** (chr19, no `--model`: status ADJUDICATED, q=0.993, 39 U12 calls). The z stack
+(`normalizer.py` adaptive-z, `mode_separation.py`+`mode_sep_pipeline.py`, `prior_adjustment.py`) is LEFT
+INTACT — reversible (revert the bundle to restore modesep), and modesep stays fully testable against its own
+explicit `v5_modesep` bundle (those tests pin it, not the default, so they're unaffected). Validated under the
+new default: input-modes + CLI (36), unit suite (723), modesep tests skip cleanly (dev-only bundle absent),
+streaming==in-memory parity [the canonical integration gate]. **Step 2 (delete the z stack) remains** — a
+separate PR once this default has soaked. The §5 formal gates / §0a airtight pass are complete (§0a).
 
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
