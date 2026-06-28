@@ -298,6 +298,34 @@ new default: input-modes + CLI (36), unit suite (723), modesep tests skip cleanl
 streaming==in-memory parity [the canonical integration gate]. **Step 2 (delete the z stack) remains** — a
 separate PR once this default has soaked. The §5 formal gates / §0a airtight pass are complete (§0a).
 
+**SUPPLANT STEP 2a — DONE (2026-06-28, the post-SVM gate deletion; normalizer rip-out deferred to 2b).**
+Recon revealed the z stack is two distinct-risk pieces: (i) the post-SVM mode-sep + continuous-discount +
+cluster-validation GATE, cleanly removable without touching the scoring path; (ii) the adaptive-z
+NORMALIZER, woven through the scoring/streaming hot path and currently running harmlessly under raw
+bundles. 2a does (i). Tagged `pre-zstack-removal` (old zscore/modesep + v3/v6 bundles reproducible there),
+then: extracted `file_io/meta_sync.sync_meta_from_score_info` out of the doomed `mode_sep_pipeline` (the
+pmotif path's only dependency on it); removed the legacy dispatch branch from
+`_run_post_classification_pipeline` (raw_gated + pmotif return early); deleted the orphaned helpers
+`_apply_post_classification_adjustment` / `_write_pi_species_adjusted_scores` and the dead
+`_apply_margin_alignment` wrapper; deleted the four gate modules `scoring/mode_separation.py`,
+`scoring/cluster_validation.py`, `scoring/margin_alignment.py`, `classification/mode_sep_pipeline.py`.
+Added a fail-fast guard `model_io.assert_scoreable_bundle` (called at both classify load sites): a legacy
+zscore/modesep bundle now errors AT LOAD with a message pointing to the `pre-zstack-removal` tag (verified
+on the real 27 MB v3 bundle). Flipped the default `--scoring-mode` to `pmotif_adjudicated` (zscore kept as
+a deprecated/unscoreable choice). `main.py` 7100→6690 lines; 9 z-stack test files removed +
+`tests/unit/test_bundle_guard.py` added. VERIFIED: chr19 byte-identical to a pre-surgery pmotif golden
+(score_info/meta/bed/introns, BOTH `--streaming` and `--in-memory`); full unit suite 669 passed;
+streaming==in-memory parity gate green. KEPT (NOT part of the gate): `scoring/prior_adjustment.py` still
+backs the live `--species-prior` Bayesian adjustment; `scoring/normalizer.py` (adaptive-z) — runs
+harmlessly under raw bundles and the in-memory cv-array filter still keys on `*_z` presence.
+
+**STEP 2b (REMAINING — the deeper normalizer/z-feature rip-out):** delete `normalizer.py` + the zscore
+TRAINING path (`main_train`'s `else` branch) + the z-feature plumbing (`trainer.Z_BASE_FEATURES`, the
+adaptive/frozen scaler pre-pass, worker scaler args), removing z-normalization from the scoring/streaming
+hot path entirely. Higher-risk (touches the hot path + writers + workers); its own focused pass. Stale
+guarded `cluster_validation_result`/`mode_separation` metrics plumbing in `main.py` (always-None, harmless)
+is cosmetic cleanup folded into 2b.
+
 **Committed parity test (DONE):** `tests/integration/test_pmotif_adjudicated_parity.py` builds a tiny
 1-model `pmotif_adjudicated` bundle on the fly (`intronIC train --scoring-mode pmotif_adjudicated`; no
 committed binary, no dev-panel dependency — parity is independent of calibration) and asserts streaming vs
