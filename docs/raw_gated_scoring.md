@@ -113,6 +113,22 @@ recent-loss). The species signal is a confidence layer that *complements*, never
   aspergillus/schizo at excess_z +0.19/+0.20/+0.30) are the exponential-tail underestimate; the GPD either
   re-centers them toward 0 or exposes a real motif-strong-FP floor. **User (2026-06-27): worth doing but
   won't change the verdict — the margin is large.**
+- **AIRTIGHT PASS PART A — DONE (2026-06-27, `eval_corpus/airtight_oof.py`): in-sample optimism does NOT
+  inflate the depth_tail separation.** Re-scored all 24 computable panel genomes with an ensemble that
+  EXCLUDES each genome's own training clade (strictly OOF; diaspora genomes not in the 41,257-row v23 corpus
+  — oomycetes, ciliates, green algae — are already OOF via the full ensemble), with the Platt re-fit on
+  pooled leave-clade-out OOF margins. The like-with-like signal is **`delta = dt_oof − dt_full` (same serial
+  ensemble, only the clade-holdout differs): small for ALL genomes — vertebrate bearers +2.4..+3.3 (more
+  separated OOF), plant bearers −0.7..−1.25, gut fungi ~0; losses ascaris/caeno ~0, aspergillus −1.65,
+  toxo/vitrella −0.3** — i.e. holding out a genome's clade barely moves its depth_tail, so the bearer/loss
+  separation is NOT a training-overlap artifact. Caveat: the 15-model *serial proxy* ensemble (the real
+  126-SVC bundle's joblib pool segfaults in this exec context) has a tighter U2 scale (depth_tail ~3–5× the
+  42-model bundle) and noisier loss-FP suppression, so its leave-clade-out Firth-q gives **22/24 correct**
+  with 2 *proxy-scale* boundary cases (aphanomyces q=0.39, caenorhabditis q=0.58) whose **`delta`≈0 (NOT an
+  OOF effect)** — both separate cleanly in the canonical 42-model bundle (caeno dt=2.17 loss, aphan dt=4.69
+  bearer). **Verdict: Part A confirms the separation is real, not in-sample-inflated.** Part B (POT-GPD on the
+  secondary `excess_z`) remains optional and won't change the verdict (depth_tail is non-parametric in the
+  tail shape). Corpus: 41,261 introns (10,044 U12 / 31,213 U2, 13 clades).
 
 ### 0b. CLOSED scoring design — two per-intron numbers + a hierarchical uncertainty (2026-06-27)
 
