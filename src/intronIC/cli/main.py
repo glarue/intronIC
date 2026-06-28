@@ -422,19 +422,19 @@ def _sync_calls_to_meta_and_bed(score_path: Path, meta_path: Optional[Path],
     col 4) — which silently corrupts the ``metrics.iic.json`` boundary tables (read from meta ``type_id``)
     whenever the post-process flips a call. Mirrors what the modesep/discount path already does.
 
-    Updates: meta ``rel_score`` + ``type_id`` (via the shared ``_sync_meta_from_score_info``); bed col 4
-    (score) <- ``adjusted_score``, keyed by intron name. Omitted introns (absent from score_info) pass
-    through unchanged.
+    Updates: meta ``rel_score`` + ``type_id`` (via ``file_io.meta_sync.sync_meta_from_score_info``); bed
+    col 4 (score) <- ``adjusted_score``, keyed by intron name. Omitted introns (absent from score_info)
+    pass through unchanged.
     """
     import os
     import pandas as pd
-    from intronIC.classification.mode_sep_pipeline import _sync_meta_from_score_info
+    from intronIC.file_io.meta_sync import sync_meta_from_score_info
 
     df = pd.read_csv(score_path, sep="\t", dtype=str, keep_default_na=False)
     if "name" not in df.columns:
         return
     if meta_path is not None and meta_path.exists() and {"rel_score", "type_id"} <= set(df.columns):
-        _sync_meta_from_score_info(meta_path, df, messenger=messenger)
+        sync_meta_from_score_info(meta_path, df, messenger=messenger)
     if bed_path is not None and bed_path.exists() and "adjusted_score" in df.columns:
         name_to_score = dict(zip(df["name"].astype(str), df["adjusted_score"].astype(str)))
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".iic", dir=bed_path.parent, delete=False)
