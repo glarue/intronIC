@@ -596,7 +596,10 @@ def scatter_plot_from_arrays(
                 zorder=z, edgecolors="none", rasterized=True,
             )
 
-    ax_main.legend(handles=legend_patches, fontsize=fsize - 2)
+    # Pin the legend to the lower-right: the U12-type cluster is structurally upper-right (U12 introns
+    # score high on both 5'SS and BPS), and the U2 bulk is centred, so the lower-right corner is reliably
+    # the emptiest. (Default loc='best' mis-placed it over the U2 density — it doesn't weight the hexbin.)
+    ax_main.legend(handles=legend_patches, fontsize=fsize - 2, loc="lower right")
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
