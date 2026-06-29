@@ -611,8 +611,11 @@ def scatter_plot_from_arrays(
     ax_main.set_xlim(xlim)
     ax_main.set_ylim(ylim)
 
-    # Set equal aspect with adjustable='box' to make plot physically square
-    ax_main.set_aspect("equal", adjustable="box")
+    # NOTE: do NOT force equal aspect with adjustable='box' here — it resizes the main axes box to a square
+    # and re-anchors it within its gridspec cell, so its left/top edges no longer line up with the marginal
+    # axes. The cell is already near-square and the limits are symmetric (equal spans), so the cloud reads
+    # square while the axes stay aligned with the marginals. (Per-axis standardization also makes a strict
+    # equal-aspect semantically moot — each axis is normalized to its own spread.)
 
     # Plot marginal distributions with explicit range to match symmetric limits
     ax_top.hist(
@@ -625,10 +628,11 @@ def scatter_plot_from_arrays(
     )
     ax_top.set_xlim(xlim)  # Explicitly set to match main plot
     ax_top.set_ylabel("Count", fontsize=fsize - 2)
+    # Keep the histogram's x-axis (bottom spine) as a baseline, but drop its tick marks/labels (the main
+    # plot below carries the shared x ticks). The hspace gap keeps the baseline off the main plot.
     ax_top.tick_params(labelbottom=False, bottom=False)
     ax_top.spines["top"].set_visible(False)
     ax_top.spines["right"].set_visible(False)
-    ax_top.spines["bottom"].set_visible(False)
 
     ax_right.hist(
         plot_scores[:, 1],
