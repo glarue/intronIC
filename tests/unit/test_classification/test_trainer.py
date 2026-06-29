@@ -541,3 +541,88 @@ class TestSVMTrainerEdgeCases:
             trainer._prepare_training_data([bad_intron], mock_u12_introns[1:])
         with pytest.raises(ValueError, match="missing base feature"):
             trainer._prepare_training_data([bad_intron], mock_u12_introns[1:])
+
+
+# =============================================================================
+# SCALER SWAPPABILITY (standard / robust / none)
+# =============================================================================
+
+
+class TestScalerSwap:
+    """The in-pipeline GLOBAL scaler is selectable via SVMParameters.scaler and stamped onto the
+    trained pipeline. See svm_factory.make_scaler_step + docs/raw_svm_scaler_hpsearch_plan.md."""
+
+    @staticmethod
+    def _pipeline_of(model):
+        """The fitted base Pipeline inside a CalibratedClassifierCV-wrapped SVMModel."""
+        return model.model.calibrated_classifiers_[0].estimator
+
+    def test_make_scaler_step_factory(self):
+        from sklearn.preprocessing import StandardScaler, RobustScaler
+        from intronIC.classification.svm_factory import make_scaler_step
+
+        assert isinstance(make_scaler_step("standard"), StandardScaler)
+        assert isinstance(make_scaler_step("robust"), RobustScaler)
+        assert make_scaler_step("none") is None
+        assert isinstance(make_scaler_step(), StandardScaler)  # default
+        with pytest.raises(ValueError, match="unknown scaler"):
+            make_scaler_step("minmax")
+
+    def test_default_scaler_is_standard(self, mock_parameters):
+        """Default SVMParameters.scaler is 'standard' (preserves historical behaviour)."""
+        assert mock_parameters.scaler == "standard"
+
+    def test_trained_pipeline_uses_standard_by_default(
+        self, mock_u12_introns, mock_u2_introns, mock_parameters
+    ):
+        from sklearn.preprocessing import StandardScaler
+
+        trainer = SVMTrainer(n_models=1, kernel="rbf")
+        ens = trainer.train_ensemble(
+            mock_u12_introns, mock_u2_introns, mock_parameters, subsample_u2=False
+        )
+        pipe = self._pipeline_of(ens.models[0])
+        assert "scale" in pipe.named_steps
+        assert isinstance(pipe.named_steps["scale"], StandardScaler)
+        # the stamped parameters record the choice
+        assert ens.models[0].parameters.scaler == "standard"
+
+    def test_trained_pipeline_uses_robust(
+        self, mock_u12_introns, mock_u2_introns, mock_parameters
+    ):
+        from dataclasses import replace
+        from sklearn.preprocessing import RobustScaler
+
+        params = replace(mock_parameters, scaler="robust")
+        trainer = SVMTrainer(n_models=1, kernel="rbf")
+        ens = trainer.train_ensemble(
+            mock_u12_introns, mock_u2_introns, params, subsample_u2=False
+        )
+        pipe = self._pipeline_of(ens.models[0])
+        assert isinstance(pipe.named_steps["scale"], RobustScaler)
+        assert ens.models[0].parameters.scaler == "robust"
+
+    def test_trained_pipeline_drops_scale_step_for_none(
+        self, mock_u12_introns, mock_u2_introns, mock_parameters
+    ):
+        from dataclasses import replace
+
+        params = replace(mock_parameters, scaler="none")
+        trainer = SVMTrainer(n_models=1, kernel="rbf")
+        ens = trainer.train_ensemble(
+            mock_u12_introns, mock_u2_introns, params, subsample_u2=False
+        )
+        pipe = self._pipeline_of(ens.models[0])
+        assert "scale" not in pipe.named_steps
+        assert {"transform", "svc"} <= set(pipe.named_steps)
+        # still predicts on a raw vector (scaler absence does not break inference)
+        assert float(pipe.predict([[2.0, 2.5, 2.0]])[0]) in (0.0, 1.0)
+        assert ens.models[0].parameters.scaler == "none"
+
+    def test_optimizer_scale_steps(self):
+        from sklearn.preprocessing import StandardScaler, RobustScaler
+        from intronIC.classification.optimizer import SVMOptimizer
+
+        assert isinstance(SVMOptimizer(scaler="standard")._scale_steps()[0][1], StandardScaler)
+        assert isinstance(SVMOptimizer(scaler="robust")._scale_steps()[0][1], RobustScaler)
+        assert SVMOptimizer(scaler="none")._scale_steps() == []

@@ -1,7 +1,43 @@
 # Raw-SVM scaler choice + hyperparameter search — design & plan
 
-Status: **planning** (not yet implemented). Owner: Graham. Created 2026-06-28, after the
-z-stack removal (`docs/raw_gated_scoring.md`) + the gut-check on the 6-species panel.
+Status: **DONE — searched 2026-06-28; verdict = keep current (no rebuild).** Owner: Graham. Created
+2026-06-28 after the z-stack removal (`docs/raw_gated_scoring.md`) + the 6-species gut-check.
+
+> ## RESULTS (2026-06-28) — TL;DR: both questions answered, **no bundle change warranted**
+>
+> Code step 1 (make the scaler swappable + bundle-stamped) is **implemented and shipped** (see §3.1
+> below); steps 3–6 (rebuild / re-calibrate / re-stamp) were **evaluated and deliberately NOT done** —
+> the search shows the shipped config is already optimal.
+>
+> **Search**: `eval_corpus/scaler_hpsearch.py` — raw 6-feature single-SVC (isotonic, cv=3) replica,
+> leave-CLADE-out on the conservation-anchored eval labels (13 train clades / 17 eval clades; pos=2589,
+> neg=982 = ipa + snRNA hard-negatives). Coarse grid `{none,standard,robust} × C{20..1000} × γ{3e-4..1e-2,scale}`
+> (90 cfgs) + a refinement `standard × C{200,300,500,700} × γ{2e-4..1e-3}` (20 cfgs). Logs:
+> `eval_corpus/scaler_hpsearch.{coarse,refine}.log`.
+>
+> **(1) Scaler — keep StandardScaler.** RobustScaler never wins (and is catastrophic with γ='scale':
+> snRNA@5%→0.28, a RobustScaler-doesn't-unit-variance × fixed-γ mismatch); `none` occasionally edges
+> TPR@5% but loses AUC + halves ipa@5%. The fat motif tails do *not* degrade StandardScaler materially.
+>
+> **(2) C / γ — keep C=200, γ=0.001.** The inherited z-SVM values sit on the raw space's Pareto frontier:
+> baseline (standard,200,0.001) = **AUC 0.922, TPR@5% 0.34, ipa@5% 0.09** — tied-best on every *stable*
+> metric. AUC spread across the whole refinement is 0.919–0.923 (≤0.004 = single-SVC noise). The only
+> metric where baseline looked low (snRNA@5% 0.92) is **noise**: it oscillates non-monotonically across
+> adjacent γ (C=200: γ5e-4→0.92, 7e-4→0.98, 1e-3→0.92), i.e. the small snRNA negative set makes the
+> single-FPR-point interpolation jumpy — not a real γ effect.
+>
+> **Decisive tie-break — holdout fidelity is *identical*:** baseline vs the best candidate
+> (standard,500,3e-4) both give recall F1@50=**0.999** and consensus_fp FP=**18/454 (4.0%)**.
+>
+> **Caveat:** this is a single-SVC cv=3 replica; the production bundle is a 126-submodel isotonic
+> ensemble whose averaging only *shrinks* these already-within-noise gaps. So if anything the grid
+> *overstates* the config spread, and it still shows no robust winner.
+>
+> **Net:** the search **retroactively validates** the inherited hyperparameters on the raw 6-feature
+> space (they were never re-searched before; now they have been). The shipped
+> `default_pretrained.model.pkl` stays; no re-Platt / re-q / version bump needed. The scaler is now an
+> explicit, bundle-stamped, swappable parameter (`SVMParameters.scaler`) so a future re-search is a
+> one-line build-env change — but none is indicated today.
 
 ---
 
@@ -79,6 +115,29 @@ Hard constraint: the scaler stays **global / frozen** (fit once on the training 
 ---
 
 ## 3. Implementation plan (staged)
+
+### 3.1 Implemented (step 1 — shipped 2026-06-28)
+
+The scaler is now an explicit, swappable, bundle-stamped parameter; steps 2–6 ran as the *evaluation* in
+the RESULTS box above (verdict: keep current → no rebuild).
+
+- `svm_factory.make_scaler_step(name)` → `StandardScaler` / `RobustScaler` / `None` (+ `SCALER_CHOICES`).
+- `SVMParameters.scaler: str = "standard"` (frozen-dataclass field, **appended last** + custom
+  `__getstate__`/`__setstate__` mirroring `SVMModel`, so existing pickled bundles back-fill
+  `scaler='standard'`). **This pickle-compat shim was required**: a mid-list insert into the `slots=True`
+  positional pickle silently shifted every later field and dropped `calibration_isotonic_logloss`,
+  breaking inference on the shipped bundle — caught by `test_streaming_equivalence`. The shim also
+  hardens *all* future field additions to `SVMParameters`.
+- `SVMTrainer._train_single_model` builds the `'scale'` step from `parameters.scaler` (drops it for
+  `none`); `SVMOptimizer(scaler=...)` threads it through all 3 search pipelines + stamps the returned
+  `SVMParameters`. Scaler lives *inside* the estimator, so `score_info.iic` columns stay raw and the
+  predictor/adjudicator need no change (margin = `decision_function` through the scaler).
+- `scripts/build_raw_gated_bundle.py` reads `SCALER` / `SVM_C` / `SVM_GAMMA` env (defaults =
+  standard/200/0.001) and stamps them into `model_id` + `provenance`.
+- Tests: `tests/unit/test_classification/test_trainer.py::TestScalerSwap` (6). Default `standard` keeps
+  the bundle byte-identical (`test_streaming_equivalence` 15/15; full unit suite 608 pass).
+
+### 3.2 Original staged plan (for reference)
 
 1. **Make the scaler swappable in `SVMTrainer`.** Add a `scaler` knob (e.g.
    `scaler ∈ {"standard", "robust", "none"}`) threaded onto `SVMParameters` (frozen dataclass)

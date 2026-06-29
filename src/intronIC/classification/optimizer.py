@@ -22,7 +22,7 @@ Port from: intronIC.py:5431-5528 (optimize_svm)
 Related: intronIC.py:5290-5322 (helper functions)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, MISSING
 from typing import Sequence, Tuple, Optional, Dict, Any
 import os
 import sys
@@ -39,11 +39,9 @@ from sklearn.metrics import make_scorer, balanced_accuracy_score, log_loss, f1_s
 from scipy.stats import gmean
 from tqdm.auto import tqdm
 
-from sklearn.preprocessing import RobustScaler, StandardScaler
-
 from intronIC.core.intron import Intron
 from intronIC.classification.transformers import BothEndsStrongTransformer
-from intronIC.classification.svm_factory import create_svm, get_grid_params
+from intronIC.classification.svm_factory import create_svm, get_grid_params, make_scaler_step
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -236,6 +234,46 @@ class SVMParameters:
     calibration_sigmoid_logloss: float = 0.0  # Log-loss with sigmoid calibration
     calibration_isotonic_logloss: float = 0.0  # Log-loss with isotonic calibration
 
+    # In-pipeline GLOBAL feature scaler (the 'scale' step), resolved via svm_factory.make_scaler_step:
+    # 'standard' (StandardScaler, historical default) | 'robust' (RobustScaler) | 'none' (no scale step).
+    # Fit-on-train inside the estimator, never per-species. Stamped here so a bundle is self-describing.
+    #
+    # IMPORTANT: keep this LAST. SVMParameters is a slots=True dataclass whose pickle state is a POSITIONAL
+    # list (see _svmparameters_{get,set}state below). Appending new fields keeps existing bundles loadable
+    # (old shorter lists map to the original fields in order); the custom __setstate__ then back-fills any
+    # trailing field a stale pickle lacks with its default. Inserting mid-list would shift every later field.
+    scaler: str = "standard"
+
+
+def _svmparameters_getstate(self):
+    """Backward-compatible pickle for the slots=True SVMParameters (mirrors SVMModel).
+
+    Returns the field values as a positional list (the same shape Python's default slotted-dataclass
+    __getstate__ produces), tolerating an object that predates a slot.
+    """
+    state = []
+    for f in fields(self):
+        try:
+            state.append(getattr(self, f.name))
+        except AttributeError:
+            state.append(f.default if f.default is not MISSING else None)
+    return state
+
+
+def _svmparameters_setstate(self, state):
+    """Backward-compatible unpickle: assign positionally, then back-fill any trailing field a shorter
+    (older) pickle lacks with its default — so a pre-`scaler` bundle loads with scaler='standard'."""
+    flds = fields(self)
+    for f, val in zip(flds, state):
+        object.__setattr__(self, f.name, val)
+    for f in flds[len(state):]:
+        object.__setattr__(self, f.name, f.default if f.default is not MISSING else None)
+
+
+# Override the auto-generated slotted-dataclass pickle hooks for forward/backward field-set compatibility.
+SVMParameters.__getstate__ = _svmparameters_getstate
+SVMParameters.__setstate__ = _svmparameters_setstate
+
 
 @dataclass(frozen=True, slots=True)
 class OptimizationRound:
@@ -303,6 +341,7 @@ class SVMOptimizer:
         kernel: str = 'rbf',
         gamma_search: Optional[list] = None,
         extra_feature_names: Optional[list] = None,
+        scaler: str = 'standard',
     ):
         """
         Initialize optimizer.
@@ -364,7 +403,17 @@ class SVMOptimizer:
         self.plateau_rounds = plateau_rounds
         self.kernel = kernel
         self.gamma_search = gamma_search
+        self.scaler = scaler
         self.rounds_: list[OptimizationRound] = []
+
+    def _scale_steps(self):
+        """The in-pipeline scaler step(s) for the configured scaler ('standard'|'robust'|'none').
+
+        Returns ``[('scale', <scaler>)]`` or ``[]`` (for 'none'); spliced into each search pipeline so the
+        C/gamma landscape is searched against the SAME scaler the final ensemble will be trained with.
+        """
+        step = make_scaler_step(self.scaler)
+        return [('scale', step)] if step is not None else []
 
     def _create_scorer(self):
         """
@@ -624,6 +673,7 @@ class SVMOptimizer:
             dual=False,  # Fixed: primal formulation (n_features << n_samples)
             intercept_scaling=1.0,  # Fixed: sklearn default (works for L1 and L2)
             extra_features=tuple(self.extra_feature_names),
+            scaler=self.scaler,  # stamp the searched scaler so the bundle is self-describing
             cv_score=final_score,  # log-loss from Stage 2
             round_found=-1  # -1 indicates averaged result
         )
@@ -746,7 +796,7 @@ class SVMOptimizer:
                 features=self.features_list,
                 extra_feature_names=self.extra_feature_names,
             )),
-            ('scale', StandardScaler()),
+            *self._scale_steps(),
             ('svc', create_svm(
                 kernel=self.kernel,
                 max_iter=self.max_iter,
@@ -1276,7 +1326,7 @@ class SVMOptimizer:
                 features=self.features_list,
                 extra_feature_names=self.extra_feature_names,
             )),
-            ('scale', StandardScaler()),
+            *self._scale_steps(),
             ('svc', create_svm(
                 kernel=self.kernel,
                 C=C,
@@ -1354,7 +1404,7 @@ class SVMOptimizer:
                 features=self.features_list,
                 extra_feature_names=self.extra_feature_names,
             )),
-            ('scale', StandardScaler()),
+            *self._scale_steps(),
             ('svc', create_svm(
                 kernel=self.kernel,
                 C=C,

@@ -10,6 +10,32 @@ Both are wrapped in the same Pipeline structure, so downstream code
 """
 
 from sklearn.svm import LinearSVC, SVC
+from sklearn.preprocessing import StandardScaler, RobustScaler
+
+
+#: Accepted ``scaler`` names for the in-pipeline feature scaler (bundle-stamped on SVMParameters).
+SCALER_CHOICES = ("standard", "robust", "none")
+
+
+def make_scaler_step(scaler: str = "standard"):
+    """Return the in-pipeline feature scaler estimator for ``scaler``, or ``None`` to drop the scale step.
+
+    The scaler is **global** — fit once on the training corpus *inside* the estimator (so it never touches
+    the interpretable ``score_info.iic`` columns), and frozen at inference. It is NEVER refit per-species;
+    per-species re-anchoring is the z-inflation removed in supplant 2b (see docs/raw_gated_scoring.md).
+
+    - ``"standard"`` -> :class:`StandardScaler` (mean/std; the historical default).
+    - ``"robust"``   -> :class:`RobustScaler` (median/IQR; robust to the fat negative motif tails).
+    - ``"none"``     -> ``None`` (caller drops the ``'scale'`` step; raw features feed the kernel directly).
+    """
+    s = (scaler or "standard").lower()
+    if s in ("standard", "standardscaler"):
+        return StandardScaler()
+    if s in ("robust", "robustscaler"):
+        return RobustScaler()
+    if s in ("none", "off", "identity", ""):
+        return None
+    raise ValueError(f"unknown scaler {scaler!r}; expected one of {SCALER_CHOICES}")
 
 
 def create_svm(

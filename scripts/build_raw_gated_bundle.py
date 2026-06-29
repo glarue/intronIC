@@ -25,6 +25,11 @@ MATRIX = "/mnt/data/u12/ipa/conservation_corpus/eval_corpus/stage1_trainmatrix.n
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/mnt/data/u12/ipa/conservation_corpus/eval_corpus/raw_gated.model.pkl"
 EXTRA = ("bp_offset", "bp_scan_confidence", "support2_raw")
 N_MODELS = int(os.environ.get("N_MODELS", "9"))
+# Hyperparameters are env-overridable so the scaler/HP-search winner can be built without editing the
+# script (docs/raw_svm_scaler_hpsearch_plan.md). Defaults = the canonical C=200 / gamma=0.001 / standard.
+SCALER = os.environ.get("SCALER", "standard")
+SVM_C = float(os.environ.get("SVM_C", "200"))
+SVM_GAMMA = float(os.environ.get("SVM_GAMMA", "0.001"))
 
 d = np.load(MATRIX, allow_pickle=True)
 Xraw, y = d["Xraw"], d["y"]
@@ -52,15 +57,17 @@ u12_introns = make_introns(y == 1)
 u2_introns = make_introns(y == 0)
 
 params = SVMParameters(
-    C=200.0, calibration_method="isotonic", saturate_enabled=False, include_max=False,
+    C=SVM_C, calibration_method="isotonic", saturate_enabled=False, include_max=False,
     include_pairwise_mins=False, penalty="l2", class_weight_multiplier=1.0, loss="squared_hinge",
-    kernel="rbf", gamma=0.001, extra_features=EXTRA, base_features=RAW_BASE_FEATURES,
+    kernel="rbf", gamma=SVM_GAMMA, extra_features=EXTRA, base_features=RAW_BASE_FEATURES,
+    scaler=SCALER,
 )
 trainer = SVMTrainer(
     n_models=N_MODELS, random_state=42, kernel="rbf", max_iter=20000,
     extra_feature_names=list(EXTRA), base_features=RAW_BASE_FEATURES,
 )
-print(f"training {N_MODELS}-model raw ensemble (C=200, gamma=0.001, rbf, isotonic)...", flush=True)
+print(f"training {N_MODELS}-model raw ensemble (C={SVM_C:g}, gamma={SVM_GAMMA:g}, rbf, isotonic, "
+      f"scaler={SCALER})...", flush=True)
 ensemble = trainer.train_ensemble(u12_introns, u2_introns, params, subsample_u2=True, subsample_ratio=0.8)
 
 m0 = ensemble.models[0]
@@ -70,9 +77,11 @@ import numpy as _np
 _p = m0.model.predict_proba(_np.array([[14.0, 8.0, 1.5, -12.0, 7.0, 8.0]]))[0, 1]
 print(f"sanity predict_proba on a strong raw U12 vector: {_p:.3f}", flush=True)
 
+_cstr = f"{SVM_C:g}".replace(".", "p")
+_gstr = f"{SVM_GAMMA:g}".replace(".", "p")
 bundle = {
     "version": "raw_gated_v1",
-    "model_id": "raw_gated_v23corpus_C200_g0.001_isotonic",
+    "model_id": f"raw_gated_v23corpus_C{_cstr}_g{_gstr}_{SCALER}_isotonic",
     "ensemble": ensemble,
     "scoring_mode": "raw_gated",
     "input_features": list(RAW_BASE_FEATURES) + list(EXTRA),
@@ -80,7 +89,8 @@ bundle = {
     "threshold": 50.0,
     "provenance": {
         "training_matrix": MATRIX, "n_u12": int((y == 1).sum()), "n_u2": int((y == 0).sum()),
-        "n_models": N_MODELS, "note": "transitional raw-score bundle; see eval_corpus/PROPOSED_ARCHITECTURE.md",
+        "n_models": N_MODELS, "C": SVM_C, "gamma": SVM_GAMMA, "scaler": SCALER,
+        "note": "transitional raw-score bundle; see eval_corpus/PROPOSED_ARCHITECTURE.md",
     },
 }
 with open(OUT, "wb") as fh:

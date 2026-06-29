@@ -25,11 +25,10 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from intronIC.core.intron import Intron
 from intronIC.classification.transformers import BothEndsStrongTransformer
-from intronIC.classification.svm_factory import create_svm
+from intronIC.classification.svm_factory import create_svm, make_scaler_step
 from intronIC.classification.optimizer import SVMParameters
 
 # Global filter for convergence warnings (persists across multiprocessing forks)
@@ -458,24 +457,29 @@ class SVMTrainer:
         # Resolve gamma: 0.0 sentinel means 'scale' was used during optimization
         gamma = parameters.gamma if parameters.gamma != 0.0 else 'scale'
 
-        base_pipeline = Pipeline([
+        # In-pipeline GLOBAL scaler resolved from the bundle's stamped choice (default 'standard').
+        # 'none' drops the 'scale' step entirely (raw features feed the kernel directly).
+        steps = [
             ('transform', BothEndsStrongTransformer(
                 features=self.features_list,
                 gamma_imbalance=parameters.gamma_imbalance,
                 extra_feature_names=self.extra_feature_names,
             )),
-            ('scale', StandardScaler()),
-            ('svc', create_svm(
-                kernel=parameters.kernel,
-                C=parameters.C,
-                gamma=gamma,
-                class_weight=class_weight,
-                penalty=parameters.penalty,
-                loss=parameters.loss,
-                max_iter=self.max_iter,
-                random_state=seed,
-            ))
-        ])
+        ]
+        scaler_step = make_scaler_step(getattr(parameters, 'scaler', 'standard'))
+        if scaler_step is not None:
+            steps.append(('scale', scaler_step))
+        steps.append(('svc', create_svm(
+            kernel=parameters.kernel,
+            C=parameters.C,
+            gamma=gamma,
+            class_weight=class_weight,
+            penalty=parameters.penalty,
+            loss=parameters.loss,
+            max_iter=self.max_iter,
+            random_state=seed,
+        )))
+        base_pipeline = Pipeline(steps)
 
         # External calibration wrapper
         # Method (sigmoid vs isotonic) chosen by hyperparameter optimization
