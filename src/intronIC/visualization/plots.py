@@ -442,14 +442,13 @@ def scatter_plot_from_arrays(
     high_val = threshold
     med_val = threshold - score_stdev
 
-    # Assign colors based on classification and confidence
-    cluster_colors = []
-    u2_count, u12_low, u12_med, u12_high = 0, 0, 0, 0
-
+    # Assign each point to a confidence tier; plotted in z-order below (U2 cloud first,
+    # putative U12s last) so low/med/high-confidence U12s are never buried under the
+    # dense U2 markers.
+    tier_idx = {"u2": [], "low": [], "med": [], "high": []}
     for i, score in enumerate(svm_scores):
         if i >= len(score_vector):
             break
-
         # Determine if U2 or U12 based on type_ids if provided, else use score
         if type_ids is not None and i < len(type_ids):
             is_u2 = type_ids[i] == "u2"
@@ -457,23 +456,19 @@ def scatter_plot_from_arrays(
             is_u2 = score < 50  # Raw classifier threshold
 
         if is_u2:
-            u2_count += 1
-            color = "xkcd:medium grey"
+            tier_idx["u2"].append(i)
         elif score > high_val:
-            u12_high += 1
-            color = "xkcd:green"
+            tier_idx["high"].append(i)
         elif med_val < score <= high_val:
-            u12_med += 1
-            color = "xkcd:orange"
+            tier_idx["med"].append(i)
         else:
-            u12_low += 1
-            color = "xkcd:red"
+            tier_idx["low"].append(i)
 
-        cluster_colors.append(color)
-
-    # Trim score_vector to match colors if needed
-    n_points = len(cluster_colors)
-    plot_scores = score_vector[:n_points]
+    u2_count = len(tier_idx["u2"])
+    u12_low = len(tier_idx["low"])
+    u12_med = len(tier_idx["med"])
+    u12_high = len(tier_idx["high"])
+    plot_scores = score_vector
 
     # Create legend
     legend_colors = ["xkcd:medium grey", "xkcd:red", "xkcd:orange", "xkcd:green"]
@@ -491,10 +486,21 @@ def scatter_plot_from_arrays(
         patch = mpatches.Patch(color=color, label=label_with_count)
         legend_patches.append(patch)
 
-    # Plot main scatter
-    ax_main.scatter(
-        *plot_scores[:, :2].T, s=20, c=cluster_colors, alpha=0.5, rasterized=True
-    )
+    # Plot in z-order: U2 cloud at the bottom, then U12 low -> med -> high on top, so
+    # putative U12s of every confidence are drawn above (never buried under) the U2 markers.
+    for name, color, z, alpha in (
+        ("u2", "xkcd:medium grey", 1, 0.45),
+        ("low", "xkcd:red", 3, 0.85),
+        ("med", "xkcd:orange", 4, 0.9),
+        ("high", "xkcd:green", 5, 0.9),
+    ):
+        idx = tier_idx[name]
+        if idx:
+            pts = plot_scores[idx]
+            ax_main.scatter(
+                pts[:, 0], pts[:, 1], s=20, c=color, alpha=alpha,
+                zorder=z, edgecolors="none", rasterized=True,
+            )
 
     ax_main.legend(handles=legend_patches, fontsize=fsize - 2)
     ax_main.set_xlabel(xlab, fontsize=fsize)
