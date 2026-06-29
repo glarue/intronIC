@@ -29,9 +29,26 @@ Status: **DONE — searched 2026-06-28; verdict = keep current (no rebuild).** O
 > **Decisive tie-break — holdout fidelity is *identical*:** baseline vs the best candidate
 > (standard,500,3e-4) both give recall F1@50=**0.999** and consensus_fp FP=**18/454 (4.0%)**.
 >
-> **Caveat:** this is a single-SVC cv=3 replica; the production bundle is a 126-submodel isotonic
-> ensemble whose averaging only *shrinks* these already-within-noise gaps. So if anything the grid
-> *overstates* the config spread, and it still shows no robust winner.
+> **Caveat (now closed — see below):** the grid above is a single-SVC cv=3 *proxy*, not the shipped
+> 42-model ensemble. So it was confirmed on the production object.
+>
+> **Ensemble confirmation (`eval_corpus/ensemble_confirm.py`, log alongside).** Each leave-clade-out fold
+> trains the REAL pipeline — `SVMTrainer` ensemble of **N_MODELS=42** (shipped count) with stratified U2
+> subsampling + isotonic `CalibratedClassifierCV(cv=5)` — and scores the held-out clade with the
+> production `ensemble_margin` (mean `decision_function` over all sub-estimators; AUC/TPR are rank-based on
+> the margin, no per-fold Platt needed). Baseline vs the two refinement co-leaders:
+>
+> | config | scaler/C/γ | AUC | TPR@5% | snRNA@5% | ipa@5% |
+> |---|---|---|---|---|---|
+> | **baseline** | standard/200/0.001 | **0.931** | **0.36** | 0.98 | **0.07** |
+> | candA | standard/500/3e-4 | 0.930 | 0.35 | 0.98 | 0.06 |
+> | candB | standard/700/2e-4 | 0.930 | 0.35 | 0.98 | 0.05 |
+>
+> The shipped config is the **outright best of the three** (candidates are marginally *worse*: ΔAUC
+> −0.001, ΔTPR@5% −0.01). And the proxy's noisy snRNA@5% (0.92–0.98) collapses to a flat **0.98 for all
+> three** in the ensemble — confirming the bias-variance prediction that ensembling erases the
+> single-FPR-point jitter (candA/candB's apparent snRNA edge was proxy noise). The ensemble also beats any
+> single SVC outright (AUC 0.931 vs ~0.922). **No config beats the shipped one on the production object.**
 >
 > **Net:** the search **retroactively validates** the inherited hyperparameters on the raw 6-feature
 > space (they were never re-searched before; now they have been). The shipped
