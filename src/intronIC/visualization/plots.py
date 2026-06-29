@@ -576,7 +576,7 @@ def scatter_plot_from_arrays(
         u2_pts = plot_scores[u2_idx]
         ax_main.hexbin(
             u2_pts[:, 0], u2_pts[:, 1],
-            gridsize=60, cmap="Greys", bins="log", mincnt=1,
+            gridsize=110, cmap="Greys", bins="log", mincnt=1,  # finer cells ≈ the U12 marker size (s=20)
             extent=(xlim[0], xlim[1], ylim[0], ylim[1]),
             linewidths=0, zorder=1,
         )
