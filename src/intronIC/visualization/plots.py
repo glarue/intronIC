@@ -24,39 +24,39 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from intronIC.core.intron import Intron
 
 
-def _motif_standardizer_from_bundle(model_path) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """``(mean, scale)`` (length-3 arrays for [5'_raw, bp_raw, 3'_raw]) from the bundle's fitted
-    in-pipeline GLOBAL ``StandardScaler`` — the very scaler the classifier applies internally.
+#: How the scatter / hex / 3D motif axes are framed. Plot-time scaling is fit on the PLOTTED genome's own
+#: introns (NOT the training corpus), so the figure is reproducible from ``score_info.iic`` alone and is
+#: independent of which corpus the bundle was trained on (a bundle-StandardScaler frame is corpus-coupled:
+#: its mean/scale shift with corpus composition even when the classifications don't).
+#:   'robust'   -> median / IQR (sklearn RobustScaler convention). Anchors the frame on the dense U2 bulk
+#:                 and is unmoved by the U12 + weak-intron tails, so the U12 separation reads crisply.
+#:   'standard' -> mean / std (the tails pull the center and inflate the scale, compressing the separation).
+#:   'none'     -> raw background-corrected motif log-odds (no framing; absolute, corpus-free, but stretched).
+#: This is a DISPLAY transform only — it never touches scoring. (Per-genome recentering is banned for
+#: scoring as z-inflation, but is exactly right for a per-genome landscape figure.)
+_PLOT_SCALER_KIND = "robust"
 
-    Plotting in this standardized space puts the three motif axes on a common scale (the space the RBF
-    actually sees), un-stretching the disparate-range raw axes, while staying a faithful *per-axis affine*
-    transform (so relative positions within each axis are preserved). The transformer's first three output
-    columns are the base motif features passed through unchanged and ``StandardScaler`` is per-feature, so
-    ``(x - mean[i]) / scale[i]`` standardizes each axis exactly. Returns ``None`` (caller falls back to raw
-    axes) if the bundle/scaler can't be read.
+
+def _plot_axis_params(values, kind: str) -> Tuple[float, float]:
+    """Per-axis ``(center, scale)`` for plot-time standardization, fit on the genome's own introns.
+
+    ``robust`` -> (median, IQR); ``standard`` -> (mean, std). NaNs are dropped and a degenerate scale falls
+    back to 1.0 so the transform is always well-defined.
     """
-    if not model_path:
-        return None
-    try:
-        import pickle
-
-        with open(model_path, "rb") as fh:
-            bundle = pickle.load(fh)
-        ensemble = bundle["ensemble"] if isinstance(bundle, dict) else getattr(bundle, "ensemble", None)
-        est = ensemble.models[0].model.calibrated_classifiers_[0].estimator
-        scaler = est.named_steps.get("scale") if hasattr(est, "named_steps") else None
-        if scaler is None:
-            return None
-        mean = np.asarray(scaler.mean_, dtype=float)
-        scale = np.asarray(scaler.scale_, dtype=float)
-        if mean.size < 3 or scale.size < 3 or not np.all(scale[:3] > 0):
-            return None
-        return mean[:3], scale[:3]
-    except Exception:
-        return None
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return 0.0, 1.0
+    if kind == "standard":
+        center, scale = float(v.mean()), float(v.std())
+    else:  # robust (median / IQR)
+        center = float(np.median(v))
+        q25, q75 = np.percentile(v, [25, 75])
+        scale = float(q75 - q25)
+    return center, (scale if scale > 1e-9 else 1.0)
 
 
-#: Axis labels for the two plotting spaces (raw motif log-odds vs the classifier's standardized space).
+#: Axis labels for the two plotting spaces (raw motif log-odds vs the genome's own standardized frame).
 _RAW_AXIS_LABELS = ("5'SS raw score", "BPS raw score", "3'SS raw score")
 _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'SS score (standardized)")
 
@@ -67,7 +67,6 @@ def plot_classification_results_from_file(
     species_name: str,
     threshold: float,
     fig_dpi: int = 300,
-    model_path=None,
 ):
     """
     Generate classification plots by reading scores from output file.
@@ -149,14 +148,14 @@ def plot_classification_results_from_file(
     score_vector = np.array(list(zip(five_raw_scores, bp_raw_scores)))
     score_vector_3d = np.array(list(zip(five_raw_scores, bp_raw_scores, three_raw_scores)))
 
-    # Plot in the standardized space the classifier sees (the bundle's global StandardScaler), which
-    # un-stretches the disparate-range raw motif axes. Faithful per-axis affine transform; falls back to
-    # raw axes if the scaler can't be read.
-    std = _motif_standardizer_from_bundle(model_path)
-    if std is not None:
-        mean, scale = std
-        score_vector = (score_vector - mean[:2]) / scale[:2]
-        score_vector_3d = (score_vector_3d - mean[:3]) / scale[:3]
+    # Plot-time framing fit on THIS genome's own introns (not the training corpus), so the figure is
+    # corpus-independent and reproducible from score_info alone. See _PLOT_SCALER_KIND.
+    if _PLOT_SCALER_KIND != "none" and score_vector.size:
+        cx, sx = _plot_axis_params(five_raw_scores, _PLOT_SCALER_KIND)
+        cy, sy = _plot_axis_params(bp_raw_scores, _PLOT_SCALER_KIND)
+        cz, sz = _plot_axis_params(three_raw_scores, _PLOT_SCALER_KIND)
+        score_vector = (score_vector - [cx, cy]) / [sx, sy]
+        score_vector_3d = (score_vector_3d - [cx, cy, cz]) / [sx, sy, sz]
         xlab, ylab, zlab = _STD_AXIS_LABELS
     else:
         xlab, ylab, zlab = _RAW_AXIS_LABELS
@@ -219,7 +218,6 @@ def plot_classification_results(
     species_name: str,
     threshold: float,
     fig_dpi: int = 300,
-    model_path=None,
 ):
     """
     Generate all classification result plots.
@@ -235,8 +233,6 @@ def plot_classification_results(
         species_name: Species name for plot titles
         threshold: U12 classification threshold
         fig_dpi: Figure DPI for output images
-        model_path: Optional path to the bundle whose global StandardScaler defines the
-            standardized plotting space (falls back to raw motif axes if absent).
     """
     # Extract score vectors (5' raw motif, BP raw motif)
     score_vector = []
@@ -250,12 +246,14 @@ def plot_classification_results(
 
     score_vector = np.array(score_vector)
 
-    # Plot in the classifier's standardized space (bundle's global StandardScaler) so the disparate-range
-    # raw motif axes are on a common scale; faithful per-axis affine transform, raw fallback if absent.
-    std = _motif_standardizer_from_bundle(model_path)
-    if std is not None and score_vector.size:
-        mean, scale = std
-        score_vector = (score_vector - mean[:2]) / scale[:2]
+    # Plot-time framing fit on THIS genome's own introns (not the training corpus): corpus-independent and
+    # reproducible from score_info. The 5'/BP center+scale are reused for the 3D plot below for consistency.
+    _xy_params = None
+    if _PLOT_SCALER_KIND != "none" and score_vector.size:
+        cx, sx = _plot_axis_params(score_vector[:, 0], _PLOT_SCALER_KIND)
+        cy, sy = _plot_axis_params(score_vector[:, 1], _PLOT_SCALER_KIND)
+        _xy_params = (cx, cy, sx, sy)
+        score_vector = (score_vector - [cx, cy]) / [sx, sy]
         xlab, ylab, zlab = _STD_AXIS_LABELS
     else:
         xlab, ylab, zlab = _RAW_AXIS_LABELS
@@ -301,8 +299,10 @@ def plot_classification_results(
 
     if score_vector_3d:
         score_vector_3d = np.array(score_vector_3d)
-        if std is not None:
-            score_vector_3d = (score_vector_3d - std[0][:3]) / std[1][:3]
+        if _xy_params is not None:
+            cx, cy, sx, sy = _xy_params
+            cz, sz = _plot_axis_params(score_vector_3d[:, 2], _PLOT_SCALER_KIND)
+            score_vector_3d = (score_vector_3d - [cx, cy, cz]) / [sx, sy, sz]
         # v2.7+: prefer adjusted_score (continuous-discount-adjusted call
         # score) for color tiers + counts; fall back to svm_score.
         def _tier_score(intron):

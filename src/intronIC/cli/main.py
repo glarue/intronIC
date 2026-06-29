@@ -5068,7 +5068,6 @@ def main_classify(config: IntronICConfig):
                         species_name=config.output.base_filename,
                         threshold=config.scoring.threshold,
                         fig_dpi=300,
-                        model_path=config.training.pretrained_model_path,
                     )
                     messenger.log_only("Successfully generated classification plots")
                 else:
@@ -5311,7 +5310,6 @@ def main_classify(config: IntronICConfig):
                 species_name=config.output.base_filename,
                 threshold=config.scoring.threshold,
                 fig_dpi=300,
-                model_path=config.training.pretrained_model_path,
             )
             messenger.log_only("Successfully generated classification plots")
         except Exception as plot_error:
