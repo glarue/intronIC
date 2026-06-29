@@ -628,9 +628,9 @@ def scatter_plot_from_arrays(
     )
     ax_top.set_xlim(xlim)  # Explicitly set to match main plot
     ax_top.set_ylabel("Count", fontsize=fsize - 2)
-    # Keep the histogram's x-axis (bottom spine) as a baseline, but drop its tick marks/labels (the main
-    # plot below carries the shared x ticks). The hspace gap keeps the baseline off the main plot.
-    ax_top.tick_params(labelbottom=False, bottom=False)
+    # Keep the histogram's x-axis baseline + tick marks (the hspace gap keeps them clear of the main plot);
+    # drop only the tick LABELS, since the main plot below carries the shared x labels.
+    ax_top.tick_params(labelbottom=False, bottom=True)
     ax_top.spines["top"].set_visible(False)
     ax_top.spines["right"].set_visible(False)
 
