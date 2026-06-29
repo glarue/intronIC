@@ -62,12 +62,11 @@ _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'
 
 
 def _frame_descriptor() -> str:
-    """Human-readable description of the current plot framing, for figure subtitles."""
-    return {
-        "robust": "motif scores, robust-standardized per genome",
-        "standard": "motif scores, standardized per genome",
-        "none": "raw background-corrected motif log-odds",
-    }.get(_PLOT_SCALER_KIND, "motif scores, standardized per genome")
+    """Human-readable description of the current plot framing, for figure subtitles. The specific scaler
+    (robust vs standard) is intentionally omitted — only whether the axes are standardized or raw."""
+    if _PLOT_SCALER_KIND == "none":
+        return "raw background-corrected motif log-odds"
+    return "motif scores, standardized per genome"
 
 
 def plot_classification_results_from_file(
@@ -505,9 +504,9 @@ def scatter_plot_from_arrays(
         figure=fig,
         width_ratios=[4, 1],  # Main plot : right marginal
         height_ratios=[1, 4],  # Top marginal : main plot
-        hspace=0.02,
-        wspace=0.02,
-        top=0.92,  # Leave space for suptitle
+        hspace=0.06,  # gap between top marginal and main plot (avoid axis overlap)
+        wspace=0.04,
+        top=0.90,  # Leave space for the two-line title
         bottom=0.08,
         left=0.10,
         right=0.95,
@@ -553,10 +552,10 @@ def scatter_plot_from_arrays(
     # Create legend
     legend_colors = ["xkcd:medium grey", "xkcd:red", "xkcd:orange", "xkcd:green"]
     legend_labels = [
-        "U2",
-        f"U12<={int(med_val)}",
-        f"{int(med_val)}<U12<={int(high_val)}",
-        f"U12>{int(high_val)}",
+        "U2-type",
+        f"U12-type ≤ {int(med_val)}",
+        f"{int(med_val)} < U12-type ≤ {int(high_val)}",
+        f"U12-type > {int(high_val)}",
     ]
     legend_counts = [u2_count, u12_low, u12_med, u12_high]
 
@@ -626,9 +625,10 @@ def scatter_plot_from_arrays(
     )
     ax_top.set_xlim(xlim)  # Explicitly set to match main plot
     ax_top.set_ylabel("Count", fontsize=fsize - 2)
-    ax_top.tick_params(labelbottom=False)
+    ax_top.tick_params(labelbottom=False, bottom=False)
     ax_top.spines["top"].set_visible(False)
     ax_top.spines["right"].set_visible(False)
+    ax_top.spines["bottom"].set_visible(False)
 
     ax_right.hist(
         plot_scores[:, 1],
@@ -650,9 +650,9 @@ def scatter_plot_from_arrays(
     n_u12_total = u12_low + u12_med + u12_high
     fig.suptitle(species_name, fontsize=fsize + 3, y=0.985, weight="bold")
     fig.text(
-        0.5, 0.945,
-        f"U12 vs U2 classification  ·  {n_u12_total:,} U12 / {u2_count:,} U2  ·  {_frame_descriptor()}",
-        ha="center", va="top", fontsize=fsize - 3, color="0.30",
+        0.5, 0.94,
+        f"U12-type vs U2-type classification  ·  {n_u12_total:,} U12-type / {u2_count:,} U2-type  ·  {_frame_descriptor()}",
+        ha="center", va="top", fontsize=fsize - 4, color="0.30",
     )
 
     plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
@@ -775,9 +775,9 @@ def scatter_3d(
 
         # Plot U12 by confidence tier (low → high so high draws on top)
         for idx_list, color, label, size in [
-            (u12_low_idx, "xkcd:red", f"U12<={int(med_val)}", 15),
-            (u12_med_idx, "xkcd:orange", f"{int(med_val)}<U12<={int(high_val)}", 20),
-            (u12_high_idx, "xkcd:green", f"U12>{int(high_val)}", 25),
+            (u12_low_idx, "xkcd:red", f"U12-type ≤ {int(med_val)}", 15),
+            (u12_med_idx, "xkcd:orange", f"{int(med_val)} < U12-type ≤ {int(high_val)}", 20),
+            (u12_high_idx, "xkcd:green", f"U12-type > {int(high_val)}", 25),
         ]:
             if idx_list:
                 pts = scores_3d[idx_list]
@@ -805,7 +805,7 @@ def scatter_3d(
     # 3D z-scores so the geometry is invariant across runs.
     _space = "standardized" if "standardized" in xlab else "raw"
     fig.suptitle(
-        f"{species_name} - U12 Classification (3D {_space} scores)",
+        f"{species_name} — U12-type / U2-type classification (3D {_space} scores)",
         fontsize=fsize + 2, weight="bold", y=0.97,
     )
 
@@ -847,14 +847,14 @@ def histogram(
         plt.grid(True, which="both", ls="--", alpha=0.7)
 
     # Clean title: species_name + description
-    plt.title(f"{species_name} - U12 Score Distribution", fontsize=14)
+    plt.title(f"{species_name} — U12-type score distribution", fontsize=14)
 
-    plt.xlabel("U12 score", fontsize=14)
+    plt.xlabel("U12-type score", fontsize=14)
     plt.ylabel("Number of introns", fontsize=14)
 
     # Add threshold line
     plt.axvline(
-        threshold, color="orange", linestyle="--", label=f"U12 threshold: {threshold}"
+        threshold, color="orange", linestyle="--", label=f"U12-type threshold: {threshold}"
     )
 
     plt.legend()
@@ -1023,7 +1023,7 @@ def ref_scatter(
         c="xkcd:medium grey",
         alpha=0.5,
         s=42,
-        label=f"U2 (n={len(u2_vector)})",
+        label=f"U2-type (n={len(u2_vector)})",
         rasterized=True,
     )
 
@@ -1032,7 +1032,7 @@ def ref_scatter(
         c="xkcd:green",
         alpha=0.5,
         s=42,
-        label=f"U12 (n={len(u12_vector)})",
+        label=f"U12-type (n={len(u12_vector)})",
         rasterized=True,
     )
 
@@ -1127,10 +1127,10 @@ def plot_decision_surface(
               gridsize=50, cmap="Blues", alpha=0.6, mincnt=1)
     ax.scatter(u2_z[hard_mask, 0], u2_z[hard_mask, 1],
                c="darkorange", s=25, alpha=0.9, marker="x", linewidths=1.5,
-               zorder=5, label=f"Hard neg U2 (n={hard_mask.sum()})")
+               zorder=5, label=f"Hard neg U2-type (n={hard_mask.sum()})")
     ax.scatter(u12_z[:, 0], u12_z[:, 1],
                c="red", s=12, alpha=0.5, edgecolors="darkred", linewidths=0.3,
-               zorder=6, label=f"U12 (n={len(u12_z)})")
+               zorder=6, label=f"U12-type (n={len(u12_z)})")
     ax.contour(s5_range, bp_range, dec, levels=[0], colors="black", linewidths=2.5)
     ax.plot([-2, 4.5], [-2, 4.5], "k--", alpha=0.3, linewidth=1)
     ax.set_xlabel("5'z score", fontsize=12)
@@ -1239,9 +1239,9 @@ def plot_decision_surface(
         bins = np.linspace(min(u2_dec.min(), u12_dec.min()),
                           max(u2_dec.max(), u12_dec.max()), 60)
         ax.hist(u2_dec, bins=bins, alpha=0.6, color="steelblue",
-                label=f"U2 (n={len(u2_dec)})", density=True)
+                label=f"U2-type (n={len(u2_dec)})", density=True)
         ax.hist(u12_dec, bins=bins, alpha=0.6, color="red",
-                label=f"U12 (n={len(u12_dec)})", density=True)
+                label=f"U12-type (n={len(u12_dec)})", density=True)
         ax.axvline(0, color="black", linewidth=1.5, linestyle="--", alpha=0.7,
                    label="Decision boundary")
         ax.set_xlabel("Decision function value", fontsize=12)
