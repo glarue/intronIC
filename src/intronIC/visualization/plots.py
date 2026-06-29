@@ -61,6 +61,45 @@ _RAW_AXIS_LABELS = ("5'SS raw score", "BPS raw score", "3'SS raw score")
 _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'SS score (standardized)")
 
 
+#: Candidate legend corners in tie-break priority order (first = preferred when densities tie). The
+#: upper-right is deliberately absent so it is NEVER chosen — that corner is the U12-type region (U12
+#: introns score high on both axes).
+_LEGEND_PRIORITY = ("upper left", "lower left", "lower right")
+
+
+def _legend_loc_by_density(points, xlim, ylim, priority=_LEGEND_PRIORITY, box_frac=(0.5, 0.28)):
+    """Choose the legend corner whose region holds the fewest *actually plotted points*.
+
+    Density-weighted, unlike matplotlib's ``loc='best'`` — which counts hexbin geometry per occupied cell
+    (one weight per hex regardless of how many introns it holds) and so is density-blind. ``priority`` lists
+    the candidate corners in tie-break order (first = preferred on equal density); corners not listed (e.g.
+    'upper right', the U12-type region) are never chosen. ``box_frac`` is the legend's approximate (width,
+    height) as a fraction of the axes; points are counted in a corner-anchored box of that size. The empty
+    case falls to the first priority corner. Returns a matplotlib ``loc`` string.
+    """
+    (x0, x1), (y0, y1) = xlim, ylim
+    w = (x1 - x0) * box_frac[0]
+    h = (y1 - y0) * box_frac[1]
+    box = {
+        "lower right": (x1 - w, x1, y0, y0 + h),
+        "lower left": (x0, x0 + w, y0, y0 + h),
+        "upper left": (x0, x0 + w, y1 - h, y1),
+        "upper right": (x1 - w, x1, y1 - h, y1),
+    }
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[0] == 0:
+        return priority[0]
+    x, y = pts[:, 0], pts[:, 1]
+    best, best_count = priority[0], None
+    # Iterate in priority order with a STRICT '<' so the first (highest-priority) minimum wins ties.
+    for loc in priority:
+        bx0, bx1, by0, by1 = box[loc]
+        cnt = int(np.count_nonzero((x >= bx0) & (x <= bx1) & (y >= by0) & (y <= by1)))
+        if best_count is None or cnt < best_count:
+            best, best_count = loc, cnt
+    return best
+
+
 def plot_classification_results_from_file(
     score_file: Path,
     output_dir: Path,
@@ -596,10 +635,11 @@ def scatter_plot_from_arrays(
                 zorder=z, edgecolors="none", rasterized=True,
             )
 
-    # Pin the legend to the lower-right: the U12-type cluster is structurally upper-right (U12 introns
-    # score high on both 5'SS and BPS), and the U2 bulk is centred, so the lower-right corner is reliably
-    # the emptiest. (Default loc='best' mis-placed it over the U2 density — it doesn't weight the hexbin.)
-    ax_main.legend(handles=legend_patches, fontsize=fsize - 2, loc="lower right")
+    # Density-weighted legend placement: pick the emptiest corner by ACTUAL plotted-point counts
+    # (matplotlib's loc='best' is density-blind for a hexbin). Never the upper-right (the U12-type region);
+    # ties break upper left > lower left > lower right. See _legend_loc_by_density.
+    legend_loc = _legend_loc_by_density(plot_scores, xlim, ylim)
+    ax_main.legend(handles=legend_patches, fontsize=fsize - 2, loc=legend_loc)
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
