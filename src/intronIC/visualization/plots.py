@@ -61,6 +61,15 @@ _RAW_AXIS_LABELS = ("5'SS raw score", "BPS raw score", "3'SS raw score")
 _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'SS score (standardized)")
 
 
+def _frame_descriptor() -> str:
+    """Human-readable description of the current plot framing, for figure subtitles."""
+    return {
+        "robust": "motif scores, robust-standardized per genome",
+        "standard": "motif scores, standardized per genome",
+        "none": "raw background-corrected motif log-odds",
+    }.get(_PLOT_SCALER_KIND, "motif scores, standardized per genome")
+
+
 def plot_classification_results_from_file(
     score_file: Path,
     output_dir: Path,
@@ -390,7 +399,7 @@ def density_hexplot(
     # Original v1.5.1 used auto aspect for hexplot
 
     # Clean title: species_name + description + count
-    plot_title = f"{species_name} - Motif Score Density (n={len(scores)})"
+    plot_title = f"{species_name} — motif-score density (n={len(scores):,})"
 
     if xlab:
         plt.xlabel(xlab, fontsize=fsize)
@@ -636,11 +645,14 @@ def scatter_plot_from_arrays(
     ax_right.spines["top"].set_visible(False)
     ax_right.spines["right"].set_visible(False)
 
-    fig.suptitle(
-        f"{species_name} - U12 Classification Results",
-        fontsize=fsize + 2,
-        y=0.98,
-        weight="bold",
+    # Sensible per-run title: the run/species name (prominent) + a subtitle giving the call counts and
+    # the plotting frame, so the figure is self-describing for a given run.
+    n_u12_total = u12_low + u12_med + u12_high
+    fig.suptitle(species_name, fontsize=fsize + 3, y=0.985, weight="bold")
+    fig.text(
+        0.5, 0.945,
+        f"U12 vs U2 classification  ·  {n_u12_total:,} U12 / {u2_count:,} U2  ·  {_frame_descriptor()}",
+        ha="center", va="top", fontsize=fsize - 3, color="0.30",
     )
 
     plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
