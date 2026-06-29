@@ -24,12 +24,50 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from intronIC.core.intron import Intron
 
 
+def _motif_standardizer_from_bundle(model_path) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """``(mean, scale)`` (length-3 arrays for [5'_raw, bp_raw, 3'_raw]) from the bundle's fitted
+    in-pipeline GLOBAL ``StandardScaler`` — the very scaler the classifier applies internally.
+
+    Plotting in this standardized space puts the three motif axes on a common scale (the space the RBF
+    actually sees), un-stretching the disparate-range raw axes, while staying a faithful *per-axis affine*
+    transform (so relative positions within each axis are preserved). The transformer's first three output
+    columns are the base motif features passed through unchanged and ``StandardScaler`` is per-feature, so
+    ``(x - mean[i]) / scale[i]`` standardizes each axis exactly. Returns ``None`` (caller falls back to raw
+    axes) if the bundle/scaler can't be read.
+    """
+    if not model_path:
+        return None
+    try:
+        import pickle
+
+        with open(model_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        ensemble = bundle["ensemble"] if isinstance(bundle, dict) else getattr(bundle, "ensemble", None)
+        est = ensemble.models[0].model.calibrated_classifiers_[0].estimator
+        scaler = est.named_steps.get("scale") if hasattr(est, "named_steps") else None
+        if scaler is None:
+            return None
+        mean = np.asarray(scaler.mean_, dtype=float)
+        scale = np.asarray(scaler.scale_, dtype=float)
+        if mean.size < 3 or scale.size < 3 or not np.all(scale[:3] > 0):
+            return None
+        return mean[:3], scale[:3]
+    except Exception:
+        return None
+
+
+#: Axis labels for the two plotting spaces (raw motif log-odds vs the classifier's standardized space).
+_RAW_AXIS_LABELS = ("5'SS raw score", "BPS raw score", "3'SS raw score")
+_STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'SS score (standardized)")
+
+
 def plot_classification_results_from_file(
     score_file: Path,
     output_dir: Path,
     species_name: str,
     threshold: float,
     fig_dpi: int = 300,
+    model_path=None,
 ):
     """
     Generate classification plots by reading scores from output file.
@@ -111,14 +149,26 @@ def plot_classification_results_from_file(
     score_vector = np.array(list(zip(five_raw_scores, bp_raw_scores)))
     score_vector_3d = np.array(list(zip(five_raw_scores, bp_raw_scores, three_raw_scores)))
 
+    # Plot in the standardized space the classifier sees (the bundle's global StandardScaler), which
+    # un-stretches the disparate-range raw motif axes. Faithful per-axis affine transform; falls back to
+    # raw axes if the scaler can't be read.
+    std = _motif_standardizer_from_bundle(model_path)
+    if std is not None:
+        mean, scale = std
+        score_vector = (score_vector - mean[:2]) / scale[:2]
+        score_vector_3d = (score_vector_3d - mean[:3]) / scale[:3]
+        xlab, ylab, zlab = _STD_AXIS_LABELS
+    else:
+        xlab, ylab, zlab = _RAW_AXIS_LABELS
+
     # 1. Density hexplot
     hexplot_path = output_dir / f"{species_name}.plot.hex.iic.png"
     density_hexplot(
         score_vector,
         species_name=species_name,
         output_path=hexplot_path,
-        xlab="5'SS raw score",
-        ylab="BPS raw score",
+        xlab=xlab,
+        ylab=ylab,
         fig_dpi=fig_dpi,
     )
 
@@ -130,13 +180,13 @@ def plot_classification_results_from_file(
         svm_scores=svm_scores,
         species_name=species_name,
         output_path=scatter_path,
-        xlab="5'SS raw score",
-        ylab="BPS raw score",
+        xlab=xlab,
+        ylab=ylab,
         threshold=threshold,
         fig_dpi=fig_dpi,
     )
 
-    # 3. 3D scatter plot (5'z, BPz, 3'z)
+    # 3. 3D scatter plot (5', BP, 3' motif axes)
     if three_raw_idx is not None:
         scatter_3d_path = output_dir / f"{species_name}.plot.scatter3d.iic.png"
         scatter_3d(
@@ -145,6 +195,9 @@ def plot_classification_results_from_file(
             species_name=species_name,
             output_path=scatter_3d_path,
             threshold=threshold,
+            xlab=xlab,
+            ylab=ylab,
+            zlab=zlab,
             fig_dpi=fig_dpi,
         )
 
@@ -166,6 +219,7 @@ def plot_classification_results(
     species_name: str,
     threshold: float,
     fig_dpi: int = 300,
+    model_path=None,
 ):
     """
     Generate all classification result plots.
@@ -181,8 +235,10 @@ def plot_classification_results(
         species_name: Species name for plot titles
         threshold: U12 classification threshold
         fig_dpi: Figure DPI for output images
+        model_path: Optional path to the bundle whose global StandardScaler defines the
+            standardized plotting space (falls back to raw motif axes if absent).
     """
-    # Extract score vectors (5' z-score, BP z-score)
+    # Extract score vectors (5' raw motif, BP raw motif)
     score_vector = []
     for intron in introns:
         if (
@@ -194,14 +250,24 @@ def plot_classification_results(
 
     score_vector = np.array(score_vector)
 
+    # Plot in the classifier's standardized space (bundle's global StandardScaler) so the disparate-range
+    # raw motif axes are on a common scale; faithful per-axis affine transform, raw fallback if absent.
+    std = _motif_standardizer_from_bundle(model_path)
+    if std is not None and score_vector.size:
+        mean, scale = std
+        score_vector = (score_vector - mean[:2]) / scale[:2]
+        xlab, ylab, zlab = _STD_AXIS_LABELS
+    else:
+        xlab, ylab, zlab = _RAW_AXIS_LABELS
+
     # 1. Density hexplot
     hexplot_path = output_dir / f"{species_name}.plot.hex.iic.png"
     density_hexplot(
         score_vector,
         species_name=species_name,
         output_path=hexplot_path,
-        xlab="5'SS raw score",
-        ylab="BPS raw score",
+        xlab=xlab,
+        ylab=ylab,
         fig_dpi=fig_dpi,
     )
 
@@ -212,8 +278,8 @@ def plot_classification_results(
         score_vector,
         species_name=species_name,
         output_path=scatter_path,
-        xlab="5'SS raw score",
-        ylab="BPS raw score",
+        xlab=xlab,
+        ylab=ylab,
         threshold=threshold,
         fig_dpi=fig_dpi,
     )
@@ -235,6 +301,8 @@ def plot_classification_results(
 
     if score_vector_3d:
         score_vector_3d = np.array(score_vector_3d)
+        if std is not None:
+            score_vector_3d = (score_vector_3d - std[0][:3]) / std[1][:3]
         # v2.7+: prefer adjusted_score (continuous-discount-adjusted call
         # score) for color tiers + counts; fall back to svm_score.
         def _tier_score(intron):
@@ -268,6 +336,9 @@ def plot_classification_results(
             output_path=scatter_3d_path,
             threshold=threshold,
             type_ids=type_ids_for_3d,
+            xlab=xlab,
+            ylab=ylab,
+            zlab=zlab,
             fig_dpi=fig_dpi,
         )
 
@@ -486,10 +557,33 @@ def scatter_plot_from_arrays(
         patch = mpatches.Patch(color=color, label=label_with_count)
         legend_patches.append(patch)
 
-    # Plot in z-order: U2 cloud at the bottom, then U12 low -> med -> high on top, so
-    # putative U12s of every confidence are drawn above (never buried under) the U2 markers.
+    # Compute symmetric square limits UP FRONT: the U2 hexbin needs an explicit extent to align with
+    # the U12 scatter, and the markers + marginals all share these limits.
+    x_data = plot_scores[:, 0]
+    y_data = plot_scores[:, 1]
+    max_range = max(x_data.max() - x_data.min(), y_data.max() - y_data.min())
+    x_center = (x_data.max() + x_data.min()) / 2
+    y_center = (y_data.max() + y_data.min()) / 2
+    margin = max_range * 0.05  # 5% margin
+    xlim = (x_center - max_range / 2 - margin, x_center + max_range / 2 + margin)
+    ylim = (y_center - max_range / 2 - margin, y_center + max_range / 2 + margin)
+
+    # U2 set: grayscale hexbin DENSITY (was a flat grey scatter) — shows where the U2 bulk concentrates
+    # without burying the U12s, and reads cleanly even where the cloud is millions-dense. log color scale
+    # since the U2 core is orders of magnitude denser than its fringe.
+    u2_idx = tier_idx["u2"]
+    if u2_idx:
+        u2_pts = plot_scores[u2_idx]
+        ax_main.hexbin(
+            u2_pts[:, 0], u2_pts[:, 1],
+            gridsize=60, cmap="Greys", bins="log", mincnt=1,
+            extent=(xlim[0], xlim[1], ylim[0], ylim[1]),
+            linewidths=0, zorder=1,
+        )
+
+    # U12 tiers as a colored scatter ON TOP of the U2 density (low -> med -> high z-order), so putative
+    # U12s of every confidence are drawn above the U2 background.
     for name, color, z, alpha in (
-        ("u2", "xkcd:medium grey", 1, 0.45),
         ("low", "xkcd:red", 3, 0.85),
         ("med", "xkcd:orange", 4, 0.9),
         ("high", "xkcd:green", 5, 0.9),
@@ -506,23 +600,6 @@ def scatter_plot_from_arrays(
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
-    # First calculate symmetric limits BEFORE plotting anything
-    x_data = plot_scores[:, 0]
-    y_data = plot_scores[:, 1]
-    x_range = x_data.max() - x_data.min()
-    y_range = y_data.max() - y_data.min()
-    max_range = max(x_range, y_range)
-
-    # Center on data and extend by max range
-    x_center = (x_data.max() + x_data.min()) / 2
-    y_center = (y_data.max() + y_data.min()) / 2
-    margin = max_range * 0.05  # 5% margin
-
-    # Calculate the symmetric limits
-    xlim = (x_center - max_range / 2 - margin, x_center + max_range / 2 + margin)
-    ylim = (y_center - max_range / 2 - margin, y_center + max_range / 2 + margin)
-
-    # Set limits on main plot first
     ax_main.set_xlim(xlim)
     ax_main.set_ylim(ylim)
 
@@ -577,6 +654,9 @@ def scatter_3d(
     output_path: Path,
     threshold: float,
     type_ids: Optional[List[Optional[str]]] = None,
+    xlab: str = "5'SS raw score",
+    ylab: str = "BPS raw score",
+    zlab: str = "3'SS raw score",
     fsize: int = 12,
     fig_dpi: int = 300,
 ):
@@ -695,9 +775,9 @@ def scatter_3d(
                     label=f"{label} ({len(idx_list)})",
                 )
 
-        ax.set_xlabel("5'SS raw score", fontsize=fsize, labelpad=8)
-        ax.set_ylabel("BPS raw score", fontsize=fsize, labelpad=8)
-        ax.set_zlabel("3'SS raw score", fontsize=fsize, labelpad=8)
+        ax.set_xlabel(xlab, fontsize=fsize, labelpad=8)
+        ax.set_ylabel(ylab, fontsize=fsize, labelpad=8)
+        ax.set_zlabel(zlab, fontsize=fsize, labelpad=8)
         ax.tick_params(labelsize=fsize - 2)
         ax.view_init(elev=elev, azim=azim)
 
@@ -711,8 +791,9 @@ def scatter_3d(
     # passed in `svm_scores`. Production callers (v2.7+) pass adjusted_score
     # (continuous-discount-adjusted call score). Point positions are always
     # 3D z-scores so the geometry is invariant across runs.
+    _space = "standardized" if "standardized" in xlab else "raw"
     fig.suptitle(
-        f"{species_name} - U12 Classification (3D raw scores)",
+        f"{species_name} - U12 Classification (3D {_space} scores)",
         fontsize=fsize + 2, weight="bold", y=0.97,
     )
 
