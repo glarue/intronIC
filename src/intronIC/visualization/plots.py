@@ -61,14 +61,6 @@ _RAW_AXIS_LABELS = ("5'SS raw score", "BPS raw score", "3'SS raw score")
 _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'SS score (standardized)")
 
 
-def _frame_descriptor() -> str:
-    """Human-readable description of the current plot framing, for figure subtitles. The specific scaler
-    (robust vs standard) is intentionally omitted — only whether the axes are standardized or raw."""
-    if _PLOT_SCALER_KIND == "none":
-        return "raw background-corrected motif log-odds"
-    return "motif scores, standardized per genome"
-
-
 def plot_classification_results_from_file(
     score_file: Path,
     output_dir: Path,
@@ -655,8 +647,8 @@ def scatter_plot_from_arrays(
     fig.suptitle(species_name, fontsize=fsize + 3, y=0.985, weight="bold")
     fig.text(
         0.5, 0.94,
-        f"U12-type vs U2-type classification  ·  {n_u12_total:,} U12-type / {u2_count:,} U2-type  ·  {_frame_descriptor()}",
-        ha="center", va="top", fontsize=fsize - 4, color="0.30",
+        f"{n_u12_total:,} U12-type  ·  {u2_count:,} U2-type",
+        ha="center", va="top", fontsize=fsize - 3, color="0.30",
     )
 
     plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
