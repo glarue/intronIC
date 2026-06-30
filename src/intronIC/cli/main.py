@@ -448,6 +448,8 @@ class PostClassResult:
     """
 
     adjusted_hc_count: Optional[int] = None
+    motif_category: Optional[str] = None  #: pmotif gate (DETECTED/BORDERLINE/NOT_DETECTED/UNASSESSABLE)
+    z_excess: Optional[float] = None      #: pmotif population statistic (per-species)
 
 
 def _run_post_classification_pipeline(
@@ -515,6 +517,8 @@ def _run_post_classification_pipeline(
         _sync_calls_to_meta_and_bed(
             score_path, meta_path, config.output.get_output_path(".bed.iic"), messenger=messenger)
         result.adjusted_hc_count = adj_res.n_adj_called
+        result.motif_category = adj_res.motif_category.value
+        result.z_excess = float(adj_res.z_excess) if adj_res.z_excess == adj_res.z_excess else None
         return result
 
     # Legacy z-normalization + mode-separation + continuous-discount scoring was removed
@@ -539,6 +543,8 @@ def _finalize_classification_metrics(
     streaming_mode: str,
     normalizer_used: Any,
     meta_path: Optional[Path] = None,
+    motif_category: Optional[str] = None,
+    z_excess: Optional[float] = None,
 ) -> dict:
     """Assemble the final per-species ``metrics.iic.json`` dict, shared by the
     streaming and in-memory classify paths so both emit equivalent metrics.
@@ -588,6 +594,16 @@ def _finalize_classification_metrics(
     summary["high_confidence_percentage"] = (n_hc / n_scored * 100) if n_scored else 0.0
     summary["u12_boundaries"] = u12_boundaries
     summary["u2_boundaries"] = u2_boundaries
+    # PRIMARY two-number species call (pmotif_adjudicated): the motif-only gate + population statistic, so
+    # consumers get the per-species determination from the metrics summary without parsing score_info.
+    # DETECTED == 'a U12-motif population by motif, corroborate downstream' (snRNA cross-check is
+    # database-layer); NOT_DETECTED is not a biological loss call (motif-silent divergent bearers land here).
+    summary["motif_category"] = motif_category
+    summary["z_excess"] = z_excess
+    # The confident motif catalog: high-confidence U12 calls in a genome whose motif gate is DETECTED
+    # (strong-motif calls AND motif_category==DETECTED). high_confidence_u12 itself is strong-motif calls
+    # in any non-NOT_DETECTED genome (BORDERLINE calls included but flagged via motif_category).
+    summary["confident_u12_motif"] = n_hc if motif_category == "DETECTED" else 0
 
     # Consistency guarantees (true by construction from the single finalized tally):
     # HC can never exceed the call count, and each dinucleotide breakdown is a subset of
@@ -4152,6 +4168,8 @@ def classify_streaming_per_contig(
         streaming_mode="per_contig",
         normalizer_used=scaler_source,
         meta_path=config.output.get_output_path(".meta.iic"),
+        motif_category=_post.motif_category,
+        z_excess=_post.z_excess,
     )
 
     messenger.info(
@@ -5501,6 +5519,8 @@ def main_classify(config: IntronICConfig):
                     streaming_mode="in_memory",
                     normalizer_used=(metrics.get("normalizer_used") if metrics else None),
                     meta_path=config.output.get_output_path(".meta.iic"),
+                    motif_category=_post.motif_category,
+                    z_excess=_post.z_excess,
                 )
 
         # Save classification metrics to JSON file (after score adjustment)

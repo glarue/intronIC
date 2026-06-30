@@ -189,7 +189,41 @@ def test_secondary_excess_z_available_for_a_normal_genome():
 
 def test_params_version_is_pinned():
     assert P.params_version == ADJUDICATOR_PARAMS_VERSION
-    assert "depth_tail" in ADJUDICATOR_PARAMS_VERSION
+    assert "zexcess" in ADJUDICATOR_PARAMS_VERSION  # PRIMARY = z_excess gap gate (depth_tail->q superseded)
+
+
+def _synthetic(n_u2, n_u12, u12_margin, seed=0):
+    from intronIC.scoring.species_adjudicator import p_motif_from_margin
+    rng = np.random.RandomState(seed)
+    m = np.concatenate([rng.normal(-2.0, 1.0, n_u2), rng.normal(u12_margin, 0.3, n_u12)])
+    return m, p_motif_from_margin(m, P)
+
+
+def test_zexcess_gate_calls_a_numerous_population_bearer():
+    """The PRIMARY z_excess gate must call a real (numerous) U12 population DETECTED even when the
+    count-blind depth_tail is shallow -- the exact failure depth_tail->q had on divergent bearers."""
+    from intronIC.scoring.species_adjudicator import MotifCategory
+    m, p = _synthetic(40000, 150, 3.0)
+    r = adjudicate(m, p)
+    assert np.isfinite(r.z_excess) and r.z_excess >= P.bearer_floor_z
+    assert r.motif_category == MotifCategory.DETECTED
+
+
+def test_zexcess_gate_calls_a_loss():
+    from intronIC.scoring.species_adjudicator import MotifCategory
+    m, p = _synthetic(40000, 3, 1.5)
+    r = adjudicate(m, p)
+    assert r.z_excess <= P.loss_ceiling_z
+    assert r.motif_category == MotifCategory.NOT_DETECTED
+
+
+def test_classify_motif_category_gap_is_borderline():
+    """The empirical gap between the frozen anchors is the abstain (BORDERLINE) zone; non-finite -> UNASSESSABLE."""
+    from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory
+    assert classify_motif_category(5.0, P) == MotifCategory.DETECTED
+    assert classify_motif_category(1.0, P) == MotifCategory.NOT_DETECTED
+    assert classify_motif_category(3.2, P) == MotifCategory.BORDERLINE   # in [2.60, 4.00]
+    assert classify_motif_category(float("nan"), P) == MotifCategory.UNASSESSABLE
 
 
 def test_tied_calls_do_not_give_degenerate_ci():
@@ -294,25 +328,32 @@ def _write_score_info(path, n_u2=400, n_u12=20, inject_nan=True):
 def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
     from intronIC.scoring.species_adjudicator import apply_pmotif_adjudication
     import pandas as pd
+    from intronIC.scoring.species_adjudicator import MotifCategory
     p = tmp_path / "x.score_info.iic"
-    n, n_u2 = _write_score_info(p)
+    # a real U12 *population* (150 strong calls) -> z_excess detects it -> DETECTED. (A handful of
+    # calls is no longer a "bearer": the primary gate is a count-based population statistic, not depth alone.)
+    n, n_u2 = _write_score_info(p, n_u12=150)
     res = apply_pmotif_adjudication(str(p), _tiny_ensemble(), params=P)
     out = pd.read_csv(p, sep="\t", keep_default_na=False)
 
-    # new interpretable columns present + row alignment preserved
-    for c in ("P_motif", "q", "P_adj", "P_adj_lo", "P_adj_hi"):
+    # two-number columns present + row alignment preserved
+    for c in ("P_motif", "z_excess", "motif_category", "type_id", "rel_score"):
         assert c in out.columns
     assert len(out) == n
-    assert res.status is AdjStatus.ADJUDICATED          # 400 U2 + a deep U12 cluster -> assessable bearer
+    assert res.motif_category is MotifCategory.DETECTED   # 400 U2 + a real U12 population -> motif population DETECTED
+    assert np.isfinite(res.z_excess) and res.z_excess >= P.bearer_floor_z
     assert res.n_adj_called == int((out["type_id"] == "u12").sum())
+    # motif_category is constant within the run (one genome)
+    assert set(out["motif_category"]) == {MotifCategory.DETECTED.value}
 
     pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
     padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
     fin = np.isfinite(pm) & np.isfinite(padj)
-    # P_adj == q * P_motif within the assessed run
-    assert np.allclose(padj[fin], res.q * pm[fin], atol=1e-6)
-    # the deep U12 block (last n=20) should be the called set; U2 bulk mostly not called
-    assert (out["type_id"].to_numpy()[-20:] == "u12").sum() >= 18
+    # legacy P_adj == q_eff * P_motif with the BINARY gate (q_eff==1 for a non-loss species)
+    assert res.q == 1.0 and np.allclose(padj[fin], pm[fin], atol=1e-6)
+    # the U12 population (last n=150) should be the called set; U2 bulk mostly not called
+    assert (out["type_id"].to_numpy()[-150:] == "u12").sum() >= 140
+    assert (out["type_id"].to_numpy()[:n_u2] == "u12").mean() < 0.1
     # injected NaN row stays unscored / uncalled
     assert out["P_motif"][2] == "nan" and out["type_id"][2] == "u2"
 

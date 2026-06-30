@@ -14,6 +14,16 @@ validated, the honest verdict, and the remaining path to supplant.
   of the complexity. Not yet supplant-ready (small panel, post-hoc τ, build-script bundle, output not fully
   synced).
 
+> **SUPERSEDED (2026-06-29):** the `depth_tail → q → adjusted_score` adjudicator described in §0a–§0e
+> (the shipped `depth_tail_firth_2026-06-27` params) is being **replaced by a two-number design**
+> (calibrated post-hoc-thresholdable `P_motif` + an empirical `z_excess` species gate; no `q·P_motif`
+> product). It failed to report genuine band-dweller bearers at the HC (90%) threshold, for four
+> intertwined reasons (eval-graded-the-wrong-threshold; q-slope unidentified under separation so HC was
+> read off an arbitrary slope; `depth_tail` is count-blind; a near-binary n=1 species signal can't be a
+> calibrated per-intron probability). **Full analysis + the generalizable lessons:
+> [`docs/adjudicator_qdriver_postmortem.md`](adjudicator_qdriver_postmortem.md).** Read §0a–§0e below as
+> historical record of the superseded method.
+
 ## 0. MAJOR UPDATE (2026-06-27): `P_motif`-as-default supersedes the per-species layer
 
 A broad-panel investigation (chasing an interpretable per-intron probability) found that **the per-species

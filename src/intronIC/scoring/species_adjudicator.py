@@ -7,26 +7,35 @@ motif probability ``P_motif`` (calibrated ensemble margin). This module answers 
 and produces the per-intron posterior ``P_adj = q * P_motif`` (functional-U12 posterior; clean because
 ``P(functional U12 | motif, not-a-bearer) ≈ 0``). The low-numbers uncertainty flows through ``q``'s CI.
 
-Method (size-INVARIANT depth-beyond-U2-tail test on the margin):
+Method (PRIMARY = z_excess population statistic + an EMPIRICAL gap-anchored gate). See
+``docs/adjudicator_qdriver_postmortem.md`` for the full design + why the prior ``depth_tail -> q ->
+adjusted_score`` chain was superseded (it baked in the 50% threshold and reported the high-confidence
+count off an unidentified logistic slope; ``depth_tail`` is also count-blind and mis-ranks numerous-but-
+shallow divergent bearers).
   - U2 reference = introns with ``P_motif < u2_threshold``; calls = ``P_motif >= call_threshold``.
-  - robust call-core = ``median(margin_calls)`` (median peels a fringe of edge-of-U2 mis-calls).
-  - **PRIMARY q-driver = ``depth_tail`` = (call-core − U2's own 99.9th pct) / MAD_U2.** This is *size-
-    invariant*: it asks "does a real U12 *population* sit in territory the U2 bulk does not reach?"
-    (``Q_pop``), independent of genome size. ``q = sigma(q_a*depth_tail + q_b)``.
-  - The earlier ``excess_z`` (call-core beyond the U2 EXPECTED MAXIMUM, which grows with the U2 count via a
-    ``ln(N_u2)`` term) is a *size-aware significance* test (``Q_sig``); it is retained here as a **labelled
-    SECONDARY** diagnostic, NOT the q-driver. See the 2026-06-27 committee/meta-review record in
-    ``docs/raw_gated_scoring.md`` §0d for why the swap (the "#2 N-dependence" fix).
+  - **PRIMARY = ``z_excess``** = Poisson significance of the strong-call COUNT above what the genome's OWN
+    U2 tail predicts: "is there a real U12 *population* beyond chance?" A count (so it sees numerous-but-
+    shallow divergent bearers) referenced to the per-genome background (so it is robust at both size
+    extremes, unlike raw count / density). Bearer/loss separate cleanly on the snRNA-corroborated panel.
+  - **EMPIRICAL gap gate** (no fitted probability slope -> no threshold-baking): ``z_excess >=
+    BEARER_FLOOR_Z`` -> DETECTED (a U12-motif population); ``<= LOSS_CEILING_Z`` -> NOT_DETECTED; in between
+    (the empirical gap, the out-of-support region) -> BORDERLINE (abstain). Anchors are frozen class extremes from
+    the labelled panel, not tuning targets.
+  - ``depth_tail``/``q`` and the EVT ``excess_z``/``p_gumbel`` are retained as labelled SECONDARY/back-compat
+    diagnostics only.
 
-Calibration provenance: ``q``'s ``(q_a, q_b)`` are a **separation-safe Firth-penalized** logistic fit of
-``depth_tail`` against bearer/loss truth on the 37-genome panel (``eval_corpus`` snRNA + IPA labels;
-Symbiodinium recoded as a CONFLICT case and excluded from the loss class, not anchored as a hard loss). The
-panel is cleanly separated so a plain MLE diverges; Firth (Jeffreys-prior penalty) is the standard fix.
-**Leave-clade-out validated** (``eval_corpus/q_firth_leaveclade.py``): 26/27 genomes classify correctly
-out-of-sample; the lone OOF miss is chlamydomonas (the deepest loss, 3 calls) tipping to q≈0.60 only when its
-whole Chlorophyta clade is held out — and with 3 calls its bootstrap CI is wide, so it surfaces as
-``UNDETERMINED`` (the undetermined band), not a confident bearer. The constants are version-pinned by
-``ADJUDICATOR_PARAMS_VERSION``. (ship-blocker #2 of the 2026-06-27 committee verdict, §0d.)
+CAVEAT (important): a high ``z_excess`` is *confirmatory* of a bearer only because it empirically correlates
+with snRNA presence (0 of 96 panel bearers were high-z with searched-and-absent snRNAs). It is NOT a logical
+guarantee. The runtime gate is MOTIF-ONLY, so DETECTED means "a U12-motif population BY MOTIF, corroborate
+downstream" -- a high-z genome whose snRNAs are *searched and absent* must be flagged for investigation, not
+auto-accepted. That snRNA cross-check lives in CALIBRATION (where it flags SUSPICIOUS) and in the database
+layer downstream -- never in this module.
+
+Calibration provenance: the anchors (``loss_ceiling_z=2.60`` = aspergillus coremiiformis, the max snRNA-
+confirmed loss; ``bearer_floor_z=4.00`` = Mycotypha, the lowest snRNA-corroborated motif-detectable bearer)
+are frozen extremes from the cross-clade panel + 68 freshly-run divergent bearers, vetted at the Infernal
+inclusion threshold (E<=0.01, >=3-of-4, self-consistently defining-aware). Gap [2.60, 4.00] CLEAN;
+**leave-clade-out = 0 cross-errors / 87**. Version-pinned by ``ADJUDICATOR_PARAMS_VERSION``.
 """
 from __future__ import annotations
 
@@ -36,15 +45,22 @@ from typing import Optional
 
 import numpy as np
 
-#: Version pin for the calibration constants (bundle-stamped in production). Bump when (q_a, q_b) or the
-#: depth_tail/EVT recipe changes so a stale bundle can be detected.
-ADJUDICATOR_PARAMS_VERSION = "depth_tail_firth_2026-06-27"
+#: Version pin for the calibration constants (bundle-stamped in production). Bump when the anchors or the
+#: z_excess/EVT recipe changes so a stale bundle can be detected.
+ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_2026-06-30"
 
-# Calibration constants frozen from the 37-genome panel (eval_corpus/{robust_sep_one,q_firth_leaveclade}.py).
-# These are bundle-stamped in production; the defaults document the prototype values.
+# Calibration constants frozen from the cross-clade panel + 68 divergent bearers + snRNA-vetted losses
+# (eval_corpus/{corroborate_v2,refit_anchors_expanded,robust_sep_one_nu2}.py; see
+# docs/adjudicator_qdriver_postmortem.md §4a). Bundle-stamped in production; defaults document the values.
 DEFAULT_PLATT_A = 2.796       #: P_motif = sigma(PLATT_A * margin + PLATT_C)
 DEFAULT_PLATT_C = -1.178
-DEFAULT_Q_A = 3.64            #: q = sigma(Q_A * depth_tail + Q_B)   (Firth fit; q=0.5 at -Q_B/Q_A = +2.98, in the gap)
+# z_excess (the PRIMARY population statistic): Poisson significance of the strong-call COUNT vs the genome's
+# OWN U2-tail prediction. Empirical bearer/loss gap on the snRNA-corroborated panel; LCO 0 cross-errors.
+DEFAULT_LOSS_CEILING_Z = 2.60   #: z_excess <= this => NOT_DETECTED (max snRNA-confirmed-loss; aspergillus)
+DEFAULT_BEARER_FLOOR_Z = 4.00   #: z_excess >= this => DETECTED (min corroborated motif-population bearer; Mycotypha)
+# depth_tail/q are RETAINED as a labelled SECONDARY/back-compat diagnostic only (NOT the driver). The
+# depth_tail->q logistic baked in the 50% threshold and reported HC off an unidentified slope; superseded.
+DEFAULT_Q_A = 3.64            #: SECONDARY (back-compat): q = sigma(Q_A * depth_tail + Q_B)
 DEFAULT_Q_B = -10.86
 
 
@@ -61,13 +77,40 @@ class AdjStatus(str, Enum):
     SCHEMA_FAIL = "SCHEMA_FAIL"          #: required inputs missing / non-finite / shape mismatch
 
 
+class MotifCategory(str, Enum):
+    """PRIMARY within-genome motif-population gate from the z_excess statistic. Names the MOTIF EVIDENCE
+    for a U12 population, NOT the biological bearer/loss truth (that's the corroborated species ``u12_status``
+    = motif x snRNA, a database-layer concept: U12_POSITIVE / U12_NEGATIVE / CONFLICT). ``DETECTED`` ==
+    strong evidence of a U12 population, 'by motif — corroborate downstream' (see the module CAVEAT);
+    ``NOT_DETECTED`` is NOT a loss call (motif-silent divergent bearers land here)."""
+    DETECTED = "DETECTED"            #: z_excess >= bearer_floor_z -> a clear U12-motif population
+    BORDERLINE = "BORDERLINE"        #: in the empirical gap -> weak/ambiguous; can't separate from background
+    NOT_DETECTED = "NOT_DETECTED"    #: z_excess <= loss_ceiling_z -> calls consistent with the U2 background
+    UNASSESSABLE = "UNASSESSABLE"    #: z_excess could not be computed (LOW_N / EVT-unfit / fail)
+
+
+def classify_motif_category(z_excess: float, params: "AdjudicatorParams") -> "MotifCategory":
+    """Empirical gap gate (no fitted slope): place z_excess against the frozen class extremes; the gap
+    between them is the out-of-support / abstain (BORDERLINE) zone. A more-extreme genome than anything
+    calibrated lands in the gap and abstains by construction (motif-only conservatism)."""
+    if not np.isfinite(z_excess):
+        return MotifCategory.UNASSESSABLE
+    if z_excess >= params.bearer_floor_z:
+        return MotifCategory.DETECTED
+    if z_excess <= params.loss_ceiling_z:
+        return MotifCategory.NOT_DETECTED
+    return MotifCategory.BORDERLINE
+
+
 @dataclass(frozen=True)
 class AdjudicatorParams:
     """Calibrated constants + method settings for the species adjudicator (bundle-stamped in production)."""
     platt_a: float = DEFAULT_PLATT_A    #: margin -> P_motif Platt slope
     platt_c: float = DEFAULT_PLATT_C    #: margin -> P_motif Platt intercept
-    q_a: float = DEFAULT_Q_A            #: depth_tail -> q logistic slope
-    q_b: float = DEFAULT_Q_B            #: depth_tail -> q logistic intercept
+    loss_ceiling_z: float = DEFAULT_LOSS_CEILING_Z  #: z_excess <= this -> NOT_DETECTED (PRIMARY gate)
+    bearer_floor_z: float = DEFAULT_BEARER_FLOOR_Z  #: z_excess >= this -> DETECTED motif population (PRIMARY gate)
+    q_a: float = DEFAULT_Q_A            #: SECONDARY/back-compat: depth_tail -> q logistic slope
+    q_b: float = DEFAULT_Q_B            #: SECONDARY/back-compat: depth_tail -> q logistic intercept
     call_threshold: float = 0.90        #: P_motif >= this defines a "call"
     u2_threshold: float = 0.50          #: P_motif < this defines the U2 reference set
     tail_pct: float = 99.9              #: U2 percentile defining the tail edge for depth_tail (primary)
@@ -98,11 +141,13 @@ class AdjudicatorResult:
     """Outcome of adjudicating one genome."""
     n_call: int                          #: number of P_motif-calls
     n_u2: int                            #: number of U2-reference introns
-    depth_tail: float                    #: PRIMARY: call-core depth beyond U2's 99.9th pct, in MAD units (>~3 => bearer)
-    q: float                             #: P(genome is a U12 bearer), point estimate
-    q_lo: float                          #: q lower CI (bootstrap)
-    q_hi: float                          #: q upper CI (bootstrap)
+    depth_tail: float                    #: SECONDARY (back-compat): call-core depth beyond U2's 99.9th pct, MAD units
+    q: float                             #: SECONDARY (back-compat): depth_tail->q P(bearer) point estimate
+    q_lo: float                          #: SECONDARY: q lower CI (bootstrap)
+    q_hi: float                          #: SECONDARY: q upper CI (bootstrap)
     status: AdjStatus = AdjStatus.ADJUDICATED
+    z_excess: float = float("nan")       #: PRIMARY population statistic (Poisson count-excess over U2 tail)
+    motif_category: MotifCategory = MotifCategory.UNASSESSABLE  #: PRIMARY motif gate (DETECTED/BORDERLINE/NOT_DETECTED)
     excess_z: float = float("nan")       #: SECONDARY (size-aware significance): call-core beyond U2 expected-max
     p_gumbel: float = float("nan")       #: SECONDARY: Gumbel tail-prob that U2's own max reaches the call-core
     z_expmax: float = float("nan")       #: SECONDARY: U2 expected-max in robust-z units (the size-aware cutoff)
@@ -145,10 +190,12 @@ class _U2Reference:
     (too few exceedances) — the PRIMARY ``depth_tail`` does NOT depend on them, only the SECONDARY excess_z does."""
     med: float
     mad: float
-    q_tail: float          #: the ``tail_pct`` (99.9th) U2 percentile — the primary depth reference
+    q_tail: float          #: the ``tail_pct`` (99.9th) U2 percentile — the depth reference (secondary depth_tail)
     z_expmax: float        #: U2 expected-max in robust-z units (secondary); NaN if EVT tail unfit
     evt_beta: float        #: Gumbel scale in robust-z units (secondary); NaN if EVT tail unfit
     finite: bool           #: True when (med, mad, q_tail) are usable (mad > 0 and finite)
+    q_evt: float = float("nan")  #: the ``evt_tail_pct`` (90th) U2 percentile — the z_excess tail anchor
+    lam: float = float("nan")    #: exponential U2-tail rate above q_evt (for z_excess); NaN if tail unfit
 
 
 def _u2_reference(u2_margin: np.ndarray, n_u2: float, params: AdjudicatorParams) -> _U2Reference:
@@ -166,22 +213,43 @@ def _u2_reference(u2_margin: np.ndarray, n_u2: float, params: AdjudicatorParams)
     if not finite:
         return _U2Reference(med, mad, q_tail, np.nan, np.nan, finite=False)
 
-    # ---- SECONDARY: exponential-tail EVT expected-max (size-aware; may be unavailable) ----
+    # ---- exponential U2-tail fit above the 90th pct: drives BOTH the PRIMARY z_excess (Poisson count-
+    # excess over what this tail predicts) and the SECONDARY EVT expected-max. Fragile (needs
+    # >= min_evt_excesses exceedances); when unfit, z_excess/excess_z are NaN -> the gate reads UNASSESSABLE.
     q_evt = float(np.percentile(u2_margin, params.evt_tail_pct))
     exc = u2_margin[u2_margin > q_evt] - q_evt
     z_expmax = np.nan
     evt_beta = np.nan
+    lam = np.nan
     if len(exc) >= params.min_evt_excesses and exc.mean() > 0:
         lam = 1.0 / float(exc.mean())
         exp_max_margin = q_evt + np.log(max(params.evt_tail_frac * n_u2, 2.0)) / lam
         z_expmax = (exp_max_margin - med) / mad
         evt_beta = 1.0 / (lam * mad + 1e-9)
-    return _U2Reference(med, mad, q_tail, z_expmax, evt_beta, finite=True)
+    return _U2Reference(med, mad, q_tail, z_expmax, evt_beta, finite=True, q_evt=q_evt, lam=lam)
 
 
 def compute_depth_tail(call_core_margin: float, ref: _U2Reference) -> float:
-    """PRIMARY size-invariant separation: how far the call-core sits beyond U2's 99.9th pct, in MAD units."""
+    """SECONDARY (back-compat): how far the call-core sits beyond U2's 99.9th pct, in MAD units. Count-blind
+    (a central-tendency statistic) -> mis-ranks numerous-but-shallow divergent bearers. Not the gate driver."""
     return float((call_core_margin - ref.q_tail) / ref.mad)
+
+
+def compute_z_excess(call_core_margin: float, calls: np.ndarray, n_u2: int, n_total: int,
+                     ref: _U2Reference, params: AdjudicatorParams) -> float:
+    """PRIMARY population statistic: Poisson significance of the strong-call COUNT above what the genome's
+    OWN U2 tail predicts in the call region. Loss: the calls ARE the U2 tail (excess ~ 0 / negative).
+    Bearer: a separate population the U2 tail can't explain (large positive excess). A COUNT (so it sees
+    numerous-but-shallow divergent bearers depth_tail misses), referenced to the per-genome background (so a
+    big loss reads ~0 and a small loss can't spike, unlike raw count / density). NaN if the U2 tail is unfit.
+    Matches eval_corpus/robust_sep_one_nu2.py (the recipe the frozen anchors were calibrated with)."""
+    if not (np.isfinite(ref.lam) and np.isfinite(ref.q_evt)) or n_total <= 0:
+        return float("nan")
+    frac_u2 = n_u2 / n_total
+    s_u2 = frac_u2 * params.evt_tail_frac * np.exp(-ref.lam * (call_core_margin - ref.q_evt))
+    pred_cnt = s_u2 * n_total                          # U2-predicted #calls above the call-core
+    obs_cnt = float((calls > call_core_margin).sum())  # observed #calls above the call-core
+    return float((obs_cnt - pred_cnt) / np.sqrt(pred_cnt + 1.0))
 
 
 def q_from_depth_tail(depth_tail, params: AdjudicatorParams) -> np.ndarray:
@@ -215,16 +283,20 @@ def _fail(n_call, n_u2, status, params) -> AdjudicatorResult:
                              secondary_available=False, params=params)
 
 
-def _assess(calls: np.ndarray, n_u2: int, ref: _U2Reference,
+def _assess(calls: np.ndarray, n_u2: int, n_total: int, ref: _U2Reference,
             params: AdjudicatorParams) -> AdjudicatorResult:
-    """Score a call set against the species U2 reference: depth_tail -> q + bootstrap CI + status
-    (ADJUDICATED if the bootstrap q-CI clears the 0.5 boundary, else UNDETERMINED). The secondary EVT
-    diagnostic (excess_z/p_gumbel) is attached when the U2 tail could be fit."""
+    """Score a call set against the species U2 reference. PRIMARY: z_excess (Poisson count-excess) ->
+    the empirical gap gate (motif_category). SECONDARY/back-compat: depth_tail -> q + bootstrap CI + status
+    (ADJUDICATED if the bootstrap q-CI clears 0.5, else UNDETERMINED) and the EVT excess_z/p_gumbel."""
     call_core = float(np.median(calls))
     depth_tail = compute_depth_tail(call_core, ref)
     if not np.isfinite(depth_tail):
         return _fail(len(calls), n_u2, AdjStatus.DEGENERATE_TAIL, params)
     q_point = float(q_from_depth_tail(depth_tail, params))
+
+    # PRIMARY: z_excess + the empirical gap gate
+    z_excess = compute_z_excess(call_core, calls, n_u2, n_total, ref, params)
+    motif_category = classify_motif_category(z_excess, params)
 
     excess_z = compute_excess_z(call_core, ref)
     p_gumbel = compute_p_gumbel(call_core, ref)
@@ -252,6 +324,7 @@ def _assess(calls: np.ndarray, n_u2: int, ref: _U2Reference,
     return AdjudicatorResult(
         n_call=int(len(calls)), n_u2=int(n_u2), depth_tail=float(depth_tail),
         q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
+        z_excess=float(z_excess), motif_category=motif_category,
         excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
         secondary_available=secondary_available, params=params)
 
@@ -304,7 +377,7 @@ def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
     if not ref.finite:
         return _fail(len(calls), len(u2), AdjStatus.DEGENERATE_TAIL, params)
 
-    return _assess(calls, len(u2), ref, params)
+    return _assess(calls, len(u2), n_total, ref, params)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -316,19 +389,20 @@ _RAW_FEATURE_COLS = ("5'_raw", "bp_raw", "3'_raw", "bp_offset", "bp_scan_confide
 
 
 def _effective_q(result: "AdjudicatorResult"):
-    """Map an adjudication outcome to the per-intron multiplier ``q_eff`` (+ CI) applied to ``P_motif``.
+    """PRIMARY (two-number design): a BINARY species gate from the ``z_excess`` tier — NOT a continuous
+    multiplier. ``P_motif`` is the calibrated, post-hoc-thresholdable per-intron number; the species
+    confidence is carried *separately* in ``motif_category`` and must NOT be folded into a per-intron
+    probability (that conflation -- the superseded ``q*P_motif`` chain -- baked in a threshold and reported
+    the confident count off an unidentified logistic slope; see ``docs/adjudicator_qdriver_postmortem.md``).
 
-    - ADJUDICATED / UNDETERMINED -> use the assessed ``q`` and its bootstrap CI.
-    - LOW_N / DEGENERATE_TAIL / SCHEMA_FAIL -> the species layer is *inconclusive* (too few species U2, a
-      malformed input, or no motif calls), so it must NOT suppress: default to ``q_eff = 1`` (P_adj =
-      P_motif, the species-agnostic motif call — option A, the safe low-N default). A confirmed loss needs a
-      successful adjudication to suppress; absent that ``P_motif`` is the call (matches the design's "P_motif
-      everywhere; suppress only confirmed-depleted"). Users who want low-N suppression lower ``min_u2`` so a
-      small genome reaches the ADJUDICATED path on its own U2 tail (option B).
+    - ``NOT_DETECTED`` -> ``q=0`` : suppress (the strong calls are consistent with the U2 tail / relic FPs).
+    - everything else (DETECTED / BORDERLINE / UNASSESSABLE) -> ``q=1`` : pass ``P_motif`` through unscaled.
+      "P_motif is the call everywhere; suppress only the no-population case" (§0). BORDERLINE/UNASSESSABLE
+      calls are reported and flagged via ``motif_category`` for downstream filtering -- never silently boosted
+      or deflated. (Note: DETECTED is 'by motif'; a high-z genome with searched-and-absent snRNAs must be
+      investigated downstream, not auto-accepted -- see the module CAVEAT.)
     """
-    if result.status in (AdjStatus.ADJUDICATED, AdjStatus.UNDETERMINED):
-        return result.q, result.q_lo, result.q_hi
-    return 1.0, 1.0, 1.0
+    return (0.0, 0.0, 0.0) if result.motif_category == MotifCategory.NOT_DETECTED else (1.0, 1.0, 1.0)
 
 
 def apply_pmotif_adjudication(score_info_path, ensemble_models,
@@ -338,16 +412,24 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     probability ``P_motif`` from the ensemble MARGIN, run the per-species adjudicator, and write the two
     interpretable per-intron numbers + the call.
 
-    Adds/overwrites columns in ``score_info.iic``:
-      - ``P_motif``  : sigmoid(Platt(margin)) — species-agnostic sequence-motif probability;
-      - ``q``        : P(genome is a U12 bearer) (constant within a run / species);
-      - ``P_adj``    : ``q_eff * P_motif`` — functional-U12 posterior, with ``P_adj_lo``/``P_adj_hi`` (CI);
-      - ``adjusted_score`` = ``100*P_adj`` and ``rel_score`` = ``100*P_adj - 90`` (existing conventions:
-        ``type_id == u12`` iff ``adjusted_score >= 50``; ``rel_score > 0`` iff high-confidence ``P_adj>=0.9``);
-      - ``type_id``  : ``u12`` iff ``P_adj >= 0.5`` else ``u2``.
+    TWO-NUMBER output (per-intron motif probability + species gate). Adds/overwrites in ``score_info.iic``:
+      - ``P_motif``     : sigmoid(Platt(margin)) — the calibrated, species-agnostic, post-hoc-thresholdable
+                          per-intron motif probability (threshold it at any certainty);
+      - ``z_excess``    : the per-species population statistic (constant within a run);
+      - ``motif_category``: DETECTED / BORDERLINE / NOT_DETECTED / UNASSESSABLE — the motif-population gate
+                          (DETECTED == 'a U12-motif population, by motif — corroborate downstream'; NOT a
+                          confirmed bearer, and NOT_DETECTED is NOT a loss call);
+      - ``type_id``     : ``u12`` iff ``P_motif >= 0.5`` AND ``motif_category != NOT_DETECTED`` (suppress only
+                          the no-population case; BORDERLINE/UNASSESSABLE calls are made and flagged);
+      - ``rel_score`` = ``100*P_motif - 90`` (per-intron motif strength; ``> 0`` iff ``P_motif >= 0.9`` =
+                          strong-by-motif) — so ``confident_u12_motif`` is strong-motif calls in a
+                          ``DETECTED`` genome (computed in the metrics layer).
+      - LEGACY (superseded ``q*P_motif`` chain, re-derived with the BINARY gate q∈{0,1}): ``q``, ``P_adj`` =
+        ``q*P_motif``, ``P_adj_lo``/``P_adj_hi`` (= P_adj; the species uncertainty is now in motif_category,
+        not a CI), ``adjusted_score`` = ``100*P_adj``. Consumers should migrate to P_motif + motif_category.
 
-    Unscorable introns (NaN motif log-odds) keep NaN ``P_motif``/``P_adj`` and are not called. Per-run =
-    per-species (one genome). Returns the :class:`AdjudicatorResult` (q + CI + status diagnostics).
+    Unscorable introns (NaN motif log-odds) keep NaN ``P_motif`` and are not called. Per-run = per-species
+    (one genome). Returns the :class:`AdjudicatorResult` (z_excess + tier + secondary q/CI diagnostics).
     """
     import pandas as pd
     params = params or AdjudicatorParams()
@@ -389,6 +471,11 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
         return [("nan" if not np.isfinite(v) else f"{v:.6g}") for v in arr]
 
     df["P_motif"] = fmt(p_motif)
+    # PRIMARY species gate (constant within a run/species): the motif-only population statistic + category.
+    # DETECTED == 'a U12-motif population, by motif — corroborate downstream' (CAVEAT); not a confirmed bearer.
+    df["z_excess"] = f"{result.z_excess:.6g}"
+    df["motif_category"] = result.motif_category.value
+    # SECONDARY / back-compat (depth_tail->q->P_adj chain; superseded — see adjudicator_qdriver_postmortem.md).
     df["q"] = f"{q_eff:.6g}"
     df["P_adj"] = fmt(p_adj)
     df["P_adj_lo"] = fmt(p_adj_lo)
@@ -402,7 +489,8 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     result.n_adj_called = int(called.sum())
     if messenger is not None:
         messenger.info(
-            f"pmotif_adjudicated: status={result.status.value} n_call={result.n_call} "
-            f"depth_tail={result.depth_tail:.2f} q={q_eff:.3f} CI=[{q_lo:.2f},{q_hi:.2f}] "
+            f"pmotif_adjudicated: status={result.status.value} motif_category={result.motif_category.value} "
+            f"z_excess={result.z_excess:.2f} n_call={result.n_call} "
+            f"(secondary: depth_tail={result.depth_tail:.2f} q={q_eff:.3f}) "
             f"-> {int(called.sum())} U12 calls / {int(finite.sum())} scorable introns")
     return result
