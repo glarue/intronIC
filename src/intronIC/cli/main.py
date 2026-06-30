@@ -548,6 +548,7 @@ def _finalize_classification_metrics(
     motif_category: Optional[str] = None,
     z_excess: Optional[float] = None,
     motif_called_u12: Optional[int] = None,
+    feature_type: Optional[str] = None,
 ) -> dict:
     """Assemble the final per-species ``metrics.iic.json`` dict, shared by the
     streaming and in-memory classify paths so both emit equivalent metrics.
@@ -582,11 +583,11 @@ def _finalize_classification_metrics(
     # so omitted introns (type_id==NA: not_longest_isoform / short) are excluded from
     # both. high_confidence_u12 is the strong subset (rel_score > 0). Percentages are
     # over the scored set. Empty/zero if meta is unavailable.
-    u12_boundaries, u2_boundaries, u12_hc_boundaries = {}, {}, {}
+    u12_boundaries, u2_boundaries, u12_hc_boundaries, u12_hc_by_feature = {}, {}, {}, {}
     n_u12 = n_hc = n_u2 = 0
     if meta_path is not None and Path(meta_path).exists():
-        u12_boundaries, u2_boundaries, u12_hc_boundaries = summarize_boundaries_from_meta(
-            meta_path, summary.get("threshold", 90.0)
+        u12_boundaries, u2_boundaries, u12_hc_boundaries, u12_hc_by_feature = (
+            summarize_boundaries_from_meta(meta_path, summary.get("threshold", 90.0))
         )
         n_u12, n_hc, n_u2 = count_calls_from_meta(meta_path)
     n_scored = n_u12 + n_u2
@@ -601,6 +602,9 @@ def _finalize_classification_metrics(
     # of high_confidence_u12, so analyst tools can report e.g. AT-AC as a subset of the HC U12 headline
     # (the full u12_boundaries above is keyed on the wider type_id==u12 superset, P_motif>=0.5).
     summary["high_confidence_u12_boundaries"] = u12_hc_boundaries
+    # HC U12 split by extraction feature ('cds' = coding introns | 'exon' = UTR introns the CDS misses).
+    # Sums to high_confidence_u12 (asserted below); lets consumers report HC coding vs UTR separately.
+    summary["high_confidence_u12_by_feature"] = u12_hc_by_feature
     # PRIMARY two-number species call (pmotif_adjudicated): the motif-only gate + population statistic, so
     # consumers get the per-species determination from the metrics summary without parsing score_info.
     # DETECTED == 'a U12-motif population by motif, corroborate downstream' (snRNA cross-check is
@@ -611,6 +615,9 @@ def _finalize_classification_metrics(
     # non-NOT_DETECTED genome; for NOT_DETECTED it's the count the species gate suppressed (u12_count -> 0),
     # so analysts can see what the motif alone called. Not derivable from the gated meta.iic tally.
     summary["motif_called_u12"] = motif_called_u12
+    # Feature type introns were extracted from ('cds' | 'exon' | 'both'; default 'both' = CDS + exon pairs).
+    # Recorded so consumers report the actual extraction method instead of assuming one.
+    summary["feature_type"] = feature_type
     # The confident motif catalog: high-confidence U12 calls in a genome whose motif gate is DETECTED
     # (strong-motif calls AND motif_category==DETECTED). high_confidence_u12 itself is strong-motif calls
     # in any non-NOT_DETECTED genome (BORDERLINE calls included but flagged via motif_category).
@@ -625,6 +632,9 @@ def _finalize_classification_metrics(
     )
     assert sum(u12_hc_boundaries.values()) <= n_hc, (
         f"high_confidence_u12_boundaries ({sum(u12_hc_boundaries.values())}) > high_confidence_u12 ({n_hc})"
+    )
+    assert sum(u12_hc_by_feature.values()) <= n_hc, (
+        f"high_confidence_u12_by_feature ({sum(u12_hc_by_feature.values())}) > high_confidence_u12 ({n_hc})"
     )
 
     return summary
@@ -4185,6 +4195,7 @@ def classify_streaming_per_contig(
         motif_category=_post.motif_category,
         z_excess=_post.z_excess,
         motif_called_u12=_post.motif_called_u12,
+        feature_type=config.extraction.feature_type,
     )
 
     messenger.info(
@@ -5537,6 +5548,7 @@ def main_classify(config: IntronICConfig):
                     motif_category=_post.motif_category,
                     z_excess=_post.z_excess,
                     motif_called_u12=_post.motif_called_u12,
+                    feature_type=config.extraction.feature_type,
                 )
 
         # Save classification metrics to JSON file (after score adjustment)

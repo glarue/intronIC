@@ -52,7 +52,7 @@ def patch_metrics(metrics_path) -> dict:
     m = json.load(open(metrics_path))
     thr = m.get("threshold", 90.0)
     n_u12, n_hc, n_u2 = count_calls_from_meta(meta)
-    u12_b, u2_b, u12_hc_b = summarize_boundaries_from_meta(meta, thr)
+    u12_b, u2_b, u12_hc_b, u12_hc_feat = summarize_boundaries_from_meta(meta, thr)
     n_scored = n_u12 + n_u2
 
     m["u12_count"] = n_u12
@@ -63,10 +63,12 @@ def patch_metrics(metrics_path) -> dict:
     m["u12_boundaries"] = u12_b
     m["u2_boundaries"] = u2_b
     m["high_confidence_u12_boundaries"] = u12_hc_b
+    m["high_confidence_u12_by_feature"] = u12_hc_feat
 
     # Consistency (same guarantees the live finalizer asserts).
     assert n_hc <= n_u12, f"HC ({n_hc}) > u12_count ({n_u12}) in {metrics_path}"
     assert sum(u12_hc_b.values()) <= n_hc, f"HC boundaries > HC ({n_hc}) in {metrics_path}"
+    assert sum(u12_hc_feat.values()) <= n_hc, f"HC-by-feature > HC ({n_hc}) in {metrics_path}"
     ts = m.get("total_scored")
     if ts is not None and ts != n_scored:
         print(f"  WARN {metrics_path.name}: total_scored={ts} != u12+u2={n_scored}", file=sys.stderr)

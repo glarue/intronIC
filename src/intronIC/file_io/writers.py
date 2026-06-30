@@ -48,15 +48,17 @@ def summarize_introns(introns: Iterable[Intron], threshold: float = 90.0) -> dic
     return {"total_introns": sum(1 for _ in introns), "threshold": threshold}
 
 
-def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[dict, dict, dict]:
+def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[dict, dict, dict, dict]:
     """Tally terminal-dinucleotide boundaries from a *finalized* meta.iic, keyed
     by the final ``type_id`` column, returning ``(u12_boundaries, u2_boundaries,
-    u12_hc_boundaries)`` as deterministically-ordered top-20 dicts (``_ordered_boundaries``).
+    u12_hc_boundaries, u12_hc_by_feature)`` as deterministically-ordered top-20 dicts.
 
     ``u12_boundaries`` / ``u2_boundaries`` are the wider ``type_id`` superset (P_motif>=0.5).
     ``u12_hc_boundaries`` is the HIGH-CONFIDENCE subset (``type_id==u12`` AND ``rel_score>0`` ==
-    adjusted_score>=90), so each of its counts is a strict subset of ``high_confidence_u12`` — the
-    breakdown the analyst-facing tools report against the HC U12 headline (e.g. AT-AC ⊆ HC U12).
+    adjusted_score>=90), so each count is a strict subset of ``high_confidence_u12`` (e.g. AT-AC ⊆ HC U12).
+    ``u12_hc_by_feature`` splits that SAME HC set by extraction feature ('cds' | 'exon'), so it sums to
+    exactly ``high_confidence_u12`` (every scored intron has a feature; unlike dnts it is never skipped) —
+    the cds-vs-exon (coding vs UTR) breakdown of the HC U12 headline.
 
     This is the authoritative boundary source: meta.iic is rewritten with the
     post-discount ``type_id`` during post-classification, so its tally sums to the
@@ -70,6 +72,7 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
     u12_b: Counter = Counter()
     u2_b: Counter = Counter()
     u12_hc_b: Counter = Counter()
+    u12_hc_feat: Counter = Counter()
     path = Path(meta_path)
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt") as f:
@@ -78,32 +81,38 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
             i_dnt = header.index("dnts")
             i_type = header.index("type_id")
         except ValueError:
-            return {}, {}, {}
+            return {}, {}, {}, {}
         i_rel = header.index("rel_score") if "rel_score" in header else None
+        i_feat = header.index("feature") if "feature" in header else None
         for line in f:
             fields = line.rstrip("\n").split("\t")
             if len(fields) <= max(i_dnt, i_type):
                 continue
+            tid = fields[i_type]
+            # HC = strong U12 call (rel_score > 0 == adjusted_score >= 90). Computed once; the feature
+            # split is tallied here (BEFORE the dnt skip) so it sums to exactly high_confidence_u12.
+            is_hc = False
+            if tid == "u12" and i_rel is not None and i_rel < len(fields):
+                try:
+                    is_hc = float(fields[i_rel]) > 0
+                except ValueError:
+                    is_hc = False
+            if is_hc and i_feat is not None and i_feat < len(fields):
+                u12_hc_feat[fields[i_feat]] += 1
             dnt = fields[i_dnt]
             if not dnt or dnt in ("NA", ".", "None"):
                 continue
             # Only SCORED calls contribute (consistent with count_calls_from_meta):
             # omitted introns (type_id==NA) are excluded from both breakdowns, so each
             # boundary tally is a subset of its u12_count / u2_count.
-            tid = fields[i_type]
             if tid == "u12":
                 u12_b[dnt] += 1
-                # HC subset: strong calls only (rel_score > 0 == adjusted_score >= 90), so
-                # u12_hc_b sums to <= high_confidence_u12 (the strict-subset AT-AC guarantee).
-                if i_rel is not None and i_rel < len(fields):
-                    try:
-                        if float(fields[i_rel]) > 0:
-                            u12_hc_b[dnt] += 1
-                    except ValueError:
-                        pass
+                if is_hc:
+                    u12_hc_b[dnt] += 1   # HC dinucleotide subset: sums to <= high_confidence_u12
             elif tid == "u2":
                 u2_b[dnt] += 1
-    return _ordered_boundaries(u12_b), _ordered_boundaries(u2_b), _ordered_boundaries(u12_hc_b)
+    return (_ordered_boundaries(u12_b), _ordered_boundaries(u2_b),
+            _ordered_boundaries(u12_hc_b), _ordered_boundaries(u12_hc_feat))
 
 
 def count_calls_from_meta(meta_path) -> Tuple[int, int, int]:
