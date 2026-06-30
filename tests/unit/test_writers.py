@@ -831,10 +831,11 @@ class TestSummarizeBoundariesFromMeta:
             + [("NA", "u2")] * 5       # missing dnt -> skipped
         )
         self._write_meta(meta, rows)
-        u12, u2 = summarize_boundaries_from_meta(meta, threshold=90.0)
+        u12, u2, u12_hc = summarize_boundaries_from_meta(meta, threshold=90.0)
         assert sum(u12.values()) == 41           # == type_id-u12 count
         assert u12 == {"GT-AG": 31, "AT-AC": 10}  # deterministic order, GT-AG first
         assert u2 == {"GT-AG": 540}               # NA rows skipped
+        assert u12_hc == {}                       # no rel_score column -> HC subset empty
 
     def test_omitted_NA_excluded_from_u2_boundaries(self, tmp_path):
         # Omitted introns (type_id==NA) must NOT land in u2_boundaries (regression:
@@ -847,14 +848,14 @@ class TestSummarizeBoundariesFromMeta:
             + [("GT-AG", "NA")] * 99   # omitted — must be ignored
             + [("AT-AC", "NA")] * 50   # omitted — must be ignored
         ))
-        u12, u2 = summarize_boundaries_from_meta(meta)
+        u12, u2, u12_hc = summarize_boundaries_from_meta(meta)
         assert u12 == {"GT-AG": 3}
         assert u2 == {"GT-AG": 10}     # NA rows excluded (not 159)
 
     def test_missing_columns_returns_empty(self, tmp_path):
         meta = tmp_path / "bad.meta.iic"
         meta.write_text("name\tfoo\tbar\nintron0\tx\ty\n")
-        assert summarize_boundaries_from_meta(meta) == ({}, {})
+        assert summarize_boundaries_from_meta(meta) == ({}, {}, {})
 
     def test_gzip_supported(self, tmp_path):
         import gzip
@@ -863,8 +864,31 @@ class TestSummarizeBoundariesFromMeta:
             f.write("name\tdnts\ttype_id\n")
             f.write("i0\tAT-AC\tu12\n")
             f.write("i1\tGT-AG\tu2\n")
-        u12, u2 = summarize_boundaries_from_meta(meta)
+        u12, u2, u12_hc = summarize_boundaries_from_meta(meta)
         assert u12 == {"AT-AC": 1} and u2 == {"GT-AG": 1}
+
+    def test_hc_boundaries_are_strict_subset_of_u12(self, tmp_path):
+        # u12_hc_boundaries counts only strong calls (rel_score > 0), so each dinucleotide count is
+        # <= the type_id-u12 superset, and AT-AC stays a strict subset of high_confidence_u12.
+        meta = tmp_path / "x.meta.iic"
+        header = ["name", "dnts", "type_id", "rel_score"]
+        rows = (
+            [("AT-AC", "u12", "8.0")] * 10     # strong AT-AC -> HC
+            + [("AT-AC", "u12", "-3.0")] * 2   # weak AT-AC (P_motif in [0.5,0.9)) -> NOT HC
+            + [("GT-AG", "u12", "5.0")] * 4    # strong GT-AG -> HC
+            + [("GT-AG", "u12", "-1.0")] * 3   # weak GT-AG -> NOT HC
+            + [("GT-AG", "u2", "-50.0")] * 300
+        )
+        with open(meta, "w") as f:
+            f.write("\t".join(header) + "\n")
+            for i, (dnt, tid, rel) in enumerate(rows):
+                f.write(f"intron{i}\t{dnt}\t{tid}\t{rel}\n")
+        u12, u2, u12_hc = summarize_boundaries_from_meta(meta)
+        assert u12 == {"AT-AC": 12, "GT-AG": 7}       # superset (all type_id==u12)
+        assert u12_hc == {"AT-AC": 10, "GT-AG": 4}    # HC subset (rel_score>0 only)
+        # strict-subset guarantees the metrics layer asserts
+        assert all(u12_hc[k] <= u12[k] for k in u12_hc)
+        assert sum(u12_hc.values()) <= sum(u12.values())
 
 
 class TestCountCallsFromMeta:

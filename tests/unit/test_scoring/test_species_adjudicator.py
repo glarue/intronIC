@@ -226,6 +226,28 @@ def test_classify_motif_category_gap_is_borderline():
     assert classify_motif_category(float("nan"), P) == MotifCategory.UNASSESSABLE
 
 
+def test_zero_calls_well_powered_is_not_detected():
+    """A genome with an ample U2 background but ZERO strong calls is a definite NOT_DETECTED (the clearest
+    loss), NOT UNASSESSABLE -- the plasmodium case (7069 U2, 0 calls). Regression for zexcess_gap_2026-06-30b."""
+    from intronIC.scoring.species_adjudicator import MotifCategory, AdjStatus, p_motif_from_margin
+    m = np.full(8000, -3.0)                    # all deep in U2 territory -> 0 strong calls, plenty of U2
+    p = p_motif_from_margin(m, P)
+    r = adjudicate(m, p)
+    assert r.n_call == 0 and r.n_u2 >= P.min_u2
+    assert r.motif_category == MotifCategory.NOT_DETECTED
+    assert r.z_excess == 0.0                   # 0 by construction (no calls)
+    assert r.status == AdjStatus.LOW_N         # secondary q-pipeline degenerate, but the gate is decisive
+
+
+def test_zero_calls_underpowered_is_unassessable():
+    """Too few U2 to reference the tail -> genuinely UNASSESSABLE (giardia: 8 U2, 0 calls)."""
+    from intronIC.scoring.species_adjudicator import MotifCategory, p_motif_from_margin
+    m = np.full(8, -3.0)                        # below min_u2 -> cannot reference its own tail
+    p = p_motif_from_margin(m, P)
+    r = adjudicate(m, p)
+    assert r.motif_category == MotifCategory.UNASSESSABLE
+
+
 def test_tied_calls_do_not_give_degenerate_ci():
     """Regression: a plain bootstrap-of-median gives a width-0 CI on tied/few calls, silently defeating the
     UNDETERMINED band. The count-aware smoothed bootstrap must give a NON-degenerate CI, widening as the
@@ -343,6 +365,10 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
     assert res.motif_category is MotifCategory.DETECTED   # 400 U2 + a real U12 population -> motif population DETECTED
     assert np.isfinite(res.z_excess) and res.z_excess >= P.bearer_floor_z
     assert res.n_adj_called == int((out["type_id"] == "u12").sum())
+    # ungated motif-call count: for a non-NOT_DETECTED genome the gate doesn't suppress, so it equals the
+    # gated call count == #(P_motif>=0.5). (For NOT_DETECTED genomes it would EXCEED n_adj_called==0.)
+    pm_all = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
+    assert res.n_motif_called == int(np.nansum(pm_all >= 0.5)) == res.n_adj_called
     # motif_category is constant within the run (one genome)
     assert set(out["motif_category"]) == {MotifCategory.DETECTED.value}
 

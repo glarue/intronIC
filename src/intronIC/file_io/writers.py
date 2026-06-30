@@ -48,10 +48,15 @@ def summarize_introns(introns: Iterable[Intron], threshold: float = 90.0) -> dic
     return {"total_introns": sum(1 for _ in introns), "threshold": threshold}
 
 
-def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[dict, dict]:
+def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[dict, dict, dict]:
     """Tally terminal-dinucleotide boundaries from a *finalized* meta.iic, keyed
-    by the final ``type_id`` column, returning ``(u12_boundaries, u2_boundaries)``
-    as deterministically-ordered top-20 dicts (``_ordered_boundaries``).
+    by the final ``type_id`` column, returning ``(u12_boundaries, u2_boundaries,
+    u12_hc_boundaries)`` as deterministically-ordered top-20 dicts (``_ordered_boundaries``).
+
+    ``u12_boundaries`` / ``u2_boundaries`` are the wider ``type_id`` superset (P_motif>=0.5).
+    ``u12_hc_boundaries`` is the HIGH-CONFIDENCE subset (``type_id==u12`` AND ``rel_score>0`` ==
+    adjusted_score>=90), so each of its counts is a strict subset of ``high_confidence_u12`` — the
+    breakdown the analyst-facing tools report against the HC U12 headline (e.g. AT-AC ⊆ HC U12).
 
     This is the authoritative boundary source: meta.iic is rewritten with the
     post-discount ``type_id`` during post-classification, so its tally sums to the
@@ -64,6 +69,7 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
 
     u12_b: Counter = Counter()
     u2_b: Counter = Counter()
+    u12_hc_b: Counter = Counter()
     path = Path(meta_path)
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt") as f:
@@ -72,7 +78,8 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
             i_dnt = header.index("dnts")
             i_type = header.index("type_id")
         except ValueError:
-            return {}, {}
+            return {}, {}, {}
+        i_rel = header.index("rel_score") if "rel_score" in header else None
         for line in f:
             fields = line.rstrip("\n").split("\t")
             if len(fields) <= max(i_dnt, i_type):
@@ -86,9 +93,17 @@ def summarize_boundaries_from_meta(meta_path, threshold: float = 90.0) -> Tuple[
             tid = fields[i_type]
             if tid == "u12":
                 u12_b[dnt] += 1
+                # HC subset: strong calls only (rel_score > 0 == adjusted_score >= 90), so
+                # u12_hc_b sums to <= high_confidence_u12 (the strict-subset AT-AC guarantee).
+                if i_rel is not None and i_rel < len(fields):
+                    try:
+                        if float(fields[i_rel]) > 0:
+                            u12_hc_b[dnt] += 1
+                    except ValueError:
+                        pass
             elif tid == "u2":
                 u2_b[dnt] += 1
-    return _ordered_boundaries(u12_b), _ordered_boundaries(u2_b)
+    return _ordered_boundaries(u12_b), _ordered_boundaries(u2_b), _ordered_boundaries(u12_hc_b)
 
 
 def count_calls_from_meta(meta_path) -> Tuple[int, int, int]:

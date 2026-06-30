@@ -47,7 +47,7 @@ import numpy as np
 
 #: Version pin for the calibration constants (bundle-stamped in production). Bump when the anchors or the
 #: z_excess/EVT recipe changes so a stale bundle can be detected.
-ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_2026-06-30"
+ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_2026-06-30b"
 
 # Calibration constants frozen from the cross-clade panel + 68 divergent bearers + snRNA-vetted losses
 # (eval_corpus/{corroborate_v2,refit_anchors_expanded,robust_sep_one_nu2}.py; see
@@ -153,6 +153,9 @@ class AdjudicatorResult:
     z_expmax: float = float("nan")       #: SECONDARY: U2 expected-max in robust-z units (the size-aware cutoff)
     secondary_available: bool = False    #: True when the EVT secondary (excess_z/p_gumbel) could be computed
     n_adj_called: Optional[int] = None   #: final P_adj>=0.5 U12 calls (set by the file-side application; None otherwise)
+    n_motif_called: Optional[int] = None #: UNGATED motif calls (P_motif>=0.5, DISREGARDING motif_category) —
+                                         #: == n_adj_called except for NOT_DETECTED genomes, where the gate
+                                         #: suppresses these to u2 (file-side; None otherwise)
     params: AdjudicatorParams = field(repr=False, default_factory=AdjudicatorParams)
 
     @property
@@ -277,9 +280,24 @@ def compute_p_gumbel(call_core_margin: float, ref: _U2Reference) -> float:
 # The adjudicator
 # --------------------------------------------------------------------------------------------------
 def _fail(n_call, n_u2, status, params) -> AdjudicatorResult:
-    """Construct a non-assessable result (q defaults to the loss side; CI collapsed)."""
+    """Construct a non-assessable result (q defaults to the loss side; CI collapsed). motif_category stays
+    the default UNASSESSABLE (z_excess could not be computed): for SCHEMA_FAIL / DEGENERATE_TAIL, and for
+    LOW_N when the species has too few U2 to reference its own tail (genuinely under-powered)."""
     return AdjudicatorResult(n_call=int(n_call), n_u2=int(n_u2), depth_tail=float("nan"),
                              q=0.0, q_lo=0.0, q_hi=0.0, status=status,
+                             secondary_available=False, params=params)
+
+
+def _no_population(n_u2, params) -> AdjudicatorResult:
+    """Well-powered genome (>= ``min_u2`` U2 introns) with ZERO strong calls -> a definite ``NOT_DETECTED``,
+    NOT ``UNASSESSABLE``. An ample U2 background with no U12-motif population is the CLEAREST loss: z_excess is
+    0 by construction (no calls to exceed the U2 tail), so the gate verdict is unambiguous. The secondary
+    q-pipeline is still degenerate (no calls to bootstrap) -> operational ``status=LOW_N``, but the PRIMARY
+    ``motif_category`` is decisive. (Before zexcess_gap_2026-06-30b this fell through ``_fail`` -> UNASSESSABLE,
+    wrongly pooling well-powered losses with truly under-powered low-U2 genomes.)"""
+    return AdjudicatorResult(n_call=0, n_u2=int(n_u2), depth_tail=float("nan"),
+                             q=0.0, q_lo=0.0, q_hi=0.0, status=AdjStatus.LOW_N,
+                             z_excess=0.0, motif_category=MotifCategory.NOT_DETECTED,
                              secondary_available=False, params=params)
 
 
@@ -366,9 +384,15 @@ def adjudicate(margin: np.ndarray, p_motif: np.ndarray,
     u2 = margin[p_motif < params.u2_threshold]
     n_total = len(p_motif)
 
-    # ---- LOW_N: too few calls or species U2 to assess a population ----
-    if len(calls) < params.min_calls or len(u2) < params.min_u2:
+    # ---- UNASSESSABLE: too few species U2 to reference the tail (genuinely under-powered) ----
+    if len(u2) < params.min_u2:
         return _fail(len(calls), len(u2), AdjStatus.LOW_N, params)
+
+    # ---- NOT_DETECTED: well-powered (>= min_u2 U2) but ZERO strong calls -> the clearest loss, not
+    # "couldn't assess". A genome with an ample U2 background and no U12-motif population is a definite
+    # NOT_DETECTED (z_excess 0 by construction); only the truly under-powered case above is UNASSESSABLE. ----
+    if len(calls) < params.min_calls:
+        return _no_population(len(u2), params)
 
     n_u2 = len(u2) / n_total * n_total   # full-population U2 count (== len(u2) unless subsampled upstream)
     ref = _u2_reference(u2, n_u2, params)
@@ -487,6 +511,10 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     df.to_csv(score_info_path, sep="\t", index=False)
 
     result.n_adj_called = int(called.sum())
+    # UNGATED motif calls: P_motif>=0.5 DISREGARDING the species motif_category gate. Equals n_adj_called for
+    # every non-NOT_DETECTED genome; for a NOT_DETECTED genome (q_eff=0 -> p_adj=0, type_id=u2 for all) this
+    # recovers the count the gate suppressed (the raw P_motif survives only in score_info, not meta/type_id).
+    result.n_motif_called = int((np.isfinite(p_motif) & (p_motif >= 0.5)).sum())
     if messenger is not None:
         messenger.info(
             f"pmotif_adjudicated: status={result.status.value} motif_category={result.motif_category.value} "
