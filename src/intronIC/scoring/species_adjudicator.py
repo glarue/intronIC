@@ -31,11 +31,15 @@ downstream" -- a high-z genome whose snRNAs are *searched and absent* must be fl
 auto-accepted. That snRNA cross-check lives in CALIBRATION (where it flags SUSPICIOUS) and in the database
 layer downstream -- never in this module.
 
-Calibration provenance: the anchors (``loss_ceiling_z=2.60`` = aspergillus coremiiformis, the max snRNA-
-confirmed loss; ``bearer_floor_z=4.00`` = Mycotypha, the lowest snRNA-corroborated motif-detectable bearer)
-are frozen extremes from the cross-clade panel + 68 freshly-run divergent bearers, vetted at the Infernal
-inclusion threshold (E<=0.01, >=3-of-4, self-consistently defining-aware). Gap [2.60, 4.00] CLEAN;
-**leave-clade-out = 0 cross-errors / 87**. Version-pinned by ``ADJUDICATOR_PARAMS_VERSION``.
+Calibration provenance: ``loss_ceiling_z=2.60`` = aspergillus coremiiformis (max snRNA-confirmed loss), frozen
+from the cross-clade panel + 68 divergent bearers (Infernal E<=0.01, >=3-of-4, self-consistently defining-aware).
+``bearer_floor_z=5.50`` is a TRUST threshold (2026-06-30c), widened from the original 4.00 (Mycotypha, lowest
+corroborated bearer) after the tier1 v3 run surfaced a near-floor UNCERTAIN cluster the gate can't separate:
+blyttiomyces (z=4.54, probable bearer) and monocercomonoides (z=4.24, probable loss) sit ADJACENT in z with
+opposite truth and are unresolvable even by augmented clade-CMs + protein machinery. So z_excess is a trust
+line, not a separator, in that band. 5.50 sits in the empty [4.54, 6.95] gap (below the lowest CONFIRMED bearer
+batrachochytrium 6.95) -> near-floor calls -> BORDERLINE/corroborate. Version-pinned by ``ADJUDICATOR_PARAMS_VERSION``;
+see WtMTA ``snrna_cm/docs/zone_resolution_plan.md``.
 """
 from __future__ import annotations
 
@@ -47,7 +51,7 @@ import numpy as np
 
 #: Version pin for the calibration constants (bundle-stamped in production). Bump when the anchors or the
 #: z_excess/EVT recipe changes so a stale bundle can be detected.
-ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_2026-06-30b"
+ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_2026-06-30c"
 
 # Calibration constants frozen from the cross-clade panel + 68 divergent bearers + snRNA-vetted losses
 # (eval_corpus/{corroborate_v2,refit_anchors_expanded,robust_sep_one_nu2}.py; see
@@ -57,7 +61,12 @@ DEFAULT_PLATT_C = -1.178
 # z_excess (the PRIMARY population statistic): Poisson significance of the strong-call COUNT vs the genome's
 # OWN U2-tail prediction. Empirical bearer/loss gap on the snRNA-corroborated panel; LCO 0 cross-errors.
 DEFAULT_LOSS_CEILING_Z = 2.60   #: z_excess <= this => NOT_DETECTED (max snRNA-confirmed-loss; aspergillus)
-DEFAULT_BEARER_FLOOR_Z = 4.00   #: z_excess >= this => DETECTED (min corroborated motif-population bearer; Mycotypha)
+DEFAULT_BEARER_FLOOR_Z = 5.50   #: z_excess >= this => DETECTED. TRUST threshold (not a separator): above the
+                                #: near-floor UNCERTAIN cluster (~4.2-4.5; blyttiomyces/monocercomonoides — probable
+                                #: bearer & probable loss ADJACENT in z, unresolvable even by augmented snRNA/protein),
+                                #: below the lowest CONFIRMED bearer (batrachochytrium 6.95). Robust: any value in the
+                                #: empty [4.54, 6.95] gap gives the identical split. Widened 2026-06-30c from 4.00; see
+                                #: WtMTA snrna_cm/docs/zone_resolution_plan.md. Below this -> BORDERLINE (corroborate).
 # depth_tail/q are RETAINED as a labelled SECONDARY/back-compat diagnostic only (NOT the driver). The
 # depth_tail->q logistic baked in the 50% threshold and reported HC off an unidentified slope; superseded.
 DEFAULT_Q_A = 3.64            #: SECONDARY (back-compat): q = sigma(Q_A * depth_tail + Q_B)
