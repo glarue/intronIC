@@ -448,7 +448,7 @@ class PostClassResult:
     """
 
     adjusted_hc_count: Optional[int] = None
-    motif_category: Optional[str] = None  #: pmotif gate (DETECTED/BORDERLINE/NOT_DETECTED/UNASSESSABLE)
+    motif_category: Optional[str] = None  #: pmotif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED/UNASSESSABLE)
     z_excess: Optional[float] = None      #: pmotif population statistic (per-species)
     motif_called_u12: Optional[int] = None  #: ungated motif calls (P_motif>=0.5, disregarding motif_category)
 
@@ -620,7 +620,7 @@ def _finalize_classification_metrics(
     summary["feature_type"] = feature_type
     # The confident motif catalog: high-confidence U12 calls in a genome whose motif gate is DETECTED
     # (strong-motif calls AND motif_category==DETECTED). high_confidence_u12 itself is strong-motif calls
-    # in any non-NOT_DETECTED genome (BORDERLINE calls included but flagged via motif_category).
+    # in any non-NOT_DETECTED genome (INCONCLUSIVE calls included but flagged via motif_category).
     summary["confident_u12_motif"] = n_hc if motif_category == "DETECTED" else 0
 
     # Consistency guarantees (true by construction from the single finalized tally):

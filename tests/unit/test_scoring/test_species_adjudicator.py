@@ -217,13 +217,13 @@ def test_zexcess_gate_calls_a_loss():
     assert r.motif_category == MotifCategory.NOT_DETECTED
 
 
-def test_classify_motif_category_gap_is_borderline():
-    """The empirical gap between the frozen anchors is the abstain (BORDERLINE) zone; non-finite -> UNASSESSABLE."""
+def test_classify_motif_category_gap_is_inconclusive():
+    """The empirical gap between the frozen anchors is the abstain (INCONCLUSIVE) zone; non-finite -> UNASSESSABLE."""
     from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory
     assert classify_motif_category(7.0, P) == MotifCategory.DETECTED     # >= bearer_floor 5.50
     assert classify_motif_category(1.0, P) == MotifCategory.NOT_DETECTED
-    assert classify_motif_category(3.2, P) == MotifCategory.BORDERLINE   # in the widened gap [2.60, 5.50)
-    assert classify_motif_category(5.0, P) == MotifCategory.BORDERLINE   # near-floor uncertain zone (was DETECTED @4.00)
+    assert classify_motif_category(3.2, P) == MotifCategory.INCONCLUSIVE   # in the widened gap [2.60, 5.50)
+    assert classify_motif_category(5.0, P) == MotifCategory.INCONCLUSIVE   # near-floor uncertain zone (was DETECTED @4.00)
     assert classify_motif_category(float("nan"), P) == MotifCategory.UNASSESSABLE
 
 

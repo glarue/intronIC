@@ -19,7 +19,7 @@ shallow divergent bearers).
     extremes, unlike raw count / density). Bearer/loss separate cleanly on the snRNA-corroborated panel.
   - **EMPIRICAL gap gate** (no fitted probability slope -> no threshold-baking): ``z_excess >=
     BEARER_FLOOR_Z`` -> DETECTED (a U12-motif population); ``<= LOSS_CEILING_Z`` -> NOT_DETECTED; in between
-    (the empirical gap, the out-of-support region) -> BORDERLINE (abstain). Anchors are frozen class extremes from
+    (the empirical gap, the out-of-support region) -> INCONCLUSIVE (abstain). Anchors are frozen class extremes from
     the labelled panel, not tuning targets.
   - ``depth_tail``/``q`` and the EVT ``excess_z``/``p_gumbel`` are retained as labelled SECONDARY/back-compat
     diagnostics only.
@@ -38,7 +38,7 @@ corroborated bearer) after the tier1 v3 run surfaced a near-floor UNCERTAIN clus
 blyttiomyces (z=4.54, probable bearer) and monocercomonoides (z=4.24, probable loss) sit ADJACENT in z with
 opposite truth and are unresolvable even by augmented clade-CMs + protein machinery. So z_excess is a trust
 line, not a separator, in that band. 5.50 sits in the empty [4.54, 6.95] gap (below the lowest CONFIRMED bearer
-batrachochytrium 6.95) -> near-floor calls -> BORDERLINE/corroborate. Version-pinned by ``ADJUDICATOR_PARAMS_VERSION``;
+batrachochytrium 6.95) -> near-floor calls -> INCONCLUSIVE/corroborate. Version-pinned by ``ADJUDICATOR_PARAMS_VERSION``;
 see WtMTA ``snrna_cm/docs/zone_resolution_plan.md``.
 """
 from __future__ import annotations
@@ -66,7 +66,7 @@ DEFAULT_BEARER_FLOOR_Z = 5.50   #: z_excess >= this => DETECTED. TRUST threshold
                                 #: bearer & probable loss ADJACENT in z, unresolvable even by augmented snRNA/protein),
                                 #: below the lowest CONFIRMED bearer (batrachochytrium 6.95). Robust: any value in the
                                 #: empty [4.54, 6.95] gap gives the identical split. Widened 2026-06-30c from 4.00; see
-                                #: WtMTA snrna_cm/docs/zone_resolution_plan.md. Below this -> BORDERLINE (corroborate).
+                                #: WtMTA snrna_cm/docs/zone_resolution_plan.md. Below this -> INCONCLUSIVE (corroborate).
 # depth_tail/q are RETAINED as a labelled SECONDARY/back-compat diagnostic only (NOT the driver). The
 # depth_tail->q logistic baked in the 50% threshold and reported HC off an unidentified slope; superseded.
 DEFAULT_Q_A = 3.64            #: SECONDARY (back-compat): q = sigma(Q_A * depth_tail + Q_B)
@@ -93,14 +93,14 @@ class MotifCategory(str, Enum):
     strong evidence of a U12 population, 'by motif — corroborate downstream' (see the module CAVEAT);
     ``NOT_DETECTED`` is NOT a loss call (motif-silent divergent bearers land here)."""
     DETECTED = "DETECTED"            #: z_excess >= bearer_floor_z -> a clear U12-motif population
-    BORDERLINE = "BORDERLINE"        #: in the empirical gap -> weak/ambiguous; can't separate from background
+    INCONCLUSIVE = "INCONCLUSIVE"    #: in the empirical gap -> motif can't decide bearer vs loss (undecidable, not "weak bearer")
     NOT_DETECTED = "NOT_DETECTED"    #: z_excess <= loss_ceiling_z -> calls consistent with the U2 background
     UNASSESSABLE = "UNASSESSABLE"    #: z_excess could not be computed (LOW_N / EVT-unfit / fail)
 
 
 def classify_motif_category(z_excess: float, params: "AdjudicatorParams") -> "MotifCategory":
     """Empirical gap gate (no fitted slope): place z_excess against the frozen class extremes; the gap
-    between them is the out-of-support / abstain (BORDERLINE) zone. A more-extreme genome than anything
+    between them is the out-of-support / abstain (INCONCLUSIVE) zone. A more-extreme genome than anything
     calibrated lands in the gap and abstains by construction (motif-only conservatism)."""
     if not np.isfinite(z_excess):
         return MotifCategory.UNASSESSABLE
@@ -108,7 +108,7 @@ def classify_motif_category(z_excess: float, params: "AdjudicatorParams") -> "Mo
         return MotifCategory.DETECTED
     if z_excess <= params.loss_ceiling_z:
         return MotifCategory.NOT_DETECTED
-    return MotifCategory.BORDERLINE
+    return MotifCategory.INCONCLUSIVE
 
 
 @dataclass(frozen=True)
@@ -156,7 +156,7 @@ class AdjudicatorResult:
     q_hi: float                          #: SECONDARY: q upper CI (bootstrap)
     status: AdjStatus = AdjStatus.ADJUDICATED
     z_excess: float = float("nan")       #: PRIMARY population statistic (Poisson count-excess over U2 tail)
-    motif_category: MotifCategory = MotifCategory.UNASSESSABLE  #: PRIMARY motif gate (DETECTED/BORDERLINE/NOT_DETECTED)
+    motif_category: MotifCategory = MotifCategory.UNASSESSABLE  #: PRIMARY motif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED)
     excess_z: float = float("nan")       #: SECONDARY (size-aware significance): call-core beyond U2 expected-max
     p_gumbel: float = float("nan")       #: SECONDARY: Gumbel tail-prob that U2's own max reaches the call-core
     z_expmax: float = float("nan")       #: SECONDARY: U2 expected-max in robust-z units (the size-aware cutoff)
@@ -429,8 +429,8 @@ def _effective_q(result: "AdjudicatorResult"):
     the confident count off an unidentified logistic slope; see ``docs/adjudicator_qdriver_postmortem.md``).
 
     - ``NOT_DETECTED`` -> ``q=0`` : suppress (the strong calls are consistent with the U2 tail / relic FPs).
-    - everything else (DETECTED / BORDERLINE / UNASSESSABLE) -> ``q=1`` : pass ``P_motif`` through unscaled.
-      "P_motif is the call everywhere; suppress only the no-population case" (§0). BORDERLINE/UNASSESSABLE
+    - everything else (DETECTED / INCONCLUSIVE / UNASSESSABLE) -> ``q=1`` : pass ``P_motif`` through unscaled.
+      "P_motif is the call everywhere; suppress only the no-population case" (§0). INCONCLUSIVE/UNASSESSABLE
       calls are reported and flagged via ``motif_category`` for downstream filtering -- never silently boosted
       or deflated. (Note: DETECTED is 'by motif'; a high-z genome with searched-and-absent snRNAs must be
       investigated downstream, not auto-accepted -- see the module CAVEAT.)
@@ -449,11 +449,11 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
       - ``P_motif``     : sigmoid(Platt(margin)) — the calibrated, species-agnostic, post-hoc-thresholdable
                           per-intron motif probability (threshold it at any certainty);
       - ``z_excess``    : the per-species population statistic (constant within a run);
-      - ``motif_category``: DETECTED / BORDERLINE / NOT_DETECTED / UNASSESSABLE — the motif-population gate
+      - ``motif_category``: DETECTED / INCONCLUSIVE / NOT_DETECTED / UNASSESSABLE — the motif-population gate
                           (DETECTED == 'a U12-motif population, by motif — corroborate downstream'; NOT a
                           confirmed bearer, and NOT_DETECTED is NOT a loss call);
       - ``type_id``     : ``u12`` iff ``P_motif >= 0.5`` AND ``motif_category != NOT_DETECTED`` (suppress only
-                          the no-population case; BORDERLINE/UNASSESSABLE calls are made and flagged);
+                          the no-population case; INCONCLUSIVE/UNASSESSABLE calls are made and flagged);
       - ``rel_score`` = ``100*P_motif - 90`` (per-intron motif strength; ``> 0`` iff ``P_motif >= 0.9`` =
                           strong-by-motif) — so ``confident_u12_motif`` is strong-motif calls in a
                           ``DETECTED`` genome (computed in the metrics layer).
