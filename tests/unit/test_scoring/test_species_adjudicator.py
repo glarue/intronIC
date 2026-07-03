@@ -219,34 +219,55 @@ def test_zexcess_gate_calls_a_loss():
 
 def test_classify_motif_category_gap_is_inconclusive():
     """The empirical gap between the frozen anchors is the abstain (INCONCLUSIVE) zone; non-finite -> UNASSESSABLE.
-    cs_p95=nan keeps the call-strength gate inert so this exercises the z_excess (count) gate alone."""
+    cs_p95=nan AND p_gumbel_p95=nan keep both strength paths inert so this exercises the z_excess gate alone."""
     from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory
     nan = float("nan")
-    assert classify_motif_category(7.0, nan, 0, P) == MotifCategory.DETECTED     # >= bearer_floor 5.50
-    assert classify_motif_category(1.0, nan, 0, P) == MotifCategory.NOT_DETECTED
-    assert classify_motif_category(3.2, nan, 0, P) == MotifCategory.INCONCLUSIVE   # in the widened gap [2.60, 5.50)
-    assert classify_motif_category(5.0, nan, 0, P) == MotifCategory.INCONCLUSIVE   # near-floor uncertain zone (was DETECTED @4.00)
-    assert classify_motif_category(nan, nan, 0, P) == MotifCategory.UNASSESSABLE
+    assert classify_motif_category(7.0, nan, nan, 0, P) == MotifCategory.DETECTED     # >= bearer_floor 5.50
+    assert classify_motif_category(1.0, nan, nan, 0, P) == MotifCategory.NOT_DETECTED
+    assert classify_motif_category(3.2, nan, nan, 0, P) == MotifCategory.INCONCLUSIVE   # in the widened gap [2.60, 5.50)
+    assert classify_motif_category(5.0, nan, nan, 0, P) == MotifCategory.INCONCLUSIVE   # near-floor uncertain zone (was DETECTED @4.00)
+    assert classify_motif_category(nan, nan, nan, 0, P) == MotifCategory.UNASSESSABLE
 
 
 def test_call_strength_gate_recovers_divergent_bearers():
-    """Call-strength gate (2026-07): a genuinely strong POINT cs_p95 (>= cs_point_threshold, enough calls)
-    promotes to DETECTED even when z_excess (count) misses it — recovering few-but-strong divergent bearers —
-    while a below-threshold cs_p95, or too-few-calls, is NOT promoted."""
+    """Call-strength CO-FALLBACK (cs_p95): with p_gumbel_p95=nan (primary inert), a genuinely strong POINT
+    cs_p95 (>= cs_point_threshold, enough calls) still promotes to DETECTED even when z_excess (count) misses
+    it — the null-free fallback path — while a below-threshold cs_p95, or too-few-calls, is NOT promoted."""
     from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory, AdjudicatorParams
     P = AdjudicatorParams()
     thr, mc = P.cs_point_threshold, P.cs_min_calls
     nan = float("nan")
     # divergent bearer: low z (would be NOT_DETECTED / gap) but strong cs_p95 with ample calls -> DETECTED
-    assert classify_motif_category(1.07, thr + 1.0, 11, P) == MotifCategory.DETECTED
-    assert classify_motif_category(3.2, thr + 0.5, 20, P) == MotifCategory.DETECTED   # cs resolves the z-gap
+    assert classify_motif_category(1.07, thr + 1.0, nan, 11, P) == MotifCategory.DETECTED
+    assert classify_motif_category(3.2, thr + 0.5, nan, 20, P) == MotifCategory.DETECTED   # cs resolves the z-gap
     # relic loss: cs_p95 BELOW threshold (the p95 discounts the lone outlier) -> stays NOT_DETECTED
-    assert classify_motif_category(1.92, thr - 1.3, 102, P) == MotifCategory.NOT_DETECTED
+    assert classify_motif_category(1.92, thr - 1.3, nan, 102, P) == MotifCategory.NOT_DETECTED
     # lone relic: cs above threshold but too FEW calls (p95 == max, outlier-prone) -> gate off -> NOT_DETECTED
-    assert classify_motif_category(1.0, thr + 0.5, mc - 1, P) == MotifCategory.NOT_DETECTED
+    assert classify_motif_category(1.0, thr + 0.5, nan, mc - 1, P) == MotifCategory.NOT_DETECTED
     # disabling the gate reverts to z-only behavior
     Poff = AdjudicatorParams(cs_gate_enabled=False)
-    assert classify_motif_category(1.07, thr + 1.0, 11, Poff) == MotifCategory.NOT_DETECTED
+    assert classify_motif_category(1.07, thr + 1.0, nan, 11, Poff) == MotifCategory.NOT_DETECTED
+
+
+def test_p_gumbel_gate_is_the_primary_strength_driver():
+    """PRIMARY strength driver (2026-07-03b): a significant per-genome Gumbel tail-prob (p_gumbel_p95 <=
+    p_gumbel_threshold, enough calls) promotes to DETECTED even when the null-free cs_p95 co-fallback is BELOW
+    its threshold — the per-genome test recovers what the absolute constant would miss. An INsignificant
+    p_gumbel_p95 does not promote; too-few-calls gates both paths off."""
+    from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory, AdjudicatorParams
+    P = AdjudicatorParams()
+    pt, mc = P.p_gumbel_threshold, P.cs_min_calls
+    nan = float("nan")
+    # significant per-genome outlier (p below threshold) but cs_p95 below its co-fallback -> DETECTED via p_gumbel
+    assert classify_motif_category(3.2, P.cs_point_threshold - 1.0, pt / 2, 9, P) == MotifCategory.DETECTED
+    # NON-significant p_gumbel AND cs_p95 below fallback -> not promoted (stays in the gap / loss)
+    assert classify_motif_category(3.2, P.cs_point_threshold - 1.0, pt * 20, 9, P) == MotifCategory.INCONCLUSIVE
+    assert classify_motif_category(1.0, P.cs_point_threshold - 1.0, pt * 20, 9, P) == MotifCategory.NOT_DETECTED
+    # significant p_gumbel but too FEW calls -> gate off -> not promoted
+    assert classify_motif_category(1.0, nan, pt / 2, mc - 1, P) == MotifCategory.NOT_DETECTED
+    # disabling the strength gate ignores p_gumbel too
+    Poff = AdjudicatorParams(cs_gate_enabled=False)
+    assert classify_motif_category(1.07, nan, pt / 2, 11, Poff) == MotifCategory.NOT_DETECTED
 
 
 def test_zero_calls_well_powered_is_not_detected():

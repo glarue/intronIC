@@ -52,8 +52,10 @@ import numpy as np
 #: Version pin for the calibration constants (bundle-stamped in production). Bump when the anchors or the
 #: z_excess/EVT recipe changes so a stale bundle can be detected. z_excess gap gate stays PRIMARY; 2026-07-03
 #: the additive call-strength gate switched from the CI lower bound (cs_p95_lo >= 4.50) to the POINT cs_p95
-#: (>= cs_point_threshold 5.0); see the gate comment.
-ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_cs_point_2026-07-03"
+#: (>= cs_point_threshold 5.0). 2026-07-03b: the strength gate's PRIMARY driver became the per-genome Gumbel
+#: significance of the call upper tail (p_gumbel_p95 <= p_gumbel_threshold), with the absolute POINT cs_p95
+#: retained as a null-free co-fallback; see the gate comment + docs/adjudicator_strength_evt.md.
+ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_pgumbel_cs_2026-07-03"
 
 # Calibration constants frozen from the cross-clade panel + 68 divergent bearers + snRNA-vetted losses
 # (eval_corpus/{corroborate_v2,refit_anchors_expanded,robust_sep_one_nu2}.py; see
@@ -96,6 +98,12 @@ DEFAULT_Q_B = -10.86
 # peak gate (-> downstream snRNA/IPA corroboration on DETECTED). cs_p95_lo/hi are still computed + logged as a
 # per-genome confidence annotation (NOT the gate). See memory call-strength-divergent-recovery.
 DEFAULT_CS_POINT_THRESHOLD = 5.0  #: cs_p95 (POINT p95 of call margins) >= this (AND >= cs_min_calls) => DETECTED
+                                  #: — the null-free ABSOLUTE co-fallback (2026-07-03b: no longer the primary
+                                  #: strength driver; p_gumbel_p95 is). Retained for robustness at marginal EVT fits.
+DEFAULT_P_GUMBEL_THRESHOLD = 0.01 #: PRIMARY strength driver (2026-07-03b): DETECTED when the per-genome Gumbel
+                                  #: tail-prob that the U2 background's OWN max reaches the call p95 is <= this
+                                  #: (a ~1% one-sided outlier test on each genome's own U2 null; empirically ==
+                                  #: the cs_p95>=5.0 line, but composition-ADAPTIVE — see docs/adjudicator_strength_evt.md)
 DEFAULT_CS_MIN_CALLS = 3          #: below this many calls p95==max (outlier-sensitive) -> strength gate off
 DEFAULT_CS_P95_PCT = 95.0         #: percentile of the (sorted) call margins defining cs_p95
 DEFAULT_CS_P95_THRESHOLD = 4.50   #: LEGACY (pre-2026-07-03 CI-lower-bound gate on cs_p95_lo); no longer gates,
@@ -127,24 +135,33 @@ class MotifCategory(str, Enum):
     UNASSESSABLE = "UNASSESSABLE"    #: z_excess could not be computed (LOW_N / EVT-unfit / fail)
 
 
-def classify_motif_category(z_excess: float, cs_p95: float, n_calls: int,
+def classify_motif_category(z_excess: float, cs_p95: float, p_gumbel_p95: float, n_calls: int,
                             params: "AdjudicatorParams") -> "MotifCategory":
     """Empirical gap gate (COUNT) + call-strength gate (STRENGTH). ``z_excess`` places the genome against the
     frozen class extremes; the gap between them is the out-of-support / abstain (INCONCLUSIVE) zone. The
-    call-strength gate (2026-07) ADDITIONALLY promotes a genome whose strongest calls are strong — the POINT
-    ``cs_p95 >= cs_point_threshold`` — to DETECTED, resolving exactly the divergent bearers z_excess misses (a
-    FEW strong real U12s -> low count -> low z, in the gap or below). The gate is on the POINT cs_p95, not the
-    bootstrap CI lower bound: the lower bound penalizes call COUNT, but divergent bearers are few-call-but-strong,
-    so a CI gate can't separate them from few-and-lucky relic losses (see the module comment). Relic-loss
-    robustness comes from p95 + ``n_calls >= cs_min_calls`` (kills the degenerate k<3 case where p95==max) + the
-    fat ``cs_point_threshold`` margin. Same DETECTED caveat: 'a U12-motif population BY MOTIF, corroborate
-    downstream'. See docs/call_strength_recovery.md + eval_corpus/STRENGTH_STRESS_FINDINGS.md."""
+    call-strength gate ADDITIONALLY promotes a genome whose strongest calls are strong to DETECTED, resolving
+    exactly the divergent bearers z_excess misses (a FEW strong real U12s -> low count -> low z, in the gap or
+    below).
+
+    STRENGTH driver = a PER-GENOME anomaly test on the call UPPER TAIL (2026-07-03b). ``p_gumbel_p95`` is the
+    Gumbel tail-prob that the genome's OWN U2 background produces a maximum as strong as the call ``cs_p95`` — a
+    ~1% one-sided outlier test referenced to each genome's own U2 null (``p_gumbel_p95 <= p_gumbel_threshold``).
+    It is evaluated at the p95 (the upper tail), NOT the call median: divergent bearers are few-strong-among-many,
+    so their median call is buried in the U2 background (the median-based ``excess_z``/``depth_tail`` miss them);
+    the signal lives entirely in the tail (recovery 12->36/46 median->p95; see docs/adjudicator_strength_evt.md).
+    The absolute POINT ``cs_p95 >= cs_point_threshold`` is retained as a null-free CO-FALLBACK (OR): the two agree
+    on the panel but ``cs_p95`` stays stable at marginal EVT fits where the per-genome null is noisy. Both are
+    behind the ``z_excess`` finiteness guard, so a genome that cannot reference its own U2 tail (EVT unfit / -q
+    low-N) stays UNASSESSABLE either way. Relic-loss robustness: p95 (not max) + ``n_calls >= cs_min_calls``.
+    Same DETECTED caveat: 'a U12-motif population BY MOTIF, corroborate downstream'. See
+    docs/adjudicator_strength_evt.md + docs/call_strength_recovery.md + eval_corpus/STRENGTH_STRESS_FINDINGS.md."""
     if not np.isfinite(z_excess):
         return MotifCategory.UNASSESSABLE
     if z_excess >= params.bearer_floor_z:
         return MotifCategory.DETECTED
-    if (params.cs_gate_enabled and np.isfinite(cs_p95)
-            and n_calls >= params.cs_min_calls and cs_p95 >= params.cs_point_threshold):
+    if params.cs_gate_enabled and n_calls >= params.cs_min_calls and (
+            (np.isfinite(p_gumbel_p95) and p_gumbel_p95 <= params.p_gumbel_threshold)   # PRIMARY: per-genome null
+            or (np.isfinite(cs_p95) and cs_p95 >= params.cs_point_threshold)):           # CO-FALLBACK: null-free
         return MotifCategory.DETECTED
     if z_excess <= params.loss_ceiling_z:
         return MotifCategory.NOT_DETECTED
@@ -175,7 +192,9 @@ class AdjudicatorParams:
                                         #: Lower it (config/CLI) to let smaller genomes self-adjudicate with
                                         #: their OWN (noisier) U2 tail — the opt-in low-N suppression path.
     random_seed: int = 0
-    cs_point_threshold: float = DEFAULT_CS_POINT_THRESHOLD  #: POINT cs_p95 >= this (+ >= cs_min_calls) => DETECTED (strength gate)
+    p_gumbel_threshold: float = DEFAULT_P_GUMBEL_THRESHOLD  #: PRIMARY strength driver: p_gumbel_p95 <= this => DETECTED
+                                                        #: (per-genome Gumbel outlier test on the call p95; ~1% one-sided)
+    cs_point_threshold: float = DEFAULT_CS_POINT_THRESHOLD  #: null-free CO-FALLBACK: POINT cs_p95 >= this (+ >= cs_min_calls) => DETECTED
     cs_min_calls: int = DEFAULT_CS_MIN_CALLS            #: min calls for the strength gate (below it p95==max, outlier-prone)
     cs_p95_pct: float = DEFAULT_CS_P95_PCT              #: percentile of the call margins defining cs_p95
     cs_ci_lo_pct: float = 10.0                          #: one-sided lower-bound percentile of the cs_p95 bootstrap
@@ -205,7 +224,9 @@ class AdjudicatorResult:
     q_hi: float                          #: SECONDARY: q upper CI (bootstrap)
     status: AdjStatus = AdjStatus.ADJUDICATED
     z_excess: float = float("nan")       #: PRIMARY population statistic (Poisson count-excess over U2 tail)
-    cs_p95: float = float("nan")         #: PRIMARY (2026-07): 95th-pct of the un-clipped call MARGINS — the call-strength GATE value
+    cs_p95: float = float("nan")         #: 95th-pct of the un-clipped call MARGINS — the null-free co-fallback gate value
+    p_gumbel_p95: float = float("nan")   #: PRIMARY strength driver (2026-07-03b): per-genome Gumbel tail-prob at cs_p95
+                                         #: (U2 background's own-max prob of reaching the call p95; <= p_gumbel_threshold => DETECTED)
     cs_p95_lo: float = float("nan")      #: cs_p95 bootstrap CI LOWER bound — logged confidence annotation (NOT the gate)
     cs_p95_hi: float = float("nan")      #: cs_p95 bootstrap CI upper bound — logged confidence annotation
     motif_category: MotifCategory = MotifCategory.UNASSESSABLE  #: PRIMARY motif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED)
@@ -378,6 +399,10 @@ def _assess(calls: np.ndarray, n_u2: int, n_total: int, ref: _U2Reference,
     # the p95 (not max) is robust to a lone relic FP. The call-strength gate below is on this POINT cs_p95.
     z_excess = compute_z_excess(call_core, calls, n_u2, n_total, ref, params)
     cs_p95 = float(np.percentile(calls, params.cs_p95_pct))
+    # PRIMARY strength driver: the same Gumbel EVT null as p_gumbel/excess_z, but evaluated at the call UPPER
+    # TAIL (cs_p95) rather than the median (call_core). The upper tail is where the few-strong divergent-bearer
+    # signal lives; the median is buried in the U2 background (see docs/adjudicator_strength_evt.md).
+    p_gumbel_p95 = compute_p_gumbel(cs_p95, ref)
 
     excess_z = compute_excess_z(call_core, ref)
     p_gumbel = compute_p_gumbel(call_core, ref)
@@ -408,14 +433,16 @@ def _assess(calls: np.ndarray, n_u2: int, n_total: int, ref: _U2Reference,
     cs_p95_lo = float(np.percentile(cs_boot, params.cs_ci_lo_pct))
     cs_p95_hi = float(np.percentile(cs_boot, 100.0 - params.cs_ci_lo_pct))
 
-    # PRIMARY gate: z_excess (count) gap gate + call-strength gate on the POINT cs_p95.
-    motif_category = classify_motif_category(z_excess, cs_p95, len(calls), params)
+    # PRIMARY gate: z_excess (count) gap gate + call-strength gate — per-genome p_gumbel_p95 (primary) OR the
+    # null-free POINT cs_p95 (co-fallback).
+    motif_category = classify_motif_category(z_excess, cs_p95, p_gumbel_p95, len(calls), params)
 
     status = AdjStatus.ADJUDICATED if (q_lo > 0.5 or q_hi < 0.5) else AdjStatus.UNDETERMINED
     return AdjudicatorResult(
         n_call=int(len(calls)), n_u2=int(n_u2), depth_tail=float(depth_tail),
         q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
-        z_excess=float(z_excess), cs_p95=cs_p95, cs_p95_lo=cs_p95_lo, cs_p95_hi=cs_p95_hi,
+        z_excess=float(z_excess), cs_p95=cs_p95, p_gumbel_p95=float(p_gumbel_p95),
+        cs_p95_lo=cs_p95_lo, cs_p95_hi=cs_p95_hi,
         motif_category=motif_category,
         excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
         secondary_available=secondary_available, params=params)
@@ -573,7 +600,8 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     # DETECTED == 'a U12-motif population, by motif — corroborate downstream' (CAVEAT); not a confirmed bearer.
     df["z_excess"] = f"{result.z_excess:.6g}"
     _g = lambda v: ("nan" if not np.isfinite(v) else f"{v:.6g}")
-    df["cs_p95"] = _g(result.cs_p95)         # the call-strength GATE value (POINT p95 of the call margins)
+    df["cs_p95"] = _g(result.cs_p95)         # null-free co-fallback gate value (POINT p95 of the call margins)
+    df["p_gumbel_p95"] = _g(result.p_gumbel_p95)  # PRIMARY strength driver: per-genome Gumbel tail-prob at cs_p95
     df["cs_p95_lo"] = _g(result.cs_p95_lo)   # bootstrap CI lower bound — logged confidence annotation (not the gate)
     df["cs_p95_hi"] = _g(result.cs_p95_hi)
     df["motif_category"] = result.motif_category.value

@@ -450,7 +450,8 @@ class PostClassResult:
     adjusted_hc_count: Optional[int] = None
     motif_category: Optional[str] = None  #: pmotif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED/UNASSESSABLE)
     z_excess: Optional[float] = None      #: pmotif population statistic (per-species)
-    cs_p95: Optional[float] = None        #: pmotif call-strength statistic (95th-pct call margin, per-species)
+    cs_p95: Optional[float] = None        #: pmotif call-strength statistic (95th-pct call margin, per-species; co-fallback gate)
+    p_gumbel_p95: Optional[float] = None  #: pmotif PRIMARY strength driver (per-genome Gumbel tail-prob at cs_p95)
     cs_p95_lo: Optional[float] = None     #: call-strength gate value (cs_p95 bootstrap CI lower bound)
     motif_called_u12: Optional[int] = None  #: ungated motif calls (P_motif>=0.5, disregarding motif_category)
 
@@ -523,6 +524,7 @@ def _run_post_classification_pipeline(
         result.motif_category = adj_res.motif_category.value
         result.z_excess = float(adj_res.z_excess) if adj_res.z_excess == adj_res.z_excess else None
         result.cs_p95 = float(adj_res.cs_p95) if adj_res.cs_p95 == adj_res.cs_p95 else None
+        result.p_gumbel_p95 = float(adj_res.p_gumbel_p95) if adj_res.p_gumbel_p95 == adj_res.p_gumbel_p95 else None
         result.cs_p95_lo = float(adj_res.cs_p95_lo) if adj_res.cs_p95_lo == adj_res.cs_p95_lo else None
         result.motif_called_u12 = adj_res.n_motif_called
         return result
@@ -552,6 +554,7 @@ def _finalize_classification_metrics(
     motif_category: Optional[str] = None,
     z_excess: Optional[float] = None,
     cs_p95: Optional[float] = None,
+    p_gumbel_p95: Optional[float] = None,
     cs_p95_lo: Optional[float] = None,
     motif_called_u12: Optional[int] = None,
     feature_type: Optional[str] = None,
@@ -618,6 +621,7 @@ def _finalize_classification_metrics(
     summary["motif_category"] = motif_category
     summary["z_excess"] = z_excess
     summary["cs_p95"] = cs_p95
+    summary["p_gumbel_p95"] = p_gumbel_p95
     summary["cs_p95_lo"] = cs_p95_lo
     # UNGATED motif-call count (P_motif>=0.5, DISREGARDING motif_category). == u12_count for every
     # non-NOT_DETECTED genome; for NOT_DETECTED it's the count the species gate suppressed (u12_count -> 0),
@@ -4226,6 +4230,7 @@ def classify_streaming_per_contig(
         motif_category=_post.motif_category,
         z_excess=_post.z_excess,
         cs_p95=_post.cs_p95,
+        p_gumbel_p95=_post.p_gumbel_p95,
         cs_p95_lo=_post.cs_p95_lo,
         motif_called_u12=_post.motif_called_u12,
         feature_type=config.extraction.feature_type,
@@ -5581,6 +5586,7 @@ def main_classify(config: IntronICConfig):
                     motif_category=_post.motif_category,
                     z_excess=_post.z_excess,
                     cs_p95=_post.cs_p95,
+                    p_gumbel_p95=_post.p_gumbel_p95,
                     cs_p95_lo=_post.cs_p95_lo,
                     motif_called_u12=_post.motif_called_u12,
                     feature_type=config.extraction.feature_type,
