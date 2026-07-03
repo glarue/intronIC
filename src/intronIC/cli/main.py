@@ -450,6 +450,8 @@ class PostClassResult:
     adjusted_hc_count: Optional[int] = None
     motif_category: Optional[str] = None  #: pmotif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED/UNASSESSABLE)
     z_excess: Optional[float] = None      #: pmotif population statistic (per-species)
+    cs_p95: Optional[float] = None        #: pmotif call-strength statistic (95th-pct call margin, per-species)
+    cs_p95_lo: Optional[float] = None     #: call-strength gate value (cs_p95 bootstrap CI lower bound)
     motif_called_u12: Optional[int] = None  #: ungated motif calls (P_motif>=0.5, disregarding motif_category)
 
 
@@ -520,6 +522,8 @@ def _run_post_classification_pipeline(
         result.adjusted_hc_count = adj_res.n_adj_called
         result.motif_category = adj_res.motif_category.value
         result.z_excess = float(adj_res.z_excess) if adj_res.z_excess == adj_res.z_excess else None
+        result.cs_p95 = float(adj_res.cs_p95) if adj_res.cs_p95 == adj_res.cs_p95 else None
+        result.cs_p95_lo = float(adj_res.cs_p95_lo) if adj_res.cs_p95_lo == adj_res.cs_p95_lo else None
         result.motif_called_u12 = adj_res.n_motif_called
         return result
 
@@ -547,6 +551,8 @@ def _finalize_classification_metrics(
     meta_path: Optional[Path] = None,
     motif_category: Optional[str] = None,
     z_excess: Optional[float] = None,
+    cs_p95: Optional[float] = None,
+    cs_p95_lo: Optional[float] = None,
     motif_called_u12: Optional[int] = None,
     feature_type: Optional[str] = None,
 ) -> dict:
@@ -611,6 +617,8 @@ def _finalize_classification_metrics(
     # database-layer); NOT_DETECTED is not a biological loss call (motif-silent divergent bearers land here).
     summary["motif_category"] = motif_category
     summary["z_excess"] = z_excess
+    summary["cs_p95"] = cs_p95
+    summary["cs_p95_lo"] = cs_p95_lo
     # UNGATED motif-call count (P_motif>=0.5, DISREGARDING motif_category). == u12_count for every
     # non-NOT_DETECTED genome; for NOT_DETECTED it's the count the species gate suppressed (u12_count -> 0),
     # so analysts can see what the motif alone called. Not derivable from the gated meta.iic tally.
@@ -2172,6 +2180,29 @@ def _extract_sequences_for_introns(
 
         assert config.input.genome is not None, "Genome path required"
         contig_lengths = get_contig_lengths(config.input.genome)
+
+        # Guard a genome<->annotation sequence-ID mismatch: `contigs` come from the annotation,
+        # `contig_lengths` from the genome FASTA. A bare `contig_lengths[c]` below would otherwise
+        # raise a cryptic `KeyError: '<seqid>'` (and nothing could extract anyway). Fail with an
+        # actionable message on a full mismatch (e.g. scaffold-named annotation vs accession-named
+        # genome); warn-and-skip on a partial one so a few unplaced/extra scaffolds don't kill the run.
+        missing = [c for c in contigs if c not in contig_lengths]
+        if missing:
+            gx = list(contig_lengths.keys())[:3]
+            if len(missing) == len(contigs):
+                raise ValueError(
+                    f"None of the {len(contigs)} annotation sequence IDs are present in the genome "
+                    f"FASTA — the genome and annotation appear to use incompatible sequence-ID "
+                    f"namespaces. Annotation e.g. {contigs[:3]}; genome e.g. {gx}. Verify that the "
+                    f"genome and annotation are a matching pair."
+                )
+            messenger.warning(
+                f"{len(missing)} of {len(contigs)} annotation sequence IDs are absent from the genome "
+                f"(e.g. {missing[:3]}); introns on those sequences will be skipped. Genome e.g. {gx}."
+            )
+            contigs = [c for c in contigs if c in contig_lengths]
+            for c in missing:
+                introns_by_contig.pop(c, None)
 
         # Prepare length-weighted progress tracking
         contig_length_list = [contig_lengths[c] for c in contigs]
@@ -4194,6 +4225,8 @@ def classify_streaming_per_contig(
         meta_path=config.output.get_output_path(".meta.iic"),
         motif_category=_post.motif_category,
         z_excess=_post.z_excess,
+        cs_p95=_post.cs_p95,
+        cs_p95_lo=_post.cs_p95_lo,
         motif_called_u12=_post.motif_called_u12,
         feature_type=config.extraction.feature_type,
     )
@@ -5547,6 +5580,8 @@ def main_classify(config: IntronICConfig):
                     meta_path=config.output.get_output_path(".meta.iic"),
                     motif_category=_post.motif_category,
                     z_excess=_post.z_excess,
+                    cs_p95=_post.cs_p95,
+                    cs_p95_lo=_post.cs_p95_lo,
                     motif_called_u12=_post.motif_called_u12,
                     feature_type=config.extraction.feature_type,
                 )

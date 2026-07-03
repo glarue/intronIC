@@ -50,8 +50,10 @@ from typing import Optional
 import numpy as np
 
 #: Version pin for the calibration constants (bundle-stamped in production). Bump when the anchors or the
-#: z_excess/EVT recipe changes so a stale bundle can be detected.
-ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_2026-06-30c"
+#: z_excess/EVT recipe changes so a stale bundle can be detected. z_excess gap gate stays PRIMARY; 2026-07-03
+#: the additive call-strength gate switched from the CI lower bound (cs_p95_lo >= 4.50) to the POINT cs_p95
+#: (>= cs_point_threshold 5.0); see the gate comment.
+ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_cs_point_2026-07-03"
 
 # Calibration constants frozen from the cross-clade panel + 68 divergent bearers + snRNA-vetted losses
 # (eval_corpus/{corroborate_v2,refit_anchors_expanded,robust_sep_one_nu2}.py; see
@@ -71,6 +73,33 @@ DEFAULT_BEARER_FLOOR_Z = 5.50   #: z_excess >= this => DETECTED. TRUST threshold
 # depth_tail->q logistic baked in the 50% threshold and reported HC off an unidentified slope; superseded.
 DEFAULT_Q_A = 3.64            #: SECONDARY (back-compat): q = sigma(Q_A * depth_tail + Q_B)
 DEFAULT_Q_B = -10.86
+
+# Call-strength gate (PRIMARY, 2026-07; docs/call_strength_recovery.md, adjudicator_call_strength_plan.md,
+# eval_corpus/STRENGTH_STRESS_FINDINGS.md). z_excess is a COUNT statistic: fooled by loss genomes that make
+# MANY mediocre composition FPs (high count -> inflated z) and blind to divergent bearers with a FEW genuinely
+# strong U12s (low count -> low z, in the INCONCLUSIVE gap or below). The un-clipped ensemble MARGIN preserves
+# call STRENGTH that both z_excess and the Platt-saturated P_motif discard. cs_p95 = the 95th percentile of the
+# call margins: a loss's calls top out ~bounded (composition can only mimic a U12 so far), a bearer's real U12s
+# reach much higher; p95 (not max) discounts a lone relic-strength call.
+#
+# The gate is on the POINT cs_p95, NOT a bootstrap CI lower bound. A lower-bound gate self-calibrates to call
+# count, but that is exactly wrong here: divergent bearers ARE few-call-but-strong, so the CI penalizes the
+# signal we recover. Trichinella nativa has 5 strong calls (point 6.24) yet its lo@10 is 2.24 == the relic-loss
+# Micromonas (2.08) -> a CI-lower-bound gate cannot separate "few but strong" (bearer) from "few and lucky"
+# (relic loss) and suppresses the bearers (lo@10 recovers 8/14 vs point's 10/14 at the same 0 FP). Robustness
+# against relic-loss inflation instead comes from three things that DON'T penalize the strong-but-sparse signal:
+# p95 itself (ignores a lone above-95th relic), cs_min_calls>=3 (kills the degenerate k=2 case, e.g. Micromonas),
+# and a fat threshold margin (5.0 sits ~1.36 above the k>=3 loss ceiling ~3.64 -> no real loss's p95 reaches it).
+# Calibrated on the 58-bearer/38-loss/25-clade eval panel (index-labeled, snRNA-adjudicated): point cs_p95>=5.0
+# recovers 10/14 z-missed divergent bearers at 0 loss FP, FLAT across [4.25,5.25]. Injection stress: a single
+# spurious strong call must exceed ~5.5 (and only lifts low-k losses); two coordinated strong calls defeat any
+# peak gate (-> downstream snRNA/IPA corroboration on DETECTED). cs_p95_lo/hi are still computed + logged as a
+# per-genome confidence annotation (NOT the gate). See memory call-strength-divergent-recovery.
+DEFAULT_CS_POINT_THRESHOLD = 5.0  #: cs_p95 (POINT p95 of call margins) >= this (AND >= cs_min_calls) => DETECTED
+DEFAULT_CS_MIN_CALLS = 3          #: below this many calls p95==max (outlier-sensitive) -> strength gate off
+DEFAULT_CS_P95_PCT = 95.0         #: percentile of the (sorted) call margins defining cs_p95
+DEFAULT_CS_P95_THRESHOLD = 4.50   #: LEGACY (pre-2026-07-03 CI-lower-bound gate on cs_p95_lo); no longer gates,
+                                  #: retained only so bundles stamped with the old param load without error
 
 
 def _sigmoid(z):
@@ -98,13 +127,24 @@ class MotifCategory(str, Enum):
     UNASSESSABLE = "UNASSESSABLE"    #: z_excess could not be computed (LOW_N / EVT-unfit / fail)
 
 
-def classify_motif_category(z_excess: float, params: "AdjudicatorParams") -> "MotifCategory":
-    """Empirical gap gate (no fitted slope): place z_excess against the frozen class extremes; the gap
-    between them is the out-of-support / abstain (INCONCLUSIVE) zone. A more-extreme genome than anything
-    calibrated lands in the gap and abstains by construction (motif-only conservatism)."""
+def classify_motif_category(z_excess: float, cs_p95: float, n_calls: int,
+                            params: "AdjudicatorParams") -> "MotifCategory":
+    """Empirical gap gate (COUNT) + call-strength gate (STRENGTH). ``z_excess`` places the genome against the
+    frozen class extremes; the gap between them is the out-of-support / abstain (INCONCLUSIVE) zone. The
+    call-strength gate (2026-07) ADDITIONALLY promotes a genome whose strongest calls are strong — the POINT
+    ``cs_p95 >= cs_point_threshold`` — to DETECTED, resolving exactly the divergent bearers z_excess misses (a
+    FEW strong real U12s -> low count -> low z, in the gap or below). The gate is on the POINT cs_p95, not the
+    bootstrap CI lower bound: the lower bound penalizes call COUNT, but divergent bearers are few-call-but-strong,
+    so a CI gate can't separate them from few-and-lucky relic losses (see the module comment). Relic-loss
+    robustness comes from p95 + ``n_calls >= cs_min_calls`` (kills the degenerate k<3 case where p95==max) + the
+    fat ``cs_point_threshold`` margin. Same DETECTED caveat: 'a U12-motif population BY MOTIF, corroborate
+    downstream'. See docs/call_strength_recovery.md + eval_corpus/STRENGTH_STRESS_FINDINGS.md."""
     if not np.isfinite(z_excess):
         return MotifCategory.UNASSESSABLE
     if z_excess >= params.bearer_floor_z:
+        return MotifCategory.DETECTED
+    if (params.cs_gate_enabled and np.isfinite(cs_p95)
+            and n_calls >= params.cs_min_calls and cs_p95 >= params.cs_point_threshold):
         return MotifCategory.DETECTED
     if z_excess <= params.loss_ceiling_z:
         return MotifCategory.NOT_DETECTED
@@ -135,6 +175,15 @@ class AdjudicatorParams:
                                         #: Lower it (config/CLI) to let smaller genomes self-adjudicate with
                                         #: their OWN (noisier) U2 tail — the opt-in low-N suppression path.
     random_seed: int = 0
+    cs_point_threshold: float = DEFAULT_CS_POINT_THRESHOLD  #: POINT cs_p95 >= this (+ >= cs_min_calls) => DETECTED (strength gate)
+    cs_min_calls: int = DEFAULT_CS_MIN_CALLS            #: min calls for the strength gate (below it p95==max, outlier-prone)
+    cs_p95_pct: float = DEFAULT_CS_P95_PCT              #: percentile of the call margins defining cs_p95
+    cs_ci_lo_pct: float = 10.0                          #: one-sided lower-bound percentile of the cs_p95 bootstrap
+                                                        #: (LOGGED as cs_p95_lo, a per-genome confidence annotation;
+                                                        #: NOT the gate since 2026-07-03 — the point cs_p95 gates)
+    cs_p95_threshold: float = DEFAULT_CS_P95_THRESHOLD  #: LEGACY (old CI-lower-bound gate on cs_p95_lo); unused, kept
+                                                        #: so old-stamped bundles load. The gate is cs_point_threshold.
+    cs_gate_enabled: bool = True                        #: enable the call-strength DETECTED path (2026-07)
     params_version: str = ADJUDICATOR_PARAMS_VERSION
 
     @classmethod
@@ -156,6 +205,9 @@ class AdjudicatorResult:
     q_hi: float                          #: SECONDARY: q upper CI (bootstrap)
     status: AdjStatus = AdjStatus.ADJUDICATED
     z_excess: float = float("nan")       #: PRIMARY population statistic (Poisson count-excess over U2 tail)
+    cs_p95: float = float("nan")         #: PRIMARY (2026-07): 95th-pct of the un-clipped call MARGINS — the call-strength GATE value
+    cs_p95_lo: float = float("nan")      #: cs_p95 bootstrap CI LOWER bound — logged confidence annotation (NOT the gate)
+    cs_p95_hi: float = float("nan")      #: cs_p95 bootstrap CI upper bound — logged confidence annotation
     motif_category: MotifCategory = MotifCategory.UNASSESSABLE  #: PRIMARY motif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED)
     excess_z: float = float("nan")       #: SECONDARY (size-aware significance): call-core beyond U2 expected-max
     p_gumbel: float = float("nan")       #: SECONDARY: Gumbel tail-prob that U2's own max reaches the call-core
@@ -321,37 +373,50 @@ def _assess(calls: np.ndarray, n_u2: int, n_total: int, ref: _U2Reference,
         return _fail(len(calls), n_u2, AdjStatus.DEGENERATE_TAIL, params)
     q_point = float(q_from_depth_tail(depth_tail, params))
 
-    # PRIMARY: z_excess + the empirical gap gate
+    # PRIMARY point statistics: z_excess (count) + cs_p95 (call STRENGTH = the cs_p95_pct percentile of the
+    # call MARGINS; calls is already sorted). The un-clipped margin retains headroom z_excess/P_motif discard;
+    # the p95 (not max) is robust to a lone relic FP. The call-strength gate below is on this POINT cs_p95.
     z_excess = compute_z_excess(call_core, calls, n_u2, n_total, ref, params)
-    motif_category = classify_motif_category(z_excess, params)
+    cs_p95 = float(np.percentile(calls, params.cs_p95_pct))
 
     excess_z = compute_excess_z(call_core, ref)
     p_gumbel = compute_p_gumbel(call_core, ref)
     secondary_available = bool(np.isfinite(excess_z))
 
-    # COUNT-AWARE SMOOTHED bootstrap of the call-core -> q CI. A plain bootstrap-of-the-median is degenerate
-    # for tied/clustered calls (the resampled median takes few distinct values -> a width-0 CI that silently
-    # defeats the UNDETERMINED band in exactly the low-call-count regime it exists for). Smoothing each
-    # resampled call by a kernel (bandwidth = the robust call spread, floored to a fraction of the U2 scale)
-    # (a) breaks the tie degeneracy and (b) makes the CI widen as the call count shrinks (the median's
-    # sampling SD ~ bandwidth/sqrt(k)), so few/borderline calls correctly read UNDETERMINED. The point q
-    # still uses the un-smoothed call-core, so this only affects the CI (and stays deterministic).
+    # COUNT-AWARE SMOOTHED bootstrap -> ONE resample serves BOTH CIs. A plain bootstrap of a median/percentile
+    # is degenerate for tied/clustered calls (the resampled statistic takes few distinct values -> a width-0 CI
+    # that silently defeats the confidence bands in exactly the low-call-count regime they exist for). Smoothing
+    # each resampled call by a kernel (bandwidth = the robust call spread, floored to a fraction of the U2 scale)
+    # (a) breaks the tie degeneracy and (b) makes BOTH CIs widen as the call count shrinks (sampling SD ~
+    # bandwidth/sqrt(k)). It drives (i) the SECONDARY depth_tail->q CI (ADJUDICATED/UNDETERMINED) and (ii) the
+    # cs_p95 CI (cs_p95_lo/hi), now LOGGED as a per-genome confidence annotation but NOT the gate (the point
+    # cs_p95 gates; see the module comment on why a CI lower bound structurally suppresses divergent bearers).
+    # Point estimates (q_point, cs_p95) use the UN-smoothed calls; smoothing only affects the CIs.
     rng = np.random.RandomState(params.random_seed)
     k = len(calls)
     mad_calls = 1.4826 * float(np.median(np.abs(calls - call_core)))
     bw = max(mad_calls, params.ci_smooth_floor_frac * ref.mad)
     qs = np.empty(params.bootstrap_n)
+    cs_boot = np.empty(params.bootstrap_n)
     for b in range(params.bootstrap_n):
         samp = calls[rng.randint(0, k, k)] + rng.normal(0.0, bw, k)
-        core_b = float(np.median(samp))
-        qs[b] = q_from_depth_tail(compute_depth_tail(core_b, ref), params)
+        qs[b] = q_from_depth_tail(compute_depth_tail(float(np.median(samp)), ref), params)
+        cs_boot[b] = float(np.percentile(samp, params.cs_p95_pct))
     q_lo, q_hi = (float(x) for x in np.percentile(qs, params.ci))
+    # cs_p95_lo/hi = ONE-SIDED CI bounds (cs_ci_lo_pct, default 10% = 90% one-sided). Logged for provenance;
+    # the gate is on the POINT cs_p95 (a CI lower bound penalizes call count = the divergent-bearer signal).
+    cs_p95_lo = float(np.percentile(cs_boot, params.cs_ci_lo_pct))
+    cs_p95_hi = float(np.percentile(cs_boot, 100.0 - params.cs_ci_lo_pct))
+
+    # PRIMARY gate: z_excess (count) gap gate + call-strength gate on the POINT cs_p95.
+    motif_category = classify_motif_category(z_excess, cs_p95, len(calls), params)
 
     status = AdjStatus.ADJUDICATED if (q_lo > 0.5 or q_hi < 0.5) else AdjStatus.UNDETERMINED
     return AdjudicatorResult(
         n_call=int(len(calls)), n_u2=int(n_u2), depth_tail=float(depth_tail),
         q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
-        z_excess=float(z_excess), motif_category=motif_category,
+        z_excess=float(z_excess), cs_p95=cs_p95, cs_p95_lo=cs_p95_lo, cs_p95_hi=cs_p95_hi,
+        motif_category=motif_category,
         excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
         secondary_available=secondary_available, params=params)
 
@@ -507,6 +572,10 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     # PRIMARY species gate (constant within a run/species): the motif-only population statistic + category.
     # DETECTED == 'a U12-motif population, by motif — corroborate downstream' (CAVEAT); not a confirmed bearer.
     df["z_excess"] = f"{result.z_excess:.6g}"
+    _g = lambda v: ("nan" if not np.isfinite(v) else f"{v:.6g}")
+    df["cs_p95"] = _g(result.cs_p95)         # the call-strength GATE value (POINT p95 of the call margins)
+    df["cs_p95_lo"] = _g(result.cs_p95_lo)   # bootstrap CI lower bound — logged confidence annotation (not the gate)
+    df["cs_p95_hi"] = _g(result.cs_p95_hi)
     df["motif_category"] = result.motif_category.value
     # SECONDARY / back-compat (depth_tail->q->P_adj chain; superseded — see adjudicator_qdriver_postmortem.md).
     df["q"] = f"{q_eff:.6g}"
@@ -527,7 +596,8 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     if messenger is not None:
         messenger.info(
             f"pmotif_adjudicated: status={result.status.value} motif_category={result.motif_category.value} "
-            f"z_excess={result.z_excess:.2f} n_call={result.n_call} "
+            f"z_excess={result.z_excess:.2f} cs_p95={result.cs_p95:.2f} (lo={result.cs_p95_lo:.2f}) "
+            f"n_call={result.n_call} "
             f"(secondary: depth_tail={result.depth_tail:.2f} q={q_eff:.3f}) "
             f"-> {int(called.sum())} U12 calls / {int(finite.sum())} scorable introns")
     return result

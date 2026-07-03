@@ -119,8 +119,15 @@ class BranchPointScorer:
                         Used to exclude this region from BP search for short introns
                         Default: (-3, 10) — positions -3 to +9 (13bp)
             three_coords: 3' splice site scoring region coordinates (start, stop) relative to 3' end
-                         Used to exclude this region from BP search for short introns
-                         Default: (-14, 4) — positions -14 to +3 (18bp, captures PPT)
+                         Used to exclude this region from BP search (the BP search stop is
+                         clamped to three_coords[0] from the 3' end, so a less-negative
+                         three_coords[0] extends the searchable BP zone toward the 3'SS).
+                         This function's own default is (-14, 4), BUT the production scorer
+                         (IntronScorer, scorer.py) constructs the scorer with three_coords
+                         = (-6, 4) and passes that here — so in the deployed pipeline the BP
+                         search reaches to n-6, making branch points at offset ~-9..-16
+                         (the canonical U12 BP zone) reachable. A previous version of this
+                         docstring implied (-14, 4) was the deployed value; it is not.
 
         Returns:
             BranchPointMatch with best-scoring sequence and position, or None

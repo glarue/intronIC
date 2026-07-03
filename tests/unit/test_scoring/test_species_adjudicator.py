@@ -218,13 +218,35 @@ def test_zexcess_gate_calls_a_loss():
 
 
 def test_classify_motif_category_gap_is_inconclusive():
-    """The empirical gap between the frozen anchors is the abstain (INCONCLUSIVE) zone; non-finite -> UNASSESSABLE."""
+    """The empirical gap between the frozen anchors is the abstain (INCONCLUSIVE) zone; non-finite -> UNASSESSABLE.
+    cs_p95=nan keeps the call-strength gate inert so this exercises the z_excess (count) gate alone."""
     from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory
-    assert classify_motif_category(7.0, P) == MotifCategory.DETECTED     # >= bearer_floor 5.50
-    assert classify_motif_category(1.0, P) == MotifCategory.NOT_DETECTED
-    assert classify_motif_category(3.2, P) == MotifCategory.INCONCLUSIVE   # in the widened gap [2.60, 5.50)
-    assert classify_motif_category(5.0, P) == MotifCategory.INCONCLUSIVE   # near-floor uncertain zone (was DETECTED @4.00)
-    assert classify_motif_category(float("nan"), P) == MotifCategory.UNASSESSABLE
+    nan = float("nan")
+    assert classify_motif_category(7.0, nan, 0, P) == MotifCategory.DETECTED     # >= bearer_floor 5.50
+    assert classify_motif_category(1.0, nan, 0, P) == MotifCategory.NOT_DETECTED
+    assert classify_motif_category(3.2, nan, 0, P) == MotifCategory.INCONCLUSIVE   # in the widened gap [2.60, 5.50)
+    assert classify_motif_category(5.0, nan, 0, P) == MotifCategory.INCONCLUSIVE   # near-floor uncertain zone (was DETECTED @4.00)
+    assert classify_motif_category(nan, nan, 0, P) == MotifCategory.UNASSESSABLE
+
+
+def test_call_strength_gate_recovers_divergent_bearers():
+    """Call-strength gate (2026-07): a genuinely strong POINT cs_p95 (>= cs_point_threshold, enough calls)
+    promotes to DETECTED even when z_excess (count) misses it — recovering few-but-strong divergent bearers —
+    while a below-threshold cs_p95, or too-few-calls, is NOT promoted."""
+    from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory, AdjudicatorParams
+    P = AdjudicatorParams()
+    thr, mc = P.cs_point_threshold, P.cs_min_calls
+    nan = float("nan")
+    # divergent bearer: low z (would be NOT_DETECTED / gap) but strong cs_p95 with ample calls -> DETECTED
+    assert classify_motif_category(1.07, thr + 1.0, 11, P) == MotifCategory.DETECTED
+    assert classify_motif_category(3.2, thr + 0.5, 20, P) == MotifCategory.DETECTED   # cs resolves the z-gap
+    # relic loss: cs_p95 BELOW threshold (the p95 discounts the lone outlier) -> stays NOT_DETECTED
+    assert classify_motif_category(1.92, thr - 1.3, 102, P) == MotifCategory.NOT_DETECTED
+    # lone relic: cs above threshold but too FEW calls (p95 == max, outlier-prone) -> gate off -> NOT_DETECTED
+    assert classify_motif_category(1.0, thr + 0.5, mc - 1, P) == MotifCategory.NOT_DETECTED
+    # disabling the gate reverts to z-only behavior
+    Poff = AdjudicatorParams(cs_gate_enabled=False)
+    assert classify_motif_category(1.07, thr + 1.0, 11, Poff) == MotifCategory.NOT_DETECTED
 
 
 def test_zero_calls_well_powered_is_not_detected():
