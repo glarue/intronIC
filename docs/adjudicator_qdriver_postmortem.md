@@ -1,7 +1,11 @@
 # Post-mortem: the `depth_tail → q → adjusted_score` adjudicator (and why it's being replaced)
 
-**Status:** the method described here is what currently ships in `scoring/species_adjudicator.py`
-(`ADJUDICATOR_PARAMS_VERSION = "depth_tail_firth_2026-06-27"`). This document records *why it is being
+**Status:** this documents *why* the `depth_tail → q → P_adj` method was superseded by the two-number
+`z_excess` design — the rationale (§3, §5) is authoritative and timeless. The **shipped values have since moved
+on** from the `IMPLEMENTED 2026-06-30` / `zexcess_gap_2026-06-30` snapshot at the bottom of this doc: the
+`bearer_floor` is now **5.50** (not 4.00), `BORDERLINE` was renamed **`INCONCLUSIVE`**, and a per-genome
+**strength gate** (`p_gumbel_p95`/`cs_p95`) was added. For the current design read
+[`adjudicator_design.md`](adjudicator_design.md). This document records *why the method was
 superseded* by a two-number design, so the failure modes are not re-introduced. Written 2026-06-29 from
 the bake-off + leave-clade-out + two-groups analyses in `eval_corpus/` (`tail_stat_bakeoff.py`,
 `refit_q_2feature.py`, `anchor_lco.py`, `twogroups_posterior_demo.py`). Cross-ref the

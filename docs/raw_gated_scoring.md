@@ -1,5 +1,11 @@
 # raw_gated scoring — progress & plan
 
+> **CURRENT ADJUDICATOR → [`docs/adjudicator_design.md`](adjudicator_design.md).** This doc is authoritative
+> for the **raw-feature architecture** (why raw log-odds beat z; the `P_motif` SVM ensemble; the z-stack
+> supplant log). Its **species-adjudicator narrative (§0a–§0e) is HISTORICAL** — it describes the
+> `depth_tail → q → P_adj` design, which was superseded by the `z_excess` gap gate (and then a per-genome
+> strength gate). For the shipped adjudicator (`zexcess_gap_pgumbel_cs_2026-07-03`) read `adjudicator_design.md`.
+
 Single source of truth for the **raw-score + continuous-gate** scoring architecture: a candidate replacement
 for the z-normalizer + mode-separation + continuous-discount stack. This doc tracks what's built, what's
 validated, the honest verdict, and the remaining path to supplant.
@@ -23,6 +29,11 @@ validated, the honest verdict, and the remaining path to supplant.
 > calibrated per-intron probability). **Full analysis + the generalizable lessons:
 > [`docs/adjudicator_qdriver_postmortem.md`](adjudicator_qdriver_postmortem.md).** Read §0a–§0e below as
 > historical record of the superseded method.
+>
+> **The two-number `z_excess` design that replaced it ALSO evolved** (floor 4.00→5.50; BORDERLINE→INCONCLUSIVE;
+> + a per-genome `p_gumbel_p95`/`cs_p95` strength gate). The consolidated current design is
+> [`docs/adjudicator_design.md`](adjudicator_design.md); the strength-gate rationale is
+> [`docs/adjudicator_strength_evt.md`](adjudicator_strength_evt.md).
 
 ## 0. MAJOR UPDATE (2026-06-27): `P_motif`-as-default supersedes the per-species layer
 
