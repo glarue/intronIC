@@ -13,6 +13,7 @@ from networkx import (
     find_cycle,
     is_directed_acyclic_graph,
     lexicographical_topological_sort,
+    selfloop_edges,
 )
 
 from intronIC.core.models import Exon, Gene, Transcript
@@ -486,6 +487,23 @@ class AnnotationHierarchyBuilder:
             return
 
         all_cycle_edges = []
+
+        # Bulk-remove SELF-LOOPS first (node -> itself). WormBase-style GTFs reuse gene_id as the
+        # transcript_id of a single-isoform gene, so the gene->transcript edge collapses to a self-loop —
+        # one per such gene, which can number in the thousands (e.g. Hymenolepis microstoma: 9,144). The
+        # per-cycle find_cycle() loop below removes only ONE cycle per iteration and is capped at
+        # max_iterations, so it cannot clear thousands of self-loops and the graph stays cyclic -> the
+        # downstream topological sort raises "Graph contains a cycle". Stripping every self-loop in one O(E)
+        # pass fixes that class of annotation without touching genuine multi-node cycles.
+        self_loops = list(selfloop_edges(graph))
+        if self_loops:
+            all_cycle_edges.extend(self_loops)
+            graph.remove_edges_from(self_loops)
+            if is_directed_acyclic_graph(graph):
+                # common case (only self-loops) — skip the expensive per-cycle loop
+                self._report_removed_cycles(all_cycle_edges)
+                return
+
         max_iterations = 1000  # Safety limit to prevent infinite loops
 
         for iteration in range(max_iterations):
@@ -502,34 +520,39 @@ class AnnotationHierarchyBuilder:
                 # No cycles found (find_cycle raises exception when graph is acyclic)
                 break
 
-        if all_cycle_edges:
-            # Log cycle warning at warning level (always visible)
-            msg = f"Removed {len(all_cycle_edges)} cycle edge(s) from feature graph"
-            if self.messenger:
-                self.messenger.warning(msg)
-            else:
-                print(f"[!] Warning: {msg}")
+        self._report_removed_cycles(all_cycle_edges)
 
-            # Log detailed cycle information at debug level (only in debug mode)
-            # Extract unique features involved in cycles
-            features_in_cycles = set()
-            cycle_details = []
-            for parent, child in all_cycle_edges:
-                features_in_cycles.add(parent)
-                features_in_cycles.add(child)
-                cycle_details.append(f"  Edge removed: {parent} -> {child}")
+    def _report_removed_cycles(self, all_cycle_edges) -> None:
+        """Warn about (and debug-log the detail of) edges removed to make the feature graph acyclic."""
+        if not all_cycle_edges:
+            return
+        # Log cycle warning at warning level (always visible)
+        msg = f"Removed {len(all_cycle_edges)} cycle edge(s) from feature graph"
+        if self.messenger:
+            self.messenger.warning(msg)
+        else:
+            print(f"[!] Warning: {msg}")
 
-            debug_msg = "Cycle details:\n" + "\n".join(cycle_details)
-            debug_msg += (
-                f"\nFeatures involved in cycles ({len(features_in_cycles)} total):\n"
-            )
-            debug_msg += "\n".join(f"  {f}" for f in sorted(features_in_cycles))
+        # Log detailed cycle information at debug level (only in debug mode)
+        # Extract unique features involved in cycles
+        features_in_cycles = set()
+        cycle_details = []
+        for parent, child in all_cycle_edges:
+            features_in_cycles.add(parent)
+            features_in_cycles.add(child)
+            cycle_details.append(f"  Edge removed: {parent} -> {child}")
 
-            if self.messenger:
-                self.messenger.log_only(debug_msg, level="debug")
-            else:
-                # Fallback to print if no messenger
-                print(f"[!] {debug_msg}")
+        debug_msg = "Cycle details:\n" + "\n".join(cycle_details)
+        debug_msg += (
+            f"\nFeatures involved in cycles ({len(features_in_cycles)} total):\n"
+        )
+        debug_msg += "\n".join(f"  {f}" for f in sorted(features_in_cycles))
+
+        if self.messenger:
+            self.messenger.log_only(debug_msg, level="debug")
+        else:
+            # Fallback to print if no messenger
+            print(f"[!] {debug_msg}")
 
     def _build_relationships(
         self, graph: DiGraph, feat_index: Dict[str, Gene | Transcript | Exon]
