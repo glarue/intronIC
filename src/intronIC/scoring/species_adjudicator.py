@@ -645,7 +645,12 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     def col(name):
         if name not in df.columns:
             return None
-        return df[name].replace("", "nan").astype(float).to_numpy()
+        # Coerce any non-numeric token to NaN. score_info encodes a missing value as "" for most
+        # columns but as the literal "NA" for BP-scan fields (bp_offset / bp_scan_confidence) on introns
+        # the branch-point scan produced no offset for — a plain `.replace("", "nan").astype(float)` chokes
+        # on "NA" (ValueError). bp_offset/bp_scan_confidence NaN -> 0 downstream via np.nan_to_num, so "NA"
+        # and "" are equivalent here; to_numeric(coerce) unifies them (and "nan"/"null"/etc.) safely.
+        return pd.to_numeric(df[name], errors="coerce").to_numpy()
 
     feats = {c: col(c) for c in _RAW_FEATURE_COLS}
     if any(feats[c] is None for c in ("5'_raw", "bp_raw", "3'_raw")):
