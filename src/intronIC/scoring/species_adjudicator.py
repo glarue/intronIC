@@ -281,6 +281,8 @@ class _U2Reference:
     finite: bool           #: True when (med, mad, q_tail) are usable (mad > 0 and finite)
     q_evt: float = float("nan")  #: the ``evt_tail_pct`` (90th) U2 percentile — the z_excess tail anchor
     lam: float = float("nan")    #: exponential U2-tail rate above q_evt (for z_excess); NaN if tail unfit
+    exp_max_margin: float = float("nan")  #: Gumbel-expected U2 MAX on the raw-margin axis (q_evt + ln(frac*n_u2)/lam);
+                                          #: NaN if tail unfit. Same quantity behind z_expmax; retained for the tail plot.
 
 
 def _u2_reference(u2_margin: np.ndarray, n_u2: float, params: AdjudicatorParams) -> _U2Reference:
@@ -306,12 +308,14 @@ def _u2_reference(u2_margin: np.ndarray, n_u2: float, params: AdjudicatorParams)
     z_expmax = np.nan
     evt_beta = np.nan
     lam = np.nan
+    exp_max_margin = np.nan
     if len(exc) >= params.min_evt_excesses and exc.mean() > 0:
         lam = 1.0 / float(exc.mean())
         exp_max_margin = q_evt + np.log(max(params.evt_tail_frac * n_u2, 2.0)) / lam
         z_expmax = (exp_max_margin - med) / mad
         evt_beta = 1.0 / (lam * mad + 1e-9)
-    return _U2Reference(med, mad, q_tail, z_expmax, evt_beta, finite=True, q_evt=q_evt, lam=lam)
+    return _U2Reference(med, mad, q_tail, z_expmax, evt_beta, finite=True, q_evt=q_evt, lam=lam,
+                        exp_max_margin=float(exp_max_margin))
 
 
 def compute_depth_tail(call_core_margin: float, ref: _U2Reference) -> float:
@@ -530,6 +534,84 @@ def _effective_q(result: "AdjudicatorResult"):
     return (0.0, 0.0, 0.0) if result.motif_category == MotifCategory.NOT_DETECTED else (1.0, 1.0, 1.0)
 
 
+#: Sidecar file suffix for the per-species tail-model figure payload (consumed by
+#: ``visualization.plots.tail_model_plot``). One JSON per genome, next to its ``score_info.iic``.
+TAIL_MODEL_SIDECAR_SUFFIX = ".tail_model.iic.json"
+
+
+def tail_model_sidecar_path(score_info_path) -> str:
+    """Canonical sidecar path next to a ``score_info.iic`` (``base.score_info.iic`` ->
+    ``base.tail_model.iic.json``). Reader (plot layer) and writer (below) derive it identically."""
+    s = str(score_info_path)
+    suf = ".score_info.iic"
+    return (s[: -len(suf)] if s.endswith(suf) else s) + TAIL_MODEL_SIDECAR_SUFFIX
+
+
+def _jf(v):
+    """JSON-safe float: real NaN/inf -> None (JSON has no NaN; keep the file strictly valid)."""
+    v = float(v)
+    return v if np.isfinite(v) else None
+
+
+def build_tail_model(margin: np.ndarray, p_motif: np.ndarray,
+                     result: "AdjudicatorResult", params: AdjudicatorParams,
+                     n_bins: int = 300) -> dict:
+    """Assemble the per-species tail-model figure payload from the SAME ``(margin, P_motif)`` the
+    adjudicator scored — production-faithful by construction: it re-derives the *deterministic* U2
+    reference (``_u2_reference``) on the exact U2 split, so ``q90``/``lam``/``exp_max`` match the gate
+    values with no re-fit or subsample drift (the trap that made an eval-cache genome read z=6.6 vs a
+    production 4.2). Everything is stored in the native RAW ensemble-margin space; the plotter maps it to
+    the ``logit(P_motif)`` axis via ``(platt_a, platt_c)`` so the exponential U2 tail is a straight line
+    on log-y and the P=0.9 call line is a fixed reference.
+
+    Returns a JSON-serializable dict. ``assessable`` is False (no fitted curve — bars only) when the U2
+    tail can't be referenced (too few U2, degenerate scale, or too few EVT exceedances); the U2 histogram
+    and the call margins are still emitted so the population stays visible.
+    """
+    margin = np.asarray(margin, float)
+    p_motif = np.asarray(p_motif, float)
+    good = np.isfinite(margin) & np.isfinite(p_motif)
+    margin, p_motif = margin[good], p_motif[good]
+    u2 = margin[p_motif < params.u2_threshold]
+    calls = np.sort(margin[p_motif >= params.call_threshold])   # match adjudicate()'s canonical order
+
+    payload = {
+        "params_version": ADJUDICATOR_PARAMS_VERSION,
+        "platt_a": float(params.platt_a), "platt_c": float(params.platt_c),
+        "call_threshold": float(params.call_threshold), "u2_threshold": float(params.u2_threshold),
+        "evt_tail_pct": float(params.evt_tail_pct), "evt_tail_frac": float(params.evt_tail_frac),
+        "n_u2": int(len(u2)), "n_call": int(len(calls)),
+        "z_excess": _jf(result.z_excess), "cs_p95": _jf(result.cs_p95),
+        "p_gumbel_p95": _jf(result.p_gumbel_p95), "motif_category": result.motif_category.value,
+        "call_margins": [float(m) for m in calls],   # small (few..few-hundred); exact call positions
+    }
+    if len(u2) < params.min_u2:
+        payload.update(assessable=False, reason="LOW_N_U2")
+        return payload
+
+    ref = _u2_reference(u2, len(u2), params)   # deterministic -> bit-exact to the gate's fit
+    # x-range: cover the U2 body + any calls + the modeled expected-max, so the extrapolated tail is visible.
+    hi = float(u2.max())
+    if len(calls):
+        hi = max(hi, float(calls.max()))
+    if np.isfinite(ref.exp_max_margin):
+        hi = max(hi, float(ref.exp_max_margin))
+    lo = float(np.percentile(u2, 0.1))
+    pad = 0.5 * ref.mad if (ref.finite and np.isfinite(ref.mad)) else 0.0
+    edges = np.linspace(lo, hi + pad, n_bins + 1)
+    counts, _ = np.histogram(u2, bins=edges)
+    payload.update({
+        "assessable": bool(ref.finite and np.isfinite(ref.lam)),
+        "reason": None if (ref.finite and np.isfinite(ref.lam)) else
+                  ("DEGENERATE_TAIL" if not ref.finite else "EVT_UNFIT"),
+        "u2_hist_edges": [float(e) for e in edges],
+        "u2_hist_counts": [int(c) for c in counts],
+        "med": _jf(ref.med), "mad": _jf(ref.mad), "q_tail": _jf(ref.q_tail),
+        "q90": _jf(ref.q_evt), "lam": _jf(ref.lam), "exp_max": _jf(ref.exp_max_margin),
+    })
+    return payload
+
+
 def apply_pmotif_adjudication(score_info_path, ensemble_models,
                               params: Optional[AdjudicatorParams] = None,
                               messenger=None) -> "AdjudicatorResult":
@@ -615,6 +697,18 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     called = np.isfinite(p_adj) & (p_adj >= 0.5)
     df["type_id"] = np.where(called, "u12", "u2")
     df.to_csv(score_info_path, sep="\t", index=False)
+
+    # Per-species tail-model diagnostic sidecar: the U2 background margins, the fitted exponential tail, and
+    # the call margins — production-faithful (same margins the adjudicator scored). Consumed by
+    # visualization.plots.tail_model_plot. Best-effort: a plot payload must never break classification output.
+    try:
+        import json as _json
+        payload = build_tail_model(margin[finite], p_motif[finite], result, params)
+        with open(tail_model_sidecar_path(score_info_path), "w") as _fh:
+            _json.dump(payload, _fh)
+    except Exception as _tm_err:   # noqa: BLE001 — diagnostic sidecar is strictly optional
+        if messenger is not None:
+            messenger.warning(f"tail-model sidecar not written: {_tm_err}")
 
     result.n_adj_called = int(called.sum())
     # UNGATED motif calls: P_motif>=0.5 DISREGARDING the species motif_category gate. Equals n_adj_called for

@@ -34,6 +34,25 @@ score (that fusion was the core mistake of the superseded design — see the pos
    `z_excess` (± bootstrap CI) alongside. It names the **motif evidence for a U12 population**, *not*
    biological bearer/loss truth — see §5.
 
+### 1a. Diagnostic output — the per-species tail-model figure
+
+Every `pmotif_adjudicated` run now emits a per-species **tail-model diagnostic** that makes the `z_excess` /
+`p_gumbel` decision *visible* — the genome's U2 background margins (bars), the fitted POT-exponential U2 tail
+extrapolated into the call region (red), and the U12 calls (orange). U12 signal = calls that **escape** the
+extrapolated U2 tail; a loss genome's calls sit *inside* the tail's reach. Two artifacts, both next to the
+other `.iic` outputs:
+
+- **`{species}.plot.tail_model.iic.png`** — the figure. X-axis is `logit(P_motif) = 2.796·margin − 1.178`
+  (so the exponential tail is a straight line on log-y and P=0.9 is a fixed reference), with a `P_motif`
+  scale on top; markers for `q90` (tail onset), `exp_max` (Gumbel-expected U2 max), and the 95th-pct call
+  margin (`cs_p95`); the `motif_category` / `z_excess` / `p_gumbel` box.
+- **`{species}.tail_model.iic.json`** — the compact sidecar the figure reads (fit params `q90`/`lam`/`med`/
+  `mad`/`exp_max`, the pre-binned U2 histogram, the full call-margin array, plus the gate numbers). Written by
+  `apply_pmotif_adjudication` from the **same margins the adjudicator scored** (it re-derives the deterministic
+  `_u2_reference`, so the fit is bit-exact to the gate — no re-fit/subsample drift), so the figure is
+  reproducible from output alone. `assessable=false` (bars only, no curve) for under-powered / EVT-unfit
+  genomes. No-op for `raw_gated` bundles.
+
 ## 2. `z_excess` — the population statistic
 
 The gate's primary driver is **`z_excess`**: the Poisson significance of the *count* of strong calls
@@ -177,6 +196,7 @@ honest `INCONCLUSIVE`. The binding open work is *coverage* of the divergent-bear
 | 2026-06-30c | widen floor 4.00 → **5.50**; rename **BORDERLINE → INCONCLUSIVE** | trust threshold (near-floor zone is mixed, not separable) | commits `9cb9f5c`, `bc8d9de`. |
 | 2026-07-03 | + `cs_p95 ≥ 5.0` strength gate | recover few-but-strong divergent bearers | commits `8b8571a`, `5a63ff3`. |
 | 2026-07-03b | + `p_gumbel_p95 ≤ 0.01` PRIMARY (cs_p95 co-fallback) | `zexcess_gap_pgumbel_cs_2026-07-03` (**current**) | dissolves the tuned-constant brittleness; per-genome, adaptive. `adjudicator_strength_evt.md`. |
+| 2026-07-04 | tail-model alternatives explored (GPD/L-moments; EB pooling of the U2-tail rate) | **no change** — MoM-exponential kept | GPD **rejected** (bounded-tail extrapolation → loss-FP explosion); EB **validated but deferred** (production no-op; low-N call benefit modest + non-uniform, destabilizes far-from-mean genomes incl. a real bearer). `adjudicator_eb_pooling_spec.md`, `eval_corpus/tail_poc/FINDINGS.md`. |
 
 **The lessons that pin this design (postmortem §5):** grade the deliverable not a proxy; a classifier on
 separated binary labels anchors exactly one threshold (don't read others off the slope); "does this have a
@@ -189,7 +209,9 @@ the runtime classifier depends only on its own input).
 - **Code:** `scoring/species_adjudicator.py` — `MotifCategory`, `AdjudicatorParams`, `classify_motif_category`,
   `compute_z_excess` / `compute_p_gumbel` / `_u2_reference`, `_assess`, `apply_pmotif_adjudication`
   (file-side; the shared `_run_post_classification_pipeline` in `cli/main.py` dispatches it so streaming ==
-  in-memory by construction).
+  in-memory by construction). Tail-model diagnostic (§1a): `build_tail_model` + `tail_model_sidecar_path`
+  here write the sidecar; `visualization/plots.py::tail_model_plot` renders the figure (wired into both plot
+  blocks in `cli/main.py` — in-memory emits it *after* post-classification, since the sidecar is written then).
 - **Bundle:** `data/default_pretrained.model.pkl` carries `adjudicator_params` (version-pinned). Re-stamped —
   not retrained — for each gate change; calibrated Platt/anchors preserved. Backups: `*.bak_*_2026-*`.
 - **Tests:** `tests/unit/test_scoring/test_species_adjudicator.py`; parity `tests/integration/
@@ -200,5 +222,6 @@ the runtime classifier depends only on its own input).
 - `raw_gated_scoring.md` — the raw-feature architecture + z-stack supplant log (adjudicator §0a–§0e now historical → this doc).
 - `adjudicator_qdriver_postmortem.md`, `adjudicator_strength_evt.md` — the two rationale docs (see §top).
 - `adjudicator_call_strength_plan.md` — the `cs_p95` gate plan (superseded by `adjudicator_strength_evt.md`).
+- `adjudicator_eb_pooling_spec.md` — empirical-Bayes pooling of the U2-tail rate: VALIDATED BUT DEFERRED (why the tail model is *not* being changed; ready-to-build if a low-N `-q` regime ever needs it). PoC: `eval_corpus/tail_poc/FINDINGS.md`.
 - `training_set_construction_protocol.md` — difficulty-stratified phylo-allocated training-set protocol (the sanctioned lever for the coverage gaps that pin `bearer_floor`).
 - `/mnt/data/u12/species_index/SNRNA_CLADE_SENSITIVITY.md` — clade-conditional snRNA reliability for the corroboration layer.

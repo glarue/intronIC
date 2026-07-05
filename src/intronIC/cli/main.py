@@ -5140,6 +5140,7 @@ def main_classify(config: IntronICConfig):
             try:
                 from intronIC.visualization.plots import (
                     plot_classification_results_from_file,
+                    tail_model_plot,
                 )
 
                 score_file = config.output.get_output_path(".score_info.iic")
@@ -5149,6 +5150,15 @@ def main_classify(config: IntronICConfig):
                         output_dir=config.output.output_dir,
                         species_name=config.output.base_filename,
                         threshold=config.scoring.threshold,
+                        fig_dpi=300,
+                    )
+                    # pmotif_adjudicated tail-model diagnostic (reads the .tail_model.iic.json sidecar;
+                    # no-ops if absent, e.g. raw_gated bundles or under-powered genomes)
+                    tail_model_plot(
+                        sidecar_path=config.output.get_output_path(".tail_model.iic.json"),
+                        output_path=config.output.output_dir
+                        / f"{config.output.base_filename}.plot.tail_model.iic.png",
+                        species_name=config.output.base_filename,
                         fig_dpi=300,
                     )
                     messenger.log_only("Successfully generated classification plots")
@@ -5393,6 +5403,9 @@ def main_classify(config: IntronICConfig):
                 threshold=config.scoring.threshold,
                 fig_dpi=300,
             )
+            # NB: the tail-model diagnostic is emitted LATER (after post-classification writes the
+            # .tail_model.iic.json sidecar) — the sidecar does not exist yet at this point in the
+            # in-memory path. See the tail_model_plot call after _run_post_classification_pipeline.
             messenger.log_only("Successfully generated classification plots")
         except Exception as plot_error:
             import traceback
@@ -5598,6 +5611,22 @@ def main_classify(config: IntronICConfig):
             messenger.log_only(f"Saving classification metrics to {metrics_path}")
             with open(metrics_path, "w") as f:
                 json.dump(metrics, f, indent=2)
+
+            # pmotif_adjudicated tail-model diagnostic — emitted HERE (not with the base plots above)
+            # because the .tail_model.iic.json sidecar is written by post-classification adjudication,
+            # which runs after the in-memory base-plot block. No-ops if the sidecar is absent
+            # (raw_gated bundles / under-powered genomes). Best-effort: never break output.
+            try:
+                from intronIC.visualization.plots import tail_model_plot
+                tail_model_plot(
+                    sidecar_path=config.output.get_output_path(".tail_model.iic.json"),
+                    output_path=config.output.output_dir
+                    / f"{config.output.base_filename}.plot.tail_model.iic.png",
+                    species_name=config.output.base_filename,
+                    fig_dpi=300,
+                )
+            except Exception as _tm_err:
+                messenger.warning(f"Failed to generate tail-model plot: {_tm_err}")
 
             # Display the FINAL (post-discount) classification summary + boundary
             # tables from the finalized metrics, so the console matches

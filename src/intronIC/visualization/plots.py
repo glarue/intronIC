@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import matplotlib.gridspec as gridspec
+import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -902,6 +903,136 @@ def histogram(
     # Save figure
     plt.savefig(output_path, dpi=fig_dpi)
     plt.close()
+
+
+def _sigmoid_np(x):
+    return 1.0 / (1.0 + np.exp(-np.clip(np.asarray(x, float), -60, 60)))
+
+
+def _logit_np(p):
+    p = np.clip(np.asarray(p, float), 1e-12, 1 - 1e-12)
+    return np.log(p / (1.0 - p))
+
+
+def tail_model_plot(
+    sidecar_path: Path,
+    output_path: Path,
+    species_name: str,
+    fig_dpi: int = 300,
+):
+    """The per-species adjudicator tail-model figure: the genome's U2 background margins (bars), the fitted
+    POT-exponential U2 tail extrapolated into the call region (red), and the U12 calls (orange) — the visual
+    of ``z_excess``/``p_gumbel`` (U12 signal = calls that escape the extrapolated U2 tail).
+
+    Reads only the ``{species}.tail_model.iic.json`` sidecar written by
+    ``species_adjudicator.apply_pmotif_adjudication`` (production-faithful fit — no re-fit here). The x-axis is
+    ``logit(P_motif) = platt_a * margin + platt_c`` (so the exponential tail is a straight line on log-y and
+    P=0.9 is a fixed reference), with a P_motif scale on top. No-op if the sidecar is missing or the genome
+    was under-powered (no U2 histogram to draw).
+    """
+    import json
+
+    sidecar_path = Path(sidecar_path)
+    if not sidecar_path.exists():
+        return
+    with open(sidecar_path) as fh:
+        d = json.load(fh)
+    if "u2_hist_edges" not in d or not d.get("u2_hist_counts"):
+        return   # LOW_N / no U2 population to reference — nothing meaningful to draw
+
+    A, C = float(d["platt_a"]), float(d["platt_c"])
+    to_logit = lambda raw: A * np.asarray(raw, float) + C   # margin -> logit(P_motif)  (linear)
+
+    edges = to_logit(d["u2_hist_edges"])
+    counts = np.asarray(d["u2_hist_counts"], float)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    w = float(np.mean(np.diff(edges)))                        # uniform on the logit axis (linear transform)
+    calls = to_logit(d.get("call_margins", []))
+    n_u2 = float(d["n_u2"])
+    frac = float(d.get("evt_tail_frac", 0.10))
+    assessable = bool(d.get("assessable"))
+    cat = d.get("motif_category", "UNASSESSABLE")
+    catcol = {"DETECTED": "#238b45", "INCONCLUSIVE": "#e6550d",
+              "NOT_DETECTED": "#cb181d", "UNASSESSABLE": "#999999"}.get(cat, "#999999")
+
+    P90 = float(np.log(0.9 / 0.1))                            # logit(0.9) — the call line (axis-native)
+    y_floor = 1.5e-6
+
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+    for gy in (1e0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5):
+        ax.axhline(gy, color="#eeeeee", lw=0.8, zorder=0)
+
+    # U2 background (bars) + U12 calls (bars on the same grid + a rug at the floor)
+    ax.bar(centers, np.where(counts > 0, counts, np.nan), width=w, color="#9ecae1",
+           edgecolor="none", zorder=2, label="U2 background margins")
+    if len(calls):
+        cc, _ = np.histogram(calls, bins=edges)
+        ax.bar(centers, np.where(cc > 0, cc, np.nan), width=w, color="#f16913",
+               edgecolor="none", alpha=0.9, zorder=3, label="U12 calls (P≥0.9)")
+        ax.plot(calls, np.full_like(calls, 3e-6), "|", color="#d94801", ms=11, mew=1.3, zorder=4)
+
+    # fitted POT-exponential U2 tail, extrapolated past the calls into fractional expected counts
+    if assessable and d.get("q90") is not None and d.get("lam"):
+        q90 = to_logit(d["q90"]); lam = float(d["lam"]) / A       # rate in logit units
+        xs = np.linspace(q90, edges[-1], 300)
+        ycurve = n_u2 * frac * lam * np.exp(-lam * (xs - q90)) * w
+        ax.plot(xs, ycurve, color="#cb181d", lw=2.4, zorder=5,
+                label="fitted U2 tail (extrapolated)")
+        if d.get("cs_p95") is not None:
+            cs = to_logit(d["cs_p95"])
+            y_at = n_u2 * frac * lam * np.exp(-lam * (cs - q90)) * w
+            if np.isfinite(y_at) and y_at > 0:
+                ax.plot([cs], [y_at], "o", color="#cb181d", ms=5, zorder=6)
+                ax.annotate(f"U2 model ≈ {y_at:.0e}/bin here", (cs, y_at), xytext=(-6, 15),
+                            textcoords="offset points", fontsize=7.6, color="#cb181d", ha="right",
+                            arrowprops=dict(arrowstyle="-", color="#cb181d", lw=0.7))
+
+    # threshold / anchor lines (skip the ones that need the fit when unfit)
+    vlines = [(P90, "#31a354", ":", "P=0.9 call line")]
+    if assessable and d.get("q90") is not None:
+        vlines.append((to_logit(d["q90"]), "#636363", "--", "q90 (U2 tail onset)"))
+    if assessable and d.get("exp_max") is not None:
+        vlines.append((to_logit(d["exp_max"]), "#756bb1", "-.", "exp_max (Gumbel U2 max)"))
+    if d.get("cs_p95") is not None:
+        vlines.append((to_logit(d["cs_p95"]), "#f16913", "-", "95th-pct call margin"))
+    for xv, col, ls, _lab in vlines:
+        ax.axvline(xv, color=col, ls=ls, lw=1.5, zorder=1)
+    # legend handles for the vertical anchor lines (so the gray/green/purple/orange lines are decodable)
+    line_handles = [mlines.Line2D([], [], color=col, ls=ls, lw=1.5, label=lab)
+                    for _xv, col, ls, lab in vlines]
+
+    ax.set_yscale("log")
+    ax.set_ylim(y_floor, max(n_u2, 10))
+    ax.set_xlim(edges[0], edges[-1])
+    ax.set_xlabel("ensemble margin   m = logit(P_motif)   →  stronger U12", fontsize=10)
+    ax.set_ylabel("introns per bin  (bars = observed; red = expected U2, incl. <1)", fontsize=9)
+
+    # P_motif scale on top (same axis; P sits at logit(P))
+    sec = ax.secondary_xaxis("top", functions=(_sigmoid_np, _logit_np))
+    sec.set_xticks([0.5, 0.9, 0.99, 0.999, 0.9999])
+    sec.set_xticklabels(["0.5", "0.9", "0.99", "0.999", "0.9999"], fontsize=8)
+    sec.set_xlabel("P_motif", fontsize=9)
+
+    def _fnum(v, sci=False):
+        return "n/a" if v is None else (f"{v:.1e}" if sci else f"{v:.2f}")
+    box = (f"motif_category: {cat}\n"
+           f"z_excess  = {_fnum(d.get('z_excess'))}\n"
+           f"p_gumbel  = {_fnum(d.get('p_gumbel_p95'), sci=True)}\n"
+           f"calls (P≥0.9): {int(d.get('n_call', 0))}   U2: {int(n_u2)}")
+    ax.text(0.985, 0.965, box, transform=ax.transAxes, fontsize=9, family="monospace",
+            va="top", ha="right", color="#222",
+            bbox=dict(boxstyle="round,pad=0.4", fc="white", ec=catcol, lw=1.8))
+    ax.set_title(f"{species_name} — U2 tail model  (adjudicator diagnostic)",
+                 fontsize=13, fontweight="bold", color=catcol, pad=22)
+    if not assessable:
+        ax.text(0.015, 0.02, f"U2 tail unfit ({d.get('reason') or 'n/a'}) — bars only, no extrapolated curve",
+                transform=ax.transAxes, fontsize=8, style="italic", color="#999")
+    bar_handles, _ = ax.get_legend_handles_labels()
+    ax.legend(handles=bar_handles + line_handles, loc="upper left", fontsize=8.0,
+              framealpha=0.92, ncol=1)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_training_results(
