@@ -103,3 +103,6 @@ intronIC_refactored/
 
 # residual experimental configs / scripts / outputs (decluttered 2026-06-21)
 /_attic/
+
+# Historical bundled-model snapshots (keep only the shipped default_pretrained.model.pkl)
+src/intronIC/data/*.bak_*

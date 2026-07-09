@@ -5,6 +5,58 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-07-09
+
+Major release: the **raw-feature `pmotif_adjudicated`** architecture. All per-species
+adaptation moved out of scoring and into a single output-level adjudicator. This
+supersedes the entire z-normalization + mode-separation + continuous-discount stack
+that accreted through v2.5–v2.7 (the eval-corpus work showed per-species
+z-normalization *hurts* cross-species discrimination). Legacy z/modesep bundles remain
+reproducible from the `pre-zstack-removal` git tag.
+
+### Changed — scoring architecture (breaking)
+
+- **Removed** per-species z-normalization, the adaptive/frozen normalizer (and its
+  `MIN_ADAPTIVE_INTRONS` fallback), the v2.6 mode-separation gate, and the v2.7
+  continuous per-intron discount. Deleted modules: `scoring/normalizer.py`,
+  `scoring/mode_separation.py`, `scoring/cluster_validation.py`,
+  `scoring/margin_alignment.py`, `classification/classifier.py`,
+  `classification/mode_sep_pipeline.py`.
+- Scoring now operates directly on **background-corrected raw motif log-odds**: a
+  calibrated RBF-SVM ensemble on the 6 raw features (`5'_raw`, `BP_raw`, `3'_raw`,
+  `bp_offset`, `bp_scan_confidence`, `support2_raw`) → per-intron ensemble margin →
+  **`P_motif`** (a species-agnostic, Platt-calibrated motif probability).
+- New **species adjudicator** (`scoring/species_adjudicator.py`): per-species
+  `z_excess` (Poisson significance of the strong-call *count* vs the genome's own U2
+  tail) drives a gap gate → **`motif_category`** ∈ {`DETECTED`, `INCONCLUSIVE`,
+  `NOT_DETECTED`, `UNASSESSABLE`} (anchors `loss_ceiling_z=2.60` /
+  `bearer_floor_z=5.50`); plus a per-genome **strength gate** (`p_gumbel_p95≤0.01`,
+  `cs_p95≥5.0` co-fallback) that rescues few-but-strong divergent bearers.
+- **Label rule:** `type_id = u12` iff `adjusted_score ≥ 50` (equivalently `P_motif ≥
+  0.5`) **AND** `motif_category ≠ NOT_DETECTED`. Only `NOT_DETECTED` suppresses calls;
+  `INCONCLUSIVE`/`UNASSESSABLE` flag species-level ambiguity but still let
+  strong-motif introns call.
+- `--load-normalizer` / `--save-normalizer` / `--no-continuous-discount` and the
+  `--discount-*` family are now **accepted-but-ignored no-ops** (retained for
+  backward-compatible invocation).
+
+### Added
+
+- `score_info.iic` columns: `P_motif`, `z_excess`, `cs_p95`, `p_gumbel_p95`,
+  `cs_p95_lo`, `cs_p95_hi`, `motif_category`.
+- Per-species **`tail_model.iic.json`** adjudicator sidecar + a per-species tail-model
+  diagnostic figure.
+- `metrics.iic.json` keys: `motif_category`, `z_excess`, `cs_p95`, `p_gumbel_p95`,
+  `motif_called_u12`, `confident_u12_motif`, `normalizer_used`.
+- Authoritative output-format spec + generated-file manifest under `docs/`.
+
+### Bundled model
+
+- `data/default_pretrained.model.pkl` = the `pmotif_adjudicated` raw-feature ensemble
+  (42 sub-models / 210 sub-estimators, RBF `C=200 γ=0.001` isotonic), with adjudicator
+  params `ADJUDICATOR_PARAMS_VERSION=zexcess_gap_pgumbel_cs_2026-07-03` (Platt
+  `2.796 / −1.178`, anchors `2.60 / 5.50`, strength gate `p_gumbel≤0.01 / cs≥5.0`).
+
 ## [2.7.1] - 2026-05-25
 
 ### Changed — unified per-intron labels (fixes misleading u2_count)
