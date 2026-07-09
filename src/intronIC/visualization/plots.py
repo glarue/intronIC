@@ -158,28 +158,37 @@ def plot_classification_results_from_file(
             svm = fields[svm_idx]
             three_raw = fields[three_raw_idx] if three_raw_idx is not None else "NA"
 
-            if five_raw != "NA" and bp_raw != "NA":
-                try:
-                    five_raw_scores.append(float(five_raw))
-                    bp_raw_scores.append(float(bp_raw))
-                    three_raw_scores.append(float(three_raw) if three_raw != "NA" else 0.0)
-                except ValueError:
-                    continue
+            # A point needs a valid (5', BP) position to be plotted at all; rows without one are
+            # skipped entirely (they belong in neither the density hexbin nor the scatter).
+            if five_raw == "NA" or bp_raw == "NA":
+                continue
+            try:
+                fv = float(five_raw)
+                bv = float(bp_raw)
+                tv = float(three_raw) if three_raw != "NA" else 0.0
+            except ValueError:
+                continue
 
             # Pick the score used for color tiers + counts: prefer
             # adjusted_score (v2.7+ continuous-discount output); fall back
-            # to svm_score (raw classifier output).
+            # to svm_score (raw classifier output). NaN when a row carries no
+            # tier score — the scatter masks these out (see scatter_mask below).
             score_for_tier = svm
             if adj_idx is not None and adj_idx < len(fields):
                 adj_val = fields[adj_idx]
                 if adj_val not in ("NA", "", "null"):
                     score_for_tier = adj_val
+            try:
+                sv = float(score_for_tier) if score_for_tier != "NA" else float("nan")
+            except ValueError:
+                sv = float("nan")
 
-            if score_for_tier != "NA":
-                try:
-                    svm_scores.append(float(score_for_tier))
-                except ValueError:
-                    continue
+            # Append row-locked so the four lists stay 1:1 — the scatter can never positionally
+            # zip two independently-filtered lists (the density hexbin keeps every valid-(5',BP) row).
+            five_raw_scores.append(fv)
+            bp_raw_scores.append(bv)
+            three_raw_scores.append(tv)
+            svm_scores.append(sv)
 
     if not five_raw_scores:
         # No valid scores to plot
@@ -187,6 +196,12 @@ def plot_classification_results_from_file(
 
     score_vector = np.array(list(zip(five_raw_scores, bp_raw_scores)))
     score_vector_3d = np.array(list(zip(five_raw_scores, bp_raw_scores, three_raw_scores)))
+
+    # Row-locked scatter subset: svm_scores is 1:1 with score_vector, so the scatter (+3D +histogram)
+    # use only rows that also carry a tier score, while the density hexbin keeps every valid-(5',BP) row.
+    svm_arr = np.asarray(svm_scores, dtype=float)
+    scatter_mask = np.isfinite(svm_arr)
+    scatter_svm = svm_arr[scatter_mask].tolist()
 
     # Plot-time framing fit on THIS genome's own introns (not the training corpus), so the figure is
     # corpus-independent and reproducible from score_info alone. See _PLOT_SCALER_KIND.
@@ -215,8 +230,8 @@ def plot_classification_results_from_file(
     # Create minimal data structure for scatter plot
     scatter_path = output_dir / f"{species_name}.plot.scatter.iic.png"
     scatter_plot_from_arrays(
-        score_vector=score_vector,
-        svm_scores=svm_scores,
+        score_vector=score_vector[scatter_mask],
+        svm_scores=scatter_svm,
         species_name=species_name,
         output_path=scatter_path,
         xlab=xlab,
@@ -229,8 +244,8 @@ def plot_classification_results_from_file(
     if three_raw_idx is not None:
         scatter_3d_path = output_dir / f"{species_name}.plot.scatter3d.iic.png"
         scatter_3d(
-            score_vector_3d=score_vector_3d,
-            svm_scores=svm_scores,
+            score_vector_3d=score_vector_3d[scatter_mask],
+            svm_scores=scatter_svm,
             species_name=species_name,
             output_path=scatter_3d_path,
             threshold=threshold,
@@ -241,10 +256,10 @@ def plot_classification_results_from_file(
         )
 
     # 4. Score histogram
-    if svm_scores:
+    if scatter_svm:
         hist_path = output_dir / f"{species_name}.plot.score_histogram.iic.png"
         histogram(
-            svm_scores,
+            scatter_svm,
             threshold=threshold,
             species_name=species_name,
             output_path=hist_path,
@@ -309,18 +324,36 @@ def plot_classification_results(
         fig_dpi=fig_dpi,
     )
 
-    # 2. Scatter plot with U12 classification
+    # 2. Scatter plot with U12-type classification — build (xy, tier score, type_id) from the SAME
+    # introns in one pass (row-locked), so the scatter never positionally zips independently-filtered
+    # lists. Uses type_ids for the U2/U12 split (as the in-memory scatter always has); the confidence
+    # sub-tiers use svm_score, matching the prior scatter_plot() behavior.
+    scatter_xy, scatter_svm, scatter_types = [], [], []
+    for intron in introns:
+        s = intron.scores
+        if (s and s.five_raw_score is not None and s.bp_raw_score is not None
+                and s.svm_score is not None):
+            scatter_xy.append([s.five_raw_score, s.bp_raw_score])
+            scatter_svm.append(s.svm_score)
+            scatter_types.append(intron.metadata.type_id if intron.metadata else None)
+    scatter_xy = np.array(scatter_xy)
+    if _xy_params is not None and scatter_xy.size:
+        cx, cy, sx, sy = _xy_params
+        scatter_xy = (scatter_xy - [cx, cy]) / [sx, sy]
+
     scatter_path = output_dir / f"{species_name}.plot.scatter.iic.png"
-    scatter_plot(
-        introns,
-        score_vector,
-        species_name=species_name,
-        output_path=scatter_path,
-        xlab=xlab,
-        ylab=ylab,
-        threshold=threshold,
-        fig_dpi=fig_dpi,
-    )
+    if scatter_xy.size:
+        scatter_plot_from_arrays(
+            score_vector=scatter_xy,
+            svm_scores=scatter_svm,
+            species_name=species_name,
+            output_path=scatter_path,
+            xlab=xlab,
+            ylab=ylab,
+            threshold=threshold,
+            type_ids=scatter_types,
+            fig_dpi=fig_dpi,
+        )
 
     # 3. 3D scatter plot (5'z, BPz, 3'z)
     score_vector_3d = []
@@ -330,6 +363,7 @@ def plot_classification_results(
             and intron.scores.five_raw_score is not None
             and intron.scores.bp_raw_score is not None
             and intron.scores.three_raw_score is not None
+            and intron.scores.svm_score is not None
         ):
             score_vector_3d.append([
                 intron.scores.five_raw_score,
@@ -964,11 +998,11 @@ def tail_model_plot(
 
     # U2 background (bars) + U12 calls (bars on the same grid + a rug at the floor)
     ax.bar(centers, np.where(counts > 0, counts, np.nan), width=w, color="#9ecae1",
-           edgecolor="none", zorder=2, label="U2 background margins")
+           edgecolor="none", zorder=2, label="U2-type background margins")
     if len(calls):
         cc, _ = np.histogram(calls, bins=edges)
         ax.bar(centers, np.where(cc > 0, cc, np.nan), width=w, color="#f16913",
-               edgecolor="none", alpha=0.9, zorder=3, label="U12 calls (P≥0.9)")
+               edgecolor="none", alpha=0.9, zorder=3, label="U12-type calls (P≥0.9)")
         ax.plot(calls, np.full_like(calls, 3e-6), "|", color="#d94801", ms=11, mew=1.3, zorder=4)
 
     # fitted POT-exponential U2 tail, extrapolated past the calls into fractional expected counts
@@ -977,24 +1011,31 @@ def tail_model_plot(
         xs = np.linspace(q90, edges[-1], 300)
         ycurve = n_u2 * frac * lam * np.exp(-lam * (xs - q90)) * w
         ax.plot(xs, ycurve, color="#cb181d", lw=2.4, zorder=5,
-                label="fitted U2 tail (extrapolated)")
+                label="fitted U2-type tail (extrapolated)")
         if d.get("cs_p95") is not None:
             cs = to_logit(d["cs_p95"])
             y_at = n_u2 * frac * lam * np.exp(-lam * (cs - q90)) * w
             if np.isfinite(y_at) and y_at > 0:
-                ax.plot([cs], [y_at], "o", color="#cb181d", ms=5, zorder=6)
-                ax.annotate(f"U2 model ≈ {y_at:.0e}/bin here", (cs, y_at), xytext=(-6, 15),
-                            textcoords="offset points", fontsize=7.6, color="#cb181d", ha="right",
-                            arrowprops=dict(arrowstyle="-", color="#cb181d", lw=0.7))
+                # The U2-type model's expected count where the calls' 95th-pct margin lands: a horizontal
+                # dashed line (distinct colour) with the value called out on the y-axis, replacing the old
+                # inline "U2 model ≈ …/bin here" annotation. It crosses the 95th-pct margin vline at the
+                # blue dot, so the crosshair reads "expected U2-type count at the 95th-pct call margin".
+                ax.axhline(y_at, color="#3182bd", ls="--", lw=1.3, zorder=5,
+                           label="U2-type model at 95th-pct call margin")
+                ax.plot([cs], [y_at], "o", color="#3182bd", ms=4, zorder=6)
+                ax.annotate(f"{y_at:.0e}", xy=(0, y_at), xycoords=ax.get_yaxis_transform(),
+                            xytext=(-4, 0), textcoords="offset points", va="center", ha="right",
+                            fontsize=7.6, fontweight="bold", color="#3182bd", clip_on=False, zorder=7,
+                            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.9))
 
     # threshold / anchor lines (skip the ones that need the fit when unfit)
     vlines = [(P90, "#31a354", ":", "P=0.9 call line")]
     if assessable and d.get("q90") is not None:
-        vlines.append((to_logit(d["q90"]), "#636363", "--", "q90 (U2 tail onset)"))
+        vlines.append((to_logit(d["q90"]), "#636363", "--", "q90 (U2-type tail onset)"))
     if assessable and d.get("exp_max") is not None:
-        vlines.append((to_logit(d["exp_max"]), "#756bb1", "-.", "exp_max (Gumbel U2 max)"))
+        vlines.append((to_logit(d["exp_max"]), "#756bb1", "-.", "exp_max (Gumbel U2-type max)"))
     if d.get("cs_p95") is not None:
-        vlines.append((to_logit(d["cs_p95"]), "#f16913", "-", "95th-pct call margin"))
+        vlines.append((to_logit(d["cs_p95"]), "#c51b8a", "-", "95th-pct call margin"))
     for xv, col, ls, _lab in vlines:
         ax.axvline(xv, color=col, ls=ls, lw=1.5, zorder=1)
     # legend handles for the vertical anchor lines (so the gray/green/purple/orange lines are decodable)
@@ -1004,8 +1045,8 @@ def tail_model_plot(
     ax.set_yscale("log")
     ax.set_ylim(y_floor, max(n_u2, 10))
     ax.set_xlim(edges[0], edges[-1])
-    ax.set_xlabel("ensemble margin   m = logit(P_motif)   →  stronger U12", fontsize=10)
-    ax.set_ylabel("introns per bin  (bars = observed; red = expected U2, incl. <1)", fontsize=9)
+    ax.set_xlabel("ensemble margin   m = logit(P_motif)   →  stronger U12-type", fontsize=10)
+    ax.set_ylabel("introns per bin  (bars = observed; red = expected U2-type, incl. <1)", fontsize=9)
 
     # P_motif scale on top (same axis; P sits at logit(P))
     sec = ax.secondary_xaxis("top", functions=(_sigmoid_np, _logit_np))
@@ -1018,14 +1059,14 @@ def tail_model_plot(
     box = (f"motif_category: {cat}\n"
            f"z_excess  = {_fnum(d.get('z_excess'))}\n"
            f"p_gumbel  = {_fnum(d.get('p_gumbel_p95'), sci=True)}\n"
-           f"calls (P≥0.9): {int(d.get('n_call', 0))}   U2: {int(n_u2)}")
+           f"calls (P≥0.9): {int(d.get('n_call', 0))}   U2-type: {int(n_u2)}")
     ax.text(0.985, 0.965, box, transform=ax.transAxes, fontsize=9, family="monospace",
             va="top", ha="right", color="#222",
             bbox=dict(boxstyle="round,pad=0.4", fc="white", ec=catcol, lw=1.8))
-    ax.set_title(f"{species_name} — U2 tail model  (adjudicator diagnostic)",
+    ax.set_title(f"{species_name} — U2-type tail model  (adjudicator diagnostic)",
                  fontsize=13, fontweight="bold", color=catcol, pad=22)
     if not assessable:
-        ax.text(0.015, 0.02, f"U2 tail unfit ({d.get('reason') or 'n/a'}) — bars only, no extrapolated curve",
+        ax.text(0.015, 0.02, f"U2-type tail unfit ({d.get('reason') or 'n/a'}) — bars only, no extrapolated curve",
                 transform=ax.transAxes, fontsize=8, style="italic", color="#999")
     bar_handles, _ = ax.get_legend_handles_labels()
     ax.legend(handles=bar_handles + line_handles, loc="upper left", fontsize=8.0,
@@ -1365,10 +1406,10 @@ def plot_decision_surface(
         # Build profiles with extra feature medians appended
         _em = list(extra_medians) if n_extra > 0 else []
         profiles = {
-            f"Real U12\n(3.0, 2.5, {s3_u12_med:.1f})": [3.0, 2.5, s3_u12_med] + _em,
+            f"Real U12-type\n(3.0, 2.5, {s3_u12_med:.1f})": [3.0, 2.5, s3_u12_med] + _em,
             "Hard neg\n(3.0, 0.0, -0.5)": [3.0, 0.0, -0.5] + _em,
             "Marginal\n(2.0, 0.5, 0.0)": [2.0, 0.5, 0.0] + _em,
-            "Bulk U2\n(-0.5, -0.5, -0.5)": [-0.5, -0.5, -0.5] + _em,
+            "Bulk U2-type\n(-0.5, -0.5, -0.5)": [-0.5, -0.5, -0.5] + _em,
         }
 
         x_pos = np.arange(len(profiles))

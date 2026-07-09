@@ -50,6 +50,20 @@ reproducible from the `pre-zstack-removal` git tag.
   `motif_called_u12`, `confident_u12_motif`, `normalizer_used`.
 - Authoritative output-format spec + generated-file manifest under `docs/`.
 
+### Figures — per-species diagnostic + scatter/hexbin
+
+- All figure text uses `U2-type`/`U12-type` consistently (tail-model diagnostic, scatter,
+  hexbin, 3D, and SVM-diagnostic panels).
+- Tail-model diagnostic: the inline "U2 model ≈ …/bin here" callout is replaced by a
+  horizontal dashed line at the fitted U2-type tail's expected count where the 95th-pct call
+  margin lands, with the value annotated on the y-axis; the 95th-pct call-margin line is
+  recolored (magenta) so it no longer shares the U12-type call colour.
+- Row-locked the scatter / 3D / histogram inputs in **both** the streaming and in-memory plot
+  paths so the position array and the tier-score array are built 1:1 (never a positional zip
+  of two independently NA-filtered lists), while the density hexbin still keeps every
+  valid-(5′,BP) row. Bit-identical on current data (every row carries both); a defensive fix
+  against a future scoring-only path emitting position-without-score rows.
+
 ### Fixed — `-i` / `-d` isoform-flag parity (merged from PR #17 / v2.7.x maintenance)
 
 Both `-i` (`--allow-multiple-isoforms`) and `-d` (`--include-duplicates`) are now
