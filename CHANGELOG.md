@@ -50,6 +50,22 @@ reproducible from the `pre-zstack-removal` git tag.
   `motif_called_u12`, `confident_u12_motif`, `normalizer_used`.
 - Authoritative output-format spec + generated-file manifest under `docs/`.
 
+### Fixed — `-i` / `-d` isoform-flag parity (merged from PR #17 / v2.7.x maintenance)
+
+Both `-i` (`--allow-multiple-isoforms`) and `-d` (`--include-duplicates`) are now
+respected end-to-end in **both** `--in-memory` and `--streaming` classify modes, with
+streaming/in-memory parity holding across all four flag combinations (regression-guarded
+by `tests/integration/test_isoform_flag.py` and the parametrized
+`test_streaming_matches_in_memory_with_flags`). Reconciled onto the raw-feature pipeline:
+
+- `extraction/filters.py::should_extract_sequences_for` no longer skips coord-duplicate
+  sequence extraction unconditionally — it skips only when `include_duplicates=False`, so
+  `-d` duplicates keep their sequences and reach the writer instead of being silently
+  dropped as un-scoreable.
+- The streaming per-contig worker filter and its worker `config_dict`s now carry and honor
+  `allow_multiple_isoforms` (was hardcoded `longest_only=True`), and the streaming
+  filtering summary reflects the actual isoform setting.
+
 ### Bundled model
 
 - `data/default_pretrained.model.pkl` = the `pmotif_adjudicated` raw-feature ensemble

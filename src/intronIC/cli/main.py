@@ -3578,7 +3578,7 @@ def _streaming_extract_and_filter_contig(
         scoring_regions=["five", "three"],
         allow_noncanonical=not config["exclude_noncanonical"],
         allow_overlap=not config["no_intron_overlap"],
-        longest_only=True,
+        longest_only=not config["allow_multiple_isoforms"],
         include_duplicates=config["include_duplicates"],
     )
     filtered_introns = intron_filter.filter_introns(contig_with_seqs)
@@ -3891,6 +3891,7 @@ def classify_streaming_per_contig(
             'clean_names': config.output.clean_names,
             'debug': config.output.debug,
             'include_duplicates': config.extraction.include_duplicates,
+            'allow_multiple_isoforms': config.extraction.allow_multiple_isoforms,
             'min_intron_len': config.extraction.min_intron_len,
             # Required by _streaming_extract_and_filter_contig:
             'feature_type': config.extraction.feature_type,
@@ -4044,6 +4045,7 @@ def classify_streaming_per_contig(
         "exclude_noncanonical": config.scoring.exclude_noncanonical,
         "no_intron_overlap": config.extraction.no_intron_overlap,
         "include_duplicates": config.extraction.include_duplicates,
+        "allow_multiple_isoforms": config.extraction.allow_multiple_isoforms,
         "threshold": config.scoring.threshold,
         "ignore_nc_dnts": config.scoring.ignore_nc_dnts,
         "five_start": config.scoring.scoring_regions.five_start,
@@ -4269,7 +4271,7 @@ def classify_streaming_per_contig(
         duplicates=accumulated_filter_stats.duplicates,
         kept=accumulated_filter_stats.kept_introns,
         include_duplicates=config.extraction.include_duplicates,
-        include_isoforms=False,  # Streaming always uses longest_only=True
+        include_isoforms=config.extraction.allow_multiple_isoforms,
         exclude_noncanonical=config.scoring.exclude_noncanonical,
         exclude_overlap=config.extraction.no_intron_overlap,
     )
@@ -5300,8 +5302,8 @@ def main_classify(config: IntronICConfig):
             scoring_regions=["five", "three"],  # Check these for ambiguous bases
             allow_noncanonical=not config.scoring.exclude_noncanonical,
             allow_overlap=not config.extraction.no_intron_overlap,
-            longest_only=True,  # For sequences: no-op (no grandparent info)
-            include_duplicates=False,  # For sequences: no-op (unique coords)
+            longest_only=not config.extraction.allow_multiple_isoforms,
+            include_duplicates=config.extraction.include_duplicates,
         )
 
         filtered_introns = intron_filter.filter_introns(introns)
