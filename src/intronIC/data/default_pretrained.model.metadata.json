@@ -1,48 +1,68 @@
 {
-  "model_id": "v5_modesep_aug_C200_g0.001_v2.6",
-  "version": "v3",
-  "schema": "v3+modesep",
-  "intronIC_version": "2.6.0",
-  "released": "2026-05-19",
+  "model_id": "pmotif_adjudicated_v23corpus_C200_g0.001",
+  "scoring_mode": "pmotif_adjudicated",
+  "bundle_version": "pmotif_adjudicated_v1",
+  "intronIC_version": "3.0.0",
+  "released": "2026-07-03",
+  "metadata_regenerated": "2026-07-09",
+  "schema": "v3+pmotif_adjudicated",
+  "call_threshold": 50.0,
   "training": {
-    "corpus": "multispecies_corpus_v5_modesep.tsv",
-    "n_train": 502921,
-    "n_species": 101,
-    "n_phyla": 13,
+    "corpus": "multispecies_v23 (stage1 reference matrix)",
+    "n_train": 41333,
+    "n_u12": 10003,
+    "n_u2": 31330,
+    "n_species": 97,
+    "n_clades": 14,
+    "holdout_species": 5,
+    "holdout_positives": 790,
     "ensemble_size": 42,
-    "seeds": [42, 1042, 2042],
-    "total_models": 126,
+    "sub_estimators": 210,
+    "seeds": "single seed group (no 3-seed stacking)",
     "C": 200.0,
     "gamma": 0.001,
-    "ezf": 0.75,
-    "calibration_method": "isotonic",
     "kernel": "rbf",
-    "input_features": ["five_z", "bp_z", "three_z", "bp_offset", "bp_scan_confidence", "support2"]
+    "calibration_method": "isotonic",
+    "input_features": [
+      "five_raw_score",
+      "bp_raw_score",
+      "three_raw_score",
+      "bp_offset",
+      "bp_scan_confidence",
+      "support2_raw"
+    ],
+    "engineered_interactions": [
+      "corr_5_bp",
+      "corr_bp_3",
+      "gap_5_bp"
+    ],
+    "fitted_feature_count": 9
   },
-  "modesep_params": {
-    "z_floor_eligibility": 0.30,
-    "valley_depth_min": 0.30,
-    "n_floor_candidates": 5,
-    "candidate_weight_center": 90.0,
-    "candidate_weight_steepness": 5.0,
-    "universal_anchors": {
-      "five_raw": 15.671,
-      "bp_raw": 6.704,
-      "three_raw": 1.764
-    },
-    "mu_u12_5p_prior": 15.671,
-    "mu_u12_5p_tolerance": 3.6,
-    "first_pass_model_id": "v4_aug_cluster_aware_2026-05",
-    "pwm_set_id": "v2.5.x_post_bg_fix"
+  "adjudicator": {
+    "params_version": "zexcess_gap_pgumbel_cs_2026-07-03",
+    "platt_a": 2.7958,
+    "platt_c": -1.1778,
+    "loss_ceiling_z": 2.6,
+    "bearer_floor_z": 5.5,
+    "p_gumbel_threshold": 0.01,
+    "cs_point_threshold": 5.0,
+    "cs_min_calls": 3,
+    "min_u2": 200,
+    "call_threshold": 0.9,
+    "u2_threshold": 0.5
   },
-  "validation": {
-    "panel_14_species_TP": 1950,
-    "panel_14_species_FN": 3,
-    "panel_14_species_FP_strong": 0,
-    "panel_14_species_FP_any": 217,
-    "panel_recall": 0.9985,
-    "apostasia_held_out_recall": "20/21 IPA-validated U12s",
-    "u12_absent_FP_strong_leakage": 0
+  "provenance": {
+    "calibrated_from": "raw_gated_42.model.pkl",
+    "platt_fit": "in-sample on stage1 v23 corpus margins -> re-derived (matches shipped 2.796/-1.178)",
+    "q_source": "shipped full-resolution Firth-LCO fit (DEFAULT_Q_*); bundled to match full-res inference",
+    "q_refit_crosscheck": "CAP-subsampled re-fit q=(4.311,-11.885) bnd=2.76, LCO 24/25",
+    "n_panel": 25,
+    "lco_errors": 1,
+    "adjudicator_params_version": "zexcess_gap_pgumbel_cs_2026-07-03",
+    "rebuilt_from": "/mnt/data/u12/ipa/conservation_corpus/eval_corpus/raw_gated_42.model.pkl",
+    "supersedes_adjudicator_params_version": "zexcess_gap_2026-06-30b",
+    "note": "bearer_floor_z widened 4.00 -> 5.50 (trust threshold; near-floor uncertain cluster -> BORDERLINE). Code-only param change, no retrain; anchors loss_ceiling 2.60 + Platt unchanged. See zone_resolution_plan.md.",
+    "adjudicator_restamp_note": "2026-07-03b: strength gate PRIMARY driver -> per-genome Gumbel outlier test on the call upper tail (p_gumbel_threshold=0.01, p_gumbel_p95<=this => DETECTED); absolute cs_p95>=5.0 retained as null-free co-fallback. All Platt/q/anchor/cs_point values from zexcess_gap_cs_point_2026-07-03 PRESERVED. See docs/adjudicator_strength_evt.md."
   },
-  "notes": "intronIC v2.6.0 default model: mode-separation 6D RBF SVM ensemble (3 seeds x 42 = 126 calibrated SVMs) plus the cluster-aware first-pass ensemble embedded as first_pass_seeds. The first pass scores all introns; mode-separation then performs per-species recalibration (z=(raw - mu_U2)/(mu_U12 - mu_U2)) and re-scores eligible introns with the second-pass ensemble. The classify path gates on n_eff floor + mu_U12 location prior + Fisher-discriminant KDE valley depth before applying recalibration; u12-absent species gate-fail cleanly to first-pass scores. See docs/mode_separation.md for the architecture."
+  "notes": "intronIC v3.0.0 default model: raw-feature pmotif_adjudicated architecture. A single calibrated RBF-SVM ensemble (42 sub-models / 210 sub-estimators, C=200 gamma=0.001, isotonic) scores the 6 background-corrected RAW motif features -> per-intron ensemble margin -> P_motif (species-agnostic, Platt-calibrated). All per-species adaptation lives in the output-level species adjudicator: z_excess gap gate (anchors loss_ceiling_z=2.60 / bearer_floor_z=5.50) + per-genome strength gate (p_gumbel_p95<=0.01, cs_p95>=5.0 co-fallback) -> motif_category {DETECTED, INCONCLUSIVE, NOT_DETECTED, UNASSESSABLE}. Call rule: type_id=u12 iff P_motif>=0.5 (adjusted_score>=50) AND motif_category!=NOT_DETECTED. This supersedes the v2.5-2.7 z-normalization + mode-separation + continuous-discount stack. See docs/raw_gated_scoring.md and docs/adjudicator_design.md."
 }
