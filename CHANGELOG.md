@@ -72,6 +72,14 @@ reproducible from the `pre-zstack-removal` git tag.
 - Scatter marginal distributions are drawn as smooth filled **KDE traces** instead of bar
   histograms (`Count` → `Density`); huge genomes are stride-subsampled for the KDE and
   degenerate marginals (n<2 / zero spread) are skipped gracefully.
+- **Unified colour palette** across the per-species figures (cool→warm): U2-type = Baltic-Blue
+  family (fitted tail, marginals, histogram bars; Sky-Reflection light fills; True-Cobalt model
+  line); U12-type = warm (confident `>90` = Blaze Orange, `84–90` = Honey Bronze, `≤84` = Oxidized
+  Iron; tail-model calls = Blaze Orange); tail-model anchors on-palette (P=0.9 teal, exp_max olive,
+  95th-pct margin Oxidized Iron, q90 grey) and the category box mapped DETECTED=olive /
+  INCONCLUSIVE=amber / NOT_DETECTED=iron. Titles standardised to a neutral dark bold (removes the
+  tail-model's old motif_category-coloured green title; category still shown in its stats box).
+  Density colormaps (inferno hexbin, floored Greys U2-type layer) unchanged.
 
 ### Fixed — `-i` / `-d` isoform-flag parity (merged from PR #17 / v2.7.x maintenance)
 
