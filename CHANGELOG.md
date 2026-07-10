@@ -57,8 +57,8 @@ reproducible from the `pre-zstack-removal` git tag.
 - Tail-model diagnostic: the inline "U2 model ≈ …/bin here" callout is replaced by a
   horizontal dashed line at the fitted U2-type tail's expected count where the 95th-pct call
   margin lands, its value labelled on the line over the U2-type distribution (clear of the
-  y-axis ticks); the 95th-pct call-margin line is recolored (magenta) so it no longer shares
-  the U12-type call colour.
+  y-axis ticks); the 95th-pct call-margin line is a distinct accent colour so it no longer
+  shares the U12-type call colour.
 - Row-locked the scatter / 3D / histogram inputs in **both** the streaming and in-memory plot
   paths so the position array and the tier-score array are built 1:1 (never a positional zip
   of two independently NA-filtered lists), while the density hexbin still keeps every
@@ -72,12 +72,14 @@ reproducible from the `pre-zstack-removal` git tag.
 - Scatter marginal distributions are drawn as smooth filled **KDE traces** instead of bar
   histograms (`Count` → `Density`); huge genomes are stride-subsampled for the KDE and
   degenerate marginals (n<2 / zero spread) are skipped gracefully.
-- **Unified colour palette** across the per-species figures (cool→warm): U2-type = Baltic-Blue
-  family (fitted tail, marginals, histogram bars; Sky-Reflection light fills; True-Cobalt model
-  line); U12-type = warm (confident `>90` = Blaze Orange, `84–90` = Honey Bronze, `≤84` = Oxidized
-  Iron; tail-model calls = Blaze Orange); tail-model anchors on-palette (P=0.9 teal, exp_max olive,
-  95th-pct margin Oxidized Iron, q90 grey) and the category box mapped DETECTED=olive /
-  INCONCLUSIVE=amber / NOT_DETECTED=iron. Titles standardised to a neutral dark bold (removes the
+- **Unified colour scheme** across the per-species figures: U12-type confidence reads as a
+  **green→yellow→red** ramp (high→low) everywhere it is tiered — scatter/3D markers (`>90` green
+  Dusty-Olive, `84–90` yellow Honey-Bronze, `≤84` red Oxidized-Iron), tail-model calls (green),
+  histogram threshold (green) — and **U2-type is neutral gray** throughout (light-gray bars/fills,
+  dark-gray fitted tail / KDE trace / expected-count line). Two palette colours are kept as bright
+  tail-model anchor accents: **Baltic-Blue** P=0.9 call line and **Blaze-Orange** 95th-pct call
+  margin (q90/exp_max stay gray). The category box maps DETECTED=green / INCONCLUSIVE=yellow /
+  NOT_DETECTED=red / UNASSESSABLE=gray. Titles standardised to a neutral dark bold (removes the
   tail-model's old motif_category-coloured green title; category still shown in its stats box).
   Density colormaps (inferno hexbin, floored Greys U2-type layer) unchanged.
 

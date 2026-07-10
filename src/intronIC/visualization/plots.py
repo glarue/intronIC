@@ -68,22 +68,33 @@ _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'
 #: still black), so the layer still never buries the coloured U12-type markers drawn on top of it.
 _U2_DENSITY_CMAP = ListedColormap(plt.cm.Greys(np.linspace(0.22, 1.0, 256)), name="U2Greys")
 
-#: Unified output-plot palette (user-provided, 2026-07). A cool→warm scheme applied across the
-#: per-species figures so U2-type reads cool (blue) and U12-type reads warm (amber→orange→red)
-#: everywhere. Density colormaps (inferno all-intron hexbin, floored Greys U2-type layer) stay as-is —
-#: they encode continuous density, not category.
-_PAL_TRUE_COBALT   = "#322e7d"   # U2-type model line (deepest blue)
-_PAL_BALTIC_BLUE   = "#33658a"   # U2-type primary (fitted tail, marginals, histogram bars)
-_PAL_SKY           = "#86bbd8"   # U2-type light fill (tail-model background bars, marginal fill)
-_PAL_MUTED_TEAL    = "#6f9b88"   # P=0.9 call line
-_PAL_DUSTY_OLIVE   = "#6b8448"   # exp_max anchor / DETECTED status
-_PAL_HONEY_BRONZE  = "#f6ae2d"   # U12-type mid tier (84–90) / INCONCLUSIVE status
-_PAL_BLAZE_ORANGE  = "#f26419"   # U12-type primary (calls / confident >90 tier)
-_PAL_OXIDIZED_IRON = "#b21d03"   # U12-type low tier (≤84) / 95th-pct margin / NOT_DETECTED status
-_PAL_NEUTRAL       = "#636363"   # neutral reference (q90 tail onset) / UNASSESSABLE
+#: Unified output-plot palette (user-provided 8-colour JSON, 2026-07). U12-type confidence reads as a
+#: green→yellow→red ramp (high→low) and U2-type is neutral gray everywhere; two palette colours are kept
+#: as bright accents for the tail-model anchor lines (Baltic Blue = P=0.9, Blaze Orange = 95th-pct call
+#: margin). Density colormaps (inferno all-intron hexbin, floored Greys U2-type layer) stay as-is — they
+#: encode continuous density, not category.
+_PAL_TRUE_COBALT   = "#322e7d"   # (reserve) deepest blue
+_PAL_BALTIC_BLUE   = "#33658a"   # P=0.9 call-line accent
+_PAL_SKY           = "#86bbd8"   # (reserve) light blue
+_PAL_MUTED_TEAL    = "#6f9b88"   # (reserve) teal-green (alt cooler green for U12-type high)
+_PAL_DUSTY_OLIVE   = "#6b8448"   # U12-type high/confident (green) + DETECTED status
+_PAL_HONEY_BRONZE  = "#f6ae2d"   # U12-type mid (yellow) + INCONCLUSIVE status
+_PAL_BLAZE_ORANGE  = "#f26419"   # 95th-pct call-margin accent
+_PAL_OXIDIZED_IRON = "#b21d03"   # U12-type low (red) + NOT_DETECTED status
+_PAL_NEUTRAL       = "#636363"   # neutral reference (q90) / UNASSESSABLE
 
-#: Standardised title styling for every per-species output plot (neutral dark — replaces the
-#: tail-model's old motif_category-coloured green title; the category now shows only in its stats box).
+#: U12-type confidence colours — green (high/confident) → yellow (mid) → red (low) — propagated to
+#: every plot that distinguishes U12-type confidence (scatter/3D tiers, tail-model calls, category box).
+_U12_HIGH = _PAL_DUSTY_OLIVE     # >90   (green)
+_U12_MED  = _PAL_HONEY_BRONZE    # 84–90 (yellow)
+_U12_LOW  = _PAL_OXIDIZED_IRON   # ≤84   (red)
+
+#: U2-type categorical elements are neutral gray (density colormaps — inferno hexbin + floored Greys
+#: U2 layer — stay as-is; they encode density, not category).
+_U2_FILL = "#cbcbcb"   # light gray fills (tail-model U2 bars, marginal fill, histogram bars)
+_U2_LINE = "#525252"   # dark gray lines (fitted U2 tail, marginal KDE line, U2 model line)
+
+#: Standardised title styling for every per-species output plot (neutral dark bold).
 _TITLE_COLOR = "#2b2b2b"
 _TITLE_SIZE = 15
 _TITLE_WEIGHT = "bold"
@@ -643,7 +654,7 @@ def scatter_plot_from_arrays(
     plot_scores = score_vector
 
     # Create legend
-    legend_colors = ["xkcd:medium grey", _PAL_OXIDIZED_IRON, _PAL_HONEY_BRONZE, _PAL_BLAZE_ORANGE]
+    legend_colors = ["xkcd:medium grey", _U12_LOW, _U12_MED, _U12_HIGH]
     legend_labels = [
         "U2-type",
         f"U12-type ≤ {int(med_val)}",
@@ -685,9 +696,9 @@ def scatter_plot_from_arrays(
     # U12 tiers as a colored scatter ON TOP of the U2 density (low -> med -> high z-order), so putative
     # U12s of every confidence are drawn above the U2 background.
     for name, color, z, alpha in (
-        ("low", _PAL_OXIDIZED_IRON, 3, 0.85),
-        ("med", _PAL_HONEY_BRONZE, 4, 0.9),
-        ("high", _PAL_BLAZE_ORANGE, 5, 0.9),
+        ("low", _U12_LOW, 3, 0.85),
+        ("med", _U12_MED, 4, 0.9),
+        ("high", _U12_HIGH, 5, 0.9),
     ):
         idx = tier_idx[name]
         if idx:
@@ -733,12 +744,12 @@ def scatter_plot_from_arrays(
         except Exception:
             return
         if orient == "x":
-            ax.fill_between(grid, dens, color=_PAL_SKY, alpha=0.45, linewidth=0)
-            ax.plot(grid, dens, color=_PAL_BALTIC_BLUE, lw=1.3)
+            ax.fill_between(grid, dens, color=_U2_FILL, alpha=0.7, linewidth=0)
+            ax.plot(grid, dens, color=_U2_LINE, lw=1.3)
             ax.set_ylim(0, float(dens.max()) * 1.08)
         else:
-            ax.fill_betweenx(grid, dens, color=_PAL_SKY, alpha=0.45, linewidth=0)
-            ax.plot(dens, grid, color=_PAL_BALTIC_BLUE, lw=1.3)
+            ax.fill_betweenx(grid, dens, color=_U2_FILL, alpha=0.7, linewidth=0)
+            ax.plot(dens, grid, color=_U2_LINE, lw=1.3)
             ax.set_xlim(0, float(dens.max()) * 1.08)
 
     _kde_trace(ax_top, plot_scores[:, 0], xlim, "x")
@@ -887,9 +898,9 @@ def scatter_3d(
 
         # Plot U12 by confidence tier (low → high so high draws on top)
         for idx_list, color, label, size in [
-            (u12_low_idx, _PAL_OXIDIZED_IRON, f"U12-type ≤ {int(med_val)}", 15),
-            (u12_med_idx, _PAL_HONEY_BRONZE, f"{int(med_val)} < U12-type ≤ {int(high_val)}", 20),
-            (u12_high_idx, _PAL_BLAZE_ORANGE, f"U12-type > {int(high_val)}", 25),
+            (u12_low_idx, _U12_LOW, f"U12-type ≤ {int(med_val)}", 15),
+            (u12_med_idx, _U12_MED, f"{int(med_val)} < U12-type ≤ {int(high_val)}", 20),
+            (u12_high_idx, _U12_HIGH, f"U12-type > {int(high_val)}", 25),
         ]:
             if idx_list:
                 pts = scores_3d[idx_list]
@@ -953,7 +964,7 @@ def histogram(
     if log:
         plt.yscale("log")
 
-    plt.hist(data_list, bins=bins, color=_PAL_BALTIC_BLUE, edgecolor="none")
+    plt.hist(data_list, bins=bins, color=_U2_FILL, edgecolor="none")
 
     if grid:
         plt.grid(True, which="both", ls="--", alpha=0.7)
@@ -967,7 +978,7 @@ def histogram(
 
     # Add threshold line
     plt.axvline(
-        threshold, color=_PAL_BLAZE_ORANGE, linestyle="--", label=f"U12-type threshold: {threshold}"
+        threshold, color=_U12_HIGH, linestyle="--", label=f"U12-type threshold: {threshold}"
     )
 
     plt.legend()
@@ -993,8 +1004,8 @@ def tail_model_plot(
     species_name: str,
     fig_dpi: int = 300,
 ):
-    """The per-species adjudicator tail-model figure: the genome's U2 background margins (bars), the fitted
-    POT-exponential U2 tail extrapolated into the call region (red), and the U12 calls (orange) — the visual
+    """The per-species adjudicator tail-model figure: the genome's U2 background margins (gray bars), the fitted
+    POT-exponential U2 tail extrapolated into the call region (gray line), and the U12 calls (green) — the visual
     of ``z_excess``/``p_gumbel`` (U12 signal = calls that escape the extrapolated U2 tail).
 
     Reads only the ``{species}.tail_model.iic.json`` sidecar written by
@@ -1036,20 +1047,20 @@ def tail_model_plot(
         ax.axhline(gy, color="#eeeeee", lw=0.8, zorder=0)
 
     # U2 background (bars) + U12 calls (bars on the same grid + a rug at the floor)
-    ax.bar(centers, np.where(counts > 0, counts, np.nan), width=w, color=_PAL_SKY,
+    ax.bar(centers, np.where(counts > 0, counts, np.nan), width=w, color=_U2_FILL,
            edgecolor="none", zorder=2, label="U2-type background margins")
     if len(calls):
         cc, _ = np.histogram(calls, bins=edges)
-        ax.bar(centers, np.where(cc > 0, cc, np.nan), width=w, color=_PAL_BLAZE_ORANGE,
+        ax.bar(centers, np.where(cc > 0, cc, np.nan), width=w, color=_U12_HIGH,
                edgecolor="none", alpha=0.9, zorder=3, label="U12-type calls (P≥0.9)")
-        ax.plot(calls, np.full_like(calls, 3e-6), "|", color=_PAL_OXIDIZED_IRON, ms=11, mew=1.3, zorder=4)
+        ax.plot(calls, np.full_like(calls, 3e-6), "|", color=_U12_HIGH, ms=11, mew=1.3, zorder=4)
 
     # fitted POT-exponential U2 tail, extrapolated past the calls into fractional expected counts
     if assessable and d.get("q90") is not None and d.get("lam"):
         q90 = to_logit(d["q90"]); lam = float(d["lam"]) / A       # rate in logit units
         xs = np.linspace(q90, edges[-1], 300)
         ycurve = n_u2 * frac * lam * np.exp(-lam * (xs - q90)) * w
-        ax.plot(xs, ycurve, color=_PAL_BALTIC_BLUE, lw=2.4, zorder=5,
+        ax.plot(xs, ycurve, color=_U2_LINE, lw=2.4, zorder=5,
                 label="fitted U2-type tail (extrapolated)")
         if d.get("cs_p95") is not None:
             cs = to_logit(d["cs_p95"])
@@ -1059,25 +1070,25 @@ def tail_model_plot(
                 # dashed line (distinct colour) with the value called out on the y-axis, replacing the old
                 # inline "U2 model ≈ …/bin here" annotation. It crosses the 95th-pct margin vline at the
                 # blue dot, so the crosshair reads "expected U2-type count at the 95th-pct call margin".
-                ax.axhline(y_at, color=_PAL_TRUE_COBALT, ls="--", lw=1.3, zorder=5,
+                ax.axhline(y_at, color=_U2_LINE, ls="--", lw=1.3, zorder=5,
                            label="U2-type model at 95th-pct call margin")
-                ax.plot([cs], [y_at], "o", color=_PAL_TRUE_COBALT, ms=4, zorder=6)
+                ax.plot([cs], [y_at], "o", color=_U2_LINE, ms=4, zorder=6)
                 # Label the line's value ON the line, centred over the U2-type distribution (count-weighted
                 # mean of the background margins) so it never collides with the y-axis tick labels.
                 u2_mid_x = (float(np.sum(centers * counts) / counts.sum())
                             if counts.sum() > 0 else float(np.mean(centers)))
                 ax.annotate(f"≈ {y_at:.0e}", xy=(u2_mid_x, y_at), va="center", ha="center",
-                            fontsize=7.6, fontweight="bold", color=_PAL_TRUE_COBALT, zorder=7,
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=_PAL_TRUE_COBALT, lw=0.6, alpha=0.92))
+                            fontsize=7.6, fontweight="bold", color=_U2_LINE, zorder=7,
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=_U2_LINE, lw=0.6, alpha=0.92))
 
     # threshold / anchor lines (skip the ones that need the fit when unfit)
-    vlines = [(P90, _PAL_MUTED_TEAL, ":", "P=0.9 call line")]
+    vlines = [(P90, _PAL_BALTIC_BLUE, ":", "P=0.9 call line")]
     if assessable and d.get("q90") is not None:
         vlines.append((to_logit(d["q90"]), _PAL_NEUTRAL, "--", "q90 (U2-type tail onset)"))
     if assessable and d.get("exp_max") is not None:
-        vlines.append((to_logit(d["exp_max"]), _PAL_DUSTY_OLIVE, "-.", "exp_max (Gumbel U2-type max)"))
+        vlines.append((to_logit(d["exp_max"]), "#969696", "-.", "exp_max (Gumbel U2-type max)"))
     if d.get("cs_p95") is not None:
-        vlines.append((to_logit(d["cs_p95"]), _PAL_OXIDIZED_IRON, "-", "95th-pct call margin"))
+        vlines.append((to_logit(d["cs_p95"]), _PAL_BLAZE_ORANGE, "-", "95th-pct call margin"))
     for xv, col, ls, _lab in vlines:
         ax.axvline(xv, color=col, ls=ls, lw=1.5, zorder=1)
     # legend handles for the vertical anchor lines (so the palette-coloured anchor lines are decodable)
@@ -1088,7 +1099,7 @@ def tail_model_plot(
     ax.set_ylim(y_floor, max(n_u2, 10))
     ax.set_xlim(edges[0], edges[-1])
     ax.set_xlabel("ensemble margin   m = logit(P_motif)   →  stronger U12-type", fontsize=10)
-    ax.set_ylabel("introns per bin  (bars = observed; blue line = expected U2-type, incl. <1)", fontsize=9)
+    ax.set_ylabel("introns per bin  (bars = observed; gray line = expected U2-type, incl. <1)", fontsize=9)
 
     # P_motif scale on top (same axis; P sits at logit(P))
     sec = ax.secondary_xaxis("top", functions=(_sigmoid_np, _logit_np))
