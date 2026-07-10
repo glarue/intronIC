@@ -20,6 +20,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from intronIC.core.intron import Intron
@@ -60,6 +61,12 @@ def _plot_axis_params(values, kind: str) -> Tuple[float, float]:
 #: Axis labels for the two plotting spaces (raw motif log-odds vs the genome's own standardized frame).
 _RAW_AXIS_LABELS = ("5'SS raw score", "BPS raw score", "3'SS raw score")
 _STD_AXIS_LABELS = ("5'SS score (standardized)", "BPS score (standardized)", "3'SS score (standardized)")
+
+#: U2-type grey hexbin colormap: standard Greys floored at 0.22 so single-count fringe cells lift off
+#: the white background — on a log scale count==1 otherwise maps to ~white and reads as "missing" even
+#: though the cell is present (see the scatter's U2 hexbin). The dense core is unchanged (ramp top is
+#: still black), so the layer still never buries the coloured U12-type markers drawn on top of it.
+_U2_DENSITY_CMAP = ListedColormap(plt.cm.Greys(np.linspace(0.22, 1.0, 256)), name="U2Greys")
 
 
 #: Candidate legend corners in tie-break priority order (first = preferred when densities tie). The
@@ -650,7 +657,7 @@ def scatter_plot_from_arrays(
         u2_pts = plot_scores[u2_idx]
         ax_main.hexbin(
             u2_pts[:, 0], u2_pts[:, 1],
-            gridsize=90, cmap="Greys", bins="log", mincnt=1,  # finer cells ≈ the U12 marker size (s=20)
+            gridsize=90, cmap=_U2_DENSITY_CMAP, bins="log", mincnt=1,  # finer cells ≈ the U12 marker size (s=20)
             extent=(xlim[0], xlim[1], ylim[0], ylim[1]),
             linewidths=0, zorder=1,
         )

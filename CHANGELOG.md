@@ -63,6 +63,11 @@ reproducible from the `pre-zstack-removal` git tag.
   of two independently NA-filtered lists), while the density hexbin still keeps every
   valid-(5′,BP) row. Bit-identical on current data (every row carries both); a defensive fix
   against a future scoring-only path emitting position-without-score rows.
+- Scatter U2-type grey hexbin: colormap floored at 0.22 (`Greys`→`_U2_DENSITY_CMAP`) so the
+  sparse single-count fringe cells lift off the white background instead of mapping to ~white
+  on the log scale (they read as "missing" vs the standalone hexbin, though no cell is dropped —
+  both use `mincnt=1`). The dense core is unchanged, so the layer still never buries the
+  coloured U12-type markers.
 
 ### Fixed — `-i` / `-d` isoform-flag parity (merged from PR #17 / v2.7.x maintenance)
 
