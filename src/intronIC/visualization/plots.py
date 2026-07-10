@@ -694,34 +694,45 @@ def scatter_plot_from_arrays(
     # square while the axes stay aligned with the marginals. (Per-axis standardization also makes a strict
     # equal-aspect semantically moot — each axis is normalized to its own spread.)
 
-    # Plot marginal distributions with explicit range to match symmetric limits
-    ax_top.hist(
-        plot_scores[:, 0],
-        bins=50,
-        range=xlim,
-        color="steelblue",
-        alpha=0.7,
-        edgecolor="none",
-    )
+    # Marginal distributions as smooth (filled) KDE traces rather than bars, over the same symmetric
+    # limits as the main plot. Million-intron genomes are stride-subsampled first (density shape is
+    # unchanged) so the KDE stays fast; degenerate marginals (n<2 or zero spread / singular covariance)
+    # are skipped gracefully rather than erroring.
+    from scipy.stats import gaussian_kde
+
+    def _kde_trace(ax, data, lims, orient):
+        d = np.asarray(data, float)
+        d = d[np.isfinite(d)]
+        if d.size > 60000:  # deterministic stride subsample for speed on huge genomes
+            d = d[:: int(np.ceil(d.size / 60000))]
+        if d.size < 2 or np.ptp(d) == 0:
+            return
+        grid = np.linspace(lims[0], lims[1], 256)
+        try:
+            dens = gaussian_kde(d)(grid)
+        except Exception:
+            return
+        if orient == "x":
+            ax.fill_between(grid, dens, color="steelblue", alpha=0.35, linewidth=0)
+            ax.plot(grid, dens, color="steelblue", lw=1.3)
+            ax.set_ylim(0, float(dens.max()) * 1.08)
+        else:
+            ax.fill_betweenx(grid, dens, color="steelblue", alpha=0.35, linewidth=0)
+            ax.plot(dens, grid, color="steelblue", lw=1.3)
+            ax.set_xlim(0, float(dens.max()) * 1.08)
+
+    _kde_trace(ax_top, plot_scores[:, 0], xlim, "x")
     ax_top.set_xlim(xlim)  # Explicitly set to match main plot
-    ax_top.set_ylabel("Count", fontsize=fsize - 2)
-    # Keep the histogram's x-axis baseline + tick marks (the hspace gap keeps them clear of the main plot);
+    ax_top.set_ylabel("Density", fontsize=fsize - 2)
+    # Keep the top axis baseline + tick marks (the hspace gap keeps them clear of the main plot);
     # drop only the tick LABELS, since the main plot below carries the shared x labels.
     ax_top.tick_params(labelbottom=False, bottom=True)
     ax_top.spines["top"].set_visible(False)
     ax_top.spines["right"].set_visible(False)
 
-    ax_right.hist(
-        plot_scores[:, 1],
-        bins=50,
-        range=ylim,
-        orientation="horizontal",
-        color="steelblue",
-        alpha=0.7,
-        edgecolor="none",
-    )
+    _kde_trace(ax_right, plot_scores[:, 1], ylim, "y")
     ax_right.set_ylim(ylim)  # Explicitly set to match main plot
-    ax_right.set_xlabel("Count", fontsize=fsize - 2)
+    ax_right.set_xlabel("Density", fontsize=fsize - 2)
     ax_right.tick_params(labelleft=False, labelrotation=45)
     ax_right.spines["top"].set_visible(False)
     ax_right.spines["right"].set_visible(False)

@@ -69,6 +69,9 @@ reproducible from the `pre-zstack-removal` git tag.
   on the log scale (they read as "missing" vs the standalone hexbin, though no cell is dropped —
   both use `mincnt=1`). The dense core is unchanged, so the layer still never buries the
   coloured U12-type markers.
+- Scatter marginal distributions are drawn as smooth filled **KDE traces** instead of bar
+  histograms (`Count` → `Density`); huge genomes are stride-subsampled for the KDE and
+  degenerate marginals (n<2 / zero spread) are skipped gracefully.
 
 ### Fixed — `-i` / `-d` isoform-flag parity (merged from PR #17 / v2.7.x maintenance)
 
