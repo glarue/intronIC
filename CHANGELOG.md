@@ -56,8 +56,9 @@ reproducible from the `pre-zstack-removal` git tag.
   hexbin, 3D, and SVM-diagnostic panels).
 - Tail-model diagnostic: the inline "U2 model ≈ …/bin here" callout is replaced by a
   horizontal dashed line at the fitted U2-type tail's expected count where the 95th-pct call
-  margin lands, with the value annotated on the y-axis; the 95th-pct call-margin line is
-  recolored (magenta) so it no longer shares the U12-type call colour.
+  margin lands, its value labelled on the line over the U2-type distribution (clear of the
+  y-axis ticks); the 95th-pct call-margin line is recolored (magenta) so it no longer shares
+  the U12-type call colour.
 - Row-locked the scatter / 3D / histogram inputs in **both** the streaming and in-memory plot
   paths so the position array and the tier-score array are built 1:1 (never a positional zip
   of two independently NA-filtered lists), while the density hexbin still keeps every

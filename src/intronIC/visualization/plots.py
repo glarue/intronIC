@@ -1030,10 +1030,13 @@ def tail_model_plot(
                 ax.axhline(y_at, color="#3182bd", ls="--", lw=1.3, zorder=5,
                            label="U2-type model at 95th-pct call margin")
                 ax.plot([cs], [y_at], "o", color="#3182bd", ms=4, zorder=6)
-                ax.annotate(f"{y_at:.0e}", xy=(0, y_at), xycoords=ax.get_yaxis_transform(),
-                            xytext=(-4, 0), textcoords="offset points", va="center", ha="right",
-                            fontsize=7.6, fontweight="bold", color="#3182bd", clip_on=False, zorder=7,
-                            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.9))
+                # Label the line's value ON the line, centred over the U2-type distribution (count-weighted
+                # mean of the background margins) so it never collides with the y-axis tick labels.
+                u2_mid_x = (float(np.sum(centers * counts) / counts.sum())
+                            if counts.sum() > 0 else float(np.mean(centers)))
+                ax.annotate(f"≈ {y_at:.0e}", xy=(u2_mid_x, y_at), va="center", ha="center",
+                            fontsize=7.6, fontweight="bold", color="#3182bd", zorder=7,
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#3182bd", lw=0.6, alpha=0.92))
 
     # threshold / anchor lines (skip the ones that need the fit when unfit)
     vlines = [(P90, "#31a354", ":", "P=0.9 call line")]
