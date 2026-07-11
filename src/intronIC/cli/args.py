@@ -108,7 +108,7 @@ class IntronICArgumentParser:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
-  # Train a model on reference data (no genome needed!)
+  # Train a model on reference data (no genome or annotation required)
   intronIC train -n homo_sapiens
 
   # Classify introns with pretrained model (uses streaming mode by default)
