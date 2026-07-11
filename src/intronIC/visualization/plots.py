@@ -9,6 +9,8 @@ Recreates the plots from original intronIC:
 - Precision-Recall AUC curves
 """
 
+import re
+
 import matplotlib
 import numpy as np
 
@@ -98,6 +100,70 @@ _U2_LINE = "#525252"   # dark gray lines (fitted U2 tail, marginal KDE line, U2 
 _TITLE_COLOR = "#2b2b2b"
 _TITLE_SIZE = 15
 _TITLE_WEIGHT = "bold"
+
+
+def _wrap_text_to_px(text, fig, target_px, fontsize=_TITLE_SIZE, fontweight=_TITLE_WEIGHT):
+    """Insert newlines so every line of `text` renders within `target_px` pixels at the
+    given font. Breaks preferentially at spaces, then after ``_ - . /`` separators (so long
+    underscore-joined species keys wrap), and hard-breaks any single token still too wide.
+    Returns `text` unchanged when it already fits. Uses the Agg renderer to measure real
+    glyph widths, so wrapping tracks the actual plot geometry rather than a character count."""
+    if not text:
+        return text
+    renderer = fig.canvas.get_renderer()
+
+    def _w(s):
+        probe = fig.text(0, 0, s, fontsize=fontsize, fontweight=fontweight)
+        try:
+            return probe.get_window_extent(renderer).width
+        finally:
+            probe.remove()
+
+    if _w(text) <= target_px:
+        return text
+
+    # Tokenise so each token carries its trailing separator run; concatenating tokens
+    # reproduces the original string exactly (no characters lost at break points).
+    tokens = re.findall(r"[^ _\-./]+[ _\-./]*|[ _\-./]+", text)
+    lines, cur = [], ""
+    for tok in tokens:
+        cand = cur + tok
+        if cur and _w(cand.rstrip()) > target_px:
+            lines.append(cur.rstrip())
+            cur = tok.lstrip(" ")
+        else:
+            cur = cand
+    if cur.rstrip():
+        lines.append(cur.rstrip())
+
+    # Hard-break any residual over-long line (a single very long token, e.g. a giant
+    # assembly-suffixed species key with no separators).
+    out = []
+    for ln in lines:
+        while _w(ln) > target_px and len(ln) > 1:
+            lo, hi = 1, len(ln)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if _w(ln[:mid]) <= target_px:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            out.append(ln[:lo])
+            ln = ln[lo:]
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _fitted_axes_title(ax, fig, text, frac=0.95):
+    """Wrap `text` to the axes' current pixel width (for ``ax.set_title``)."""
+    target = ax.get_window_extent(fig.canvas.get_renderer()).width * frac
+    return _wrap_text_to_px(text, fig, target)
+
+
+def _fitted_fig_title(fig, text, frac=0.94):
+    """Wrap `text` to the figure's pixel width (for ``fig.suptitle``)."""
+    target = fig.get_window_extent(fig.canvas.get_renderer()).width * frac
+    return _wrap_text_to_px(text, fig, target)
 
 
 #: Candidate legend corners in tie-break priority order (first = preferred when densities tie). The
@@ -508,13 +574,17 @@ def density_hexplot(
         plt.xlabel(xlab, fontsize=fsize)
     if ylab:
         plt.ylabel(ylab, fontsize=fsize)
-    plt.title(plot_title, fontsize=_TITLE_SIZE, fontweight=_TITLE_WEIGHT, color=_TITLE_COLOR)
-
     # Add colorbar
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
     cb = plt.colorbar(hx, cax=cax)
     cb.set_label("Bin density (log10(n))")
+
+    # Title set after the colorbar so it wraps to the final (reduced) plot-area width.
+    ax.set_title(
+        _fitted_axes_title(ax, plt.gcf(), plot_title, frac=0.88),
+        fontsize=_TITLE_SIZE, fontweight=_TITLE_WEIGHT, color=_TITLE_COLOR,
+    )
 
     # Save figure
     plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
@@ -771,9 +841,13 @@ def scatter_plot_from_arrays(
     # Sensible per-run title: the run/species name (prominent) + a subtitle giving the call counts and
     # the plotting frame, so the figure is self-describing for a given run.
     n_u12_total = u12_low + u12_med + u12_high
-    fig.suptitle(species_name, fontsize=_TITLE_SIZE, y=0.985, weight=_TITLE_WEIGHT, color=_TITLE_COLOR)
+    _title = _fitted_fig_title(fig, species_name)
+    fig.suptitle(_title, fontsize=_TITLE_SIZE, y=0.985, weight=_TITLE_WEIGHT, color=_TITLE_COLOR)
+    # Push the count subtitle down by one line-height per extra wrapped title line so a
+    # multi-line species name never collides with it (suptitle is top-anchored at y=0.985).
+    _extra_lines = _title.count("\n")
     fig.text(
-        0.5, 0.94,
+        0.5, 0.94 - 0.032 * _extra_lines,
         f"{n_u12_total:,} U12-type  ·  {u2_count:,} U2-type",
         ha="center", va="top", fontsize=fsize - 3, color="0.30",
     )
@@ -928,7 +1002,7 @@ def scatter_3d(
     # 3D z-scores so the geometry is invariant across runs.
     _space = "standardized" if "standardized" in xlab else "raw"
     fig.suptitle(
-        f"{species_name} — U12-type / U2-type classification (3D {_space} scores)",
+        _fitted_fig_title(fig, f"{species_name} — U12-type / U2-type classification (3D {_space} scores)"),
         fontsize=_TITLE_SIZE, weight=_TITLE_WEIGHT, color=_TITLE_COLOR, y=0.97,
     )
 
@@ -970,7 +1044,7 @@ def histogram(
         plt.grid(True, which="both", ls="--", alpha=0.7)
 
     # Clean title: species_name + description
-    plt.title(f"{species_name} — U12-type score distribution",
+    plt.title(_fitted_axes_title(plt.gca(), plt.gcf(), f"{species_name} — U12-type score distribution"),
               fontsize=_TITLE_SIZE, fontweight=_TITLE_WEIGHT, color=_TITLE_COLOR)
 
     plt.xlabel("U12-type score", fontsize=14)
@@ -1116,7 +1190,7 @@ def tail_model_plot(
     ax.text(0.985, 0.965, box, transform=ax.transAxes, fontsize=9, family="monospace",
             va="top", ha="right", color="#222",
             bbox=dict(boxstyle="round,pad=0.4", fc="white", ec=catcol, lw=1.8))
-    ax.set_title(f"{species_name} — U2-type tail model  (adjudicator diagnostic)",
+    ax.set_title(_fitted_axes_title(ax, fig, f"{species_name} — U2-type tail model"),
                  fontsize=_TITLE_SIZE, fontweight=_TITLE_WEIGHT, color=_TITLE_COLOR, pad=22)
     if not assessable:
         ax.text(0.015, 0.02, f"U2-type tail unfit ({d.get('reason') or 'n/a'}) — bars only, no extrapolated curve",
@@ -1247,7 +1321,7 @@ def plot_training_results(
 
     plt.xlabel("Recall", fontsize=14)
     plt.ylabel("Precision", fontsize=14)
-    plt.title(f"{species_name} - Precision-Recall Curve", fontsize=14)
+    plt.title(_fitted_axes_title(plt.gca(), plt.gcf(), f"{species_name} - Precision-Recall Curve"), fontsize=14)
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.legend(loc="best", fontsize=12)
@@ -1302,7 +1376,7 @@ def ref_scatter(
 
     plt.xlabel("5'SS raw score", fontsize=fsize)
     plt.ylabel("BPS raw score", fontsize=fsize)
-    plt.title(f"{species_name} - Training Reference Data", fontsize=fsize)
+    plt.title(_fitted_axes_title(plt.gca(), plt.gcf(), f"{species_name} - Training Reference Data"), fontsize=fsize)
 
     # Set equal aspect ratio to match original intronIC
     plt.gca().set_aspect("equal", adjustable="box")
