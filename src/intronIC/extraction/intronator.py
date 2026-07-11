@@ -110,12 +110,27 @@ class IntronGenerator:
         # All exons in a transcript should have the same strand
         strand = exons[0].coordinates.strand
 
+        # Sort by genomic start in coding direction, breaking ties by annotation/parse
+        # order (`_line_number`). Sorting on `start` alone is NOT a total order —
+        # overlapping exons (an annotation artifact) frequently share a start coordinate,
+        # and a stable sort then preserves the *input* order of the tie. The input order
+        # comes from `transcript.children`, which is a set, so it is string-hash-ordered and
+        # varies with PYTHONHASHSEED across processes — which made exon pairing (and thus
+        # which overlapping-exon intron gets skipped) non-deterministic from one run to the
+        # next. `_line_number` (the feature's line in the annotation file) is a unique,
+        # stable tiebreaker that reproduces the order a sequential parser sees, so exon
+        # pairing is deterministic without imposing a coordinate order that would change
+        # which introns are emitted.
+        def _key(e):
+            return (e.coordinates.start, e.attributes.get("_line_number", 0))
+
         if strand == "-":
-            # Negative strand: sort descending (highest coordinate first)
-            return sorted(exons, key=lambda e: e.coordinates.start, reverse=True)
+            # Negative strand: highest coordinate = first in coding order (start descending),
+            # ties still broken by ascending parse order.
+            return sorted(exons, key=lambda e: (-e.coordinates.start, e.attributes.get("_line_number", 0)))
         else:
-            # Positive strand: sort ascending (lowest coordinate first)
-            return sorted(exons, key=lambda e: e.coordinates.start)
+            # Positive strand: lowest coordinate = first in coding order.
+            return sorted(exons, key=_key)
 
     def generate_from_exons(self, exons: List[Exon]) -> Iterator[Intron]:
         """
@@ -291,12 +306,19 @@ class IntronGenerator:
             if non_redundant_introns
             else "+"
         )
+        # Total-order key (start, stop): sorting on `start` alone leaves same-start introns
+        # (e.g. a CDS- and an exon-derived intron sharing a 5' boundary) in hash-dependent
+        # input order. The stop tiebreaker makes the ordinal indexing deterministic.
         if strand == "-":
             # Negative strand: sort descending (highest coord = first intron)
-            non_redundant_introns.sort(key=lambda i: i.coordinates.start, reverse=True)
+            non_redundant_introns.sort(
+                key=lambda i: (i.coordinates.start, i.coordinates.stop), reverse=True
+            )
         else:
             # Positive strand: sort ascending (lowest coord = first intron)
-            non_redundant_introns.sort(key=lambda i: i.coordinates.start)
+            non_redundant_introns.sort(
+                key=lambda i: (i.coordinates.start, i.coordinates.stop)
+            )
 
         # Family size = number of actual introns output
         # Design decision: touching/zero-length exon pairs (annotation errors) are
