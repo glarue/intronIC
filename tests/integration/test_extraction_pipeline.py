@@ -207,4 +207,60 @@ def test_quick_extraction():
 
     print(f"✓ Generated {len(introns)} introns from chr19")
     assert len(introns) > 10000  # Should be thousands
-    assert len(introns) > 10000  # Should be thousands
+
+
+@pytest.mark.skipif(
+    not CHR19_ANNOTATION.exists(), reason="Chr19 test data not available"
+)
+def test_fractional_position_computed():
+    """Regression guard for the frac_pos bug (all introns were 0.0): fractional_position
+    must be populated, non-degenerate, spread across (0, 1), monotonic within a transcript,
+    and computed over the MATURE (spliced, UTR-inclusive) transcript so UTR introns fall
+    near the ends. See intronator.generate_from_transcript."""
+    from collections import defaultdict
+
+    builder = AnnotationHierarchyBuilder(["exon", "cds"])
+    genes = builder.build_from_file(str(CHR19_ANNOTATION))
+    introns = list(IntronGenerator().generate_from_genes(genes, builder.feature_index))
+
+    fps = [i.metadata.fractional_position for i in introns]
+    assert all(f is not None for f in fps), "frac_pos must never be None"
+    # Not the old degenerate all-zero output.
+    nonzero = [f for f in fps if f > 0.0]
+    assert len(nonzero) > 0.9 * len(fps), "frac_pos is degenerate (mostly 0.0)"
+    assert len(set(fps)) > 1000, "frac_pos should take many distinct values"
+    assert all(0.0 <= f <= 1.0 for f in fps), "frac_pos must lie in [0, 1]"
+
+    by_tx = defaultdict(list)
+    for i in introns:
+        by_tx[i.metadata.parent].append(i)
+
+    # Within any transcript, frac_pos must be non-decreasing with ordinal index.
+    checked = 0
+    for members in by_tx.values():
+        if len(members) < 3:
+            continue
+        ordered = sorted(members, key=lambda x: x.metadata.index)
+        seq = [x.metadata.fractional_position for x in ordered]
+        assert seq == sorted(seq), f"frac_pos not monotonic in {ordered[0].metadata.parent}: {seq}"
+        checked += 1
+    assert checked > 100, "expected many multi-intron transcripts to check"
+
+    # UTR-inclusive coordinate system: UTR (exon-defined) introns share the same
+    # spliced-transcript axis as the CDS introns, so a 5' UTR intron (first by index)
+    # must be ordered strictly upstream of the transcript's CDS introns. (Its absolute
+    # frac_pos is not bounded below 0.5 — a long first exon can push it past the midpoint.)
+    saw_5utr_case = False
+    for members in by_tx.values():
+        if len(members) < 4 or not any(x.metadata.defined_by == "cds" for x in members):
+            continue
+        ordered = sorted(members, key=lambda x: x.metadata.index)
+        if ordered[0].metadata.defined_by != "exon":
+            continue
+        first_cds = next(x for x in ordered if x.metadata.defined_by == "cds")
+        assert (
+            first_cds.metadata.fractional_position
+            > ordered[0].metadata.fractional_position
+        ), f"5' UTR intron not upstream of CDS introns in {ordered[0].metadata.parent}"
+        saw_5utr_case = True
+    assert saw_5utr_case, "expected at least one transcript with a 5' UTR intron"

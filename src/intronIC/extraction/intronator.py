@@ -8,8 +8,6 @@ Exon objects in a transcript.
 from itertools import islice
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple, Union
 
-import numpy as np
-
 from intronIC.core.intron import Intron
 from intronIC.core.models import Exon, Gene, Transcript
 
@@ -166,7 +164,8 @@ class IntronGenerator:
                     print(f"[!] Warning: Could not create intron: {e}")
                     continue
 
-            # Store exon IDs for fractional position calculation
+            # Store exon IDs (fractional position is computed later from the transcript's
+            # exon structure directly, not by re-looking these up).
             intron.metadata.upstream_exon_id = upstream_exon.feature_id
             intron.metadata.downstream_exon_id = downstream_exon.feature_id
 
@@ -311,39 +310,34 @@ class IntronGenerator:
         for index, intron in enumerate(non_redundant_introns, start=1):
             intron.metadata.index = index
 
-        # Calculate fractional positions based on cumulative exon lengths
-        # (matching original intronIC.py:429-434)
-        exon_lengths = []
-        for intron in non_redundant_introns:
-            # Get upstream exon length
-            upstream_exon_id = intron.metadata.upstream_exon_id
-            if upstream_exon_id and upstream_exon_id in feature_index:
-                upstream_exon = feature_index[upstream_exon_id]
-                exon_lengths.append(upstream_exon.length)
-            else:
-                # Fallback if exon ID not found (shouldn't happen)
-                exon_lengths.append(0)
-
-        # Add last exon (downstream of last intron)
-        last_intron = non_redundant_introns[-1]
-        if (
-            last_intron.metadata.downstream_exon_id
-            and last_intron.metadata.downstream_exon_id in feature_index
-        ):
-            last_exon = feature_index[last_intron.metadata.downstream_exon_id]
-            exon_lengths.append(last_exon.length)
-        else:
-            exon_lengths.append(0)
-
-        # Calculate cumulative sum and fractional positions
-        exon_cumsum = np.array(exon_lengths)[:-1].cumsum()
-        aggregate_length = sum(exon_lengths)
-
-        # Original multiplied by 100, but we store as 0.0-1.0 for clarity
-        if aggregate_length > 0:
-            frac_positions = (exon_cumsum / aggregate_length).round(4)
-        else:
-            frac_positions = np.zeros(len(non_redundant_introns))
+        # Fractional position of each intron along the MATURE (spliced) transcript.
+        # Coordinate system = the exon features (full transcript, incl. UTRs) when present,
+        # else the CDS features (CDS-only annotations have no UTRs). frac_pos = (spliced
+        # length upstream of the intron, coding direction) / (total spliced length). This
+        # places 5'-UTR introns near 0 and 3'-UTR introns near 1, and positions CDS introns
+        # by their true transcript position (the 5'-UTR length counts toward the numerator).
+        # NB: earlier this re-looked-up exon lengths via feature_index, which is keyed by a
+        # synthetic name (not feature_id), so every lookup missed and frac_pos was always 0.
+        coord_features = exon_features if exon_features else cds_features
+        total_spliced = sum(f.length for f in coord_features)
+        strand = non_redundant_introns[0].coordinates.strand
+        frac_positions = [0.0] * len(non_redundant_introns)
+        if total_spliced > 0:
+            for array_index, intron in enumerate(non_redundant_introns):
+                if strand == "-":
+                    # coding direction is high->low coord: upstream = higher-coord features
+                    upstream = sum(
+                        f.length
+                        for f in coord_features
+                        if f.coordinates.start > intron.coordinates.stop
+                    )
+                else:
+                    upstream = sum(
+                        f.length
+                        for f in coord_features
+                        if f.coordinates.stop < intron.coordinates.start
+                    )
+                frac_positions[array_index] = round(upstream / total_spliced, 4)
 
         for array_index, intron in enumerate(non_redundant_introns):
             # Set metadata (index already assigned above via sequential enumeration)
@@ -352,7 +346,6 @@ class IntronGenerator:
             intron.metadata.parent_length = (
                 coding_length  # Sum of CDS/exon lengths (not genomic span)
             )
-            # Use array_index for fractional position array lookup (0-based)
             intron.metadata.fractional_position = float(frac_positions[array_index])
 
             # Set grandparent if available
