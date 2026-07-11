@@ -5,7 +5,7 @@
     "Gold-standard PWMs from IPA-conserved introns + CoLa-seq empirical BPs",
     "U12 gold standard: 578 introns (ref=387, IPA=514)",
     "U2 source: IPA-conserved (112928 introns)",
-    "CoLa-seq: Luo et al. 2023 (PMC10448999), K562, hg38",
+    "CoLa-seq: Zeng et al. 2022 (PMC10448999, doi:10.1016/j.molcel.2022.11.004), K562, hg38",
     "Pseudocount: 0.0001",
     "U12 SVM threshold: 95.0%",
     "U2 AT-AC BPS: 50/50 average of CoLa-seq bootstrap + U2 GT-AG BP"

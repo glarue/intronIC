@@ -681,10 +681,8 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--normalizer_mode",
             choices=["human", "adaptive", "auto"],
             default="auto",
-            help="""Normalizer mode for pretrained model classification (default: auto):
-              human: Use scaler from training species (recommended for U12-absent genomes)
-              adaptive: Refit scaler on experimental data (experimental, may cause FPs in U12-free species)
-              auto: Use human if available in model, otherwise adaptive""",
+            help="""(Deprecated, no effect in v3.) The per-species normalizer was removed
+              with the z-normalization stack; accepted only so older command lines still parse.""",
         )
 
         # Species-specific prior adjustment (for U12-absent species)
@@ -710,12 +708,8 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             type=Path,
             default=None,
             metavar="PATH",
-            help="""Load a saved normalizer (from a previous run, or any compatible scaler pickle)
-              and use it instead of fitting one. Honored in both streaming and in-memory modes.
-              When passed, this overrides whatever scaler the model bundle ships with and skips
-              the per-input adaptive fit. Typical use: pass --save-normalizer on a first
-              full-genome run, then --load-normalizer <path>.normalizer.pkl on subsequent runs
-              over subsets of the same genome to keep z-scores consistent.""",
+            help="""(Deprecated, no effect in v3.) The per-species normalizer was removed;
+              accepted only for backward-compatible invocation.""",
         )
 
         # Save fitted normalizer (for future reproducibility)
@@ -723,10 +717,8 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             "--save-normalizer",
             action="store_true",
             default=False,
-            help="""Save the fitted normalizer for future runs (adaptive mode only).
-              Use this on your first full-genome run for a species to establish a reference
-              normalization. Future runs can use --load-normalizer to reuse this normalization.
-              Saved to <output_prefix>.normalizer.pkl""",
+            help="""(Deprecated, no effect in v3.) The per-species normalizer was removed;
+              accepted only for backward-compatible invocation.""",
         )
 
         # Mode-separation (v2.6+): activated automatically when the bundle is
@@ -736,35 +728,32 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             dest="mode_sep_disable",
             action="store_true",
             default=False,
-            help="""Disable the mode-separation second pass even when the loaded bundle
-              ships in modesep mode. Emits only first-pass (cluster-aware) scores.
-              Use for diagnostics or when reproducing pre-v2.6 behavior.""",
+            help="""(Deprecated, no effect in v3.) The mode-separation second pass was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--mode-sep-z-floor",
             dest="mode_sep_z_floor",
             type=float,
             default=None,
-            help="""Override the mode-sep z_5p eligibility floor (default from bundle: 0.30).
-              Introns with z_5p below this are skipped by the second-pass ensemble
-              (kept at first-pass score). Lower values score more introns at higher cost;
-              the bundle default is empirically derived (Phase 0 #176).""",
+            help="""(Deprecated, no effect in v3.) Mode-separation was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--mode-sep-valley-min",
             dest="mode_sep_valley_min",
             type=float,
             default=None,
-            help="""Override the mode-sep KDE valley-depth threshold (default from bundle: 0.30).
-              Species with valley depth below this fail the gate and emit first-pass scores only.""",
+            help="""(Deprecated, no effect in v3.) Mode-separation was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--mode-sep-n-floor",
             dest="mode_sep_n_floor",
             type=int,
             default=None,
-            help="""Override the mode-sep n_eff_candidates floor (default from bundle: 5).
-              Species with fewer effective first-pass U12 candidates than this gate-fail.""",
+            help="""(Deprecated, no effect in v3.) Mode-separation was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--adjudicator-min-u2",
@@ -782,10 +771,8 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             dest="mode_sep_mu_u12_tolerance",
             type=float,
             default=None,
-            help="""Override the mode-sep μ_U12 location-prior tolerance (default from bundle: 3.6
-              raw PWM units around the universal anchor 15.67). Species whose inferred
-              μ_U12_5'_raw drifts outside this band gate-fail. Catches first-pass classifiers
-              that confidently mis-locate the U12 mode (e.g., v3-era TetThe pattern).""",
+            help="""(Deprecated, no effect in v3.) Mode-separation was removed;
+              accepted only for backward-compatible invocation.""",
         )
 
         # Continuous per-intron discount (v2.7+)
@@ -794,53 +781,40 @@ Note: This command uses the bundled test data (Homo sapiens Chr19) to verify
             dest="discount_disable",
             action="store_true",
             default=False,
-            help="""Disable the v2.7+ continuous per-intron discount that suppresses
-              SVM overcalls relative to motif log-LR. By default the discount writes
-              an `adjusted_score` column to score_info.iic; calls at threshold are
-              evaluated against adjusted_score. Pass this flag to preserve raw
-              svm_score as the calling column (pre-v2.7 behavior).""",
+            help="""(Deprecated, no effect in v3.) The continuous per-intron discount was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--discount-k-overcall",
             dest="discount_k_overcall",
             type=float,
             default=2.0,
-            help="""Continuous discount coefficient for SVM overcall penalty (default 2.0).
-              Penalty = k_overcall × max(0, svm_vs_naive − tau_overcall) where
-              svm_vs_naive = logit(p_svm) − raw_sum. Higher = stronger suppression
-              of overcalls relative to motif evidence. Empirically tuned against
-              14-species panel + Salpingoeca to preserve all IPA-validated TPs.""",
+            help="""(Deprecated, no effect in v3.) The continuous per-intron discount was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--discount-tau-overcall",
             dest="discount_tau_overcall",
             type=float,
             default=0.0,
-            help="""svm_vs_naive threshold above which overcall penalty activates
-              (default 0.0). Empirically derived: panel TPs sit below 0; Salpingoeca-class
-              FPs sit well above.""",
+            help="""(Deprecated, no effect in v3.) The continuous per-intron discount was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--discount-k-weakmot",
             dest="discount_k_weakmot",
             type=float,
             default=0.0,
-            help="""Continuous discount coefficient for weak-motif penalty (default 0.0 =
-              DISABLED). Penalty = k_weakmot × max(0, tau_motif − raw_sum). When enabled,
-              suppresses calls with weak motif log-LR sums. Disabled by default because
-              it loses IPA-validated borderline TPs where the SVM correctly leverages
-              non-motif features (bp_offset, bp_scan_confidence, support2) for borderline-
-              motif U12s. Enable only if your use case requires stricter motif-evidence
-              calls.""",
+            help="""(Deprecated, no effect in v3.) The continuous per-intron discount was removed;
+              accepted only for backward-compatible invocation.""",
         )
         parser.add_argument(
             "--discount-tau-motif",
             dest="discount_tau_motif",
             type=float,
             default=10.0,
-            help="""raw_sum threshold below which weak-motif penalty activates
-              (default 10.0). Panel TPs have raw_sum ≈ +22; threshold of 10
-              ensures TPs unaffected while weak-motif candidates discounted.""",
+            help="""(Deprecated, no effect in v3.) The continuous per-intron discount was removed;
+              accepted only for backward-compatible invocation.""",
         )
 
         # Backward compatibility: old --pretrained_model flag
