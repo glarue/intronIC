@@ -1,11 +1,98 @@
-"""Tests for visualization helpers (pure logic only — no figure rendering)."""
+"""Tests for visualization helpers (pure logic + the raw-motif scatter gating)."""
 
 import numpy as np
 
-from intronIC.visualization.plots import _legend_loc_by_density
+from intronIC.visualization.plots import (
+    _legend_loc_by_density,
+    plot_raw_motif_scatter_from_file,
+    scatter_plot_from_arrays,
+)
 
 XLIM = (0.0, 10.0)
 YLIM = (0.0, 10.0)
+
+# score_info.iic columns the raw-motif scatter needs (order irrelevant — the function resolves by name)
+_RAW_COLS = ["name", "5'_raw", "bp_raw", "P_motif", "motif_category", "type_id"]
+
+
+def _write_score_info(path, rows, cols=_RAW_COLS):
+    """Write a minimal tab-delimited score_info.iic from a list of dict rows."""
+    with open(path, "w") as f:
+        f.write("\t".join(cols) + "\n")
+        for r in rows:
+            f.write("\t".join(str(r.get(c, "NA")) for c in cols) + "\n")
+
+
+def _synthetic_rows(category, n=40, n_strong=6):
+    """n introns in a U2 blob; the last n_strong are motif-strong (high P_motif). type_id honours
+    the species call: all u2 when suppressed (NOT_DETECTED), else the strong ones are u12."""
+    rng = np.random.RandomState(0)
+    rows = []
+    for i in range(n):
+        strong = i >= n - n_strong
+        pm = 0.98 if strong else 0.001
+        if category == "NOT_DETECTED":
+            tid = "u2"  # all suppressed
+        else:
+            tid = "u12" if strong else "u2"
+        rows.append({
+            "name": f"i{i}",
+            "5'_raw": round(float(rng.normal(3 if strong else 0, 0.4)), 3),
+            "bp_raw": round(float(rng.normal(2 if strong else 0, 0.4)), 3),
+            "P_motif": pm,
+            "motif_category": category,
+            "type_id": tid,
+        })
+    return rows
+
+
+class TestRawMotifScatterGating:
+    """plot_raw_motif_scatter_from_file emits ONLY for NOT_DETECTED genomes and only when the
+    adjudicator columns exist."""
+
+    def test_emits_for_not_detected(self, tmp_path):
+        sf = tmp_path / "sp.score_info.iic"
+        _write_score_info(sf, _synthetic_rows("NOT_DETECTED"))
+        out = plot_raw_motif_scatter_from_file(sf, tmp_path, "sp", threshold=90.0, fig_dpi=60)
+        assert out is not None and out.exists()
+        assert out.name == "sp.plot.scatter_raw.iic.png"
+
+    def test_noop_for_detected(self, tmp_path):
+        sf = tmp_path / "sp.score_info.iic"
+        _write_score_info(sf, _synthetic_rows("DETECTED"))
+        out = plot_raw_motif_scatter_from_file(sf, tmp_path, "sp", threshold=90.0, fig_dpi=60)
+        assert out is None
+        assert not (tmp_path / "sp.plot.scatter_raw.iic.png").exists()
+
+    def test_noop_for_inconclusive(self, tmp_path):
+        sf = tmp_path / "sp.score_info.iic"
+        _write_score_info(sf, _synthetic_rows("INCONCLUSIVE"))
+        assert plot_raw_motif_scatter_from_file(sf, tmp_path, "sp", threshold=90.0, fig_dpi=60) is None
+
+    def test_noop_when_pmotif_column_absent(self, tmp_path):
+        # raw_gated / legacy schema without the adjudicator columns -> nothing to draw
+        cols = ["name", "5'_raw", "bp_raw", "type_id"]
+        rows = [{"name": "i0", "5'_raw": 0.1, "bp_raw": 0.2, "type_id": "u2"}]
+        sf = tmp_path / "sp.score_info.iic"
+        _write_score_info(sf, rows, cols=cols)
+        assert plot_raw_motif_scatter_from_file(sf, tmp_path, "sp", threshold=90.0, fig_dpi=60) is None
+
+
+class TestDegenerateConfidenceBand:
+    """A fully-suppressed genome has zero score spread; the legend must not render the nonsensical
+    'X < U12-type <= X' bin (the C. elegans NOT_DETECTED regression)."""
+
+    def test_zero_spread_scatter_renders(self, tmp_path):
+        # All-equal tier scores -> score_stdev == 0 -> med_val == high_val (the degenerate case).
+        rng = np.random.RandomState(1)
+        xy = rng.normal(0, 1, size=(60, 2))
+        svm = [0.0] * 60  # every point below threshold, zero spread
+        out = tmp_path / "deg.png"
+        scatter_plot_from_arrays(
+            score_vector=xy, svm_scores=svm, species_name="deg", output_path=out,
+            xlab="x", ylab="y", threshold=90.0, type_ids=["u2"] * 60, fig_dpi=60,
+        )
+        assert out.exists()  # collapsed-band guard: renders cleanly rather than a degenerate label
 
 
 class TestLegendLocByDensity:

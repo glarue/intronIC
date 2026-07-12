@@ -371,6 +371,97 @@ def plot_classification_results_from_file(
         )
 
 
+def plot_raw_motif_scatter_from_file(
+    score_file: Path,
+    output_dir: Path,
+    species_name: str,
+    threshold: float,
+    fig_dpi: int = 300,
+) -> Optional[Path]:
+    """Emit the raw-motif scatter for a species-level–suppressed genome.
+
+    The standard ``.plot.scatter.iic.png`` colours introns by the *adjudicated* call
+    (``adjusted_score``). When the species adjudicator returns ``NOT_DETECTED`` it zeroes every
+    ``adjusted_score``, so that plot shows no coloured points and hides the underlying motif structure —
+    even though the genome may carry a handful of motif-strong introns (its irreducible U2-type floor).
+
+    This companion plot (``.plot.scatter_raw.iic.png``) is emitted ONLY for ``NOT_DETECTED`` genomes and
+    colours introns by the per-intron, species-agnostic ``P_motif`` (×100) *independent* of the species
+    call, so those motif-strong outliers are visible. The subtitle keeps the genome's TRUE call counts
+    (0 U12-type for a suppressed genome) and an annotation records the species call, so the figure is not
+    misread as reporting U12-type introns. No-op (returns ``None``) for any non-``NOT_DETECTED`` genome or
+    when the file lacks ``P_motif`` / ``motif_category`` (e.g. raw_gated bundles).
+
+    Reads ``score_info.iic`` directly, so it works identically for the streaming and in-memory paths
+    (both call it after post-classification finalizes the adjudicator columns).
+    """
+    with open(score_file, "r") as f:
+        header = f.readline().rstrip("\n").split("\t")
+    needed = ("5'_raw", "bp_raw", "P_motif", "motif_category", "type_id")
+    if any(col not in header for col in needed):
+        return None  # older/raw_gated schema without the adjudicator columns — nothing to draw
+    i5, ibp = header.index("5'_raw"), header.index("bp_raw")
+    ipm, icat, itid = header.index("P_motif"), header.index("motif_category"), header.index("type_id")
+
+    xy, motif100, category = [], [], None
+    true_u12 = true_u2 = 0
+    with open(score_file, "r") as f:
+        next(f)  # skip header
+        for line in f:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) <= max(i5, ibp, ipm, icat, itid):
+                continue
+            if category is None and fields[icat] not in ("NA", "", "null"):
+                category = fields[icat]  # per-species constant
+            tid = fields[itid]
+            if tid == "u12":
+                true_u12 += 1
+            elif tid == "u2":
+                true_u2 += 1
+            f5, fbp, fpm = fields[i5], fields[ibp], fields[ipm]
+            if "NA" in (f5, fbp, fpm):
+                continue
+            try:
+                xy.append([float(f5), float(fbp)])
+                motif100.append(float(fpm) * 100.0)
+            except ValueError:
+                continue
+
+    # Only suppressed genomes get this companion view; everything else already shows its calls.
+    if category != "NOT_DETECTED" or not xy:
+        return None
+
+    score_vector = np.array(xy)
+    if _PLOT_SCALER_KIND != "none" and score_vector.size:
+        cx, sx = _plot_axis_params(score_vector[:, 0], _PLOT_SCALER_KIND)
+        cy, sy = _plot_axis_params(score_vector[:, 1], _PLOT_SCALER_KIND)
+        score_vector = (score_vector - [cx, cy]) / [sx, sy]
+        xlab, ylab, _ = _STD_AXIS_LABELS
+    else:
+        xlab, ylab, _ = _RAW_AXIS_LABELS
+
+    out_path = output_dir / f"{species_name}.plot.scatter_raw.iic.png"
+    # type_ids=None so the U2/U12 split is driven purely by the raw motif score (score < 50), NOT the
+    # suppressed adjudicated call — this is exactly the "underlying score distribution absent the
+    # species-level call" the plot is meant to show.
+    scatter_plot_from_arrays(
+        score_vector=score_vector,
+        svm_scores=motif100,
+        species_name=species_name,
+        output_path=out_path,
+        xlab=xlab,
+        ylab=ylab,
+        threshold=threshold,
+        type_ids=None,
+        fig_dpi=fig_dpi,
+        legend_kind="motif",
+        legend_title="motif score (not called as U12-type)",
+        subtitle_counts=(true_u12, true_u2),
+        annotation=f"species call: {category} — motif-strong introns shown, not reported as U12-type",
+    )
+    return out_path
+
+
 def plot_classification_results(
     introns: List[Intron],
     output_dir: Path,
@@ -652,6 +743,10 @@ def scatter_plot_from_arrays(
     type_ids: Optional[List[Optional[str]]] = None,
     fsize: int = 14,
     fig_dpi: int = 300,
+    legend_kind: str = "call",
+    legend_title: Optional[str] = None,
+    subtitle_counts: Optional[Tuple[int, int]] = None,
+    annotation: Optional[str] = None,
 ):
     """
     Create a scatter plot with U12s colored by confidence level and marginal distributions.
@@ -723,15 +818,29 @@ def scatter_plot_from_arrays(
     u12_high = len(tier_idx["high"])
     plot_scores = score_vector
 
-    # Create legend
-    legend_colors = ["xkcd:medium grey", _U12_LOW, _U12_MED, _U12_HIGH]
-    legend_labels = [
-        "U2-type",
-        f"U12-type ≤ {int(med_val)}",
-        f"{int(med_val)} < U12-type ≤ {int(high_val)}",
-        f"U12-type > {int(high_val)}",
-    ]
-    legend_counts = [u2_count, u12_low, u12_med, u12_high]
+    # Create legend. The tier noun is "U12-type" for the adjudicated-call view and "motif" for the
+    # raw-motif view (pre-adjudication P_motif tiers on a suppressed genome — see
+    # plot_raw_motif_scatter_from_file). Guard the degenerate confidence band: when the score spread
+    # collapses (score_stdev ≈ 0, e.g. a fully-suppressed NOT_DETECTED genome whose adjusted_score is 0
+    # on every row) med_val meets high_val, which would render a nonsensical "90 < … ≤ 90" bin. Fall
+    # back to a single below-threshold tier in that case.
+    _noun = "U12-type" if legend_kind == "call" else "motif"
+    _mv, _hv = int(med_val), int(high_val)
+    legend_colors = ["xkcd:medium grey"]
+    legend_labels = ["U2-type"]
+    legend_counts = [u2_count]
+    if _mv < _hv:
+        legend_colors += [_U12_LOW, _U12_MED, _U12_HIGH]
+        legend_labels += [
+            f"{_noun} ≤ {_mv}",
+            f"{_mv} < {_noun} ≤ {_hv}",
+            f"{_noun} > {_hv}",
+        ]
+        legend_counts += [u12_low, u12_med, u12_high]
+    else:
+        legend_colors += [_U12_MED, _U12_HIGH]
+        legend_labels += [f"{_noun} ≤ {_hv}", f"{_noun} > {_hv}"]
+        legend_counts += [u12_low + u12_med, u12_high]
 
     legend_patches = []
     for label, count, color in zip(legend_labels, legend_counts, legend_colors):
@@ -782,7 +891,9 @@ def scatter_plot_from_arrays(
     # (matplotlib's loc='best' is density-blind for a hexbin). Never the upper-right (the U12-type region);
     # ties break upper left > lower left > lower right. See _legend_loc_by_density.
     legend_loc = _legend_loc_by_density(plot_scores, xlim, ylim)
-    ax_main.legend(handles=legend_patches, fontsize=fsize - 2, loc=legend_loc)
+    _leg = ax_main.legend(handles=legend_patches, fontsize=fsize - 2, loc=legend_loc, title=legend_title)
+    if legend_title:
+        _leg.get_title().set_fontsize(fsize - 3)
     ax_main.set_xlabel(xlab, fontsize=fsize)
     ax_main.set_ylabel(ylab, fontsize=fsize)
 
@@ -840,17 +951,31 @@ def scatter_plot_from_arrays(
 
     # Sensible per-run title: the run/species name (prominent) + a subtitle giving the call counts and
     # the plotting frame, so the figure is self-describing for a given run.
-    n_u12_total = u12_low + u12_med + u12_high
+    # Subtitle counts: the raw-motif view passes the genome's TRUE call counts via subtitle_counts
+    # (so a NOT_DETECTED genome still reads "0 U12-type" even though motif-strong points are drawn);
+    # the default adjudicated view reports its own colored-tier totals.
+    if subtitle_counts is not None:
+        _sub_u12, _sub_u2 = subtitle_counts
+    else:
+        _sub_u12, _sub_u2 = u12_low + u12_med + u12_high, u2_count
     _title = _fitted_fig_title(fig, species_name)
     fig.suptitle(_title, fontsize=_TITLE_SIZE, y=0.985, weight=_TITLE_WEIGHT, color=_TITLE_COLOR)
     # Push the count subtitle down by one line-height per extra wrapped title line so a
     # multi-line species name never collides with it (suptitle is top-anchored at y=0.985).
     _extra_lines = _title.count("\n")
+    _sub_y = 0.94 - 0.032 * _extra_lines
     fig.text(
-        0.5, 0.94 - 0.032 * _extra_lines,
-        f"{n_u12_total:,} U12-type  ·  {u2_count:,} U2-type",
+        0.5, _sub_y,
+        f"{_sub_u12:,} U12-type  ·  {_sub_u2:,} U2-type",
         ha="center", va="top", fontsize=fsize - 3, color="0.30",
     )
+    # Optional annotation (e.g. the species-level call on a raw-motif view), one line below the counts.
+    if annotation:
+        fig.text(
+            0.5, _sub_y - 0.028,
+            annotation,
+            ha="center", va="top", fontsize=fsize - 4, color="0.40", style="italic",
+        )
 
     plt.savefig(output_path, dpi=fig_dpi, bbox_inches="tight")
     plt.close()

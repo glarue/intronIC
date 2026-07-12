@@ -268,7 +268,9 @@ non-finite `z_excess` → `UNASSESSABLE`; `z_excess ≥ 5.50` → `DETECTED`; st
   - Always: `.plot.hex.iic.png` (5′×BP density), `.plot.scatter.iic.png` (U12 tiers + marginals).
   - Conditional: `.plot.scatter3d.iic.png` (5′×BP×3′, iff 3′ scores), `.plot.score_histogram.iic.png`
     (calling-score histogram), `.plot.tail_model.iic.png` (adjudicator diagnostic, iff sidecar + U2
-    population).
+    population), `.plot.scatter_raw.iic.png` (raw-motif companion scatter, iff `motif_category ==
+    NOT_DETECTED` — colours introns by per-intron `100·P_motif` so the motif-strong introns the species
+    call suppressed stay visible; subtitle keeps the true `0 U12-type` count).
   - *Training-only* suffixes (`.AUC.iic.png`, `.ref_hex.iic.png`, `.plot.training_scatter.iic.png`,
     `.plot.decision_surface.iic.png`) are **never** emitted by a classify run.
 

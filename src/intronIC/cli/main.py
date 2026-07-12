@@ -5142,12 +5142,22 @@ def main_classify(config: IntronICConfig):
             try:
                 from intronIC.visualization.plots import (
                     plot_classification_results_from_file,
+                    plot_raw_motif_scatter_from_file,
                     tail_model_plot,
                 )
 
                 score_file = config.output.get_output_path(".score_info.iic")
                 if score_file.exists():
                     plot_classification_results_from_file(
+                        score_file=score_file,
+                        output_dir=config.output.output_dir,
+                        species_name=config.output.base_filename,
+                        threshold=config.scoring.threshold,
+                        fig_dpi=300,
+                    )
+                    # Raw-motif companion scatter — emitted only for NOT_DETECTED genomes, where the
+                    # adjudicator suppresses all calls and the standard scatter hides the motif structure.
+                    plot_raw_motif_scatter_from_file(
                         score_file=score_file,
                         output_dir=config.output.output_dir,
                         species_name=config.output.base_filename,
@@ -5619,7 +5629,7 @@ def main_classify(config: IntronICConfig):
             # which runs after the in-memory base-plot block. No-ops if the sidecar is absent
             # (raw_gated bundles / under-powered genomes). Best-effort: never break output.
             try:
-                from intronIC.visualization.plots import tail_model_plot
+                from intronIC.visualization.plots import tail_model_plot, plot_raw_motif_scatter_from_file
                 tail_model_plot(
                     sidecar_path=config.output.get_output_path(".tail_model.iic.json"),
                     output_path=config.output.output_dir
@@ -5627,6 +5637,18 @@ def main_classify(config: IntronICConfig):
                     species_name=config.output.base_filename,
                     fig_dpi=300,
                 )
+                # Raw-motif companion scatter (NOT_DETECTED genomes only) — emitted HERE, not with the
+                # in-memory base plots above, because it reads the adjudicator columns (P_motif /
+                # motif_category) that post-classification appends to score_info.iic after that block.
+                _score_file = config.output.get_output_path(".score_info.iic")
+                if _score_file.exists():
+                    plot_raw_motif_scatter_from_file(
+                        score_file=_score_file,
+                        output_dir=config.output.output_dir,
+                        species_name=config.output.base_filename,
+                        threshold=config.scoring.threshold,
+                        fig_dpi=300,
+                    )
             except Exception as _tm_err:
                 messenger.warning(f"Failed to generate tail-model plot: {_tm_err}")
 
