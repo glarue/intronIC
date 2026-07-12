@@ -489,7 +489,8 @@ class IntronMetadata:
         defined_by: Which feature type defined this intron ('cds' or 'exon')
         upstream_exon_id: ID of exon/CDS feature upstream of this intron
         downstream_exon_id: ID of exon/CDS feature downstream of this intron
-        fractional_position: Actual position in transcript based on cumulative exon lengths (0.0-1.0)
+        fractional_position: CDS-relative position = (CDS length upstream of the intron) /
+            (total CDS length), in [0.0, 1.0] for CDS introns; None for exon-only (UTR) introns
         dynamic_tags: Set of dynamic tags for special cases ([c:N], etc.)
         correction_distance: Distance boundaries were shifted (for [c:N] tag)
 

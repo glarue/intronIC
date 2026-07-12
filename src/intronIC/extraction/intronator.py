@@ -332,34 +332,36 @@ class IntronGenerator:
         for index, intron in enumerate(non_redundant_introns, start=1):
             intron.metadata.index = index
 
-        # Fractional position of each intron along the MATURE (spliced) transcript.
-        # Coordinate system = the exon features (full transcript, incl. UTRs) when present,
-        # else the CDS features (CDS-only annotations have no UTRs). frac_pos = (spliced
-        # length upstream of the intron, coding direction) / (total spliced length). This
-        # places 5'-UTR introns near 0 and 3'-UTR introns near 1, and positions CDS introns
-        # by their true transcript position (the 5'-UTR length counts toward the numerator).
+        # Fractional position of each intron along the CODING SEQUENCE (CDS).
+        # frac_pos = (CDS length upstream of the intron, coding direction) / (total CDS
+        # length). Normalizing by the CDS rather than the full mature transcript avoids the
+        # 3'-UTR-length bias that otherwise pushes every intron toward the 5' end: with the
+        # old exon-length denominator, long 3'UTRs made even CDS introns cluster near 0
+        # (human CDS-intron median ~0.32 instead of ~0.5). Exon-only (UTR) introns have no
+        # CDS position and get None -> NA in output; CDS-less transcripts -> all None.
         # NB: earlier this re-looked-up exon lengths via feature_index, which is keyed by a
         # synthetic name (not feature_id), so every lookup missed and frac_pos was always 0.
-        coord_features = exon_features if exon_features else cds_features
-        total_spliced = sum(f.length for f in coord_features)
+        cds_total = sum(f.length for f in cds_features)
         strand = non_redundant_introns[0].coordinates.strand
-        frac_positions = [0.0] * len(non_redundant_introns)
-        if total_spliced > 0:
+        frac_positions = [None] * len(non_redundant_introns)
+        if cds_total > 0:
             for array_index, intron in enumerate(non_redundant_introns):
+                if intron.metadata.defined_by != "cds":
+                    continue  # UTR / exon-only intron -> no CDS position (NA)
                 if strand == "-":
-                    # coding direction is high->low coord: upstream = higher-coord features
+                    # coding direction is high->low coord: upstream = higher-coord CDS features
                     upstream = sum(
                         f.length
-                        for f in coord_features
+                        for f in cds_features
                         if f.coordinates.start > intron.coordinates.stop
                     )
                 else:
                     upstream = sum(
                         f.length
-                        for f in coord_features
+                        for f in cds_features
                         if f.coordinates.stop < intron.coordinates.start
                     )
-                frac_positions[array_index] = round(upstream / total_spliced, 4)
+                frac_positions[array_index] = round(upstream / cds_total, 4)
 
         for array_index, intron in enumerate(non_redundant_introns):
             # Set metadata (index already assigned above via sequential enumeration)
@@ -368,7 +370,8 @@ class IntronGenerator:
             intron.metadata.parent_length = (
                 coding_length  # Sum of CDS/exon lengths (not genomic span)
             )
-            intron.metadata.fractional_position = float(frac_positions[array_index])
+            _fp = frac_positions[array_index]
+            intron.metadata.fractional_position = float(_fp) if _fp is not None else None
 
             # Set grandparent if available
             if transcript.parent_id and transcript.parent_id in feature_index:
