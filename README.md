@@ -43,12 +43,16 @@ See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algori
 
 ## Relationship to the published method (v1)
 
-intronIC v3 is the successor to the method published in Moyer et al. (2020). The core task is unchanged — score the 5′, branch-point, and 3′ motifs, then classify — but the model and its cross-species handling were reworked. The main differences:
+intronIC v3 keeps the PWM motif scoring of the Moyer et al. (2020) method but replaces the per-species z-normalization that made scores comparable across genomes. That normalization assumed every genome matched the human reference geometry, and failed in two ways: it under-called divergent bearers (e.g. *Amborella*, *Oryza*) and produced false positives in genomes that have lost the minor spliceosome. v3 instead scores background-corrected **raw** motif log-odds — six features, an ensemble of 42 SVMs trained on 97 species across 14 clades — and calibrates the output to `P_motif`, a species-agnostic probability. All per-species reasoning moves to one output-level adjudicator, which reports whether a genome carries a detectable U12-type population (`motif_category`), referenced to that genome's own U2-type background.
 
-- **Training data.** v1 trained a single SVM on human U12-type introns. v3 trains on a multispecies corpus of **97 species across 14 clades**, with labels assigned from cross-species orthology (IPA) rather than a single reference genome.
-- **Features and model.** v1 classified on three numbers — the 5′, branch-point, and 3′ motif scores. v3 adds three more (a branch-point offset, a branch-point-scan confidence, and a support term) for **six raw features**, and uses an **ensemble of 42 calibrated SVMs** rather than one.
-- **Cross-species comparability.** v1 applied **per-species z-normalization** to make scores comparable between genomes. This under-called species whose U12-type population sat far from the human calibration (e.g. *Amborella*, *Oryza*) and inflated false positives in U12-absent genomes. v3 removes z-normalization: `P_motif` is a species-agnostic probability, and per-genome variation is handled at the output stage by the adjudicator.
-- **Genome-level call.** In addition to per-intron scores, v3 reports whether a genome carries a detectable U12-type population (`motif_category`), separating genuinely U12-poor lineages from the composition-driven false positives that every genome produces.
+| | v1 (Moyer 2020) | v3 (current) |
+|---|---|---|
+| Features | 3 motif scores | 6 raw features (→9 with interactions) |
+| Classifier | 1 human-trained SVM | 42-model ensemble, 97 species |
+| Cross-species | per-species z-normalization | species-agnostic `P_motif` |
+| Per-species logic | folded into normalization | output-level adjudicator |
+
+For the full comparison, see [Technical Details → Relationship to the published method (v1)](https://github.com/glarue/intronIC/wiki/Technical-algorithm#relationship-to-the-published-method-v1).
 
 ---
 
