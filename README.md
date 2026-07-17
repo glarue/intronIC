@@ -43,12 +43,12 @@ See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algori
 
 ## Relationship to the published method (v1)
 
-intronIC v3 is the direct successor to the method published in Moyer et al. (2020) — a ground-up rebuild for cross-species robustness, not an incremental tweak. If you've used the original intronIC, the differences that matter:
+intronIC v3 is the successor to the method published in Moyer et al. (2020). The core task is unchanged — score the 5′, branch-point, and 3′ motifs, then classify — but the model and its cross-species handling were reworked. The main differences:
 
-- **Training data.** v1 trained a single SVM on human U12-type introns. v3 trains on a multispecies reference corpus spanning **97 species across 14 clades**, so the model generalizes to lineages far from human without per-species hand-tuning.
-- **Features and model.** v1 classified on three numbers — the 5′, branch-point, and 3′ motif scores. v3 uses **six raw features** (the three background-corrected site scores plus a branch-point offset, a branch-point-scan confidence, and a support term) and an **ensemble of 42 calibrated SVMs** in place of one.
-- **Cross-species comparability.** v1 relied on **per-species z-normalization** to make scores comparable between genomes, which broke down whenever a species' U12-type population sat far from the human calibration (e.g. *Amborella*, *Oryza*). v3 drops z-normalization entirely: `P_motif` is species-agnostic by construction, and everything that genuinely varies per genome is handled once, at the end, by the adjudicator.
-- **A genome-level answer.** Beyond per-intron calls, v3 reports whether a genome carries a **detectable minor-spliceosome population at all** (`motif_category`) — what distinguishes a genuinely U12-poor lineage from a few composition-driven false positives.
+- **Training data.** v1 trained a single SVM on human U12-type introns. v3 trains on a multispecies corpus of **97 species across 14 clades**, with labels assigned from cross-species orthology (IPA) rather than a single reference genome.
+- **Features and model.** v1 classified on three numbers — the 5′, branch-point, and 3′ motif scores. v3 adds three more (a branch-point offset, a branch-point-scan confidence, and a support term) for **six raw features**, and uses an **ensemble of 42 calibrated SVMs** rather than one.
+- **Cross-species comparability.** v1 applied **per-species z-normalization** to make scores comparable between genomes. This under-called species whose U12-type population sat far from the human calibration (e.g. *Amborella*, *Oryza*) and inflated false positives in U12-absent genomes. v3 removes z-normalization: `P_motif` is a species-agnostic probability, and per-genome variation is handled at the output stage by the adjudicator.
+- **Genome-level call.** In addition to per-intron scores, v3 reports whether a genome carries a detectable U12-type population (`motif_category`), separating genuinely U12-poor lineages from the composition-driven false positives that every genome produces.
 
 ---
 
