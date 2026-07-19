@@ -17,10 +17,10 @@ reproducible from the `pre-zstack-removal` git tag.
 ### Relative to the published method (v1; Moyer et al. 2020)
 
 - **Training data.** v1 trained one SVM on human U12-type introns. v3 trains a 42-model
-  RBF-SVM ensemble on 41,333 introns from 97 species across 14 clades, labeled from
-  cross-species orthology (Intron Position Analysis) rather than a single reference genome.
+  RBF-SVM ensemble on 41,333 introns from 97 species across 14 clades, labeled by
+  comparative genomic analysis across orthologs rather than a single reference genome.
 - **Motif model.** The branch-point PWM is built from CoLa-seq empirical branch points
-  (Zeng et al. 2022); the 5′SS/3′SS PWMs from a human + IPA-conserved gold standard. Each
+  (Zeng et al. 2022); the 5′SS/3′SS PWMs from a human + comparative-genomics-conserved gold standard. Each
   raw motif score is background-corrected against the species' own U2-type intron pool.
 - **Features.** Three motif scores (v1) → six raw features (the three background-corrected
   motif log-odds plus a branch-point offset, a branch-point-scan confidence, and a support
@@ -36,7 +36,7 @@ reproducible from the `pre-zstack-removal` git tag.
 
 Collected here because most v2.x releases were not published as GitHub Releases:
 
-- CoLa-seq branch-point PWM and IPA-conserved gold-standard labeling (v2.2.0).
+- CoLa-seq branch-point PWM and comparative-genomics-conserved gold-standard labeling (v2.2.0).
 - Species-specific U2-type background correction, including in streaming mode (v2.3.0).
 - The `support2`, `bp_offset`, and `bp_scan_confidence` features (v2.2.0–v2.3.0).
 - The multispecies training bundle as the default model (v2.4.0).
