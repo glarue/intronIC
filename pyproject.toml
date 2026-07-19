@@ -55,6 +55,8 @@ test = [
 Homepage = "https://github.com/glarue/intronIC"
 Repository = "https://github.com/glarue/intronIC"
 Issues = "https://github.com/glarue/intronIC/issues"
+Changelog = "https://github.com/glarue/intronIC/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/glarue/intronIC/wiki"
 
 [project.scripts]
 intronIC = "intronIC.cli.main:main"

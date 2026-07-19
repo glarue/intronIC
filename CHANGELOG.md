@@ -7,38 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - 2026-07-09
 
-Major release: the **raw-feature `pmotif_adjudicated`** architecture. All per-species
-adaptation moved out of scoring and into a single output-level adjudicator. This
-supersedes the entire z-normalization + mode-separation + continuous-discount stack
-that accreted through v2.5–v2.7 (the eval-corpus work showed per-species
-z-normalization *hurts* cross-species discrimination). Legacy z/modesep bundles remain
+intronIC 3.0.0 is the consolidated, vetted release of the cross-species architecture
+developed across the v2 series. It replaces the per-species z-normalization lineage
+(v2.5–v2.7) with a raw-feature classifier and a single output-level species adjudicator,
+and carries forward — now validated on a 97-species / 14-clade corpus — the improvements
+introduced incrementally through v2.2–v2.4. Legacy z/mode-separation bundles remain
 reproducible from the `pre-zstack-removal` git tag.
 
-### Changed — scoring architecture (breaking)
+### Relative to the published method (v1; Moyer et al. 2020)
 
-- **Removed** per-species z-normalization, the adaptive/frozen normalizer (and its
-  `MIN_ADAPTIVE_INTRONS` fallback), the v2.6 mode-separation gate, and the v2.7
-  continuous per-intron discount. Deleted modules: `scoring/normalizer.py`,
-  `scoring/mode_separation.py`, `scoring/cluster_validation.py`,
-  `scoring/margin_alignment.py`, `classification/classifier.py`,
-  `classification/mode_sep_pipeline.py`.
-- Scoring now operates directly on **background-corrected raw motif log-odds**: a
-  calibrated RBF-SVM ensemble on the 6 raw features (`5'_raw`, `BP_raw`, `3'_raw`,
-  `bp_offset`, `bp_scan_confidence`, `support2_raw`) → per-intron ensemble margin →
-  **`P_motif`** (a species-agnostic, Platt-calibrated motif probability).
-- New **species adjudicator** (`scoring/species_adjudicator.py`): per-species
-  `z_excess` (Poisson significance of the strong-call *count* vs the genome's own U2
-  tail) drives a gap gate → **`motif_category`** ∈ {`DETECTED`, `INCONCLUSIVE`,
-  `NOT_DETECTED`, `UNASSESSABLE`} (anchors `loss_ceiling_z=2.60` /
-  `bearer_floor_z=5.50`); plus a per-genome **strength gate** (`p_gumbel_p95≤0.01`,
-  `cs_p95≥5.0` co-fallback) that rescues few-but-strong divergent bearers.
-- **Label rule:** `type_id = u12` iff `adjusted_score ≥ 50` (equivalently `P_motif ≥
-  0.5`) **AND** `motif_category ≠ NOT_DETECTED`. Only `NOT_DETECTED` suppresses calls;
-  `INCONCLUSIVE`/`UNASSESSABLE` flag species-level ambiguity but still let
-  strong-motif introns call.
-- `--load-normalizer` / `--save-normalizer` / `--no-continuous-discount` and the
-  `--discount-*` family are now **accepted-but-ignored no-ops** (retained for
-  backward-compatible invocation).
+- **Training data.** v1 trained one SVM on human U12-type introns. v3 trains a 42-model
+  RBF-SVM ensemble on 41,333 introns from 97 species across 14 clades, labeled from
+  cross-species orthology (Intron Position Analysis) rather than a single reference genome.
+- **Motif model.** The branch-point PWM is built from CoLa-seq empirical branch points
+  (Zeng et al. 2022); the 5′SS/3′SS PWMs from a human + IPA-conserved gold standard. Each
+  raw motif score is background-corrected against the species' own U2-type intron pool.
+- **Features.** Three motif scores (v1) → six raw features (the three background-corrected
+  motif log-odds plus a branch-point offset, a branch-point-scan confidence, and a support
+  term), expanded to nine with deterministic interaction terms.
+- **Cross-species comparability.** v1's per-species z-normalization under-called divergent
+  bearers (e.g. *Amborella*, *Oryza*) and inflated false positives in genomes lacking the
+  minor spliceosome. v3 removes it: the ensemble margin is Platt-calibrated to `P_motif`, a
+  species-agnostic probability.
+- **Genome-level call.** v3 reports whether a genome carries a detectable U12-type
+  population (`motif_category`).
+
+### Carried forward from the v2 series (now vetted on the full corpus)
+
+Collected here because most v2.x releases were not published as GitHub Releases:
+
+- CoLa-seq branch-point PWM and IPA-conserved gold-standard labeling (v2.2.0).
+- Species-specific U2-type background correction, including in streaming mode (v2.3.0).
+- The `support2`, `bp_offset`, and `bp_scan_confidence` features (v2.2.0–v2.3.0).
+- The multispecies training bundle as the default model (v2.4.0).
+- Bit-identical `--streaming` / `--in-memory` classification (v2.4.0), now a parity gate.
+
+### Removed — the v2.5–v2.7 z-normalization stack (breaking)
+
+Evaluation on the cross-species corpus showed per-species z-normalization *hurts*
+cross-species discrimination — it manufactures false positives in U12-absent species
+("z-inflation"; leave-clade-out AUC 0.916 for raw features vs 0.786 for z-normalized).
+Removed:
+
+- the adaptive/frozen normalizer and its `MIN_ADAPTIVE_INTRONS` fallback, and the Path C′
+  scaler gate (v2.5.0);
+- the mode-separation classifier (v2.6.0);
+- the continuous per-intron discount (v2.7.0).
+
+Deleted modules: `scoring/normalizer.py`, `scoring/mode_separation.py`,
+`scoring/cluster_validation.py`, `scoring/margin_alignment.py`,
+`classification/classifier.py`, `classification/mode_sep_pipeline.py`. The
+`--load-normalizer` / `--save-normalizer` / `--no-continuous-discount` / `--discount-*`
+flags are now accepted-but-ignored no-ops (retained so existing command lines keep
+running); legacy z/mode-separation bundles are rejected at load, with a pointer to the
+`pre-zstack-removal` tag.
+
+### New — the raw-feature `pmotif_adjudicated` architecture
+
+- **`P_motif`.** Scoring operates directly on the background-corrected raw motif log-odds;
+  the per-intron ensemble margin is Platt-calibrated (`σ(2.796·margin − 1.178)`) to
+  `P_motif`, a species-agnostic motif probability that can be thresholded post-hoc at any
+  confidence level.
+- **Species adjudicator** (`scoring/species_adjudicator.py`). `z_excess` (the Poisson
+  significance of the strong-call *count* against the genome's own U2-type tail) drives a
+  gap gate → `motif_category` ∈ {`DETECTED`, `INCONCLUSIVE`, `NOT_DETECTED`,
+  `UNASSESSABLE`} (anchors `loss_ceiling_z = 2.60`, `bearer_floor_z = 5.50`), with a
+  per-genome strength gate (`p_gumbel_p95 ≤ 0.01`, `cs_p95 ≥ 5.0` co-fallback) that
+  recovers few-but-strong divergent bearers.
+- **Calling rule.** `type_id = u12` iff `P_motif ≥ 0.5` (equivalently `adjusted_score ≥
+  50`) AND `motif_category ≠ NOT_DETECTED`. Only `NOT_DETECTED` suppresses calls;
+  `INCONCLUSIVE` / `UNASSESSABLE` flag species-level ambiguity without vetoing individual
+  introns.
 
 ### Added
 
@@ -48,7 +87,7 @@ reproducible from the `pre-zstack-removal` git tag.
   diagnostic figure.
 - `metrics.iic.json` keys: `motif_category`, `z_excess`, `cs_p95`, `p_gumbel_p95`,
   `motif_called_u12`, `confident_u12_motif`, `normalizer_used`.
-- Authoritative output-format spec + generated-file manifest under `docs/`.
+- Expanded output-format documentation (see the [Output files](https://github.com/glarue/intronIC/wiki/Output-files) wiki page).
 
 ### Figures — per-species diagnostic + scatter/hexbin
 

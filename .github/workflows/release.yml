@@ -1,0 +1,46 @@
+name: Draft release from CHANGELOG
+
+# On a version tag push (vX.Y.Z), extract that version's section from
+# CHANGELOG.md and create a DRAFT GitHub Release with it as the body.
+# The release is left as a draft on purpose: publishing it is a manual step,
+# and only a *published* release triggers publish.yml -> PyPI. Review the
+# draft, then click "Publish release" to ship to PyPI.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  draft-release:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract this version's CHANGELOG section
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 == "## [" ver "]" || index($0, "## [" ver "] ") == 1 { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > release_body.md
+          # Trim leading/trailing blank lines
+          sed -i -e '/./,$!d' release_body.md
+          if [ ! -s release_body.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $VERSION" >&2
+            exit 1
+          fi
+          echo "Extracted $(wc -l < release_body.md) lines for $VERSION"
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: "intronIC ${{ github.ref_name }}"
+          body_path: release_body.md
