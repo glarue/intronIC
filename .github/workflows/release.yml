@@ -21,22 +21,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract this version's CHANGELOG section
+      - name: Extract and reflow this version's CHANGELOG section
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
+          # 1. Pull the "## [VERSION] ..." section (up to the next "## [").
           awk -v ver="$VERSION" '
             $0 == "## [" ver "]" || index($0, "## [" ver "] ") == 1 { flag=1; next }
             flag && /^## \[/ { exit }
             flag { print }
-          ' CHANGELOG.md > release_body.md
-          # Trim leading/trailing blank lines
+          ' CHANGELOG.md > section.md
+          # 2. Reflow hard-wrapped prose/bullets into single lines. GitHub renders
+          #    newlines in a release body as hard breaks, so wrapped source lines
+          #    otherwise show as mid-sentence breaks. Blank lines, headings, list
+          #    items, tables, blockquotes, and code fences are preserved as-is.
+          awk '
+            BEGIN { incode=0; buf="" }
+            function flush() { if (buf != "") { print buf; buf="" } }
+            {
+              line = $0
+              if (line ~ /^[ \t]*```/) { flush(); print line; incode = !incode; next }
+              if (incode)              { print line; next }
+              if (line ~ /^[ \t]*$/)   { flush(); print ""; next }
+              if (line ~ /^#/ || line ~ /^[ \t]*\|/ || line ~ /^[ \t]*>/) { flush(); print line; next }
+              if (line ~ /^[ \t]*([-*+]|[0-9]+\.)[ \t]+/) { flush(); buf = line; next }
+              if (buf == "") { buf = line }
+              else { sub(/^[ \t]+/, "", line); buf = buf " " line }
+            }
+            END { flush() }
+          ' section.md > release_body.md
+          # 3. Trim leading blank lines.
           sed -i -e '/./,$!d' release_body.md
           if [ ! -s release_body.md ]; then
             echo "::error::No CHANGELOG.md section found for version $VERSION" >&2
             exit 1
           fi
-          echo "Extracted $(wc -l < release_body.md) lines for $VERSION"
+          echo "Release body: $(wc -l < release_body.md) lines"
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
