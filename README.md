@@ -41,6 +41,12 @@ See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algori
 
 ---
 
+## Where the Minor Things Are (WtMTA)
+
+[**Where the Minor Things Are**](https://www.introns.info/WtMTA) — WtMTA v2 ([introns.info](https://www.introns.info/WtMTA)), a database of minor (U12-type) introns generated with intronIC v3 across ~2,600 eukaryotic genomes (~350M introns, ~1M high-confidence U12-type). Interactive species tree, splice-site logos, and bulk downloads.
+
+---
+
 ## Relationship to the published method (v1)
 
 intronIC v3 keeps the PWM motif scoring of the Moyer et al. (2020) method but replaces the per-species z-normalization that made scores comparable across genomes. That normalization assumed every genome matched the human reference geometry, and failed in two ways: it under-called divergent bearers (e.g. *Amborella*, *Oryza*) and produced false positives in genomes that have lost the minor spliceosome. v3 instead scores background-corrected **raw** motif log-odds — six features, an ensemble of 42 SVMs trained on 97 species across 14 clades — and calibrates the output to `P_motif`, a species-agnostic probability. All per-species reasoning moves to one output-level adjudicator, which reports whether a genome carries a detectable U12-type population (`motif_category`), referenced to that genome's own U2-type background.
