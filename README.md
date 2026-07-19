@@ -43,7 +43,7 @@ See [Technical Details](https://github.com/glarue/intronIC/wiki/Technical-algori
 
 ## Where the Minor Things Are (WtMTA)
 
-[**Where the Minor Things Are**](https://www.introns.info/WtMTA) — WtMTA v2 ([introns.info](https://www.introns.info/WtMTA)), a database of minor (U12-type) introns generated with intronIC v3 across ~2,600 eukaryotic genomes (~350M introns, ~1M high-confidence U12-type). Interactive species tree, splice-site logos, and bulk downloads.
+[**Where the Minor Things Are**](https://www.introns.info/WtMTA) — WtMTA v2 ([www.introns.info/WtMTA](https://www.introns.info/WtMTA)), a database of minor (U12-type) introns generated with intronIC v3 across ~2,600 eukaryotic genomes (~350M introns, ~1M high-confidence U12-type). Interactive species tree, splice-site logos, and bulk downloads.
 
 ---
 
