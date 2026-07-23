@@ -303,6 +303,29 @@ def _u2_reference(u2_margin: np.ndarray, n_u2: float, params: AdjudicatorParams)
     # ---- exponential U2-tail fit above the 90th pct: drives BOTH the PRIMARY z_excess (Poisson count-
     # excess over what this tail predicts) and the SECONDARY EVT expected-max. Fragile (needs
     # >= min_evt_excesses exceedances); when unfit, z_excess/excess_z are NaN -> the gate reads UNASSESSABLE.
+    #
+    # WHY EXPONENTIAL (xi=0) AND NOT A "BETTER-FITTING" TAIL (GPD/Weibull). The U2 margin tail IS mildly
+    # lighter-than-exponential (cv_excess~0.87, GPD xi~-0.15 corpus-wide), so a GPD/Weibull fits the OBSERVED
+    # tail better — yet both make z_excess WORSE (faithful gold-panel head-to-head, 1839 bearers/45 losses:
+    # GPD/Weibull detonate divergent losses, e.g. Pristionchus 1.9->51; AUC 0.990->0.976; recover FEWER bearers
+    # at the 0-loss-FP operating point; see eval_corpus/tail_model_proveout_2026-07/). This is not a paradox —
+    # the exponential is not a tail DESCRIPTION, it is the NULL for a count-excess test, and it is the right
+    # null from first principles (docs/adjudicator_design.md; memory tail-model-alternatives-closed):
+    #   (1) EXTRAPOLATION, not fit: `call_core` sits far BEYOND the observed U2 data, so in-sample fit quality
+    #       is irrelevant; given only the reliably-estimable mean excess, the exponential is the MAX-ENTROPY
+    #       (least-committal, constant-hazard) extrapolation. A GPD xi<0 asserts an accelerating hazard / finite
+    #       endpoint out where there is no data to justify it.
+    #   (2) CONSERVATIVE by construction: the exponential OVER-predicts the null count (reality is lighter) so z
+    #       UNDER-declares excess; a lighter/bounded tail sends pred_cnt->0, so z collapses to a raw COUNT — the
+    #       loss-FP failure mode. Under the asymmetric loss (a false divergent-loss CALL is expensive; a
+    #       conservative miss is cheap + rescuable by the strength gate) that conservative bias is the feature.
+    #   (3) CROSS-GENOME COMPARABILITY: z is gated against a FIXED anchor (loss_ceiling/bearer_floor), which only
+    #       works if z is stable across genomes. The 1-parameter mean-excess has low estimation variance; GPD's
+    #       shape xi is high-variance at per-genome N, so its extrapolated count swings erratically by genome
+    #       (why the losses explode NON-uniformly) and breaks the fixed-anchor comparison.
+    # Boundary: this is NOT "simpler is always better" — for a per-intron p-value WITHIN the observed tail the
+    # GPD would be correct. The exponential wins HERE from the conjunction {far-extrapolation, count-null,
+    # asymmetric loss, fixed cross-genome anchor}; change any of those and re-derive.
     q_evt = float(np.percentile(u2_margin, params.evt_tail_pct))
     exc = u2_margin[u2_margin > q_evt] - q_evt
     z_expmax = np.nan
