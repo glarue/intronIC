@@ -78,6 +78,16 @@ def _read_score_info(output_dir, species_name):
     return header, rows
 
 
+def _read_substrate_quality(output_dir):
+    """Read the substrate_quality block from metrics.iic.json (None if absent)."""
+    import json
+    matches = list(Path(output_dir).glob("*metrics.iic.json"))
+    if not matches:
+        return None
+    with open(matches[0]) as fh:
+        return json.load(fh).get("substrate_quality")
+
+
 def _read_meta(output_dir):
     """Read meta.iic and return sorted rows (excluding header)."""
     matches = list(Path(output_dir).glob("*meta*"))
@@ -124,7 +134,16 @@ class TestStreamingEquivalence:
                 "meta_header_p3": mh3,
                 "meta_rows_p1": meta_rows_p1,
                 "meta_rows_p3": meta_rows_p3,
+                "substrate_p1": _read_substrate_quality(dir_p1),
+                "substrate_p3": _read_substrate_quality(dir_p3),
             }
+
+    def test_substrate_quality_identical(self, run_results):
+        # the metrics.iic.json substrate_quality block is computed from the finalized on-disk files with
+        # order-independent metrics, so it must be bit-identical across the streaming/in-memory paths.
+        assert run_results["substrate_p1"] == run_results["substrate_p3"], (
+            f"substrate_quality differs:\n p1={run_results['substrate_p1']}\n p3={run_results['substrate_p3']}"
+        )
 
     def test_score_info_headers_match(self, run_results):
         assert run_results["score_header_p1"] == run_results["score_header_p3"]
