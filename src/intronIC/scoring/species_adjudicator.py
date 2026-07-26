@@ -651,12 +651,19 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
                           confirmed bearer, and NOT_DETECTED is NOT a loss call);
       - ``type_id``     : ``u12`` iff ``P_motif >= 0.5`` AND ``motif_category != NOT_DETECTED`` (suppress only
                           the no-population case; INCONCLUSIVE/UNASSESSABLE calls are made and flagged);
-      - ``rel_score`` = ``100*P_motif - 90`` (per-intron motif strength; ``> 0`` iff ``P_motif >= 0.9`` =
-                          strong-by-motif) — so ``confident_u12_motif`` is strong-motif calls in a
-                          ``DETECTED`` genome (computed in the metrics layer).
-      - LEGACY (superseded ``q*P_motif`` chain, re-derived with the BINARY gate q∈{0,1}): ``q``, ``P_adj`` =
-        ``q*P_motif``, ``P_adj_lo``/``P_adj_hi`` (= P_adj; the species uncertainty is now in motif_category,
-        not a CI), ``adjusted_score`` = ``100*P_adj``. Consumers should migrate to P_motif + motif_category.
+      - ``adjusted_score`` = ``100 * q_eff * P_motif`` — the GATED call score (bed col5; ``>= 50`` iff u12);
+      - ``rel_score`` = ``adjusted_score - 90`` — the same number recentred on the high-confidence threshold,
+                          so ``rel_score > 0`` is a SELF-SUFFICIENT single-column HC filter that needs no
+                          companion condition and no knowledge of the run's threshold. That identity is the
+                          reason both are gated together: un-gating ``rel_score`` alone would break the
+                          identity, and un-gating it at all would make ``rel_score > 0`` select the calls a
+                          ``NOT_DETECTED`` genome explicitly does not make (Symbiodinium: 109 of them),
+                          forcing every consumer into ``AND type_id == 'u12'``. The UNGATED per-intron
+                          ranking is ``P_motif``, which is exactly what it is for.
+    Removed 2026-07 (deterministic functions of ``P_motif`` + ``motif_category``, superseded ``q*P_motif``
+    chain — see ``docs/adjudicator_qdriver_postmortem.md``): ``q``, ``P_adj``, ``P_adj_lo``, ``P_adj_hi``.
+    ``P_adj_lo``/``P_adj_hi`` were bit-identical to ``P_adj`` by construction; ``q`` was a per-species
+    constant. Use ``P_motif`` + ``motif_category``.
 
     Unscorable introns (NaN motif log-odds) keep NaN ``P_motif`` and are not called. Per-run = per-species
     (one genome). Returns the :class:`AdjudicatorResult` (z_excess + tier + secondary q/CI diagnostics).
@@ -695,11 +702,9 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     p_motif = p_motif_from_margin(margin, params)   # NaN where margin NaN
 
     result = adjudicate(margin[finite], p_motif[finite], params)
-    q_eff, q_lo, q_hi = _effective_q(result)
+    q_eff, _, _ = _effective_q(result)
 
     p_adj = q_eff * p_motif
-    p_adj_lo = q_lo * p_motif
-    p_adj_hi = q_hi * p_motif
     adjusted = 100.0 * p_adj
 
     def fmt(arr):
@@ -715,11 +720,8 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     df["cs_p95_lo"] = _g(result.cs_p95_lo)   # bootstrap CI lower bound — logged confidence annotation (not the gate)
     df["cs_p95_hi"] = _g(result.cs_p95_hi)
     df["motif_category"] = result.motif_category.value
-    # SECONDARY / back-compat (depth_tail->q->P_adj chain; superseded — see adjudicator_qdriver_postmortem.md).
-    df["q"] = f"{q_eff:.6g}"
-    df["P_adj"] = fmt(p_adj)
-    df["P_adj_lo"] = fmt(p_adj_lo)
-    df["P_adj_hi"] = fmt(p_adj_hi)
+    # The GATED call pair. rel_score is adjusted_score recentred on the HC threshold; keeping the identity
+    # exact is what makes `rel_score > 0` a self-sufficient one-column HC filter (see the docstring).
     df["adjusted_score"] = fmt(adjusted)
     df["rel_score"] = fmt(adjusted - 90.0)
     called = np.isfinite(p_adj) & (p_adj >= 0.5)

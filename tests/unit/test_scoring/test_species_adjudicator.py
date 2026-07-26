@@ -322,8 +322,9 @@ def test_tied_calls_do_not_give_degenerate_ci():
 def test_adjudication_is_order_invariant():
     """The whole adjudication — including the bootstrap q-CI — must be invariant to the input row order.
     The CI bootstrap resamples calls by index, so without sorting the calls the streaming (per-contig) and
-    in-memory paths (same call values, different order) produced different P_adj_lo/P_adj_hi. Regression for
-    the streaming==in-memory parity break under the raw-feature default."""
+    in-memory paths (same call values, different order) produced different bootstrap bounds. Regression for
+    the streaming==in-memory parity break under the raw-feature default. (The columns that first exposed it,
+    P_adj_lo/P_adj_hi, were removed in 2026-07; the invariant they guarded lives on in q_lo/q_hi here.)"""
     rng = np.random.RandomState(7)
     u2 = rng.normal(-4.8, 1.0, 3000)
     calls = rng.normal(1.6, 0.4, 30)
@@ -417,10 +418,16 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
     assert set(out["motif_category"]) == {MotifCategory.DETECTED.value}
 
     pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
-    padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
-    fin = np.isfinite(pm) & np.isfinite(padj)
-    # legacy P_adj == q_eff * P_motif with the BINARY gate (q_eff==1 for a non-loss species)
-    assert res.q == 1.0 and np.allclose(padj[fin], pm[fin], atol=1e-6)
+    adj = pd.to_numeric(out["adjusted_score"], errors="coerce").to_numpy()
+    rel = pd.to_numeric(out["rel_score"], errors="coerce").to_numpy()
+    fin = np.isfinite(pm) & np.isfinite(adj)
+    # q_eff == 1 for a non-loss species -> adjusted_score is P_motif on the 0-100 scale, unsuppressed.
+    # Tolerance is set by the file's own resolution: columns are written "%.6g", so a value near -88.9
+    # carries only 4 decimals. The identity is exact in-computation, not in the serialized text.
+    assert np.allclose(adj[fin], 100.0 * pm[fin], atol=1e-3)
+    # rel_score is adjusted_score - 90 (the identity that makes `rel_score > 0` a self-sufficient
+    # one-column HC filter); both are gated together, never independently.
+    assert np.allclose(rel[fin], adj[fin] - 90.0, atol=1e-3)
     # the U12 population (last n=150) should be the called set; U2 bulk mostly not called
     assert (out["type_id"].to_numpy()[-150:] == "u12").sum() >= 140
     assert (out["type_id"].to_numpy()[:n_u2] == "u12").mean() < 0.1
@@ -429,8 +436,8 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
 
 
 def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
-    """Below min_u2 the species layer is inconclusive -> LOW_N -> q_eff=1 (P_adj==P_motif), never silent
-    suppression (option A, the safe low-N default)."""
+    """Below min_u2 the species layer is inconclusive -> LOW_N -> q_eff=1 (adjusted_score==100*P_motif),
+    never silent suppression (option A, the safe low-N default)."""
     from intronIC.scoring.species_adjudicator import apply_pmotif_adjudication
     import pandas as pd
     p = tmp_path / "small.score_info.iic"
@@ -438,8 +445,10 @@ def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
     res = apply_pmotif_adjudication(str(p), _tiny_ensemble(), params=P)
     out = pd.read_csv(p, sep="\t", keep_default_na=False)
     assert res.status is AdjStatus.LOW_N
-    assert float(out["q"].iloc[0]) == 1.0
     pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
-    padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
-    fin = np.isfinite(pm) & np.isfinite(padj)
-    assert np.allclose(padj[fin], pm[fin], atol=1e-9)
+    adj = pd.to_numeric(out["adjusted_score"], errors="coerce").to_numpy()
+    fin = np.isfinite(pm) & np.isfinite(adj)
+    assert np.allclose(adj[fin], 100.0 * pm[fin], atol=1e-6)   # q_eff == 1: nothing suppressed
+    # The superseded q/P_adj chain is gone (deterministic from P_motif + motif_category).
+    assert not ({"q", "P_adj", "P_adj_lo", "P_adj_hi"} & set(out.columns))
+
