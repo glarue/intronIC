@@ -385,6 +385,71 @@ def compute_p_gumbel(call_core_margin: float, ref: _U2Reference) -> float:
     return float(1.0 - np.exp(-np.exp(-(robust_z - ref.z_expmax) / max(ref.evt_beta, 1e-6))))
 
 
+def background_fdr(margin: np.ndarray, p_motif: np.ndarray, params: AdjudicatorParams) -> np.ndarray:
+    """REPORT-ONLY per-intron background FDR: of the strong calls at least this strong, what fraction does
+    the genome's OWN U2 tail already explain? A **third axis** — background-relative surprisal — deliberately
+    NOT folded into ``P_motif`` or ``adjusted_score`` (see ``docs/adjudicator_qdriver_postmortem.md`` §3d:
+    a species signal must not be multiplied into a calibrated per-intron probability, and the single-column
+    ``rel_score > 0`` HC filter must keep working). It gates nothing.
+
+    Definition (the per-intron decomposition of ``z_excess``, which evaluates the SAME arithmetic once at the
+    call core). For each call with margin ``m_i``, using the identical deterministic ``_u2_reference`` fit:
+
+        E_i    = evt_tail_frac * n_u2 * exp(-lam * (m_i - q_evt))   # U2 introns expected at or above m_i
+        rank_i = #{j : m_j >= m_i}                                  # calls observed at or above m_i
+        bg_fdr = min(E_i / rank_i, 1)                               # Benjamini-Hochberg q estimate
+
+    with the standard BH step-up applied (a running minimum from the weakest call upward), so the column is
+    MONOTONE in margin: a stronger call can never carry a worse ``bg_fdr`` than a weaker one. Without it the
+    raw ratio is non-monotone (E and rank both fall with margin), which reads as noise in the output.
+
+    Read it as: ``bg_fdr ~ 1`` -> indistinguishable from this genome's background; ``bg_fdr << 1`` -> the
+    background cannot account for it. Computed only for the adjudicator's canonical call set
+    (``P_motif >= call_threshold``) — the fitted domain of the exponential tail, and the only set for which
+    the question is meaningful (non-calls ARE the background; their ranking is ``P_motif``). Populated even
+    for a ``NOT_DETECTED`` genome, where the calling columns are zeroed: that is the point, since it
+    separates a genome whose calls are uniformly background (Symbiodinium: every ``bg_fdr`` = 1) from one
+    holding a genuine outlier (Phytophthora infestans: one call at 6.9e-3) — currently indistinguishable.
+
+    ``rank_i`` uses a tie-max rule (``searchsorted``), so the result depends only on the multiset of margins,
+    never on row order — required for streaming/in-memory bit-identical parity.
+
+    CAVEAT (inherited, not new): the tail is fitted on the U2 side only, so the calls are missing from the
+    exceedance set and ``lam`` is biased steep when they are a large share of it. Negligible at production
+    ratios (Symbiodinium: 109 calls vs a 51,621-strong exceedance set = 0.2%), material only if calls
+    approach ~10% of ``evt_tail_frac * n_u2``. ``z_excess`` uses the identical reference, so this adds no
+    new exposure — but a genome that thin is already ``LOW_N``/``UNASSESSABLE`` territory.
+
+    Returns a float array aligned to ``margin``; NaN for non-calls, unscorable rows, and whenever the U2 tail
+    cannot be referenced (too few U2 / degenerate scale / EVT unfit), matching the adjudicator's own guards.
+    """
+    margin = np.asarray(margin, float)
+    p_motif = np.asarray(p_motif, float)
+    out = np.full(len(margin), np.nan)
+    good = np.isfinite(margin) & np.isfinite(p_motif)
+    u2 = margin[good & (p_motif < params.u2_threshold)]
+    if len(u2) < params.min_u2:
+        return out
+    ref = _u2_reference(u2, len(u2), params)
+    if not (ref.finite and np.isfinite(ref.lam) and np.isfinite(ref.q_evt)):
+        return out
+    is_call = good & (p_motif >= params.call_threshold)
+    m = margin[is_call]
+    if not len(m):
+        return out
+    e = params.evt_tail_frac * len(u2) * np.exp(-ref.lam * (m - ref.q_evt))
+    # rank_i = #{j : m_j >= m_i}; ties share the max rank so the value is order-independent.
+    rank = np.searchsorted(-np.sort(m)[::-1], -m, side="right")
+    raw = e / rank
+    # BH step-up: running minimum from the weakest call upward, so bg_fdr is monotone in margin.
+    desc = np.argsort(-m, kind="stable")                 # strongest first
+    adjusted = np.minimum.accumulate(raw[desc][::-1])[::-1]
+    fdr = np.empty_like(raw)
+    fdr[desc] = adjusted
+    out[is_call] = np.minimum(fdr, 1.0)
+    return out
+
+
 # --------------------------------------------------------------------------------------------------
 # The adjudicator
 # --------------------------------------------------------------------------------------------------
@@ -660,6 +725,8 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
                           ``NOT_DETECTED`` genome explicitly does not make (Symbiodinium: 109 of them),
                           forcing every consumer into ``AND type_id == 'u12'``. The UNGATED per-intron
                           ranking is ``P_motif``, which is exactly what it is for.
+      - ``bg_fdr``      : REPORT-ONLY background-relative surprisal for the call set (see :func:`background_fdr`).
+
     Removed 2026-07 (deterministic functions of ``P_motif`` + ``motif_category``, superseded ``q*P_motif``
     chain — see ``docs/adjudicator_qdriver_postmortem.md``): ``q``, ``P_adj``, ``P_adj_lo``, ``P_adj_hi``.
     ``P_adj_lo``/``P_adj_hi`` were bit-identical to ``P_adj`` by construction; ``q`` was a per-species
@@ -706,6 +773,8 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
 
     p_adj = q_eff * p_motif
     adjusted = 100.0 * p_adj
+    # REPORT-ONLY third axis (gates nothing): per-intron background surprisal for the call set.
+    bg_fdr = background_fdr(margin, p_motif, params)
 
     def fmt(arr):
         return [("nan" if not np.isfinite(v) else f"{v:.6g}") for v in arr]
@@ -720,6 +789,9 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
     df["cs_p95_lo"] = _g(result.cs_p95_lo)   # bootstrap CI lower bound — logged confidence annotation (not the gate)
     df["cs_p95_hi"] = _g(result.cs_p95_hi)
     df["motif_category"] = result.motif_category.value
+    # REPORT-ONLY: background-relative surprisal of each call vs THIS genome's own U2 tail. NaN for
+    # non-calls. Never feeds a call — the gate stays in type_id/adjusted_score (see background_fdr).
+    df["bg_fdr"] = fmt(bg_fdr)
     # The GATED call pair. rel_score is adjusted_score recentred on the HC threshold; keeping the identity
     # exact is what makes `rel_score > 0` a self-sufficient one-column HC filter (see the docstring).
     df["adjusted_score"] = fmt(adjusted)

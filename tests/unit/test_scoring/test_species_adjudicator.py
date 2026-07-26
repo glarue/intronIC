@@ -324,7 +324,8 @@ def test_adjudication_is_order_invariant():
     The CI bootstrap resamples calls by index, so without sorting the calls the streaming (per-contig) and
     in-memory paths (same call values, different order) produced different bootstrap bounds. Regression for
     the streaming==in-memory parity break under the raw-feature default. (The columns that first exposed it,
-    P_adj_lo/P_adj_hi, were removed in 2026-07; the invariant they guarded lives on in q_lo/q_hi here.)"""
+    P_adj_lo/P_adj_hi, were removed in 2026-07; the invariant they guarded lives on in q_lo/q_hi here, and
+    the same requirement now applies to bg_fdr — see test_background_fdr_is_order_independent.)"""
     rng = np.random.RandomState(7)
     u2 = rng.normal(-4.8, 1.0, 3000)
     calls = rng.normal(1.6, 0.4, 30)
@@ -428,6 +429,10 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
     # rel_score is adjusted_score - 90 (the identity that makes `rel_score > 0` a self-sufficient
     # one-column HC filter); both are gated together, never independently.
     assert np.allclose(rel[fin], adj[fin] - 90.0, atol=1e-3)
+    # bg_fdr is REPORT-ONLY: present, finite on the call set, NaN elsewhere, and gates nothing.
+    bg = pd.to_numeric(out["bg_fdr"], errors="coerce").to_numpy()
+    is_call = np.isfinite(pm) & (pm >= P.call_threshold)
+    assert np.isfinite(bg[is_call]).all() and np.isnan(bg[~is_call]).all()
     # the U12 population (last n=150) should be the called set; U2 bulk mostly not called
     assert (out["type_id"].to_numpy()[-150:] == "u12").sum() >= 140
     assert (out["type_id"].to_numpy()[:n_u2] == "u12").mean() < 0.1
@@ -452,3 +457,78 @@ def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
     # The superseded q/P_adj chain is gone (deterministic from P_motif + motif_category).
     assert not ({"q", "P_adj", "P_adj_lo", "P_adj_hi"} & set(out.columns))
 
+
+# ----------------------------------------------------------------------------------------------
+# background_fdr: REPORT-ONLY per-intron background surprisal (the third axis; gates nothing)
+# ----------------------------------------------------------------------------------------------
+def _bgfdr_inputs(n_u2=5000, calls=(6.0, 5.0, 4.0), seed=0):
+    """Exponential-tailed U2 background (P_motif below u2_threshold) + a handful of strong calls."""
+    rng = np.random.default_rng(seed)
+    u2 = rng.exponential(1.0, n_u2) - 5.0
+    margin = np.concatenate([u2, np.asarray(calls, float)])
+    p = np.concatenate([np.zeros(n_u2), np.ones(len(calls))])   # 0 -> U2 side, 1 -> call side
+    return margin, p
+
+
+def test_background_fdr_only_populated_for_calls():
+    """NaN for non-calls and unscorable rows; finite only on the canonical call set."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    margin, p = _bgfdr_inputs()
+    margin = np.append(margin, np.nan); p = np.append(p, np.nan)     # unscorable row
+    out = background_fdr(margin, p, P)
+    assert out.shape == margin.shape
+    is_call = np.isfinite(margin) & np.isfinite(p) & (p >= P.call_threshold)
+    assert np.isfinite(out[is_call]).all()
+    assert np.isnan(out[~is_call]).all()
+
+
+def test_background_fdr_is_bounded_and_monotone_in_margin():
+    """Bounded to (0, 1]; and the BH step-up makes it MONOTONE — a stronger call can never carry a worse
+    bg_fdr than a weaker one. (The raw E/rank ratio is NOT monotone: E and rank both fall with margin.)"""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    # a jagged call set: without the step-up the raw ratio zig-zags
+    margin, p = _bgfdr_inputs(calls=(9.0, 4.2, 4.1, 4.0, 3.9, 3.8, 3.0))
+    out = background_fdr(margin, p, P)
+    v = out[np.isfinite(out)]
+    assert ((v > 0) & (v <= 1.0)).all()
+    calls = out[p >= P.call_threshold]
+    m = margin[p >= P.call_threshold]
+    ordered = calls[np.argsort(-m)]              # strongest first
+    assert np.all(np.diff(ordered) >= -1e-12), ordered
+
+
+def test_background_fdr_is_order_independent():
+    """Value depends only on the MULTISET of margins — required for streaming/in-memory parity."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    margin, p = _bgfdr_inputs()
+    perm = np.random.default_rng(7).permutation(len(margin))
+    a = background_fdr(margin, p, P)
+    b = background_fdr(margin[perm], p[perm], P)
+    assert np.allclose(a[perm][np.isfinite(a[perm])], b[np.isfinite(b)], rtol=0, atol=0)
+
+
+def test_background_fdr_separates_background_grade_from_genuine_outlier():
+    """The corpus-validated discriminator: calls that ARE this genome's own tail leave NO individually
+    significant intron; one genuine outlier does. This is the Symbiodinium-vs-Phytophthora distinction that
+    the gated call columns cannot express (both are NOT_DETECTED, both zeroed)."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    # buried: relabel the background's OWN top 109 as calls, so observed == expected by construction.
+    # Production-scale U2:call ratio — see the truncation caveat in background_fdr's docstring.
+    rng = np.random.default_rng(0)
+    x = rng.exponential(1.0, 200_000) - 5.0
+    p = np.zeros(len(x))
+    p[np.argsort(-x)[:109]] = 1.0
+    buried = background_fdr(x, p, P)
+    assert np.nanmedian(buried) > 0.5
+    assert int((buried[np.isfinite(buried)] < 0.01).sum()) == 0     # nothing survives its own background
+    # outlier: one call far beyond the fitted tail (the Phytophthora infestans shape)
+    out_m, out_p = _bgfdr_inputs(calls=(14.0,))
+    outlier = background_fdr(out_m, out_p, P)
+    assert np.nanmin(outlier) < 0.01
+
+
+def test_background_fdr_nan_when_u2_tail_unreferenceable():
+    """Too few U2 to fit the genome's own tail -> all NaN (matches the adjudicator's own guard)."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    margin, p = _bgfdr_inputs(n_u2=50)           # < min_u2
+    assert np.isnan(background_fdr(margin, p, P)).all()

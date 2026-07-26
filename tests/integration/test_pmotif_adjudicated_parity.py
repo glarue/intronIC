@@ -6,7 +6,7 @@ must produce identical score_info/meta/bed. This test builds a tiny (1-model) pm
 the fly via `intronIC train --scoring-mode pmotif_adjudicated` (no committed binary, no dev-panel
 dependency — the bundle is intentionally uncalibrated, which is fine because PARITY is independent of
 calibration), then classifies the bundled Chr19 human data in both modes and asserts equality + that the
-new interpretable columns (P_motif, motif_category, adjusted_score, rel_score) are present.
+new interpretable columns (P_motif, motif_category, bg_fdr, adjusted_score, rel_score) are present.
 
 Runs in ~2-3 minutes (one tiny train + two classify passes). Skips gracefully if the dev env / test data
 are unavailable.
@@ -22,7 +22,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / "src" / "intronIC" / "data"
 TEST_GENOME = DATA_DIR / "test_data" / "Homo_sapiens.Chr19.Ensembl_91.fa.gz"
 TEST_ANNOTATION = DATA_DIR / "test_data" / "Homo_sapiens.Chr19.Ensembl_91.gff3.gz"
 
-PMOTIF_COLUMNS = ("P_motif", "motif_category", "adjusted_score", "rel_score")
+PMOTIF_COLUMNS = ("P_motif", "motif_category", "bg_fdr", "adjusted_score", "rel_score")
 
 
 @pytest.fixture(scope="module")
