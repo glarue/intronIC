@@ -49,7 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `INCONCLUSIVE` now also covers the low-k case above, not only "`z_excess` in the empirical gap". Both mean
   *abstain, corroborate downstream*, but consumers inferring a `z_excess` range from the label will be wrong
   for those genomes.
-- `ADJUDICATOR_PARAMS_VERSION` → `zexcess_gap_pgumbel_cs_lowk_2026-07-27`.
+- `ADJUDICATOR_PARAMS_VERSION` → `zexcess_gap_pgumbel_cs_lowk_2026-07-27`, and the bundled model was
+  re-stamped to match (a gate change is a re-stamp, not a retrain — the ensemble is untouched, verified
+  identical over a fixed probe set).
+- New `scripts/restamp_adjudicator_params.py` mechanises that re-stamp. It adds only fields the code has and
+  the bundle lacks, and never overwrites a stored value: the bundle's calibrated Platt is `2.7958/-1.1778`
+  while the module *defaults* are the rounded `2.796/-1.178`, so re-stamping from
+  `asdict(AdjudicatorParams())` would silently degrade the calibration on every genome.
 
 ### Fixed
 
