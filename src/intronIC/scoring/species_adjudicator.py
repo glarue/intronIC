@@ -55,7 +55,7 @@ import numpy as np
 #: (>= cs_point_threshold 5.0). 2026-07-03b: the strength gate's PRIMARY driver became the per-genome Gumbel
 #: significance of the call upper tail (p_gumbel_p95 <= p_gumbel_threshold), with the absolute POINT cs_p95
 #: retained as a null-free co-fallback; see the gate comment + docs/adjudicator_strength_evt.md.
-ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_pgumbel_cs_2026-07-03"
+ADJUDICATOR_PARAMS_VERSION = "zexcess_gap_pgumbel_cs_lowk_2026-07-27"
 
 # Calibration constants frozen from the cross-clade panel + 68 divergent bearers + snRNA-vetted losses
 # (eval_corpus/{corroborate_v2,refit_anchors_expanded,robust_sep_one_nu2}.py; see
@@ -98,6 +98,18 @@ DEFAULT_Q_B = -10.86
 # peak gate (-> downstream snRNA/IPA corroboration on DETECTED). cs_p95_lo/hi are still computed + logged as a
 # per-genome confidence annotation (NOT the gate). See memory call-strength-divergent-recovery.
 DEFAULT_CS_POINT_THRESHOLD = 5.0  #: cs_p95 (POINT p95 of call margins) >= this (AND >= cs_min_calls) => DETECTED
+# LOW-K ESCAPE HATCH (2026-07-27). Below cs_min_calls the strength gate cannot run and z_excess is bounded
+# below the loss ceiling by construction, so k<=2 was un-adjudicated and fell through to NOT_DETECTED (=
+# zeroed scores). Calibrated on the WtMTA v3 corpus: presumed losses bottom out at 6.5e-4 and 98.4% of
+# intronIC's own called bearers score stronger. 3e-3 is deliberately ABOVE that floor — it is a
+# preserve-the-evidence trust line, not a bearer/loss separator (the axis that actually separates these
+# genomes is the minor spliceosome machinery, which this module cannot see). It sits in the one EMPTY band
+# in the low-k distribution: the admitted set tops out at 2.65e-3 and the next genome is 6.04e-3, so any
+# value in [2.65e-3, 6.04e-3] selects the identical 8 genomes — robust to the exact number, unlike 1e-3,
+# which fell mid-cluster and split Seison (a metazoan, 1.2e-3) off from Leishmania (a kinetoplastid,
+# 6.5e-4) on a <2x difference. Since the hatch abstains rather than asserts, erring wide is the cheap
+# direction. See docs/adjudicator_design.md §4c.
+DEFAULT_LOWK_BG_FDR = 3e-3        #: min bg_fdr <= this (AND 0 < n_calls < cs_min_calls) => INCONCLUSIVE
                                   #: — the null-free ABSOLUTE co-fallback (2026-07-03b: no longer the primary
                                   #: strength driver; p_gumbel_p95 is). Retained for robustness at marginal EVT fits.
 DEFAULT_P_GUMBEL_THRESHOLD = 0.01 #: PRIMARY strength driver (2026-07-03b): DETECTED when the per-genome Gumbel
@@ -136,7 +148,8 @@ class MotifCategory(str, Enum):
 
 
 def classify_motif_category(z_excess: float, cs_p95: float, p_gumbel_p95: float, n_calls: int,
-                            params: "AdjudicatorParams") -> "MotifCategory":
+                            params: "AdjudicatorParams",
+                            bg_fdr_min: float = float("nan")) -> "MotifCategory":
     """Empirical gap gate (COUNT) + call-strength gate (STRENGTH). ``z_excess`` places the genome against the
     frozen class extremes; the gap between them is the out-of-support / abstain (INCONCLUSIVE) zone. The
     call-strength gate ADDITIONALLY promotes a genome whose strongest calls are strong to DETECTED, resolving
@@ -163,6 +176,35 @@ def classify_motif_category(z_excess: float, cs_p95: float, p_gumbel_p95: float,
             (np.isfinite(p_gumbel_p95) and p_gumbel_p95 <= params.p_gumbel_threshold)   # PRIMARY: per-genome null
             or (np.isfinite(cs_p95) and cs_p95 >= params.cs_point_threshold)):           # CO-FALLBACK: null-free
         return MotifCategory.DETECTED
+    # ---- LOW-K ESCAPE HATCH (2026-07-27) ----
+    # Below cs_min_calls the strength gate above cannot run AT ALL (at k<=2 the p95 IS the max — one
+    # outlier — which is precisely what cs_min_calls refuses). And z_excess is bounded by construction
+    # there: at k=1 the call-core IS the only call so obs=0 -> z<=0; at k=2, obs=1 -> z<=1. Both are far
+    # below loss_ceiling_z, so k<=2 cannot reach DETECTED by ANY path and falls straight through to
+    # NOT_DETECTED -- which zeroes adjusted_score/rel_score/type_id via _effective_q and destroys the
+    # evidence, including for genomes carrying a complete minor spliceosome.
+    #
+    # bg_fdr is the one statistic here that does not degenerate at k=1 (see min_background_fdr).
+    #
+    # Returns INCONCLUSIVE, NOT DETECTED, deliberately: one or two introns is not a "population", and the
+    # asymmetric loss behind cs_min_calls still applies. INCONCLUSIVE leaves q_eff at 1.0, so the scores
+    # and calls SURVIVE for the downstream snRNA/comparative corroboration this module cannot do (it is
+    # snRNA-blind by design) instead of being silently zeroed. The hatch's job is to stop destroying
+    # evidence, not to adjudicate.
+    #
+    # NOTE this BROADENS what INCONCLUSIVE means: it is no longer only "z_excess in the empirical gap"
+    # but also "too few calls to gate, yet one is unexplained by this genome's own background". Consumers
+    # keying on INCONCLUSIVE should read it as "abstain, corroborate downstream" — which it always was.
+    #
+    # Threshold calibration (WtMTA v3) and its honest limit: presumed losses bottom out at 6.5e-4, so the
+    # 3e-3 default sits ABOVE the loss arm's floor and admits loss-prior genomes (Leishmania, Babesia,
+    # Porospora) alongside bearer-lineage ones (Seison, Pythium). That is accepted, not overlooked: the
+    # verdict is INCONCLUSIVE, so they are routed to the machinery axis that can resolve them rather than
+    # promoted. This is a preserve-the-evidence trust line, NOT a bearer/loss separator.
+    # See docs/adjudicator_design.md §4c.
+    if (params.lowk_gate_enabled and 0 < n_calls < params.cs_min_calls
+            and np.isfinite(bg_fdr_min) and bg_fdr_min <= params.lowk_bg_fdr_threshold):
+        return MotifCategory.INCONCLUSIVE
     if z_excess <= params.loss_ceiling_z:
         return MotifCategory.NOT_DETECTED
     return MotifCategory.INCONCLUSIVE
@@ -196,6 +238,10 @@ class AdjudicatorParams:
                                                         #: (per-genome Gumbel outlier test on the call p95; ~1% one-sided)
     cs_point_threshold: float = DEFAULT_CS_POINT_THRESHOLD  #: null-free CO-FALLBACK: POINT cs_p95 >= this (+ >= cs_min_calls) => DETECTED
     cs_min_calls: int = DEFAULT_CS_MIN_CALLS            #: min calls for the strength gate (below it p95==max, outlier-prone)
+    lowk_gate_enabled: bool = True      #: LOW-K ESCAPE HATCH: below cs_min_calls, a call the genome's own U2
+                                        #: tail cannot explain -> INCONCLUSIVE (not DETECTED) instead of a
+                                        #: silent zeroing. False reproduces pre-3.1 behaviour exactly.
+    lowk_bg_fdr_threshold: float = DEFAULT_LOWK_BG_FDR  #: min bg_fdr <= this arms the hatch (see the gate comment)
     cs_p95_pct: float = DEFAULT_CS_P95_PCT              #: percentile of the call margins defining cs_p95
     cs_ci_lo_pct: float = 10.0                          #: one-sided lower-bound percentile of the cs_p95 bootstrap
                                                         #: (LOGGED as cs_p95_lo, a per-genome confidence annotation;
@@ -229,6 +275,8 @@ class AdjudicatorResult:
                                          #: (U2 background's own-max prob of reaching the call p95; <= p_gumbel_threshold => DETECTED)
     cs_p95_lo: float = float("nan")      #: cs_p95 bootstrap CI LOWER bound — logged confidence annotation (NOT the gate)
     cs_p95_hi: float = float("nan")      #: cs_p95 bootstrap CI upper bound — logged confidence annotation
+    bg_fdr_min: float = float("nan")     #: strongest (smallest) per-intron bg_fdr over the call set; drives the
+                                         #: LOW-K escape hatch (k < cs_min_calls) and is logged for every genome
     motif_category: MotifCategory = MotifCategory.UNASSESSABLE  #: PRIMARY motif gate (DETECTED/INCONCLUSIVE/NOT_DETECTED)
     excess_z: float = float("nan")       #: SECONDARY (size-aware significance): call-core beyond U2 expected-max
     p_gumbel: float = float("nan")       #: SECONDARY: Gumbel tail-prob that U2's own max reaches the call-core
@@ -437,7 +485,20 @@ def background_fdr(margin: np.ndarray, p_motif: np.ndarray, params: AdjudicatorP
     m = margin[is_call]
     if not len(m):
         return out
-    e = params.evt_tail_frac * len(u2) * np.exp(-ref.lam * (m - ref.q_evt))
+    out[is_call] = _bg_fdr_for_calls(m, ref, len(u2), params)
+    return out
+
+
+def _bg_fdr_for_calls(call_margins: np.ndarray, ref: _U2Reference, n_u2: float,
+                      params: AdjudicatorParams) -> np.ndarray:
+    """Core BH arithmetic for :func:`background_fdr`, factored out so the low-k GATE
+    (:func:`min_background_fdr`, used inside ``_assess``) and the reported ``bg_fdr`` COLUMN are the same
+    computation by construction — they cannot drift. Takes an ALREADY-FITTED ``ref``, so the gate reuses
+    ``_assess``'s reference instead of re-fitting it.
+
+    ``call_margins`` must be finite. Returns the BH q-values aligned to it (no NaN)."""
+    m = np.asarray(call_margins, float)
+    e = params.evt_tail_frac * n_u2 * np.exp(-ref.lam * (m - ref.q_evt))
     # rank_i = #{j : m_j >= m_i}; ties share the max rank so the value is order-independent.
     rank = np.searchsorted(-np.sort(m)[::-1], -m, side="right")
     raw = e / rank
@@ -446,8 +507,25 @@ def background_fdr(margin: np.ndarray, p_motif: np.ndarray, params: AdjudicatorP
     adjusted = np.minimum.accumulate(raw[desc][::-1])[::-1]
     fdr = np.empty_like(raw)
     fdr[desc] = adjusted
-    out[is_call] = np.minimum(fdr, 1.0)
-    return out
+    return np.minimum(fdr, 1.0)
+
+
+def min_background_fdr(calls: np.ndarray, n_u2: float, ref: _U2Reference,
+                       params: AdjudicatorParams) -> float:
+    """Strongest (smallest) ``bg_fdr`` over a genome's call set — the LOW-K GATE driver.
+
+    Why this and not ``cs_p95``: below ``cs_min_calls`` the strength gate cannot run at all (at k<=2 the
+    p95 IS the max, i.e. a single outlier, which is exactly what ``cs_min_calls`` exists to refuse). This
+    statistic does not degenerate at k=1 — it is a per-intron BH q-value referenced to the genome's own
+    fitted U2 tail, so one call is a well-posed question ("would this background produce it?") even though
+    one call is not a population.
+
+    Bit-identical to ``min(bg_fdr)`` over the reported column: same ``ref``, same call set, same arithmetic
+    (:func:`_bg_fdr_for_calls`). NaN if the tail is unusable or there are no calls."""
+    calls = np.asarray(calls, float)
+    if not len(calls) or not (ref.finite and np.isfinite(ref.lam) and np.isfinite(ref.q_evt)):
+        return float("nan")
+    return float(np.min(_bg_fdr_for_calls(calls, ref, n_u2, params)))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -525,9 +603,15 @@ def _assess(calls: np.ndarray, n_u2: int, n_total: int, ref: _U2Reference,
     cs_p95_lo = float(np.percentile(cs_boot, params.cs_ci_lo_pct))
     cs_p95_hi = float(np.percentile(cs_boot, 100.0 - params.cs_ci_lo_pct))
 
+    # LOW-K gate driver. Computed HERE, before the verdict, reusing the reference `_assess` already holds —
+    # so it is bit-identical to the reported bg_fdr column (same ref, same calls, same arithmetic) with no
+    # second `_u2_reference` fit. It is the only statistic in this function that survives k=1.
+    bg_fdr_min = min_background_fdr(calls, n_u2, ref, params)
+
     # PRIMARY gate: z_excess (count) gap gate + call-strength gate — per-genome p_gumbel_p95 (primary) OR the
-    # null-free POINT cs_p95 (co-fallback).
-    motif_category = classify_motif_category(z_excess, cs_p95, p_gumbel_p95, len(calls), params)
+    # null-free POINT cs_p95 (co-fallback) — then the low-k escape hatch for k < cs_min_calls.
+    motif_category = classify_motif_category(z_excess, cs_p95, p_gumbel_p95, len(calls), params,
+                                             bg_fdr_min=bg_fdr_min)
 
     status = AdjStatus.ADJUDICATED if (q_lo > 0.5 or q_hi < 0.5) else AdjStatus.UNDETERMINED
     return AdjudicatorResult(
@@ -535,7 +619,7 @@ def _assess(calls: np.ndarray, n_u2: int, n_total: int, ref: _U2Reference,
         q=q_point, q_lo=q_lo, q_hi=q_hi, status=status,
         z_excess=float(z_excess), cs_p95=cs_p95, p_gumbel_p95=float(p_gumbel_p95),
         cs_p95_lo=cs_p95_lo, cs_p95_hi=cs_p95_hi,
-        motif_category=motif_category,
+        motif_category=motif_category, bg_fdr_min=bg_fdr_min,
         excess_z=float(excess_z), p_gumbel=float(p_gumbel), z_expmax=float(ref.z_expmax),
         secondary_available=secondary_available, params=params)
 
@@ -821,7 +905,7 @@ def apply_pmotif_adjudication(score_info_path, ensemble_models,
         messenger.info(
             f"pmotif_adjudicated: status={result.status.value} motif_category={result.motif_category.value} "
             f"z_excess={result.z_excess:.2f} cs_p95={result.cs_p95:.2f} (lo={result.cs_p95_lo:.2f}) "
-            f"n_call={result.n_call} "
+            f"n_call={result.n_call} bg_fdr_min={result.bg_fdr_min:.3g} "
             f"(secondary: depth_tail={result.depth_tail:.2f} q={q_eff:.3f}) "
             f"-> {int(called.sum())} U12 calls / {int(finite.sum())} scorable introns")
     return result

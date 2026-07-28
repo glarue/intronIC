@@ -532,3 +532,83 @@ def test_background_fdr_nan_when_u2_tail_unreferenceable():
     from intronIC.scoring.species_adjudicator import background_fdr
     margin, p = _bgfdr_inputs(n_u2=50)           # < min_u2
     assert np.isnan(background_fdr(margin, p, P)).all()
+
+
+# ----------------------------------------------------------------------------------------------
+# LOW-K escape hatch (v3.1): k < cs_min_calls + a call the genome's own U2 tail cannot explain
+# -> INCONCLUSIVE (scores SURVIVE) instead of the silent NOT_DETECTED zeroing.
+# ----------------------------------------------------------------------------------------------
+def _lowk_genome(n_call, call_margin=14.0, n_u2=5000, seed=0):
+    """Exponential U2 background + exactly `n_call` strong calls. The offset (-10) keeps the background's
+    own right tail BELOW the P_motif>=0.9 call threshold, so k is exactly n_call — at -5 the exponential
+    tail supplies ~14 calls of its own and the fixture silently stops testing the low-k regime."""
+    rng = np.random.default_rng(seed)
+    u2 = rng.exponential(1.0, n_u2) - 10.0
+    margin = np.concatenate([u2, np.full(n_call, call_margin)]) if n_call else u2
+    p_motif = 1.0 / (1.0 + np.exp(-(P.platt_a * margin + P.platt_c)))
+    return margin, p_motif
+
+
+@pytest.mark.parametrize("n_call", [1, 2])
+def test_lowk_hatch_preserves_scores_instead_of_zeroing(n_call):
+    """THE POINT OF THE CHANGE: a k<cs_min_calls genome with an unexplainable call must not be zeroed.
+    Assert on q_eff, not just the category — q_eff is what actually decides whether scores survive."""
+    from intronIC.scoring.species_adjudicator import MotifCategory, _effective_q
+    margin, p_motif = _lowk_genome(n_call)
+    r = adjudicate(margin, p_motif, P)
+    assert r.n_call == n_call
+    assert r.z_excess <= P.loss_ceiling_z          # cannot reach DETECTED by the count path...
+    assert r.n_call < P.cs_min_calls              # ...nor by the strength gate
+    assert r.motif_category is MotifCategory.INCONCLUSIVE
+    assert np.isfinite(r.bg_fdr_min) and r.bg_fdr_min <= P.lowk_bg_fdr_threshold
+    assert _effective_q(r)[0] == 1.0              # scores + calls SURVIVE (the whole purpose)
+
+
+def test_lowk_hatch_disabled_reproduces_pre_v31_zeroing():
+    """Regression path: lowk_gate_enabled=False must give the old verdict exactly (NOT_DETECTED, q_eff=0)."""
+    from intronIC.scoring.species_adjudicator import MotifCategory, _effective_q
+    margin, p_motif = _lowk_genome(2)
+    r = adjudicate(margin, p_motif, AdjudicatorParams(lowk_gate_enabled=False))
+    assert r.motif_category is MotifCategory.NOT_DETECTED
+    assert _effective_q(r)[0] == 0.0
+
+
+def test_lowk_hatch_ignores_a_weak_call():
+    """A lone call the background readily explains stays NOT_DETECTED — the hatch is not a blanket rescue."""
+    from intronIC.scoring.species_adjudicator import MotifCategory
+    margin, p_motif = _lowk_genome(1, call_margin=2.0)   # a call the background readily reaches
+    r = adjudicate(margin, p_motif, P)
+    assert r.n_call == 1
+    assert r.bg_fdr_min > P.lowk_bg_fdr_threshold
+    assert r.motif_category is MotifCategory.NOT_DETECTED
+
+
+def test_lowk_hatch_does_not_rescue_a_genome_with_no_calls():
+    """k==0 must never be rescued: no call means nothing to be surprised by (the `0 < n_calls` guard)."""
+    from intronIC.scoring.species_adjudicator import MotifCategory
+    margin, p_motif = _lowk_genome(0)
+    r = adjudicate(margin, p_motif, P)
+    assert r.n_call == 0
+    assert r.motif_category is MotifCategory.NOT_DETECTED
+
+
+def test_lowk_hatch_does_not_reach_past_its_regime():
+    """At k >= cs_min_calls the strength gate DID run, so the hatch must not second-guess its verdict."""
+    from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory
+    nan = float("nan")
+    # k=3 with a strong bg_fdr but a failing strength gate stays NOT_DETECTED
+    assert classify_motif_category(1.0, nan, nan, P.cs_min_calls, P,
+                                   bg_fdr_min=1e-12) is MotifCategory.NOT_DETECTED
+    # ...and a genuine DETECTED is never downgraded by the hatch
+    assert classify_motif_category(9.0, nan, nan, 2, P, bg_fdr_min=1e-12) is MotifCategory.DETECTED
+
+
+def test_lowk_gate_driver_is_bit_identical_to_the_reported_column():
+    """The gate (min_background_fdr, off _assess's ref) and the bg_fdr COLUMN (background_fdr, off its own
+    fit) must be the same number — they share _bg_fdr_for_calls precisely so they cannot drift."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    for n_call in (1, 2, 5, 40):
+        margin, p_motif = _lowk_genome(n_call, call_margin=8.0, seed=n_call)
+        r = adjudicate(margin, p_motif, P)
+        col = background_fdr(margin, p_motif, P)
+        assert np.nanmin(col) == r.bg_fdr_min, (n_call, np.nanmin(col), r.bg_fdr_min)
