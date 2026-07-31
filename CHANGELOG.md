@@ -5,6 +5,65 @@ All notable changes to intronIC will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-07-27
+
+### Added
+
+- **`bg_fdr`** — a new report-only per-intron column in `score_info.iic`: for each strong call, the
+  fraction of the calls at least that strong which the genome's *own* U2 tail already explains. It is the
+  per-intron decomposition of `z_excess` (which evaluates the same arithmetic once, at the call core),
+  Benjamini-Hochberg-adjusted so it is monotone in call strength. It gates nothing.
+
+  It exists because the calling columns cannot express one real distinction. *Symbiodinium natans* and
+  *Phytophthora infestans* are both `NOT_DETECTED` and both fully zeroed, and `z_excess` does not separate
+  them (−1.35 vs −0.24) — but Symbiodinium's best of 109 calls is one its background expects 2.4 of (every
+  `bg_fdr` = 1), while Phytophthora holds one at 6.9e-3. `P_motif` cannot separate them either: it
+  saturates, reading 1.0000 at the top of both.
+
+- **Low-k escape hatch** in the species adjudicator. Genomes with fewer than `cs_min_calls` (3) strong calls
+  could not reach `DETECTED` by *any* path — the strength gate is hard-gated on the call count, and
+  `z_excess` is bounded below the loss ceiling at low k by construction (k=1 ⇒ z ≤ 0; k=2 ⇒ z ≤ 1). They
+  fell through to `NOT_DETECTED`, which zeroes every score. Not adjudicated as a loss: never adjudicated,
+  and the evidence discarded — including for genomes carrying a complete minor spliceosome.
+
+  `bg_fdr` is the only statistic here that survives k=1, so such a genome now resolves to **`INCONCLUSIVE`**
+  (not `DETECTED`) when its strongest call clears `lowk_bg_fdr_threshold` (3e-3). Scores and calls survive
+  for downstream corroboration; no population is asserted. New params `lowk_gate_enabled` /
+  `lowk_bg_fdr_threshold`; set the former to `False` to reproduce 3.0.0 behaviour exactly.
+
+  The threshold is a preserve-the-evidence trust line, not a bearer/loss separator — it sits above the
+  presumed-loss floor (6.5e-4) on purpose, since the gate abstains rather than asserts. It also sits in the
+  only empty band in the low-k distribution, so any value in `[2.65e-3, 6.04e-3]` selects the same set.
+
+  Effect on the 2,785-genome WtMTA v3 corpus: **8 genomes**, all `NOT_DETECTED → INCONCLUSIVE` — four from
+  bearer-prior lineages (3 *Mucor*, *Pythium*, *Seison*) and four from loss-prior ones (*Leishmania*,
+  *Babesia*, *Porospora*), which is the expected shape for an abstaining gate. Nothing at k ≥ 3 moves.
+
+### Changed
+
+- **`score_info.iic` is now 35 columns (was 38).** `q`, `P_adj`, `P_adj_lo` and `P_adj_hi` were removed —
+  all four were deterministic functions of `P_motif` + `motif_category` (`q` a per-species constant;
+  `P_adj_lo`/`P_adj_hi` bit-identical to `P_adj`). `adjusted_score` is computed directly as
+  `100·q_eff·P_motif`. **`type_id` moved from column 38 to 35**, so any position-based parser must be
+  updated; parse by header name.
+- `INCONCLUSIVE` now also covers the low-k case above, not only "`z_excess` in the empirical gap". Both mean
+  *abstain, corroborate downstream*, but consumers inferring a `z_excess` range from the label will be wrong
+  for those genomes.
+- `ADJUDICATOR_PARAMS_VERSION` → `zexcess_gap_pgumbel_cs_lowk_2026-07-27`, and the bundled model was
+  re-stamped to match (a gate change is a re-stamp, not a retrain — the ensemble is untouched, verified
+  identical over a fixed probe set).
+- New `scripts/restamp_adjudicator_params.py` mechanises that re-stamp. It adds only fields the code has and
+  the bundle lacks, and never overwrites a stored value: the bundle's calibrated Platt is `2.7958/-1.1778`
+  while the module *defaults* are the rounded `2.796/-1.178`, so re-stamping from
+  `asdict(AdjudicatorParams())` would silently degrade the calibration on every genome.
+
+### Fixed
+
+- The `apply_pmotif_adjudication` docstring claimed `rel_score = 100*P_motif - 90` while the code computes
+  `adjusted_score - 90`. These agree only when `q_eff == 1`, so they diverged completely on `NOT_DETECTED`
+  genomes. The code was right: `rel_score` must stay an exact linear transform of `adjusted_score`, because
+  that identity is what makes `rel_score > 0` a self-sufficient one-column high-confidence filter.
+
 ## [3.0.0] - 2026-07-09
 
 intronIC 3.0.0 is the consolidated, vetted release of the cross-species architecture

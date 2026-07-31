@@ -649,6 +649,22 @@ def _finalize_classification_metrics(
         f"high_confidence_u12_by_feature ({sum(u12_hc_by_feature.values())}) > high_confidence_u12 ({n_hc})"
     )
 
+    # Per-genome SUBSTRATE-QUALITY report — REPORT-ONLY (never gates type_id/motif_category). A composition-
+    # relative structure-weighted background-IC + a canonical-terminus annotation-QC signal + a soft
+    # substrate_confidence, read alongside motif_category + snRNA downstream (see population_coherence.py /
+    # docs/background_ic_annotation_qc_investigation.md). Computed from the FINALIZED on-disk score_info +
+    # meta (the scorable/classified set) with order-independent metrics, so it is identical across the
+    # streaming and in-memory paths by construction. Best-effort: a QC annotation must never break output.
+    summary["substrate_quality"] = None
+    if meta_path is not None and Path(meta_path).exists():
+        try:
+            from intronIC.scoring.population_coherence import compute_from_iic
+            score_info_path = str(meta_path).replace(".meta.iic", ".score_info.iic")
+            if Path(score_info_path).exists():
+                summary["substrate_quality"] = compute_from_iic(score_info_path, meta_path).substrate_quality()
+        except Exception:  # noqa: BLE001 — report-only annotation, never fatal
+            pass
+
     return summary
 
 

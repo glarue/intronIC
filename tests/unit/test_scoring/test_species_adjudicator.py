@@ -322,8 +322,10 @@ def test_tied_calls_do_not_give_degenerate_ci():
 def test_adjudication_is_order_invariant():
     """The whole adjudication — including the bootstrap q-CI — must be invariant to the input row order.
     The CI bootstrap resamples calls by index, so without sorting the calls the streaming (per-contig) and
-    in-memory paths (same call values, different order) produced different P_adj_lo/P_adj_hi. Regression for
-    the streaming==in-memory parity break under the raw-feature default."""
+    in-memory paths (same call values, different order) produced different bootstrap bounds. Regression for
+    the streaming==in-memory parity break under the raw-feature default. (The columns that first exposed it,
+    P_adj_lo/P_adj_hi, were removed in 2026-07; the invariant they guarded lives on in q_lo/q_hi here, and
+    the same requirement now applies to bg_fdr — see test_background_fdr_is_order_independent.)"""
     rng = np.random.RandomState(7)
     u2 = rng.normal(-4.8, 1.0, 3000)
     calls = rng.normal(1.6, 0.4, 30)
@@ -417,10 +419,20 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
     assert set(out["motif_category"]) == {MotifCategory.DETECTED.value}
 
     pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
-    padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
-    fin = np.isfinite(pm) & np.isfinite(padj)
-    # legacy P_adj == q_eff * P_motif with the BINARY gate (q_eff==1 for a non-loss species)
-    assert res.q == 1.0 and np.allclose(padj[fin], pm[fin], atol=1e-6)
+    adj = pd.to_numeric(out["adjusted_score"], errors="coerce").to_numpy()
+    rel = pd.to_numeric(out["rel_score"], errors="coerce").to_numpy()
+    fin = np.isfinite(pm) & np.isfinite(adj)
+    # q_eff == 1 for a non-loss species -> adjusted_score is P_motif on the 0-100 scale, unsuppressed.
+    # Tolerance is set by the file's own resolution: columns are written "%.6g", so a value near -88.9
+    # carries only 4 decimals. The identity is exact in-computation, not in the serialized text.
+    assert np.allclose(adj[fin], 100.0 * pm[fin], atol=1e-3)
+    # rel_score is adjusted_score - 90 (the identity that makes `rel_score > 0` a self-sufficient
+    # one-column HC filter); both are gated together, never independently.
+    assert np.allclose(rel[fin], adj[fin] - 90.0, atol=1e-3)
+    # bg_fdr is REPORT-ONLY: present, finite on the call set, NaN elsewhere, and gates nothing.
+    bg = pd.to_numeric(out["bg_fdr"], errors="coerce").to_numpy()
+    is_call = np.isfinite(pm) & (pm >= P.call_threshold)
+    assert np.isfinite(bg[is_call]).all() and np.isnan(bg[~is_call]).all()
     # the U12 population (last n=150) should be the called set; U2 bulk mostly not called
     assert (out["type_id"].to_numpy()[-150:] == "u12").sum() >= 140
     assert (out["type_id"].to_numpy()[:n_u2] == "u12").mean() < 0.1
@@ -429,8 +441,8 @@ def test_apply_pmotif_adjudication_writes_columns_and_calls(tmp_path):
 
 
 def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
-    """Below min_u2 the species layer is inconclusive -> LOW_N -> q_eff=1 (P_adj==P_motif), never silent
-    suppression (option A, the safe low-N default)."""
+    """Below min_u2 the species layer is inconclusive -> LOW_N -> q_eff=1 (adjusted_score==100*P_motif),
+    never silent suppression (option A, the safe low-N default)."""
     from intronIC.scoring.species_adjudicator import apply_pmotif_adjudication
     import pandas as pd
     p = tmp_path / "small.score_info.iic"
@@ -438,8 +450,165 @@ def test_apply_pmotif_adjudication_low_n_falls_back_to_pmotif(tmp_path):
     res = apply_pmotif_adjudication(str(p), _tiny_ensemble(), params=P)
     out = pd.read_csv(p, sep="\t", keep_default_na=False)
     assert res.status is AdjStatus.LOW_N
-    assert float(out["q"].iloc[0]) == 1.0
     pm = pd.to_numeric(out["P_motif"], errors="coerce").to_numpy()
-    padj = pd.to_numeric(out["P_adj"], errors="coerce").to_numpy()
-    fin = np.isfinite(pm) & np.isfinite(padj)
-    assert np.allclose(padj[fin], pm[fin], atol=1e-9)
+    adj = pd.to_numeric(out["adjusted_score"], errors="coerce").to_numpy()
+    fin = np.isfinite(pm) & np.isfinite(adj)
+    assert np.allclose(adj[fin], 100.0 * pm[fin], atol=1e-6)   # q_eff == 1: nothing suppressed
+    # The superseded q/P_adj chain is gone (deterministic from P_motif + motif_category).
+    assert not ({"q", "P_adj", "P_adj_lo", "P_adj_hi"} & set(out.columns))
+
+
+# ----------------------------------------------------------------------------------------------
+# background_fdr: REPORT-ONLY per-intron background surprisal (the third axis; gates nothing)
+# ----------------------------------------------------------------------------------------------
+def _bgfdr_inputs(n_u2=5000, calls=(6.0, 5.0, 4.0), seed=0):
+    """Exponential-tailed U2 background (P_motif below u2_threshold) + a handful of strong calls."""
+    rng = np.random.default_rng(seed)
+    u2 = rng.exponential(1.0, n_u2) - 5.0
+    margin = np.concatenate([u2, np.asarray(calls, float)])
+    p = np.concatenate([np.zeros(n_u2), np.ones(len(calls))])   # 0 -> U2 side, 1 -> call side
+    return margin, p
+
+
+def test_background_fdr_only_populated_for_calls():
+    """NaN for non-calls and unscorable rows; finite only on the canonical call set."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    margin, p = _bgfdr_inputs()
+    margin = np.append(margin, np.nan); p = np.append(p, np.nan)     # unscorable row
+    out = background_fdr(margin, p, P)
+    assert out.shape == margin.shape
+    is_call = np.isfinite(margin) & np.isfinite(p) & (p >= P.call_threshold)
+    assert np.isfinite(out[is_call]).all()
+    assert np.isnan(out[~is_call]).all()
+
+
+def test_background_fdr_is_bounded_and_monotone_in_margin():
+    """Bounded to (0, 1]; and the BH step-up makes it MONOTONE — a stronger call can never carry a worse
+    bg_fdr than a weaker one. (The raw E/rank ratio is NOT monotone: E and rank both fall with margin.)"""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    # a jagged call set: without the step-up the raw ratio zig-zags
+    margin, p = _bgfdr_inputs(calls=(9.0, 4.2, 4.1, 4.0, 3.9, 3.8, 3.0))
+    out = background_fdr(margin, p, P)
+    v = out[np.isfinite(out)]
+    assert ((v > 0) & (v <= 1.0)).all()
+    calls = out[p >= P.call_threshold]
+    m = margin[p >= P.call_threshold]
+    ordered = calls[np.argsort(-m)]              # strongest first
+    assert np.all(np.diff(ordered) >= -1e-12), ordered
+
+
+def test_background_fdr_is_order_independent():
+    """Value depends only on the MULTISET of margins — required for streaming/in-memory parity."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    margin, p = _bgfdr_inputs()
+    perm = np.random.default_rng(7).permutation(len(margin))
+    a = background_fdr(margin, p, P)
+    b = background_fdr(margin[perm], p[perm], P)
+    assert np.allclose(a[perm][np.isfinite(a[perm])], b[np.isfinite(b)], rtol=0, atol=0)
+
+
+def test_background_fdr_separates_background_grade_from_genuine_outlier():
+    """The corpus-validated discriminator: calls that ARE this genome's own tail leave NO individually
+    significant intron; one genuine outlier does. This is the Symbiodinium-vs-Phytophthora distinction that
+    the gated call columns cannot express (both are NOT_DETECTED, both zeroed)."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    # buried: relabel the background's OWN top 109 as calls, so observed == expected by construction.
+    # Production-scale U2:call ratio — see the truncation caveat in background_fdr's docstring.
+    rng = np.random.default_rng(0)
+    x = rng.exponential(1.0, 200_000) - 5.0
+    p = np.zeros(len(x))
+    p[np.argsort(-x)[:109]] = 1.0
+    buried = background_fdr(x, p, P)
+    assert np.nanmedian(buried) > 0.5
+    assert int((buried[np.isfinite(buried)] < 0.01).sum()) == 0     # nothing survives its own background
+    # outlier: one call far beyond the fitted tail (the Phytophthora infestans shape)
+    out_m, out_p = _bgfdr_inputs(calls=(14.0,))
+    outlier = background_fdr(out_m, out_p, P)
+    assert np.nanmin(outlier) < 0.01
+
+
+def test_background_fdr_nan_when_u2_tail_unreferenceable():
+    """Too few U2 to fit the genome's own tail -> all NaN (matches the adjudicator's own guard)."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    margin, p = _bgfdr_inputs(n_u2=50)           # < min_u2
+    assert np.isnan(background_fdr(margin, p, P)).all()
+
+
+# ----------------------------------------------------------------------------------------------
+# LOW-K escape hatch (v3.1): k < cs_min_calls + a call the genome's own U2 tail cannot explain
+# -> INCONCLUSIVE (scores SURVIVE) instead of the silent NOT_DETECTED zeroing.
+# ----------------------------------------------------------------------------------------------
+def _lowk_genome(n_call, call_margin=14.0, n_u2=5000, seed=0):
+    """Exponential U2 background + exactly `n_call` strong calls. The offset (-10) keeps the background's
+    own right tail BELOW the P_motif>=0.9 call threshold, so k is exactly n_call — at -5 the exponential
+    tail supplies ~14 calls of its own and the fixture silently stops testing the low-k regime."""
+    rng = np.random.default_rng(seed)
+    u2 = rng.exponential(1.0, n_u2) - 10.0
+    margin = np.concatenate([u2, np.full(n_call, call_margin)]) if n_call else u2
+    p_motif = 1.0 / (1.0 + np.exp(-(P.platt_a * margin + P.platt_c)))
+    return margin, p_motif
+
+
+@pytest.mark.parametrize("n_call", [1, 2])
+def test_lowk_hatch_preserves_scores_instead_of_zeroing(n_call):
+    """THE POINT OF THE CHANGE: a k<cs_min_calls genome with an unexplainable call must not be zeroed.
+    Assert on q_eff, not just the category — q_eff is what actually decides whether scores survive."""
+    from intronIC.scoring.species_adjudicator import MotifCategory, _effective_q
+    margin, p_motif = _lowk_genome(n_call)
+    r = adjudicate(margin, p_motif, P)
+    assert r.n_call == n_call
+    assert r.z_excess <= P.loss_ceiling_z          # cannot reach DETECTED by the count path...
+    assert r.n_call < P.cs_min_calls              # ...nor by the strength gate
+    assert r.motif_category is MotifCategory.INCONCLUSIVE
+    assert np.isfinite(r.bg_fdr_min) and r.bg_fdr_min <= P.lowk_bg_fdr_threshold
+    assert _effective_q(r)[0] == 1.0              # scores + calls SURVIVE (the whole purpose)
+
+
+def test_lowk_hatch_disabled_reproduces_pre_v31_zeroing():
+    """Regression path: lowk_gate_enabled=False must give the old verdict exactly (NOT_DETECTED, q_eff=0)."""
+    from intronIC.scoring.species_adjudicator import MotifCategory, _effective_q
+    margin, p_motif = _lowk_genome(2)
+    r = adjudicate(margin, p_motif, AdjudicatorParams(lowk_gate_enabled=False))
+    assert r.motif_category is MotifCategory.NOT_DETECTED
+    assert _effective_q(r)[0] == 0.0
+
+
+def test_lowk_hatch_ignores_a_weak_call():
+    """A lone call the background readily explains stays NOT_DETECTED — the hatch is not a blanket rescue."""
+    from intronIC.scoring.species_adjudicator import MotifCategory
+    margin, p_motif = _lowk_genome(1, call_margin=2.0)   # a call the background readily reaches
+    r = adjudicate(margin, p_motif, P)
+    assert r.n_call == 1
+    assert r.bg_fdr_min > P.lowk_bg_fdr_threshold
+    assert r.motif_category is MotifCategory.NOT_DETECTED
+
+
+def test_lowk_hatch_does_not_rescue_a_genome_with_no_calls():
+    """k==0 must never be rescued: no call means nothing to be surprised by (the `0 < n_calls` guard)."""
+    from intronIC.scoring.species_adjudicator import MotifCategory
+    margin, p_motif = _lowk_genome(0)
+    r = adjudicate(margin, p_motif, P)
+    assert r.n_call == 0
+    assert r.motif_category is MotifCategory.NOT_DETECTED
+
+
+def test_lowk_hatch_does_not_reach_past_its_regime():
+    """At k >= cs_min_calls the strength gate DID run, so the hatch must not second-guess its verdict."""
+    from intronIC.scoring.species_adjudicator import classify_motif_category, MotifCategory
+    nan = float("nan")
+    # k=3 with a strong bg_fdr but a failing strength gate stays NOT_DETECTED
+    assert classify_motif_category(1.0, nan, nan, P.cs_min_calls, P,
+                                   bg_fdr_min=1e-12) is MotifCategory.NOT_DETECTED
+    # ...and a genuine DETECTED is never downgraded by the hatch
+    assert classify_motif_category(9.0, nan, nan, 2, P, bg_fdr_min=1e-12) is MotifCategory.DETECTED
+
+
+def test_lowk_gate_driver_is_bit_identical_to_the_reported_column():
+    """The gate (min_background_fdr, off _assess's ref) and the bg_fdr COLUMN (background_fdr, off its own
+    fit) must be the same number — they share _bg_fdr_for_calls precisely so they cannot drift."""
+    from intronIC.scoring.species_adjudicator import background_fdr
+    for n_call in (1, 2, 5, 40):
+        margin, p_motif = _lowk_genome(n_call, call_margin=8.0, seed=n_call)
+        r = adjudicate(margin, p_motif, P)
+        col = background_fdr(margin, p_motif, P)
+        assert np.nanmin(col) == r.bg_fdr_min, (n_call, np.nanmin(col), r.bg_fdr_min)
